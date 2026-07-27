@@ -1,0 +1,42 @@
+# Client principals. Copy to config/clients.yaml (gitignored).
+# NEVER put raw API keys here — only their sha256 hash. Generate with:
+#   npm run gen-key -- claude-browser
+# which prints the key ONCE and writes the hash below.
+
+clients:
+  - id: claude-browser
+    name: Claude Browser
+    keyHash: "<sha256-of-key>"      # from: npm run gen-key -- claude-browser
+    enabled: true
+    scopes:
+      - targets:read
+      - files:read
+      - files:write
+      - files:delete
+      - terminal:exec
+      - git:read
+      - process:read
+    targets: ["demo"]               # explicit ids, or ["*"] for all CONFIGURED targets
+    rateLimit: 120                  # requests/min (optional)
+
+  - id: chatgpt-browser
+    name: ChatGPT Browser
+    keyHash: "<sha256-of-key>"
+    enabled: true
+    scopes: [targets:read, files:read, files:write, terminal:exec, git:read]
+    targets: ["demo"]
+    rateLimit: 120
+
+  - id: vscode
+    name: VS Code
+    keyHash: "<sha256-of-key>"
+    enabled: true
+    scopes: [targets:read, files:read, files:write, files:delete, terminal:exec, git:read, process:read]
+    targets: ["*"]
+
+  - id: kiro
+    name: Kiro
+    keyHash: "<sha256-of-key>"
+    enabled: true
+    scopes: [targets:read, files:read, files:write, terminal:exec, git:read]
+    targets: ["demo"]

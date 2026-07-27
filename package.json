@@ -1,0 +1,36 @@
+{
+  "name": "mcp-ide-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone MCP gateway bridging approved MCP clients to explicitly authorized Docker target containers",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "gateway": "node dist/gateway/index.js",
+    "executor": "node dist/executor/index.js",
+    "test": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration --no-file-parallelism",
+    "gen-key": "node scripts/gen-client-key.mjs",
+    "revoke-key": "node scripts/revoke-client.mjs",
+    "validate-config": "node scripts/validate-config.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "express": "^5.1.0",
+    "tar-stream": "^3.1.7",
+    "undici": "^7.10.0",
+    "yaml": "^2.8.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "@types/tar-stream": "^3.1.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  }
+}

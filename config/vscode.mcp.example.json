@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "mcp-ide-bridge": {
+      "type": "http",
+      "url": "http://127.0.0.1:8787/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:bridge_key}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "bridge_key",
+      "type": "promptString",
+      "description": "mcp-ide-bridge API key (mcpb_vscode_...)",
+      "password": true
+    }
+  ]
+}

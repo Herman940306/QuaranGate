@@ -1,0 +1,88 @@
+# mcp-ide-bridge — standalone deployment. Owns only its own networks/services.
+# Does NOT touch existing project stacks.
+
+name: mcp-ide-bridge
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  restart: unless-stopped
+
+services:
+  gateway:
+    <<: *hardening
+    build:
+      context: .
+    image: mcp-ide-bridge:latest
+    command: ["node", "dist/gateway/index.js"]
+    environment:
+      BRIDGE_PORT: "8787"
+      BRIDGE_PUBLIC_URL: "${BRIDGE_PUBLIC_URL:-http://127.0.0.1:8787}"
+      EXECUTOR_URL: "http://executor:8990"
+      INTERNAL_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
+      DATA_DIR: "/data"
+      CLIENTS_CONFIG: "/config/clients.yaml"
+    ports:
+      # Bind to loopback only. Remote ingress is documented but NOT enabled here.
+      - "127.0.0.1:${BRIDGE_PORT:-8787}:8787"
+    volumes:
+      - ./config:/config:ro
+      - bridge-data:/data
+    tmpfs:
+      - /tmp
+    networks:
+      - edge
+      - internal
+    depends_on:
+      - executor
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+    pids_limit: 256
+
+  executor:
+    <<: *hardening
+    image: mcp-ide-bridge:latest
+    build:
+      context: .
+    command: ["node", "dist/executor/index.js"]
+    environment:
+      EXECUTOR_PORT: "8990"
+      INTERNAL_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
+      BRIDGE_CONFIG: "/config/bridge.yaml"
+      DOCKER_SOCK: "/var/run/docker.sock"
+    # Access to the docker socket is confined to THIS private service only.
+    group_add:
+      - "${DOCKER_GID:-1001}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config:/config:ro
+    tmpfs:
+      - /tmp
+    networks:
+      - internal
+    # No published ports. Reachable only from the gateway over the internal net.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8990/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+    pids_limit: 512
+
+networks:
+  edge:
+    name: mcp-bridge-edge
+  internal:
+    name: mcp-bridge-internal
+    internal: true
+
+volumes:
+  bridge-data:
+    name: mcp-bridge-data

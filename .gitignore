@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+config/bridge.yaml
+config/clients.yaml
+data/
+*.log
+.vitest-cache/

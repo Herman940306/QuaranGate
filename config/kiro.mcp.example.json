@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "mcp-ide-bridge": {
+      "url": "http://127.0.0.1:8787/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BRIDGE_KEY}"
+      },
+      "disabled": false,
+      "disabledTools": []
+    }
+  }
+}

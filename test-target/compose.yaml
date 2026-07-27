@@ -1,0 +1,24 @@
+# Disposable integration targets, owned entirely by this repo.
+# `dev` is the authorized target; `decoy` is an unrelated container that must
+# NEVER be reachable through the bridge.
+name: mcp-ide-bridge-testtarget
+
+services:
+  dev:
+    build:
+      context: .
+    image: mcp-bridge-testtarget:latest
+    container_name: mcp-bridge-testtarget-dev
+    # Opt-in discovery labels (also referenced by manual config in bridge.yaml)
+    labels:
+      mcp.bridge.enabled: "true"
+      mcp.bridge.workspace: "/workspace"
+      mcp.bridge.name: "demo"
+    restart: unless-stopped
+
+  decoy:
+    image: alpine:3.20
+    container_name: mcp-bridge-testtarget-decoy
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+    # No bridge labels -> must be invisible/unreachable to the bridge.
+    restart: unless-stopped

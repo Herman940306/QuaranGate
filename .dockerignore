@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.env
+config/bridge.yaml
+config/clients.yaml
+data
+tests
+test-target
+docs
+*.md

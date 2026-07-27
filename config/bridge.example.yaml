@@ -1,0 +1,22 @@
+# Target configuration. Copy to config/bridge.yaml (gitignored).
+# Discovery IDENTIFIES containers; it never AUTHORIZES them. Authorization is
+# per-client in clients.yaml. A target must appear here (or via opt-in labels)
+# AND be listed in a client's `targets` to be usable.
+
+discovery:
+  # When true, running containers labeled `mcp.bridge.enabled=true` become
+  # targets automatically (workspace from `mcp.bridge.workspace`).
+  enabled: true
+
+targets:
+  # Stable identity = Compose project + service (resolved to a live container at
+  # request time). Preferred over container IDs.
+  - id: demo
+    composeProject: mcp-ide-bridge-testtarget
+    composeService: dev
+    workspace: /workspace
+
+  # Alternatively pin by container name:
+  # - id: legacy-app
+  #   containerName: my-existing-container
+  #   workspace: /srv/app
