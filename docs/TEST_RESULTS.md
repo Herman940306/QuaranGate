@@ -131,13 +131,43 @@ Completed 2026-07-27 against the real Claude web client through the approved Tai
 - Controlled write artifact `gen/claude-browser-e2e.txt` was deleted and independently confirmed
   absent afterward.
 - Gateway audit records attributed each operation to `claude-browser` with `decision=allow`.
-- Post-browser regression: typecheck **PASS**, unit **20/20**, live integration **37/37**.
+- Post-Claude regression at that milestone: typecheck **PASS**, unit **20/20**, live integration
+  **37/37**. The later structured-output upgrade increased the integration baseline to **40/40**.
 - Security invariants after exposure: gateway still loopback-bound, gateway Docker socket absent,
   executor published ports `{}`.
 
 **Claude browser status: EXTERNALLY VERIFIED.**
 
-## Remaining external validation
+## ChatGPT browser external verification
 
-- **ChatGPT browser** has not yet been connected end-to-end. Re-check current OpenAI product/MCP
-  requirements immediately before that work because the browser integration surface is time-sensitive.
+Completed 2026-07-28 against the real ChatGPT web plugin/developer-mode client through the same
+approved Tailscale Funnel:
+
+- Public endpoint: `https://wolf.taildc680e.ts.net/mcp`.
+- OAuth discovery, Dynamic Client Registration, browser authorization, and token exchange: **PASS**.
+- ChatGPT imported the MCP action surface and displayed tool annotations and schemas.
+- Structured-output upgrade: all **14/14** tools advertise an object `outputSchema`; successful tool
+  calls return `structuredContent` while preserving legacy JSON text. The ChatGPT
+  `OUTPUT SCHEMA RECOMMENDED` warning disappeared after refreshing actions.
+- Real ChatGPT calls against authorized target `demo`: `targets_list`, `fs_read`, `git_status`,
+  `terminal_exec`, `fs_write`, and read-back — **PASS**.
+- Gateway audit records attributed successful calls to principal `chatgpt-browser`.
+- `fs_delete` was discovered as WRITE / DESTRUCTIVE, but the real ChatGPT client blocked the
+  invocation before it reached the gateway. The bridge's delete behavior remains independently
+  covered by the live integration suite. No attempt was made to bypass that client-side safety check.
+- The known ChatGPT test artifact was removed out-of-band only after verifying its exact marker
+  content, then confirmed absent.
+- Final post-ChatGPT regression: typecheck **PASS**, unit **20/20**, live integration **40/40**.
+- Security invariants after both browser validations: public health/readiness **PASS**, gateway
+  Docker socket absent, executor published ports `{}`.
+
+**ChatGPT browser status: EXTERNALLY VERIFIED WITH CLIENT-SIDE PERMANENT-DELETE RESTRICTION.**
+
+## Current external-client status
+
+- **Claude browser:** externally verified for discovery, read, Git, terminal, write/read-back, and
+  permanent delete against the disposable `demo` target.
+- **ChatGPT browser:** externally verified for discovery, read, Git, terminal, and write/read-back;
+  permanent delete is server-verified but was blocked by the tested ChatGPT client before invocation.
+- Product UI, entitlement, and safety behavior are time-sensitive and should be revalidated before a
+  different production deployment.

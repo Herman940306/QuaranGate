@@ -66,7 +66,11 @@ non-routable Docker network (`mcp-bridge-internal`, `internal: true`).
 | `process_list` | READ | `process:read` | target | none |
 
 Classes map to MCP tool annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so clients
-can surface confirmation prompts for write/destructive actions.
+can surface confirmation prompts for write/destructive actions. All 14 tools also advertise an
+object `outputSchema`. Successful calls return the typed value in `structuredContent` and preserve
+the same object as JSON text in `content` for backward compatibility. Live integration coverage
+verifies schema discovery for all 14 tools and equality between `structuredContent` and the legacy
+JSON representation on successful calls.
 
 ## Target model
 

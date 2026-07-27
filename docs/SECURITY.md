@@ -40,6 +40,15 @@ The authorization page uses a restrictive CSP; `form-action` permits only `self`
 the already-validated registered redirect URI. This is required for real browser OAuth redirects
 without opening form submission to arbitrary origins.
 
+## Client-side action safety
+
+MCP annotations remain truthful even when a browser client applies a stricter policy. In live ChatGPT
+verification on 2026-07-28, `fs_delete` was discovered as WRITE / DESTRUCTIVE but ChatGPT blocked the
+invocation before any MCP request reached the gateway. The bridge must not weaken or disguise the
+destructive annotation, nor use `terminal_exec` as a bypass for a client-side safety decision. Server
+authorization and integration tests continue to verify the underlying `files:delete` capability for
+clients that are permitted to invoke it.
+
 ## Threat model
 
 | # | Threat | Impact | Mitigation | Residual risk |

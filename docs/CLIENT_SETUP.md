@@ -96,16 +96,35 @@ For another deployment, replace the hostname above with its approved HTTPS ingre
 
 ---
 
-## ChatGPT browser (Developer Mode connector)
+## ChatGPT browser (developer-mode MCP plugin/app)
 
-**Requires a public HTTPS URL + OAuth.**
+**Status: externally verified on 2026-07-28.** The same approved Tailscale Funnel endpoint used by
+Claude was connected from the current ChatGPT web plugin flow:
 
-1. Enable **Developer Mode** (Settings → Connectors → Advanced → Developer Mode; org admins enable
-   per-workspace first).
-2. **Create** a custom connector → URL `https://your.domain/mcp` → transport HTTP → Auth **OAuth**.
-3. Complete the OAuth flow (paste the client API key on the bridge `/authorize` page).
+```text
+https://wolf.taildc680e.ts.net/mcp
+```
 
-Plans: Plus/Pro/Business/Enterprise/Edu (admin-gated).
+Setup used for the verified connection:
 
-**Status:** server-side ready and locally verified. The connector creation + OAuth approval are
-external/user actions.
+1. Keep `BRIDGE_PUBLIC_URL=https://wolf.taildc680e.ts.net` aligned with the public OAuth origin.
+2. In ChatGPT web, create a developer-mode plugin/app with **Server URL**
+   `https://wolf.taildc680e.ts.net/mcp` and authentication **OAuth**.
+3. Leave advanced OAuth client credentials unset so the bridge's Dynamic Client Registration flow
+   is used.
+4. On the bridge `/oauth/authorize` page, paste the dedicated `chatgpt-browser` API key. The raw key
+   is stored outside the repository.
+5. After connection, use **Refresh** when the ChatGPT UI needs to rescan action definitions.
+
+The verified ChatGPT round-trip imported the 14-tool surface, including MCP input/output schemas,
+and successfully exercised `targets_list`, `fs_read`, `git_status`, `terminal_exec`, `fs_write`, and
+read-back against the disposable `demo` target. The gateway audit attributed those calls to
+principal `chatgpt-browser`.
+
+`fs_delete` was discovered and correctly labelled WRITE / DESTRUCTIVE, but the real ChatGPT client
+blocked that specific invocation in its own safety layer before a request reached the gateway. The
+bridge's permanent delete capability remains independently verified by integration tests. Do not
+weaken the destructive annotation or route around the client safety decision.
+
+ChatGPT product availability, UI labels, and action policy are time-sensitive; verify current OpenAI
+documentation before reproducing this setup in another account/workspace.

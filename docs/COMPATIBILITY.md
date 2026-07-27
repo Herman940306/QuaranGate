@@ -30,16 +30,20 @@ All facts checked **2026-07-27**. Materially-architectural facts carry a source 
 same per-client principal. **External verification completed 2026-07-27** using the OAuth path over
 Tailscale Funnel HTTPS. The gateway stayed loopback-bound and the executor stayed unpublished.
 
-## ChatGPT browser (Developer Mode connectors)
+## ChatGPT browser (developer-mode MCP plugins/apps)
 
 | Fact | Source | Checked |
 |---|---|---|
 | Requires **HTTPS endpoint + OAuth** (or "no auth" for dev/testing, which we reject) | https://developers.openai.com/api/docs/mcp ; https://help.openai.com/en/articles/12584461 | 2026-07-27 |
 | Supports **SSE and Streamable HTTP**; use `/mcp` for HTTP transport | https://developers.openai.com/api/docs/mcp | 2026-07-27 |
 | Developer Mode toggled in Settings; org admins enable per-workspace; write actions prompt for confirmation | https://help.openai.com/en/articles/12584461 | 2026-07-27 |
-| Availability: Plus, Pro, Business/Enterprise/Edu (admin-gated) | https://help.openai.com/en/articles/12584461 | 2026-07-27 |
+| Product/account availability and permissions are time-sensitive; current official guidance says full MCP/write support is rolling out for Business and Enterprise/Edu, with narrower Pro support | https://help.openai.com/en/articles/12584461 | 2026-07-28 |
 
-**Decision:** OAuth 2.1 façade at `/mcp`. **Requires a public HTTPS URL.**
+**Decision:** OAuth 2.1 façade at `/mcp`. **External verification completed 2026-07-28** over the
+same approved Tailscale Funnel used for Claude. ChatGPT completed OAuth/DCR, imported the 14 tools,
+and successfully invoked discovery, read, Git, terminal, and write/read-back operations as principal
+`chatgpt-browser`. `fs_delete` was visible as WRITE / DESTRUCTIVE but was blocked client-side before
+reaching the gateway; retain its destructive classification.
 
 ## VS Code
 
@@ -66,5 +70,9 @@ Works against the **local** endpoint.
 - **VS Code and Kiro** work fully against the local loopback endpoint.
 - **Claude browser** is externally verified over the approved Tailscale Funnel ingress, including
   OAuth and real read/execute/write/delete tool calls against the disposable `demo` target.
-- **ChatGPT browser** remains pending external client validation; treat product/account requirements
-  as time-sensitive and re-check current OpenAI documentation before configuring it.
+- **ChatGPT browser** is externally verified over the approved Tailscale Funnel ingress, including
+  OAuth/DCR, tool discovery, structured schemas, read/Git/terminal/write/read-back calls, and audit
+  attribution to `chatgpt-browser`. Permanent `fs_delete` remained available server-side but the real
+  ChatGPT client blocked that invocation before it reached the gateway.
+- ChatGPT product/account requirements and safety policy remain time-sensitive; re-check current
+  OpenAI documentation before another deployment.

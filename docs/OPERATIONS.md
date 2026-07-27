@@ -120,12 +120,12 @@ KEYS_ENV=/path/to/keys.env npm run test:integration
 Remote browser access is a deliberate operator action because it creates the project's public attack
 surface. The gateway itself must remain bound to `127.0.0.1:8787`; never publish the executor.
 
-### Current verified Claude ingress — Tailscale Funnel
+### Current verified browser ingress — Tailscale Funnel
 
-Approved and verified on 2026-07-27:
+Approved for Claude and verified on 2026-07-27; reused and verified for ChatGPT on 2026-07-28:
 
 ```text
-Claude.ai
+Claude.ai / ChatGPT
    │ HTTPS
    ▼
 https://wolf.taildc680e.ts.net
@@ -162,8 +162,11 @@ tailscale funnel status
 ```
 
 A public unauthenticated MCP initialize request must return HTTP `401` with OAuth resource metadata;
-that check was verified before connecting Claude. The executor had `Ports: {}` and the gateway had no
-`/var/run/docker.sock` throughout external validation.
+that check was verified before connecting either browser client. The executor had `Ports: {}` and the
+gateway had no `/var/run/docker.sock` throughout Claude and ChatGPT external validation. ChatGPT
+action definitions may need an explicit **Refresh** after server-side tool metadata changes; the
+verified 14-tool surface now advertises `outputSchema` and returns `structuredContent` plus legacy JSON
+text.
 
 For a different ingress provider or hostname, preserve the same invariants: TLS on, exact
 `BRIDGE_PUBLIC_URL`, loopback-only gateway bind, executor private, and no raw Docker socket in the

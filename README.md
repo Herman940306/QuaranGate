@@ -59,9 +59,10 @@ API_KEY=<your key> ./scripts/mcp-check.sh
 ```
 
 The gateway binds to `127.0.0.1:8787` only. Remote browser clients require HTTPS ingress in front
-of that loopback listener. The currently verified Claude deployment uses **Tailscale Funnel** to
-publish the gateway without exposing the executor or changing the Docker bind address; see
-[`docs/OPERATIONS.md`](docs/OPERATIONS.md) and [`docs/CLIENT_SETUP.md`](docs/CLIENT_SETUP.md).
+of that loopback listener. The currently verified browser deployment uses **Tailscale Funnel** for
+both Claude and ChatGPT while keeping the executor unpublished and the Docker bind address
+loopback-only; see [`docs/OPERATIONS.md`](docs/OPERATIONS.md) and
+[`docs/CLIENT_SETUP.md`](docs/CLIENT_SETUP.md).
 
 ## Client setup
 
@@ -73,7 +74,8 @@ placeholders: [`docs/CLIENT_SETUP.md`](docs/CLIENT_SETUP.md). Sample configs:
 
 `targets_list` `target_inspect` · `fs_list` `fs_stat` `fs_read` `fs_search` `fs_write`
 `fs_patch` `fs_delete` · `terminal_exec` · `git_status` `git_diff` `git_log` · `process_list`.
-Contracts in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+All 14 tools advertise MCP `outputSchema` and return `structuredContent` together with the legacy
+JSON text result for compatibility. Contracts in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Documentation
 
