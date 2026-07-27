@@ -70,6 +70,33 @@ docker compose exec executor node -e "fetch('http://127.0.0.1:8990/reload',{meth
 
 Rotating `INTERNAL_TOKEN` requires restarting both services (`docker compose up -d`).
 
+
+### OAuth data-volume permissions
+
+Fresh gateway images create `/data` as `node:node` with mode `0700`; OAuth state files are written
+with mode `0600`. This preserves a non-root gateway while allowing the OAuth façade to persist
+registrations and hashed token state.
+
+An existing `mcp-bridge-data` volume created by an older image may still be `root:root` and therefore
+unwritable by the gateway. Diagnose without reading file contents:
+
+```bash
+docker compose exec -T gateway sh -lc 'id; stat -c "mode=%a uid=%u gid=%g path=%n" /data; test -w /data && echo writable || echo not-writable'
+```
+
+If the volume is bridge-owned and confirmed to contain no user data requiring different ownership,
+stop only the gateway and repair the volume root:
+
+```bash
+docker compose stop gateway
+docker run --rm --user 0:0 \
+  --mount type=volume,source=mcp-bridge-data,target=/data \
+  alpine:3.20 sh -eu -c 'chown 1000:1000 /data; chmod 0700 /data'
+docker compose up -d --no-deps --force-recreate gateway
+```
+
+Do not solve this by running the gateway as root or by making `/data` world-writable.
+
 ## Inspect discovered / configured targets
 
 ```bash

@@ -28,11 +28,14 @@ OAuth 2.1 bearer that maps to the **same** principal (see below).
 ## OAuth façade
 
 The smallest standards-compatible surface to satisfy Claude/ChatGPT browser OAuth requirements:
-Protected-Resource + Authorization-Server metadata, Dynamic Client Registration (public clients),
-`/authorize` (the user pastes their bridge API key = the login), and `/token` (auth code + **PKCE
-S256** → opaque bearer, 1 h; rotating refresh token, 30 d). Tokens are stored hashed on the data
-volume. The bearer maps to the same per-client principal as the static key, so authorization is
-identical regardless of auth method. Browser auth is never anonymous.
+Protected-Resource + Authorization-Server metadata, JSON Dynamic Client Registration (public
+clients), `/authorize` (the user pastes their bridge API key = the login), and `/token` (auth code +
+**PKCE S256** → opaque bearer, 1 h; rotating refresh token, 30 d). Registered redirect URIs are
+validated exactly, authorization and token requests are bound to the MCP resource (RFC 8707),
+authorization codes are single-use, and refresh tokens rotate on use. OAuth state is stored hashed
+on the bridge data volume. The volume root is private to the non-root gateway (`0700`, `node:node`)
+and OAuth state files are created `0600`. The bearer maps to the same per-client principal as the
+static key, so authorization is identical regardless of auth method. Browser auth is never anonymous.
 
 ## Threat model
 
@@ -80,4 +83,6 @@ identical regardless of auth method. Browser auth is never anonymous.
 
 Both services: `no-new-privileges`, `cap_drop: ALL`, `read_only` rootfs + tmpfs `/tmp`, mem/pids
 limits, healthchecks, clean SIGTERM shutdown via tini. No `--privileged`, no host network, no broad
-host mounts. Networks and volume are bridge-owned (`mcp-bridge-*`).
+host mounts. Networks and volume are bridge-owned (`mcp-bridge-*`). The gateway remains non-root
+(`uid=1000(node)`) and its persistent `/data` directory is owned by that user with mode `0700`;
+OAuth state files are mode `0600`.

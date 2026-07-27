@@ -9,7 +9,7 @@ Executed 2026-07-27 on WSL2 Ubuntu 24.04 (`Wolf`), Docker 29.6.2, Compose v5.3.1
 | Suite | Result |
 |---|---|
 | Unit (`npm test`) | **20 / 20 passed** |
-| Integration, live stack (`npm run test:integration`) | **34 / 34 passed** |
+| Integration, live stack (`npm run test:integration`) | **37 / 37 passed** |
 | MCP Inspector CLI protocol validation | tools/list (14 tools) + tools/call verified |
 | Adversarial security checks | 12 / 12 as expected |
 
@@ -24,11 +24,14 @@ Executed 2026-07-27 on WSL2 Ubuntu 24.04 (`Wolf`), Docker 29.6.2, Compose v5.3.1
 - `redact` (4): bridge keys, bearer headers, key=value secrets redacted; ordinary text intact.
 - `ratelimit` (2): blocks beyond limit; unlimited when unset.
 
-## Integration tests (`tests/integration/bridge.test.ts`, 34, against the running stack)
+## Integration tests (`tests/integration/bridge.test.ts`, 37, against the running stack)
 
 Run via the official MCP SDK client over Streamable HTTP.
 
 - **Authentication (5):** missing/malformed/invalid → 401; valid → 200; `X-API-Key` accepted.
+- **OAuth 2.1 façade (3):** JSON Dynamic Client Registration works and rejects unsafe redirects;
+  authorization requires exact registered redirect URIs and the MCP resource; Authorization Code +
+  PKCE completes end-to-end and the resulting resource-bound token authenticates to `/mcp`.
 - **Protocol (4):** all 14 tools listed; unknown tool → error result; malformed args (missing
   `target`) → error result.
 - **Targets/discovery (3):** manual `demo` listed; unlabeled `decoy` **not** listed; unknown target
@@ -51,6 +54,23 @@ Run via the official MCP SDK client over Streamable HTTP.
 A single undici `Client` (one connection) let a long-running `exec/start` stream block the
 timeout-kill call behind it, so `terminal_exec` timeouts hung ~30 s. Switched the executor's Docker
 client to an undici `Pool` (16 connections). Timeout now fires correctly (~1.7 s). Re-verified.
+
+
+## OAuth hardening verification (post-build)
+
+After the original local-verification baseline, the OAuth façade was hardened and re-tested on the
+same local Docker stack:
+
+- `npm run typecheck` — **PASS**.
+- Unit tests — **20 / 20 passed**.
+- Live integration tests — **37 / 37 passed** (the original 34 tests remained green plus 3 OAuth
+  regression tests).
+- Independent adversarial OAuth probe — **PASS**: unsafe redirect rejection, exact redirect binding,
+  mandatory RFC 8707 resource binding, PKCE failure rejection, single-use authorization codes,
+  resource-bound access-token use, refresh-client/resource binding, refresh rotation, and replay
+  rejection.
+- Gateway runtime — non-root `uid=1000(node)`; `/data` mode `0700`, owned by `node`; OAuth state files
+  mode `0600`; no matching `EACCES`, unhandled, fatal, or generic runtime errors after verification.
 
 ## MCP Inspector CLI (official protocol validation)
 

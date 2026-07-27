@@ -9,7 +9,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { asBridgeError, BridgeError } from '../shared/errors.js';
 import { loadClients, principalById, type Principal } from './config.js';
 import { authenticateKey } from './auth/apikeys.js';
-import { mountOAuth, tokenToPrincipalId } from './auth/oauth.js';
+import { mountOAuth, oauthResourceForPublicUrl, tokenToPrincipalId } from './auth/oauth.js';
 import { withPrincipal } from './context.js';
 import { checkRate } from './ratelimit.js';
 import { buildServer } from './mcp.js';
@@ -18,6 +18,7 @@ import { audit, newReqId } from './audit.js';
 
 const PORT = Number(process.env.BRIDGE_PORT ?? 8787);
 const PUBLIC_URL = (process.env.BRIDGE_PUBLIC_URL ?? `http://127.0.0.1:${PORT}`).replace(/\/+$/, '');
+const MCP_RESOURCE = oauthResourceForPublicUrl(PUBLIC_URL);
 
 if (!process.env.INTERNAL_TOKEN || process.env.INTERNAL_TOKEN === '<SET_SECURELY>') {
   console.error('FATAL: INTERNAL_TOKEN is not set');
@@ -48,7 +49,7 @@ function authenticate(req: express.Request): Principal {
 
   // OAuth bearer?
   if (raw.startsWith('mcpb_at_')) {
-    const pid = tokenToPrincipalId(raw);
+    const pid = tokenToPrincipalId(raw, MCP_RESOURCE);
     if (!pid) throw new BridgeError('INVALID_CREDENTIAL', 'invalid or expired token', 401);
     const p = principalById(pid);
     if (!p) throw new BridgeError('INVALID_CREDENTIAL', 'principal not found', 401);

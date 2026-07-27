@@ -11,7 +11,10 @@ FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # tini for correct signal handling / zombie reaping
-RUN apk add --no-cache tini
+RUN apk add --no-cache tini \
+    && mkdir -p /data \
+    && chown node:node /data \
+    && chmod 0700 /data
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./

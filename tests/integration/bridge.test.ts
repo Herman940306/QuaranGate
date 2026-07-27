@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { connect, callTool, loadKeys, rawInitialize } from './helpers.js';
+import { BASE, connect, callTool, loadKeys, rawInitialize } from './helpers.js';
 
 const keys = loadKeys();
 const T = 'demo';
@@ -24,6 +25,164 @@ describe('MCP IDE Bridge — integration (live stack)', () => {
     it('invalid credential -> 401', async () => expect(await rawInitialize({ Authorization: 'Bearer mcpb_vscode_deadbeef' })).toBe(401));
     it('valid credential -> 200', async () => expect(await rawInitialize({ Authorization: `Bearer ${keys.vscode}` })).toBe(200));
     it('X-API-Key header also works', async () => expect(await rawInitialize({ 'X-API-Key': keys.vscode })).toBe(200));
+  });
+
+  describe('OAuth 2.1 façade', () => {
+    const resource = `${BASE}/mcp`;
+    const redirectUri = 'https://client.example/callback';
+
+    async function registerClient(uri = redirectUri): Promise<string> {
+      const res = await fetch(`${BASE}/oauth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          redirect_uris: [uri],
+          token_endpoint_auth_method: 'none',
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+        }),
+      });
+      expect(res.status).toBe(201);
+      const body: any = await res.json();
+      expect(body.redirect_uris).toEqual([uri]);
+      return body.client_id;
+    }
+
+    it('parses JSON DCR and rejects unsafe redirect URIs', async () => {
+      const clientId = await registerClient();
+      expect(clientId).toMatch(/^mcpb-client-/);
+
+      const bad = await fetch(`${BASE}/oauth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ redirect_uris: ['http://evil.example/callback'] }),
+      });
+      expect(bad.status).toBe(400);
+      expect((await bad.json() as any).error).toBe('invalid_redirect_uri');
+    });
+
+    it('requires exact registered redirect URI and MCP resource binding', async () => {
+      const clientId = await registerClient();
+      const verifier = 'A'.repeat(64);
+      const challenge = createHash('sha256').update(verifier).digest('base64url');
+
+      const wrongRedirect = new URL(`${BASE}/oauth/authorize`);
+      wrongRedirect.search = new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: 'https://attacker.example/callback',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        resource,
+      }).toString();
+      expect((await fetch(wrongRedirect)).status).toBe(400);
+
+      const missingResource = new URL(`${BASE}/oauth/authorize`);
+      missingResource.search = new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }).toString();
+      expect((await fetch(missingResource)).status).toBe(400);
+    });
+
+    it('completes Authorization Code + PKCE and accepts the resource-bound token', async () => {
+      const clientId = await registerClient();
+      const verifier = 'B'.repeat(64);
+      const challenge = createHash('sha256').update(verifier).digest('base64url');
+
+      const authorize = new URL(`${BASE}/oauth/authorize`);
+      authorize.search = new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        state: 'itest-state',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        resource,
+        scope: 'offline_access',
+      }).toString();
+      const page = await fetch(authorize);
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain('Authorize MCP IDE Bridge');
+
+      const approve = await fetch(`${BASE}/oauth/authorize`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          apikey: keys.vscode,
+          response_type: 'code',
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          state: 'itest-state',
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+          resource,
+          scope: 'offline_access',
+        }),
+      });
+      expect(approve.status).toBe(302);
+      const location = approve.headers.get('location');
+      expect(location).toBeTruthy();
+      const callback = new URL(location!);
+      expect(callback.origin + callback.pathname).toBe(redirectUri);
+      expect(callback.searchParams.get('state')).toBe('itest-state');
+      const code = callback.searchParams.get('code');
+      expect(code).toMatch(/^mcpb_ac_/);
+
+      const tokenRes = await fetch(`${BASE}/oauth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: clientId,
+          code: code!,
+          redirect_uri: redirectUri,
+          code_verifier: verifier,
+          resource,
+        }),
+      });
+      expect(tokenRes.status).toBe(200);
+      const tokens: any = await tokenRes.json();
+      expect(tokens.access_token).toMatch(/^mcpb_at_/);
+      expect(tokens.refresh_token).toMatch(/^mcpb_rt_/);
+      expect(tokens.scope).toBe('offline_access');
+      expect(await rawInitialize({ Authorization: `Bearer ${tokens.access_token}` })).toBe(200);
+
+      const replay = await fetch(`${BASE}/oauth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          client_id: clientId,
+          code: code!,
+          redirect_uri: redirectUri,
+          code_verifier: verifier,
+          resource,
+        }),
+      });
+      expect(replay.status).toBe(400);
+      expect((await replay.json() as any).error).toBe('invalid_grant');
+
+      const refreshRes = await fetch(`${BASE}/oauth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: clientId,
+          refresh_token: tokens.refresh_token,
+          resource,
+        }),
+      });
+      expect(refreshRes.status).toBe(200);
+      const refreshed: any = await refreshRes.json();
+      expect(refreshed.access_token).toMatch(/^mcpb_at_/);
+      expect(refreshed.refresh_token).toMatch(/^mcpb_rt_/);
+      expect(refreshed.refresh_token).not.toBe(tokens.refresh_token);
+    });
   });
 
   describe('protocol', () => {
