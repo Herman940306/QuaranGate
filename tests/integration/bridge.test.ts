@@ -114,6 +114,10 @@ describe('MCP IDE Bridge — integration (live stack)', () => {
       }).toString();
       const page = await fetch(authorize);
       expect(page.status).toBe(200);
+      const csp = page.headers.get('content-security-policy') ?? '';
+      expect(csp).toContain("form-action 'self'");
+      expect(csp).toContain(new URL(redirectUri).origin);
+      expect(csp).not.toContain('https://attacker.example');
       expect(await page.text()).toContain('Authorize MCP IDE Bridge');
 
       const approve = await fetch(`${BASE}/oauth/authorize`, {

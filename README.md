@@ -58,9 +58,10 @@ curl -s http://127.0.0.1:8787/healthz && curl -s http://127.0.0.1:8787/readyz
 API_KEY=<your key> ./scripts/mcp-check.sh
 ```
 
-The gateway binds to `127.0.0.1:8787` only. Browser clients (Claude/ChatGPT) require a public
-HTTPS URL — that is intentionally **not** enabled here (see [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
-and [`docs/CLIENT_SETUP.md`](docs/CLIENT_SETUP.md)).
+The gateway binds to `127.0.0.1:8787` only. Remote browser clients require HTTPS ingress in front
+of that loopback listener. The currently verified Claude deployment uses **Tailscale Funnel** to
+publish the gateway without exposing the executor or changing the Docker bind address; see
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md) and [`docs/CLIENT_SETUP.md`](docs/CLIENT_SETUP.md).
 
 ## Client setup
 

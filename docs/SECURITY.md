@@ -36,6 +36,9 @@ authorization codes are single-use, and refresh tokens rotate on use. OAuth stat
 on the bridge data volume. The volume root is private to the non-root gateway (`0700`, `node:node`)
 and OAuth state files are created `0600`. The bearer maps to the same per-client principal as the
 static key, so authorization is identical regardless of auth method. Browser auth is never anonymous.
+The authorization page uses a restrictive CSP; `form-action` permits only `self` plus the origin of
+the already-validated registered redirect URI. This is required for real browser OAuth redirects
+without opening form submission to arbitrary origins.
 
 ## Threat model
 

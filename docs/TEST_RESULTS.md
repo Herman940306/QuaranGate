@@ -113,8 +113,31 @@ KEYS_ENV=<keys.env> npm run test:integration
 API_KEY=<key> ./scripts/mcp-check.sh
 ```
 
-## Not tested here (require external/user action)
+## Claude browser external verification
 
-- Live Claude browser connection and live ChatGPT browser connection — both need a public HTTPS URL
-  and in-product OAuth/connector UI steps. Server-side OAuth 2.1 façade is implemented and the local
-  endpoint is verified, but the browser round-trip itself was not exercised. See `docs/CLIENT_SETUP.md`.
+Completed 2026-07-27 against the real Claude web client through the approved Tailscale Funnel:
+
+- Public endpoint: `https://wolf.taildc680e.ts.net/mcp`.
+- Public `healthz` / `readyz`: **PASS** repeatedly.
+- OAuth Protected Resource + Authorization Server metadata: **PASS**.
+- Anonymous public MCP initialize: **401 fail-closed PASS**.
+- Dynamic Client Registration + browser Authorization Code / PKCE flow: **PASS**.
+- Browser CSP redirect compatibility: **PASS** with `form-action` restricted to `self` plus the
+  validated redirect origin.
+- Principal identity: all host config, running gateway config, OAuth token state, and audit logs
+  agreed on `claude-browser`.
+- Real Claude tool calls against authorized target `demo`: `targets_list`, `fs_read`, `git_status`,
+  `terminal_exec`, `fs_write`, read-back, and `fs_delete` — **PASS**.
+- Controlled write artifact `gen/claude-browser-e2e.txt` was deleted and independently confirmed
+  absent afterward.
+- Gateway audit records attributed each operation to `claude-browser` with `decision=allow`.
+- Post-browser regression: typecheck **PASS**, unit **20/20**, live integration **37/37**.
+- Security invariants after exposure: gateway still loopback-bound, gateway Docker socket absent,
+  executor published ports `{}`.
+
+**Claude browser status: EXTERNALLY VERIFIED.**
+
+## Remaining external validation
+
+- **ChatGPT browser** has not yet been connected end-to-end. Re-check current OpenAI product/MCP
+  requirements immediately before that work because the browser integration surface is time-sensitive.

@@ -183,9 +183,20 @@ function issueTokens(principalId: string, clientId: string, resource: string, sc
   };
 }
 
-function secureHtml(res: express.Response) {
+function secureHtml(res: express.Response, redirectUri?: string) {
   noStore(res);
-  res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+  const formAction = ["'self'"];
+  if (redirectUri) {
+    try {
+      formAction.push(new URL(redirectUri).origin);
+    } catch {
+      // Callers only pass redirect URIs that already passed validation.
+    }
+  }
+  res.setHeader(
+    'Content-Security-Policy',
+    `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction.join(' ')}; base-uri 'none'; frame-ancestors 'none'`,
+  );
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -315,7 +326,7 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
 
     let redirectHost = 'registered client';
     try { redirectHost = new URL(redirect_uri).host; } catch { /* already validated */ }
-    secureHtml(res);
+    secureHtml(res, redirect_uri);
     res.type('html').send(`<!doctype html><html><head><meta charset=utf-8><title>Authorize MCP IDE Bridge</title>
 <style>body{font-family:system-ui;max-width:460px;margin:6rem auto;padding:1rem}input{width:100%;padding:.6rem;margin:.4rem 0;box-sizing:border-box}button{padding:.6rem 1rem}</style></head>
 <body><h2>MCP IDE Bridge</h2><p>Authorize connection to <strong>${escapeHtml(redirectHost)}</strong>.</p><p>Paste the API key for the intended bridge client principal.</p>

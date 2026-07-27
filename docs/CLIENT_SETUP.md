@@ -66,24 +66,33 @@ connects over streamable-http. Use the path `/mcp` (avoid paths ending in `/mess
 
 ## Claude browser (custom connector)
 
-**Requires a public HTTPS URL.** The local `127.0.0.1` endpoint is not reachable from Anthropic's
-cloud. See `docs/OPERATIONS.md` → *Remote ingress* (a gated operator action).
+**Status: externally verified on 2026-07-27.** The gateway remains bound to `127.0.0.1:8787`; a
+Tailscale Funnel publishes the HTTPS front door while the executor remains private. The verified
+endpoint for this deployment is:
 
-Once you have `https://your.domain/mcp`:
+```text
+https://wolf.taildc680e.ts.net/mcp
+```
 
-1. Claude → **Settings → Connectors → Add custom connector**.
-2. URL: `https://your.domain/mcp`.
-3. Auth, either:
-   - **OAuth** (recommended, implemented): Claude discovers the OAuth metadata automatically; on
-     connect it opens the bridge's `/authorize` page — paste the client's API key there to authorize.
-   - **Request headers (beta):** add `Authorization: Bearer <key>` in Advanced settings.
-4. Set `BRIDGE_PUBLIC_URL=https://your.domain` in `.env` so OAuth metadata advertises the right URLs,
-   and rebuild the gateway.
+Setup used for the verified connection:
 
-Plans: Pro/Max/Team/Enterprise.
+1. Set `BRIDGE_PUBLIC_URL=https://wolf.taildc680e.ts.net` in `.env` and recreate the gateway so OAuth
+   metadata advertises the public issuer/resource.
+2. Start the approved Tailscale Funnel to proxy public HTTPS to `http://127.0.0.1:8787`.
+3. Claude → **Customize → Connectors → Add custom connector**.
+4. URL: `https://wolf.taildc680e.ts.net/mcp`. Leave OAuth client ID/secret blank so Dynamic Client
+   Registration is used.
+5. On the bridge `/oauth/authorize` page, paste the dedicated `claude-browser` API key. The raw key
+   is not stored in the repository.
+6. Keep read-only tools on the least-friction policy desired by the operator; keep terminal/write/delete
+   tools approval-gated unless broader automation has been explicitly accepted.
 
-**Status:** server-side is ready and locally verified. Browser connection itself requires the public
-URL + the in-product UI steps above — a genuine external/user action.
+The live Claude round-trip verified `targets_list`, `fs_read`, `git_status`, `terminal_exec`,
+`fs_write`, read-back, and `fs_delete` against the disposable `demo` target. Gateway audit records
+attributed the calls to principal `claude-browser`; the principal remained limited to target `demo`.
+
+For another deployment, replace the hostname above with its approved HTTPS ingress URL and keep
+`BRIDGE_PUBLIC_URL` exactly aligned with that origin.
 
 ---
 

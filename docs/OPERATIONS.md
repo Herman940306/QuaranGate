@@ -115,21 +115,59 @@ npm test                                   # unit tests (no Docker needed)
 KEYS_ENV=/path/to/keys.env npm run test:integration
 ```
 
-## Remote ingress (NOT enabled — gated operator action)
+## Remote ingress
 
-Browser clients (Claude/ChatGPT) need a public **HTTPS** URL. The bridge is ingress-ready but binds
-to `127.0.0.1` only and creates no tunnel. Enabling public exposure is a deliberate action with real
-risk (see `docs/SECURITY.md`) and, in this project's operating rules, **requires explicit approval**.
+Remote browser access is a deliberate operator action because it creates the project's public attack
+surface. The gateway itself must remain bound to `127.0.0.1:8787`; never publish the executor.
 
-Template options (none active):
+### Current verified Claude ingress — Tailscale Funnel
 
-- **Cloudflare Tunnel:** `cloudflared tunnel --url http://127.0.0.1:8787` → set
-  `BRIDGE_PUBLIC_URL=https://<assigned-host>` in `.env`, rebuild gateway so OAuth metadata is correct.
-- **Tailscale Funnel / Caddy / nginx:** terminate TLS, reverse-proxy to `127.0.0.1:8787`, forward the
-  `Authorization` header untouched, set `BRIDGE_PUBLIC_URL` accordingly.
+Approved and verified on 2026-07-27:
 
-Whatever the front door: keep TLS verification on, do not expose the executor, and prefer a firewall
-allowlist (e.g. Anthropic IP ranges for Claude).
+```text
+Claude.ai
+   │ HTTPS
+   ▼
+https://wolf.taildc680e.ts.net
+   │ Tailscale Funnel
+   ▼
+http://127.0.0.1:8787
+   │ private Docker network
+   ▼
+executor (no published ports)
+```
+
+The persisted Funnel mapping is:
+
+```text
+https://wolf.taildc680e.ts.net
+|-- / proxy http://127.0.0.1:8787
+```
+
+The corresponding `.env` setting is:
+
+```text
+BRIDGE_PUBLIC_URL=https://wolf.taildc680e.ts.net
+```
+
+After changing `BRIDGE_PUBLIC_URL`, recreate only the gateway and verify both local and public OAuth
+metadata before client authorization. Useful checks:
+
+```bash
+curl -fsS https://wolf.taildc680e.ts.net/healthz
+curl -fsS https://wolf.taildc680e.ts.net/readyz
+curl -fsS https://wolf.taildc680e.ts.net/.well-known/oauth-protected-resource | jq .
+curl -fsS https://wolf.taildc680e.ts.net/.well-known/oauth-authorization-server | jq .
+tailscale funnel status
+```
+
+A public unauthenticated MCP initialize request must return HTTP `401` with OAuth resource metadata;
+that check was verified before connecting Claude. The executor had `Ports: {}` and the gateway had no
+`/var/run/docker.sock` throughout external validation.
+
+For a different ingress provider or hostname, preserve the same invariants: TLS on, exact
+`BRIDGE_PUBLIC_URL`, loopback-only gateway bind, executor private, and no raw Docker socket in the
+public-facing gateway. Public-ingress changes still require explicit operator approval.
 
 ## Backups / state
 

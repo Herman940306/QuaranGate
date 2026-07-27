@@ -26,9 +26,9 @@ All facts checked **2026-07-27**. Materially-architectural facts carry a source 
 | **Beta:** static request-header auth (API key/bearer) configurable in the connector dialog | https://claude.com/docs/connectors/custom/remote-mcp | 2026-07-27 |
 | Availability: Pro, Max, Team, Enterprise (Desktop connectors only via Settings > Connectors) | https://support.claude.com/en/articles/11175166 | 2026-07-27 |
 
-**Decision:** provide OAuth 2.1 façade (works today) **and** accept a static Bearer/`X-API-Key`
-(usable with the beta request-header feature). Both map to the same per-client principal.
-**Requires a public HTTPS URL** — see OPERATIONS ingress (not enabled by default).
+**Decision:** provide OAuth 2.1 façade **and** accept a static Bearer/`X-API-Key`; both map to the
+same per-client principal. **External verification completed 2026-07-27** using the OAuth path over
+Tailscale Funnel HTTPS. The gateway stayed loopback-bound and the executor stayed unpublished.
 
 ## ChatGPT browser (Developer Mode connectors)
 
@@ -63,7 +63,8 @@ Works against the **local** endpoint.
 
 ## Summary
 
-- **VS Code and Kiro** work fully against the local loopback endpoint today.
-- **Claude and ChatGPT browsers** are server-ready but need a **public HTTPS URL** (OAuth 2.1 façade
-  is implemented). Exposing it publicly is a deliberate, gated operator action — see
-  `docs/OPERATIONS.md`.
+- **VS Code and Kiro** work fully against the local loopback endpoint.
+- **Claude browser** is externally verified over the approved Tailscale Funnel ingress, including
+  OAuth and real read/execute/write/delete tool calls against the disposable `demo` target.
+- **ChatGPT browser** remains pending external client validation; treat product/account requirements
+  as time-sensitive and re-check current OpenAI documentation before configuring it.
