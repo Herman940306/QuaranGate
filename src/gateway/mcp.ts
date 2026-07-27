@@ -24,14 +24,21 @@ function require2(scope: Scope, targetId: string): Principal {
   return p;
 }
 
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
+type ToolResult = {
+  content: { type: 'text'; text: string }[];
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+};
 
-function ok(data: unknown): ToolResult {
-  return { content: [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data, null, 2) }] };
+function ok(data: object): ToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+    structuredContent: { ...data },
+  };
 }
 
 /** Wrap a tool body with audit + uniform error mapping. */
-function guarded(tool: string, fn: (args: any) => Promise<{ target?: string; result: unknown }>) {
+function guarded(tool: string, fn: (args: any) => Promise<{ target?: string; result: object }>) {
   return async (args: any): Promise<ToolResult> => {
     const reqId = newReqId();
     const started = Date.now();
@@ -52,6 +59,49 @@ const READ = { readOnlyHint: true, destructiveHint: false, openWorldHint: false 
 const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
 const DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
 
+
+const TARGET_SUMMARY_SCHEMA = {
+  id: z.string(),
+  name: z.string(),
+  source: z.enum(['manual', 'discovered']),
+  running: z.boolean(),
+  workspace: z.string(),
+  composeProject: z.string().nullable(),
+  composeService: z.string().nullable(),
+} as const;
+
+const TARGET_INSPECT_SCHEMA = {
+  id: z.string(),
+  running: z.boolean(),
+  workspace: z.string(),
+  image: z.string().optional(),
+  status: z.string().optional(),
+  source: z.enum(['manual', 'discovered']),
+} as const;
+
+const FILE_STAT_SCHEMA = {
+  path: z.string(),
+  type: z.enum(['file', 'dir', 'symlink', 'other']),
+  size: z.number().int().nonnegative(),
+  mode: z.string(),
+  mtime: z.string(),
+  linkTarget: z.string().optional(),
+} as const;
+
+const OK_PATH_SCHEMA = {
+  ok: z.literal(true),
+  path: z.string(),
+} as const;
+
+const EXEC_RESULT_SCHEMA = {
+  exitCode: z.number().int().nullable(),
+  stdout: z.string(),
+  stderr: z.string(),
+  truncated: z.boolean(),
+  timedOut: z.boolean(),
+  durationMs: z.number().int().nonnegative(),
+} as const;
+
 export function buildServer(): McpServer {
   const server = new McpServer(
     { name: 'mcp-ide-bridge', version: '0.1.0' },
@@ -62,6 +112,7 @@ export function buildServer(): McpServer {
     title: 'List authorized targets',
     description: 'List Docker target containers this client is authorized to use.',
     inputSchema: {},
+    outputSchema: { targets: z.array(z.object(TARGET_SUMMARY_SCHEMA)) },
     annotations: READ,
   }, guarded('targets_list', async () => {
     const p = currentPrincipal()!;
@@ -78,6 +129,7 @@ export function buildServer(): McpServer {
     title: 'Inspect a target',
     description: 'Show status, workspace and image for one authorized target.',
     inputSchema: { target: z.string() },
+    outputSchema: TARGET_INSPECT_SCHEMA,
     annotations: READ,
   }, guarded('target_inspect', async ({ target }) => {
     require2('targets:read', target);
@@ -89,6 +141,7 @@ export function buildServer(): McpServer {
     title: 'List directory',
     description: 'List entries under a workspace-relative directory.',
     inputSchema: { target: z.string(), path: z.string().default(''), maxDepth: z.number().int().min(1).max(5).optional() },
+    outputSchema: { entries: z.array(z.string()) },
     annotations: READ,
   }, guarded('fs_list', async ({ target, path, maxDepth }) => {
     require2('files:read', target);
@@ -99,6 +152,7 @@ export function buildServer(): McpServer {
     title: 'Stat path',
     description: 'Return type/size/mode/mtime for a workspace-relative path.',
     inputSchema: { target: z.string(), path: z.string() },
+    outputSchema: FILE_STAT_SCHEMA,
     annotations: READ,
   }, guarded('fs_stat', async ({ target, path }) => {
     require2('files:read', target);
@@ -109,6 +163,7 @@ export function buildServer(): McpServer {
     title: 'Read file',
     description: 'Read a UTF-8/binary file (base64) from the workspace.',
     inputSchema: { target: z.string(), path: z.string() },
+    outputSchema: { path: z.string(), bytes: z.number().int().nonnegative(), content: z.string() },
     annotations: READ,
   }, guarded('fs_read', async ({ target, path }) => {
     require2('files:read', target);
@@ -120,6 +175,7 @@ export function buildServer(): McpServer {
     title: 'Search files',
     description: 'Fixed-string recursive search under a workspace-relative path.',
     inputSchema: { target: z.string(), query: z.string().min(1), path: z.string().default(''), maxResults: z.number().int().min(1).max(1000).optional() },
+    outputSchema: { matches: z.array(z.string()) },
     annotations: READ,
   }, guarded('fs_search', async ({ target, query, path, maxResults }) => {
     require2('files:read', target);
@@ -130,6 +186,7 @@ export function buildServer(): McpServer {
     title: 'Write file',
     description: 'Create or overwrite a file at a workspace-relative path.',
     inputSchema: { target: z.string(), path: z.string(), content: z.string() },
+    outputSchema: OK_PATH_SCHEMA,
     annotations: WRITE,
   }, guarded('fs_write', async ({ target, path, content }) => {
     require2('files:write', target);
@@ -141,6 +198,7 @@ export function buildServer(): McpServer {
     title: 'Patch file',
     description: 'Replace a unique exact substring (oldText) with newText in a file.',
     inputSchema: { target: z.string(), path: z.string(), oldText: z.string(), newText: z.string() },
+    outputSchema: OK_PATH_SCHEMA,
     annotations: WRITE,
   }, guarded('fs_patch', async ({ target, path, oldText, newText }) => {
     require2('files:write', target);
@@ -152,6 +210,7 @@ export function buildServer(): McpServer {
     title: 'Delete path',
     description: 'Delete a file, or a directory when recursive=true. Destructive.',
     inputSchema: { target: z.string(), path: z.string(), recursive: z.boolean().default(false) },
+    outputSchema: OK_PATH_SCHEMA,
     annotations: DESTRUCTIVE,
   }, guarded('fs_delete', async ({ target, path, recursive }) => {
     require2('files:delete', target);
@@ -168,6 +227,7 @@ export function buildServer(): McpServer {
       cwd: z.string().optional(),
       timeoutMs: z.number().int().min(1000).max(600_000).optional(),
     },
+    outputSchema: EXEC_RESULT_SCHEMA,
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, guarded('terminal_exec', async ({ target, command, cwd, timeoutMs }) => {
     const p = require2('terminal:exec', target);
@@ -179,6 +239,7 @@ export function buildServer(): McpServer {
     server.registerTool(name, {
       title: name, description: desc,
       inputSchema: { target: z.string() },
+      outputSchema: EXEC_RESULT_SCHEMA,
       annotations: READ,
     }, guarded(name, async ({ target }) => {
       const p = require2('git:read', target);
@@ -194,6 +255,7 @@ export function buildServer(): McpServer {
     title: 'List processes',
     description: 'List running processes in the target container.',
     inputSchema: { target: z.string() },
+    outputSchema: EXEC_RESULT_SCHEMA,
     annotations: READ,
   }, guarded('process_list', async ({ target }) => {
     const p = require2('process:read', target);
