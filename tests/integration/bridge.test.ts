@@ -28,8 +28,16 @@ describe('MCP IDE Bridge — integration (live stack)', () => {
   });
 
   describe('OAuth 2.1 façade', () => {
-    const resource = `${BASE}/mcp`;
+    let resource: string;
     const redirectUri = 'https://client.example/callback';
+
+    beforeAll(async () => {
+      const res = await fetch(`${BASE}/.well-known/oauth-protected-resource`);
+      expect(res.status).toBe(200);
+      const metadata: any = await res.json();
+      expect(metadata.resource).toMatch(/^https?:\/\/.+\/mcp$/);
+      resource = metadata.resource;
+    });
 
     async function registerClient(uri = redirectUri): Promise<string> {
       const res = await fetch(`${BASE}/oauth/register`, {
