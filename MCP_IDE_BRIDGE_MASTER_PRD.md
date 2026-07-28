@@ -3,7 +3,7 @@
 **Document ID:** MIB-MASTER-PRD  
 **Version:** 1.0  
 **Date:** 2026-07-28  
-**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0, A1 and A2 complete (PASS); A3 ready for implementation\
+**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0, A1, A2 and A3 complete (PASS); A4 ready for implementation\
 **Repository:** `/home/herman/projects/mcp-ide-bridge`\
 **Current verified Git HEAD:** `bd1137c` — `feat: add durable agent job engine` (A2 implementation evidence commit)
 
@@ -1950,8 +1950,8 @@ Status at the A2 closeout:
 A0  Forensic readiness audit        COMPLETE — PASS
 A1  Agent-control specification     COMPLETE — PASS
 A2  Job engine + fake backend       COMPLETE — PASS
-A3  Runner sandbox                  READY FOR IMPLEMENTATION
-A4  Kiro ACP read-only              NOT STARTED
+A3  Runner sandbox                  COMPLETE — PASS
+A4  Kiro ACP read-only              READY FOR IMPLEMENTATION
 A5  Kiro implementation             NOT STARTED
 A6  Review / apply / discard        NOT STARTED
 A7  GitHub Copilot backend          NOT STARTED
@@ -2348,6 +2348,56 @@ Security boundary:    gateway no docker.sock + loopback bind; executor unpublish
 Historical/pre-A2 live integration (`bridge.test.ts` + `output-schema.test.ts` = 40) was not rerun
 as a whole (test-fixture keys managed outside the session; pre-existing principals not rotated);
 existing-tool behavior was re-proven live through a dedicated additive test principal.
+
+**Post-closeout SQLite security remediation:** `9e52d5bde11bcabd370fd45baac9021ea955fa04` —
+`security: restrict agent job database permissions` (job DB + `-wal`/`-shm` sidecars forced to 0600;
+`/jobs` 0700; created under a restrictive umask, idempotently hardened on open).
+
+---
+
+## A3 completion record (2026-07-28)
+
+**Verdict: A3 COMPLETE — PASS. READY FOR A4.**
+
+Implementation evidence commit: `7df2e09c9cf1c426d91641894dfb11693cc41439` —
+`feat: add isolated agent runner sandbox`. Full persisted report:
+`docs/audits/PHASE_A3_RUNNER_SANDBOX.md`.
+
+Delivered (sandbox foundation only — no real agent, not wired into live dispatch): bounded Docker
+Engine lifecycle primitives on the executor Docker client (image inspect; volume + container
+create/inspect/wait/logs/stop/kill/remove; label-scoped listing) with NO new HTTP routes and NO
+caller-selectable Docker options; a trusted read-only staging helper that snapshots a git project's
+**tracked committed HEAD only** (clean-checkpoint fail-closed with base-commit provenance; no
+untracked/ignored/host secrets); a tightly confined ephemeral runner (non-root `1000:1000`,
+non-privileged, `CapDrop=ALL`, `no-new-privileges`, read-only rootfs, `NetworkMode=none`, no host
+binds, no docker.sock, private namespaces) with exact-integer resource limits, bounded runtime +
+graceful-stop/kill timeout, bounded demultiplexed evidence, guaranteed cleanup, and label-scoped
+orphan reconciliation; a dedicated trusted runner image (`runner/Dockerfile`); and a forward-only
+job-DB schema migration v1 → v2 (`base_commit`) preserving all A2 records.
+
+Public MCP surface unchanged: operational tools **20** (14 original + 6 Agent), Agent contract
+total **9**, `agent_diff`/`agent_apply`/`agent_discard` still unregistered; the deterministic fake
+backend remains the operational Agent Dispatch backend.
+
+Validation evidence executed during A3:
+
+```text
+git diff --check:     PASS (clean)
+TypeScript typecheck: PASS
+Unit:                 137 / 137 PASS   (109 pre-A3 + 28 new)
+Build:                PASS
+A3 Docker integration: 6 / 6 PASS   (host Docker harness; no MCP/keys/live stack; no Kiro/Copilot)
+Security boundary:    runner proven confined in-suite; gateway/executor boundary reverified via
+                      docker inspect (unchanged from A2); 0 bridge-managed resources left behind
+```
+
+The A2 stack was not redeployed (the sandbox is not wired into live dispatch; the v1→v2 migration is
+proven by unit test to apply safely on the Executor's next start). Pre-existing real client
+credentials were not rotated and no live MCP suite was rerun in-session — prior A2 evidence stands.
+Runner probe image `mcp-ide-bridge-sandbox:a3`
+(`sha256:20535453bb7797eb21169246f9695c1f5311bd68c78a34a34d2011f9bce8236f`) is an A3 probe image
+ONLY, not the production Kiro runner image (A4 owns that). No Kiro/Copilot invoked; no real backend
+activated; no Tailscale change; no unrelated Docker project touched; no new npm dependency.
 
 ---
 
@@ -2882,9 +2932,9 @@ Use this table as the project checkpoint.
 | Existing | ChatGPT browser external verification docs | COMPLETE | `6bf16a8` |
 | A0 | Forensic readiness audit | COMPLETE — PASS | `f179ba19a8beed412d51202691675e9539595bd0` (actual final closeout commit; supersedes the pre-amend `e59703a` reference) — `docs/audits/PHASE_A0_FORENSIC_READINESS_AUDIT.md` |
 | A1 | Agent-control specification | COMPLETE — PASS | `c3cd057a5bfa9e61dc9f6d448db5e5647c7a1a73` — `docs/audits/PHASE_A1_AGENT_CONTROL_SPECIFICATION.md` |
-| A2 | Job engine + fake backend | COMPLETE — PASS | `bd1137c138598ddc88e57e6be4edcdc0a413ca62` — `docs/audits/PHASE_A2_DURABLE_JOB_ENGINE.md` |
-| A3 | Runner sandbox | READY FOR IMPLEMENTATION | — |
-| A4 | Kiro ACP read-only | NOT STARTED | — |
+| A2 | Job engine + fake backend | COMPLETE — PASS | `bd1137c138598ddc88e57e6be4edcdc0a413ca62` — `docs/audits/PHASE_A2_DURABLE_JOB_ENGINE.md`; post-closeout SQLite security remediation `9e52d5bde11bcabd370fd45baac9021ea955fa04` — `security: restrict agent job database permissions` |
+| A3 | Runner sandbox | COMPLETE — PASS | `7df2e09c9cf1c426d91641894dfb11693cc41439` — `docs/audits/PHASE_A3_RUNNER_SANDBOX.md` |
+| A4 | Kiro ACP read-only | READY FOR IMPLEMENTATION | — |
 | A5 | Kiro implementation | NOT STARTED | — |
 | A6 | Review / apply / discard | NOT STARTED | — |
 | A7 | GitHub Copilot backend | NOT STARTED | — |
