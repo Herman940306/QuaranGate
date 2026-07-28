@@ -9,7 +9,11 @@ export type Scope =
   | 'files:delete'
   | 'terminal:exec'
   | 'git:read'
-  | 'process:read';
+  | 'process:read'
+  | 'agents:read'
+  | 'agents:dispatch'
+  | 'agents:cancel'
+  | 'agents:apply';
 
 export const ALL_SCOPES: Scope[] = [
   'targets:read',
@@ -19,6 +23,10 @@ export const ALL_SCOPES: Scope[] = [
   'terminal:exec',
   'git:read',
   'process:read',
+  'agents:read',
+  'agents:dispatch',
+  'agents:cancel',
+  'agents:apply',
 ];
 
 export interface Principal {
@@ -29,6 +37,16 @@ export interface Principal {
   targets: string[]; // explicit ids, or ["*"] for all CONFIGURED targets
   enabled: boolean;
   rateLimit?: number; // requests per minute
+  /**
+   * Agent Control Plane grants (Phase A1 contract; no agent tool is live yet).
+   * Missing/empty = DENY. "*" = every entry in the TRUSTED CONFIGURED agent
+   * registry, never arbitrary host resources. Target permission does NOT
+   * imply project permission, and agent scopes alone grant nothing without
+   * the matching resource grant.
+   */
+  projects?: string[]; // logical agent project ids, or ["*"]
+  agentBackends?: string[]; // agent backend ids, or ["*"]
+  agentProfiles?: string[]; // agent profile ids, or ["*"]
 }
 
 interface ClientsFile {
@@ -48,6 +66,10 @@ export function loadClients(path = process.env.CLIENTS_CONFIG ?? '/config/client
     enabled: p.enabled !== false,
     scopes: (p.scopes ?? []).filter((s): s is Scope => ALL_SCOPES.includes(s as Scope)),
     targets: p.targets ?? [],
+    // Agent grants default to DENY: absent fields become empty allowlists.
+    projects: p.projects ?? [],
+    agentBackends: p.agentBackends ?? [],
+    agentProfiles: p.agentProfiles ?? [],
   }));
   const seen = new Set<string>();
   for (const p of principals) {

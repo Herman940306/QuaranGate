@@ -40,3 +40,37 @@ clients:
     enabled: true
     scopes: [targets:read, files:read, files:write, terminal:exec, git:read]
     targets: ["demo"]
+
+  # ---------------------------------------------------------------------------
+  # Agent Control Plane grants (Phase A1 contract — no agent tool is live yet).
+  #
+  # Agent access is DENY BY DEFAULT: clients without the agents:* scopes AND
+  # the matching projects/agentBackends/agentProfiles grants have ZERO agent
+  # privileges. Target permission does NOT imply project permission. "*" means
+  # every entry of the trusted configured agent registry (config/agents.yaml),
+  # never arbitrary host resources.
+  # ---------------------------------------------------------------------------
+
+  - id: chatgpt-orchestrator
+    name: ChatGPT Orchestrator (example agent client)
+    keyHash: "<sha256-of-key>"
+    enabled: true
+    scopes: [agents:read, agents:dispatch, agents:cancel]
+    targets: []                       # agent grants are separate from targets
+    projects: ["example-project"]     # logical ids from config/agents.yaml
+    agentBackends: ["kiro"]
+    agentProfiles: [audit, plan]
+    rateLimit: 60
+
+  # HIGH PRIVILEGE EXAMPLE — agents:apply lets this client mutate the real
+  # project after review. Grant it deliberately and sparingly.
+  - id: agent-applier
+    name: Agent Apply Authority (example, high privilege)
+    keyHash: "<sha256-of-key>"
+    enabled: false                    # disabled by default even as an example
+    scopes: [agents:read, agents:dispatch, agents:cancel, agents:apply]
+    targets: []
+    projects: ["example-project"]
+    agentBackends: ["kiro"]
+    agentProfiles: [audit, plan, implement, review]
+    rateLimit: 30

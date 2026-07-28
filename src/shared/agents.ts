@@ -1,0 +1,322 @@
+/**
+ * Shared Agent Control Plane contracts (Phase A1).
+ *
+ * Typed contracts + pure job state-machine rules for the future governed
+ * Agent Dispatch feature. Nothing in this module executes agents, creates
+ * jobs, or touches Docker: A2+ implement the runtime against these
+ * contracts. See docs/AGENT_CONTROL_PLANE.md and the Master PRD.
+ */
+import { BridgeError } from './errors.js';
+
+// ---------------------------------------------------------------------------
+// Identifiers
+// ---------------------------------------------------------------------------
+
+export const AGENT_BACKEND_IDS = ['kiro', 'copilot'] as const;
+export type AgentBackendId = (typeof AGENT_BACKEND_IDS)[number];
+
+export const AGENT_PROFILE_IDS = ['audit', 'plan', 'implement', 'review'] as const;
+export type AgentProfileId = (typeof AGENT_PROFILE_IDS)[number];
+
+export const RESOURCE_POLICY_IDS = ['economy', 'standard', 'deep'] as const;
+export type ResourcePolicyId = (typeof RESOURCE_POLICY_IDS)[number];
+
+/**
+ * Same grammar as the proven target-ID grammar. A project ID is a logical
+ * name only; the trusted executor-side registry resolves it to a source.
+ * Public callers never supply host paths.
+ */
+export const AGENT_PROJECT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export type AgentProjectId = string;
+
+/** Executor-generated job identity: `job_` + 32 lowercase hex chars. */
+export const AGENT_JOB_ID_PATTERN = /^job_[0-9a-f]{32}$/;
+export type AgentJobId = string;
+
+/**
+ * v1 caller prompt bound (characters). Matches the order of magnitude of the
+ * existing 32 KiB terminal command cap: large enough for a bounded
+ * implementation brief, small enough to prevent unbounded payload smuggling.
+ */
+export const MAX_AGENT_PROMPT_CHARS = 32_768;
+
+// ---------------------------------------------------------------------------
+// Job lifecycle
+// ---------------------------------------------------------------------------
+
+export const AGENT_JOB_ACTIVE_STATUSES = ['QUEUED', 'PREPARING', 'RUNNING', 'VALIDATING'] as const;
+
+/** Failure/termination statuses. Never collapse these into a generic ERROR. */
+export const AGENT_FAILURE_CODES = [
+  'FAILED_PRECONDITION',
+  'FAILED_POLICY',
+  'FAILED_AGENT',
+  'FAILED_TIMEOUT',
+  'FAILED_INFRASTRUCTURE',
+  'CANCELLED',
+] as const;
+export type AgentFailureCode = (typeof AGENT_FAILURE_CODES)[number];
+
+/** Post-completion dispositions. COMPLETED is NOT equivalent to APPLIED. */
+export const AGENT_JOB_DISPOSITIONS = ['APPLIED', 'DISCARDED'] as const;
+export type AgentJobDisposition = (typeof AGENT_JOB_DISPOSITIONS)[number];
+
+export const AGENT_JOB_STATUSES = [
+  ...AGENT_JOB_ACTIVE_STATUSES,
+  'COMPLETED',
+  ...AGENT_FAILURE_CODES,
+  ...AGENT_JOB_DISPOSITIONS,
+] as const;
+export type AgentJobStatus = (typeof AGENT_JOB_STATUSES)[number];
+
+/**
+ * The complete transition matrix. Anything not listed is rejected.
+ *
+ * Rationale per failure code:
+ * - FAILED_PRECONDITION: precondition checks happen before execution
+ *   (QUEUED/PREPARING only).
+ * - FAILED_POLICY: a policy violation can be detected at any active point.
+ * - FAILED_AGENT: the agent itself can only fail once it runs.
+ * - FAILED_TIMEOUT: staging, execution, and validation are all time-bounded;
+ *   queue admission is not (queue policy failures are precondition/policy).
+ * - FAILED_INFRASTRUCTURE / CANCELLED: possible from any active state.
+ *
+ * Failure statuses and dispositions are terminal: a retry is a NEW job,
+ * never mutation of historical truth.
+ */
+const AGENT_JOB_TRANSITIONS: Record<AgentJobStatus, readonly AgentJobStatus[]> = {
+  QUEUED: ['PREPARING', 'FAILED_PRECONDITION', 'FAILED_POLICY', 'FAILED_INFRASTRUCTURE', 'CANCELLED'],
+  PREPARING: ['RUNNING', 'FAILED_PRECONDITION', 'FAILED_POLICY', 'FAILED_TIMEOUT', 'FAILED_INFRASTRUCTURE', 'CANCELLED'],
+  RUNNING: ['VALIDATING', 'FAILED_POLICY', 'FAILED_AGENT', 'FAILED_TIMEOUT', 'FAILED_INFRASTRUCTURE', 'CANCELLED'],
+  VALIDATING: ['COMPLETED', 'FAILED_POLICY', 'FAILED_AGENT', 'FAILED_TIMEOUT', 'FAILED_INFRASTRUCTURE', 'CANCELLED'],
+  COMPLETED: ['APPLIED', 'DISCARDED'],
+  FAILED_PRECONDITION: [],
+  FAILED_POLICY: [],
+  FAILED_AGENT: [],
+  FAILED_TIMEOUT: [],
+  FAILED_INFRASTRUCTURE: [],
+  CANCELLED: [],
+  APPLIED: [],
+  DISCARDED: [],
+};
+
+export function canTransitionAgentJob(from: AgentJobStatus, to: AgentJobStatus): boolean {
+  return (AGENT_JOB_TRANSITIONS[from] ?? []).includes(to);
+}
+
+export function assertAgentJobTransition(from: AgentJobStatus, to: AgentJobStatus): void {
+  if (!canTransitionAgentJob(from, to)) {
+    throw new BridgeError('INVALID_JOB_TRANSITION', `invalid agent job transition ${from} -> ${to}`, 409);
+  }
+}
+
+/** QUEUED/PREPARING/RUNNING/VALIDATING: the job still occupies execution capacity. */
+export function isActiveAgentJobStatus(s: AgentJobStatus): boolean {
+  return (AGENT_JOB_ACTIVE_STATUSES as readonly string[]).includes(s);
+}
+
+export function isAgentFailureStatus(s: AgentJobStatus): boolean {
+  return (AGENT_FAILURE_CODES as readonly string[]).includes(s);
+}
+
+/** Execution finished successfully (evidence exists): COMPLETED, APPLIED or DISCARDED. */
+export function isExecutionComplete(s: AgentJobStatus): boolean {
+  return s === 'COMPLETED' || isFinalDisposition(s);
+}
+
+/** APPLIED / DISCARDED: one-time, immutable outcomes of a COMPLETED job. */
+export function isFinalDisposition(s: AgentJobStatus): boolean {
+  return (AGENT_JOB_DISPOSITIONS as readonly string[]).includes(s);
+}
+
+/** No outgoing transitions exist: all failures and both dispositions. */
+export function isTerminalAgentJobStatus(s: AgentJobStatus): boolean {
+  return AGENT_JOB_TRANSITIONS[s].length === 0;
+}
+
+// ---------------------------------------------------------------------------
+// Writer policy (v1)
+// ---------------------------------------------------------------------------
+
+/** Only `implement` may receive a writable sandbox in v1. */
+export const WRITER_PROFILE_IDS: readonly AgentProfileId[] = ['implement'];
+
+export function isWriterProfile(profile: AgentProfileId): boolean {
+  return WRITER_PROFILE_IDS.includes(profile);
+}
+
+/**
+ * v1 concurrency rule. Enforcement (persisted, restart-safe) begins in A2;
+ * the contract is fixed here so A2 cannot weaken it silently.
+ */
+export const AGENT_WRITER_POLICY_V1 = {
+  maxActiveGlobalWriterJobs: 1,
+  maxActiveWriterJobsPerProject: 1,
+} as const;
+
+// ---------------------------------------------------------------------------
+// Network / retention / model class
+// ---------------------------------------------------------------------------
+
+/**
+ * v1 runner egress semantics. `unrestricted` is deliberately NOT an ordinary
+ * option. `backend-only` means: only the backend provider's own API endpoints,
+ * resolved by trusted configuration in A3. Tailscale control (`tailscale
+ * serve`/`funnel`/ACLs) is host infrastructure and is never part of the agent
+ * capability plane.
+ */
+export const AGENT_NETWORK_POLICIES = ['deny', 'backend-only'] as const;
+export type AgentNetworkPolicy = (typeof AGENT_NETWORK_POLICIES)[number];
+
+/** Evidence/sandbox retention classes. Lifecycle enforcement begins A2/A3. */
+export const AGENT_RETENTION_CLASSES = ['ephemeral', 'short', 'audit'] as const;
+export type AgentRetentionClass = (typeof AGENT_RETENTION_CLASSES)[number];
+
+/**
+ * Provider-neutral model tier. Backend adapters (A4/A7) map a class to a
+ * concrete pinned model; callers never name provider models directly.
+ */
+export const AGENT_MODEL_CLASSES = ['fast', 'standard', 'deep'] as const;
+export type AgentModelClass = (typeof AGENT_MODEL_CLASSES)[number];
+
+// ---------------------------------------------------------------------------
+// Resource policy
+// ---------------------------------------------------------------------------
+
+/**
+ * Deterministic, integer-unit resource limits. CPU is millicores (1000 =
+ * one CPU) to avoid float ambiguity. `maxProviderCredits` is in
+ * provider-specific units and is only meaningful where the backend exposes a
+ * controllable limit — Kiro credits and Copilot credits are NOT economically
+ * comparable, and no dollar estimate is derived from them.
+ */
+export interface AgentResourceLimits {
+  modelClass: AgentModelClass;
+  maxRuntimeMs: number;
+  maxCpuMillicores: number;
+  maxMemoryBytes: number;
+  maxPids: number;
+  maxOutputBytes: number;
+  maxEvidenceBytes: number;
+  maxProviderCredits?: number;
+  networkPolicy: AgentNetworkPolicy;
+  retentionClass: AgentRetentionClass;
+}
+
+export interface AgentResourcePolicy extends AgentResourceLimits {
+  id: ResourcePolicyId;
+}
+
+// ---------------------------------------------------------------------------
+// Profiles (enforcement policy, not prompt templates)
+// ---------------------------------------------------------------------------
+
+export type AgentWorkspaceAccess = 'read-only' | 'sandbox-write';
+export type AgentShellPolicy = 'none' | 'read-only' | 'validation';
+export type AgentGitPolicy = 'none' | 'read' | 'sandbox';
+
+/**
+ * Specification consumed by A3+ container enforcement. A1 does not pretend
+ * the OS/container layer enforces this yet.
+ */
+export interface AgentProfilePolicy {
+  id: AgentProfileId;
+  workspaceAccess: AgentWorkspaceAccess;
+  shellPolicy: AgentShellPolicy;
+  gitPolicy: AgentGitPolicy;
+  networkPolicy: AgentNetworkPolicy;
+  defaultResourcePolicy: ResourcePolicyId;
+}
+
+// ---------------------------------------------------------------------------
+// Job / result / evidence records
+// ---------------------------------------------------------------------------
+
+export interface AgentJob {
+  jobId: AgentJobId;
+  principalId: string;
+  backend: AgentBackendId;
+  project: AgentProjectId;
+  profile: AgentProfileId;
+  resourcePolicy: ResourcePolicyId;
+  status: AgentJobStatus;
+  /** Set iff status is a failure status; mirrors it for persistence queries. */
+  failureCode?: AgentFailureCode;
+  createdAt: string; // ISO 8601
+  startedAt?: string;
+  completedAt?: string;
+  dispositionAt?: string;
+  /** sha256 hex of the dispatched prompt (identity/audit; raw prompt retention is a separate policy). */
+  promptHash: string;
+  baseCommit?: string;
+  /** Whether this job counts against the writer policy (derived from profile). */
+  writer: boolean;
+}
+
+/** Reference to locally stored evidence — retrieved on demand, never dumped. */
+export interface AgentEvidenceRef {
+  kind: 'diff' | 'result' | 'transcript' | 'log';
+  sha256: string;
+  bytes: number;
+}
+
+/**
+ * Optional provider usage evidence. `usageAvailable: false` is a first-class
+ * honest answer — metrics are never fabricated as zeros.
+ */
+export interface AgentUsage {
+  usageAvailable: boolean;
+  backend?: AgentBackendId;
+  model?: string;
+  providerCredits?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+/** Locally measured job telemetry. Types only in A1; collection begins A3+. */
+export interface AgentResourceTelemetry {
+  runtimeMs?: number;
+  peakCpuMillicores?: number;
+  peakMemoryBytes?: number;
+  sandboxBytes?: number;
+  storedEvidenceBytes?: number;
+  outputBytes?: number;
+  peakProcessCount?: number;
+}
+
+/**
+ * Concise normalized result. Large evidence (transcript, full logs, full
+ * diff) stays local and is referenced via AgentEvidenceRef — there is
+ * deliberately no unbounded raw transcript field.
+ */
+export interface AgentResult {
+  jobId: AgentJobId;
+  status: AgentJobStatus;
+  backend: AgentBackendId;
+  project: AgentProjectId;
+  profile: AgentProfileId;
+  summary: string;
+  exitCode?: number | null;
+  changedFiles?: string[];
+  baseCommit?: string;
+  /** sha256 hex of the full machine-derived diff. */
+  diffHash?: string;
+  evidence?: AgentEvidenceRef[];
+  usage?: AgentUsage;
+  telemetry?: AgentResourceTelemetry;
+}
+
+/** One bounded chunk of the machine-derived diff (selective retrieval). */
+export interface AgentDiff {
+  jobId: AgentJobId;
+  /** sha256 hex of the FULL diff, regardless of chunking. */
+  diffHash: string;
+  /** Optional single-file selection (workspace-relative). */
+  path?: string;
+  chunk: string;
+  chunkBytes: number;
+  totalBytes: number;
+  truncated: boolean;
+  /** Opaque continuation token when truncated. */
+  cursor?: string;
+}

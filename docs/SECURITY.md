@@ -49,6 +49,31 @@ destructive annotation, nor use `terminal_exec` as a bypass for a client-side sa
 authorization and integration tests continue to verify the underlying `files:delete` capability for
 clients that are permitted to invoke it.
 
+## Agent Control Plane scopes (Phase A1 — contracts only, nothing live)
+
+Four additional scopes exist in the closed scope model: `agents:read`, `agents:dispatch`,
+`agents:cancel`, `agents:apply`. **No tool consumes them yet** — the nine agent tool contracts are
+defined but not registered, so granting these scopes enables nothing in the current bridge.
+
+Security properties fixed by the A1 contract (unit-tested):
+
+- **Deny by default.** Agent access requires both an `agents:*` scope and explicit
+  `projects`/`agentBackends`/`agentProfiles` grants on the principal; absent fields mean deny.
+  Existing clients keep working with zero agent privileges.
+- **Target permission never implies agent/project permission.**
+- **Public schemas are strict**: caller-supplied `hostPath`, `runnerImage`, `mounts`,
+  `privileged`, `networkMode`, `dockerSocket` and any unknown property are rejected; prompts are
+  size-bounded; callers address logical project ids only. Trusted host paths live exclusively in
+  executor-owned configuration (`config/agents.yaml`, example-only in A1).
+- **Job ownership is exact** — no cross-principal admin override in v1; `agent_apply` additionally
+  requires the project grant, and takes no caller patch text.
+- **`COMPLETED` ≠ `APPLIED`**: applying sandbox work to a real project is a separate, one-time,
+  explicitly authorized transition; final dispositions and failures are immutable.
+- Runner egress policy values are `deny`/`backend-only` only; Tailscale
+  (`serve`/`funnel`/ACLs) is host infrastructure permanently outside the agent capability plane.
+
+See `docs/AGENT_CONTROL_PLANE.md` for the complete specification.
+
 ## Threat model
 
 | # | Threat | Impact | Mitigation | Residual risk |

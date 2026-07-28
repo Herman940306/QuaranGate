@@ -20,6 +20,7 @@ export type BridgeErrorCode =
   | 'RATE_LIMITED'
   | 'DOCKER_UNAVAILABLE'
   | 'MALFORMED_REQUEST'
+  | 'INVALID_JOB_TRANSITION'
   | 'INTERNAL';
 
 export class BridgeError extends Error {

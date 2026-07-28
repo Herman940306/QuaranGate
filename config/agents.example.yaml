@@ -1,0 +1,112 @@
+# EXAMPLE ONLY — NOT LIVE CONFIGURATION.
+#
+# Trusted Agent Control Plane registry (Phase A1 contract).
+# Copy to config/agents.yaml (gitignored) ONLY when a later phase (A2+)
+# activates agent execution. Nothing reads config/agents.yaml in A1, and the
+# bridge never requires it to start.
+#
+# SECURITY: everything in this file is TRUSTED, executor-owned configuration.
+# hostPath, backends, profiles and resource policies are never accepted from
+# MCP callers — public callers address logical project ids only.
+
+backends:
+  - id: kiro
+    enabled: true
+    profiles: [audit, plan, implement, review]
+    defaultResourcePolicy: standard
+    # No transport field here: Kiro targets ACP; transport-specific runtime
+    # configuration belongs to the backend adapter phase (A4).
+
+  - id: copilot
+    enabled: false                       # transport decision deferred to A7
+    profiles: [audit, review]
+    defaultResourcePolicy: economy
+
+projects:
+  - id: example-project
+    hostPath: /srv/projects/example-project   # neutral example path
+    gitRequired: true
+    backends: [kiro]
+    profiles: [audit, plan, implement, review]
+    guardedPaths:                        # refused/harder-gated at future apply
+      - .env
+      - config/clients.yaml
+      - config/bridge.yaml
+      - "**/*.pem"
+      - "**/id_rsa*"
+
+  - id: example-docs
+    hostPath: /srv/projects/example-docs
+    gitRequired: true
+    backends: [kiro, copilot]
+    profiles: [audit, plan]              # read-only lanes only
+    guardedPaths: [.env]
+
+# Profiles are ENFORCEMENT POLICY, not prompt templates. The container/OS
+# layer enforcing these begins in A3; this is the specification it consumes.
+profiles:
+  - id: audit
+    workspaceAccess: read-only
+    shellPolicy: read-only
+    gitPolicy: read
+    networkPolicy: backend-only
+    defaultResourcePolicy: economy
+
+  - id: plan
+    workspaceAccess: read-only
+    shellPolicy: none
+    gitPolicy: read
+    networkPolicy: backend-only
+    defaultResourcePolicy: economy
+
+  - id: implement                        # the ONLY writer profile in v1
+    workspaceAccess: sandbox-write       # sandbox copy — never the live project
+    shellPolicy: validation
+    gitPolicy: sandbox
+    networkPolicy: backend-only
+    defaultResourcePolicy: standard
+
+  - id: review
+    workspaceAccess: read-only
+    shellPolicy: validation
+    gitPolicy: read
+    networkPolicy: backend-only
+    defaultResourcePolicy: standard
+
+# Deterministic integer units: CPU in millicores, sizes in bytes, time in ms.
+# maxProviderCredits is in provider-specific units (Kiro credits and Copilot
+# credits are NOT economically comparable; no dollar estimates are derived).
+resourcePolicies:
+  - id: economy
+    modelClass: fast
+    maxRuntimeMs: 600000                 # 10 min
+    maxCpuMillicores: 1000
+    maxMemoryBytes: 1073741824           # 1 GiB
+    maxPids: 128
+    maxOutputBytes: 262144               # 256 KiB
+    maxEvidenceBytes: 10485760           # 10 MiB
+    networkPolicy: backend-only
+    retentionClass: ephemeral
+
+  - id: standard
+    modelClass: standard
+    maxRuntimeMs: 1800000                # 30 min
+    maxCpuMillicores: 2000
+    maxMemoryBytes: 2147483648           # 2 GiB
+    maxPids: 256
+    maxOutputBytes: 262144
+    maxEvidenceBytes: 52428800           # 50 MiB
+    networkPolicy: backend-only
+    retentionClass: short
+
+  - id: deep
+    modelClass: deep
+    maxRuntimeMs: 3600000                # 60 min
+    maxCpuMillicores: 4000
+    maxMemoryBytes: 4294967296           # 4 GiB
+    maxPids: 512
+    maxOutputBytes: 262144
+    maxEvidenceBytes: 104857600          # 100 MiB
+    maxProviderCredits: 100              # example provider-unit budget
+    networkPolicy: backend-only
+    retentionClass: audit

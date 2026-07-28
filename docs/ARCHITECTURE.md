@@ -94,6 +94,20 @@ the canonical workspace root, which defeats symlink and nested-symlink escapes. 
 tar archive API and all other ops use argv-array `docker exec` (no shell), so there is no command
 injection surface on paths.
 
+## Agent Control Plane (specification only — Phase A1)
+
+The repository additionally carries the **contracts** for the future governed Agent Dispatch
+feature: shared types + a pure job state machine (`src/shared/agents.ts`), four `agents:*` scopes
+and per-principal project/backend/profile grants (`src/gateway/config.ts`), pure authorization
+helpers (`src/gateway/agentAuthz.ts`), strict Zod schemas for the nine planned agent tools
+(`src/gateway/agentSchemas.ts`), and an executor-side trusted-config validator
+(`src/executor/agentConfig.ts` + `config/agents.example.yaml`).
+
+**None of this is live.** No agent tool is registered with `buildServer()` (the operational MCP
+surface remains exactly the 14 tools above), no executor agent route exists, no job store exists,
+and `config/agents.yaml` is optional and absent. Activation begins in Phase A2 with a
+deterministic fake backend. See `docs/AGENT_CONTROL_PLANE.md` for the full contract.
+
 ## Terminal model
 
 `terminal_exec` is the single deliberate shell entrypoint. The command runs as
