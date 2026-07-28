@@ -3,9 +3,9 @@
 **Document ID:** MIB-MASTER-PRD  
 **Version:** 1.0  
 **Date:** 2026-07-28  
-**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0 and A1 complete (PASS); A2 ready for implementation\
+**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0, A1 and A2 complete (PASS); A3 ready for implementation\
 **Repository:** `/home/herman/projects/mcp-ide-bridge`\
-**Current verified Git HEAD:** `c3cd057` — `feat: define agent control plane contracts` (A1 implementation evidence commit)
+**Current verified Git HEAD:** `bd1137c` — `feat: add durable agent job engine` (A2 implementation evidence commit)
 
 ---
 
@@ -1944,13 +1944,13 @@ The Agent Dispatch program consists of **ten gated phases, A0 through A9**.
 
 This corrects an earlier shorthand that referred to “nine phases” while listing A0–A9. The canonical plan is ten gates.
 
-Status at the A1 closeout:
+Status at the A2 closeout:
 
 ```text
 A0  Forensic readiness audit        COMPLETE — PASS
 A1  Agent-control specification     COMPLETE — PASS
-A2  Job engine + fake backend       READY FOR IMPLEMENTATION
-A3  Runner sandbox                  NOT STARTED
+A2  Job engine + fake backend       COMPLETE — PASS
+A3  Runner sandbox                  READY FOR IMPLEMENTATION
 A4  Kiro ACP read-only              NOT STARTED
 A5  Kiro implementation             NOT STARTED
 A6  Review / apply / discard        NOT STARTED
@@ -2311,6 +2311,43 @@ Every job operation produces expected audit records.
 ## Exit gate
 
 ChatGPT can exercise the new lifecycle end-to-end without any external agent software.
+
+## A2 completion record (2026-07-28)
+
+**Verdict: A2 COMPLETE — PASS. READY FOR A3.**
+
+Implementation evidence commit: `bd1137c138598ddc88e57e6be4edcdc0a413ca62` —
+`feat: add durable agent job engine`.
+
+Full persisted report: `docs/audits/PHASE_A2_DURABLE_JOB_ENGINE.md`.
+
+Delivered (durable orchestration behind a deterministic fake backend — no real agent, runner,
+sandbox, diff, or apply): executor-owned SQLite job store using the **built-in `node:sqlite`**
+binding (no new dependency; schema v1, WAL, atomic compare-and-set transitions) on a new
+executor-only `mcp-bridge-jobs` volume at `/jobs`; the executor-owned job engine (trusted-config
+re-validation, serial execution, `maxRuntimeMs` timeout, cooperative `AbortSignal` cancellation,
+ownership enforcement, restart-safe writer admission, startup recovery of active jobs to
+`FAILED_INFRASTRUCTURE`); and six activated MCP tools (`agents_list`, `agent_projects`,
+`agent_dispatch`, `agent_status`, `agent_result`, `agent_cancel`) using the A1 strict schemas and
+authorization matrix. `agent_diff`/`agent_apply`/`agent_discard` remain contract-only.
+
+Operational MCP tools: **14 → 20**. Contract-only agent tools: **3**. Agent contract total: **9**.
+
+Validation evidence executed during A2:
+
+```text
+TypeScript typecheck: PASS
+Unit:                 109 / 109 PASS   (75 pre-A2 + 34 new)
+Build:                PASS
+Config validation:    PASS
+Live integration:     agents 13/13, existing-tools regression 1/1, persistence+recovery 1/1
+Security boundary:    gateway no docker.sock + loopback bind; executor unpublished; jobs volume
+                      executor-only; internal net internal=true — all reverified post-deploy
+```
+
+Historical/pre-A2 live integration (`bridge.test.ts` + `output-schema.test.ts` = 40) was not rerun
+as a whole (test-fixture keys managed outside the session; pre-existing principals not rotated);
+existing-tool behavior was re-proven live through a dedicated additive test principal.
 
 ---
 
@@ -2845,8 +2882,8 @@ Use this table as the project checkpoint.
 | Existing | ChatGPT browser external verification docs | COMPLETE | `6bf16a8` |
 | A0 | Forensic readiness audit | COMPLETE — PASS | `f179ba19a8beed412d51202691675e9539595bd0` (actual final closeout commit; supersedes the pre-amend `e59703a` reference) — `docs/audits/PHASE_A0_FORENSIC_READINESS_AUDIT.md` |
 | A1 | Agent-control specification | COMPLETE — PASS | `c3cd057a5bfa9e61dc9f6d448db5e5647c7a1a73` — `docs/audits/PHASE_A1_AGENT_CONTROL_SPECIFICATION.md` |
-| A2 | Job engine + fake backend | READY FOR IMPLEMENTATION | — |
-| A3 | Runner sandbox | NOT STARTED | — |
+| A2 | Job engine + fake backend | COMPLETE — PASS | `bd1137c138598ddc88e57e6be4edcdc0a413ca62` — `docs/audits/PHASE_A2_DURABLE_JOB_ENGINE.md` |
+| A3 | Runner sandbox | READY FOR IMPLEMENTATION | — |
 | A4 | Kiro ACP read-only | NOT STARTED | — |
 | A5 | Kiro implementation | NOT STARTED | — |
 | A6 | Review / apply / discard | NOT STARTED | — |
@@ -3046,19 +3083,23 @@ The desired end state is:
 
 # 44. Immediate next action
 
-A0 and A1 are complete (PASS — see the completion records in §26/§27 and
-`docs/audits/PHASE_A0_FORENSIC_READINESS_AUDIT.md` /
-`docs/audits/PHASE_A1_AGENT_CONTROL_SPECIFICATION.md`).
+A0, A1 and A2 are complete (PASS — see the completion records in §26/§27/§28 and
+`docs/audits/PHASE_A0_FORENSIC_READINESS_AUDIT.md`,
+`docs/audits/PHASE_A1_AGENT_CONTROL_SPECIFICATION.md`,
+`docs/audits/PHASE_A2_DURABLE_JOB_ENGINE.md`).
 
 The next implementation gate is:
 
 ```text
-A2 — JOB ENGINE WITH DETERMINISTIC FAKE BACKEND
+A3 — RUNNER SANDBOX
 ```
 
-A2 introduces executor-owned persistence (SQLite; binding evaluated in A2), the asynchronous job
-engine, and the first registration of the agent tools against a deterministic fake backend —
-implementing against the A1 contracts without weakening any strict/deny-by-default property.
+A3 creates the isolated container execution foundation (runner image contract, job-volume/project
+snapshot materialization, resource limits, timeout, orphan cleanup, result/diff collector
+foundation) — expanding the executor's Docker capability while keeping the public MCP contract
+backend-neutral and the runner free of docker.sock, host mounts, and caller-supplied Docker options.
+The deterministic fake backend from A2 remains for offline tests; the first real backend (Kiro ACP)
+arrives in A4.
 
 ---
 
