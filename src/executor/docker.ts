@@ -144,6 +144,171 @@ export async function putArchive(containerId: string, absDir: string, tarBuffer:
   }
 }
 
+// ---------------------------------------------------------------------------
+// A3 runner-sandbox lifecycle primitives.
+//
+// These are the ONLY additional Docker Engine capabilities the executor gained
+// in A3, added strictly for the trusted internal runner sandbox. They are never
+// exposed as executor HTTP routes and cannot be driven by an MCP caller: the
+// request bodies are constructed exclusively from trusted policy in
+// sandboxSpec.ts. Enumeration/removal is always scoped by a filter selector so
+// callers cannot delete resources by name/age/image.
+// ---------------------------------------------------------------------------
+
+const API = '/v1.44';
+
+/** URL-encode a Docker `filters` object, e.g. { label: ['k=v'] }. */
+function filtersParam(filters: Record<string, string[]>): string {
+  return `filters=${encodeURIComponent(JSON.stringify(filters))}`;
+}
+
+/** Demultiplex a Docker (Tty:false) stdout/stderr stream: [type,0,0,0,len32be]. */
+function demuxDockerStream(buf: Buffer): { stdout: Buffer; stderr: Buffer } {
+  let out = Buffer.alloc(0);
+  let err = Buffer.alloc(0);
+  let i = 0;
+  while (i + 8 <= buf.length) {
+    const type = buf[i];
+    const len = buf.readUInt32BE(i + 4);
+    const start = i + 8;
+    const end = start + len;
+    if (end > buf.length) break; // partial trailing frame
+    const payload = buf.subarray(start, end);
+    if (type === 2) err = Buffer.concat([err, payload]);
+    else out = Buffer.concat([out, payload]);
+    i = end;
+  }
+  return { stdout: out, stderr: err };
+}
+
+export async function inspectImage(ref: string): Promise<{ Id: string }> {
+  return dockerJson('GET', `${API}/images/${encodeURIComponent(ref)}/json`);
+}
+
+export interface VolumeSummary { Name: string; Labels: Record<string, string> | null }
+
+export async function createVolume(name: string, labels: Record<string, string>): Promise<void> {
+  await dockerJson('POST', `${API}/volumes/create`, { Name: name, Driver: 'local', Labels: labels });
+}
+
+export async function removeVolume(name: string, force = true): Promise<void> {
+  const res = await client.request({ method: 'DELETE', path: `${API}/volumes/${encodeURIComponent(name)}?force=${force ? 1 : 0}` });
+  const text = await res.body.text();
+  // 404 (already gone) is acceptable for idempotent cleanup.
+  if (res.statusCode >= 400 && res.statusCode !== 404) {
+    throw new BridgeError('DOCKER_UNAVAILABLE', `volume remove failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
+  }
+}
+
+export async function listVolumesByFilter(filters: Record<string, string[]>): Promise<VolumeSummary[]> {
+  const r = await dockerJson<{ Volumes: VolumeSummary[] | null }>('GET', `${API}/volumes?${filtersParam(filters)}`);
+  return r.Volumes ?? [];
+}
+
+export async function listContainersByFilter(filters: Record<string, string[]>, all = true): Promise<ContainerSummary[]> {
+  return dockerJson<ContainerSummary[]>('GET', `${API}/containers/json?all=${all ? 1 : 0}&${filtersParam(filters)}`);
+}
+
+/** Create a container from a fully-formed, trusted-policy body. */
+export async function createContainer(name: string, body: Record<string, unknown>): Promise<string> {
+  const r = await dockerJson<{ Id: string }>('POST', `${API}/containers/create?name=${encodeURIComponent(name)}`, body);
+  return r.Id;
+}
+
+export async function startContainer(id: string): Promise<void> {
+  const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/start` });
+  const text = await res.body.text();
+  if (res.statusCode >= 400 && res.statusCode !== 304) {
+    throw new BridgeError('DOCKER_UNAVAILABLE', `container start failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
+  }
+}
+
+export interface FullContainerInspect {
+  Id: string;
+  Image: string; // immutable image ID actually used
+  State: { Running: boolean; Status: string; ExitCode: number; OOMKilled: boolean; StartedAt: string; FinishedAt: string };
+  Config: { Image: string; User: string; Labels: Record<string, string>; Cmd: string[] | null };
+  HostConfig: {
+    NetworkMode: string; ReadonlyRootfs: boolean; Privileged: boolean;
+    CapDrop: string[] | null; CapAdd: string[] | null; SecurityOpt: string[] | null;
+    Memory: number; NanoCpus: number; PidsLimit: number | null;
+    Binds: string[] | null; PidMode: string; IpcMode: string; Devices: unknown[] | null;
+    Tmpfs: Record<string, string> | null;
+  };
+  Mounts: { Type: string; Name?: string; Source: string; Destination: string; RW: boolean }[];
+}
+
+export async function inspectContainerFull(id: string): Promise<FullContainerInspect> {
+  return dockerJson<FullContainerInspect>('GET', `${API}/containers/${encodeURIComponent(id)}/json`);
+}
+
+/** Block until the container exits, bounded by timeoutMs (abort the wait, not the container). */
+export async function waitContainer(id: string, opts: { timeoutMs?: number } = {}): Promise<{ statusCode: number | null; timedOut: boolean }> {
+  const ac = new AbortController();
+  const timer = opts.timeoutMs ? setTimeout(() => ac.abort(), opts.timeoutMs) : undefined;
+  try {
+    const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/wait`, signal: ac.signal });
+    const text = await res.body.text();
+    if (res.statusCode >= 400) {
+      throw new BridgeError('DOCKER_UNAVAILABLE', `container wait failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
+    }
+    const j = JSON.parse(text) as { StatusCode: number };
+    return { statusCode: Number(j.StatusCode), timedOut: false };
+  } catch (e) {
+    if (ac.signal.aborted) return { statusCode: null, timedOut: true };
+    throw e instanceof BridgeError ? e : new BridgeError('DOCKER_UNAVAILABLE', `container wait error: ${(e as Error).message}`, 502);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetch bounded, demultiplexed container logs. Reads at most ~maxBytes (plus a
+ * small frame slack) into memory, never the full unbounded log.
+ */
+export async function getContainerLogs(id: string, maxBytes: number): Promise<{ stdout: string; stderr: string; bytes: number; truncated: boolean }> {
+  const res = await client.request({ method: 'GET', path: `${API}/containers/${encodeURIComponent(id)}/logs?stdout=1&stderr=1&timestamps=0` });
+  if (res.statusCode >= 400) {
+    const text = await res.body.text();
+    throw new BridgeError('DOCKER_UNAVAILABLE', `container logs failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
+  }
+  let raw = Buffer.alloc(0);
+  let truncated = false;
+  const hardCap = maxBytes + 65536; // frame slack; we still clip to maxBytes below
+  for await (const chunk of res.body as unknown as Readable) {
+    raw = Buffer.concat([raw, chunk as Buffer]);
+    if (raw.length > hardCap) { truncated = true; (res.body as unknown as Readable).destroy(); break; }
+  }
+  const { stdout, stderr } = demuxDockerStream(raw);
+  const total = stdout.length + stderr.length;
+  if (total > maxBytes) truncated = true;
+  return {
+    stdout: stdout.subarray(0, maxBytes).toString('utf8'),
+    stderr: stderr.subarray(0, maxBytes).toString('utf8'),
+    bytes: total,
+    truncated,
+  };
+}
+
+export async function stopContainer(id: string, timeoutSec = 2): Promise<void> {
+  const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/stop?t=${timeoutSec}` });
+  await res.body.dump();
+  // 304 (already stopped) / 404 (already gone) are fine.
+}
+
+export async function killContainer(id: string, signal = 'SIGKILL'): Promise<void> {
+  const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/kill?signal=${encodeURIComponent(signal)}` });
+  await res.body.dump();
+}
+
+export async function removeContainer(id: string, force = true): Promise<void> {
+  const res = await client.request({ method: 'DELETE', path: `${API}/containers/${encodeURIComponent(id)}?force=${force ? 1 : 0}&v=1` });
+  const text = await res.body.text();
+  if (res.statusCode >= 400 && res.statusCode !== 404) {
+    throw new BridgeError('DOCKER_UNAVAILABLE', `container remove failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
+  }
+}
+
 export async function ping(): Promise<boolean> {
   try {
     const res = await client.request({ method: 'GET', path: '/_ping' });

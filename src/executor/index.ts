@@ -15,6 +15,7 @@ import { loadAgentConfig } from './agentConfig.js';
 import { AgentJobStore } from './agents/jobStore.js';
 import { AgentJobEngine } from './agents/jobEngine.js';
 import { registerAgentRoutes } from './agents/routes.js';
+import { RunnerSandbox } from './agents/sandboxRunner.js';
 
 const PORT = Number(process.env.EXECUTOR_PORT ?? 8990);
 const TOKEN = process.env.INTERNAL_TOKEN ?? '';
@@ -30,6 +31,10 @@ loadTargetConfig();
 // runs exactly as before and agent routes fail closed (AGENTS_UNAVAILABLE).
 const AGENTS_CONFIG = process.env.AGENTS_CONFIG ?? '/config/agents.yaml';
 const JOBS_DB = process.env.JOBS_DB ?? '/jobs/agents.db';
+// A3 sandbox image is TRUSTED configuration (never caller-selectable). Absent by
+// default: the deterministic fake backend remains the operational A2 backend and
+// the sandbox is exercised only through controlled tests until A4.
+const RUNNER_IMAGE = process.env.AGENT_RUNNER_IMAGE ?? '';
 let agentEngine: AgentJobEngine | null = null;
 let agentStore: AgentJobStore | null = null;
 if (fs.existsSync(AGENTS_CONFIG)) {
@@ -42,6 +47,13 @@ if (fs.existsSync(AGENTS_CONFIG)) {
     projects: agentConfig.projects.length, backends: agentConfig.backends.length,
     schemaVersion: agentStore.schemaVersion, recoveredJobs: recovered.length,
   }));
+  // A3: label-scoped reconciliation of any bridge-owned runner sandbox resources
+  // left after a restart (fail closed). Only exact ownership labels are touched;
+  // this never enumerates or deletes unrelated Docker resources.
+  const sandbox = new RunnerSandbox({ image: RUNNER_IMAGE });
+  sandbox.reconcileOrphans()
+    .then((r) => console.log(JSON.stringify({ level: 'info', msg: 'sandbox orphan reconciliation', removedContainers: r.removedContainers.length, removedVolumes: r.removedVolumes.length })))
+    .catch((e) => console.log(JSON.stringify({ level: 'warn', msg: 'sandbox orphan reconciliation failed', error: e instanceof Error ? e.message.slice(0, 200) : String(e) })));
 } else {
   console.log(JSON.stringify({ level: 'info', msg: 'agent control plane not configured (optional)' }));
 }

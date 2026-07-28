@@ -23,7 +23,7 @@ import {
   type AgentFailureCode,
 } from '../../shared/agents.js';
 
-export const AGENT_JOB_SCHEMA_VERSION = 1;
+export const AGENT_JOB_SCHEMA_VERSION = 2;
 
 /**
  * Concurrency admission counts EXECUTING jobs only. QUEUED jobs are "active"
@@ -53,6 +53,8 @@ export interface AgentJobRow {
   backendSessionId: string | null;
   sessionPolicy: string;
   writer: boolean;
+  /** Trusted source base commit for a staged sandbox workspace (A3+). */
+  baseCommit: string | null;
 }
 
 export interface NewAgentJob {
@@ -118,6 +120,17 @@ export class AgentJobStore {
     this.migrate();
   }
 
+  private columnExists(table: string, column: string): boolean {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    return cols.some((c) => c.name === column);
+  }
+
+  /**
+   * Explicit, stepwise, forward-only migration. A fresh DB is created directly
+   * at the latest shape; an existing A2 (v1) DB is migrated in place with
+   * `ALTER TABLE ... ADD COLUMN` so every historical job record is preserved
+   * (the durable A2 state is never wiped/recreated).
+   */
   private migrate(): void {
     const row = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
     const version = Number(row?.user_version ?? 0);
@@ -127,31 +140,42 @@ export class AgentJobStore {
     }
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS agent_jobs (
-          job_id             TEXT PRIMARY KEY,
-          principal_id       TEXT NOT NULL,
-          backend            TEXT NOT NULL,
-          project            TEXT NOT NULL,
-          profile            TEXT NOT NULL,
-          resource_policy    TEXT NOT NULL,
-          status             TEXT NOT NULL,
-          failure_code       TEXT,
-          failure_reason     TEXT,
-          created_at         TEXT NOT NULL,
-          started_at         TEXT,
-          completed_at       TEXT,
-          prompt_hash        TEXT NOT NULL,
-          prompt             TEXT NOT NULL,
-          summary            TEXT,
-          exit_code          INTEGER,
-          backend_session_id TEXT,
-          session_policy     TEXT NOT NULL DEFAULT 'new',
-          writer             INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_agent_jobs_status ON agent_jobs(status);
-        CREATE INDEX IF NOT EXISTS idx_agent_jobs_principal ON agent_jobs(principal_id);
-      `);
+      if (version < 1) {
+        // Fresh install → create at the latest shape (base_commit included).
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agent_jobs (
+            job_id             TEXT PRIMARY KEY,
+            principal_id       TEXT NOT NULL,
+            backend            TEXT NOT NULL,
+            project            TEXT NOT NULL,
+            profile            TEXT NOT NULL,
+            resource_policy    TEXT NOT NULL,
+            status             TEXT NOT NULL,
+            failure_code       TEXT,
+            failure_reason     TEXT,
+            created_at         TEXT NOT NULL,
+            started_at         TEXT,
+            completed_at       TEXT,
+            prompt_hash        TEXT NOT NULL,
+            prompt             TEXT NOT NULL,
+            summary            TEXT,
+            exit_code          INTEGER,
+            backend_session_id TEXT,
+            session_policy     TEXT NOT NULL DEFAULT 'new',
+            writer             INTEGER NOT NULL DEFAULT 0,
+            base_commit        TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_agent_jobs_status ON agent_jobs(status);
+          CREATE INDEX IF NOT EXISTS idx_agent_jobs_principal ON agent_jobs(principal_id);
+        `);
+      }
+      if (version < 2) {
+        // v1 (A2) → v2 (A3): record the trusted base commit of a staged sandbox
+        // workspace. Additive; preserves all existing A2 job records.
+        if (!this.columnExists('agent_jobs', 'base_commit')) {
+          this.db.exec('ALTER TABLE agent_jobs ADD COLUMN base_commit TEXT');
+        }
+      }
       this.db.exec(`PRAGMA user_version=${AGENT_JOB_SCHEMA_VERSION}`);
       this.db.exec('COMMIT');
     } catch (e) {
@@ -201,6 +225,16 @@ export class AgentJobStore {
     if (extras.failureReason !== undefined) { sets.push('failure_reason = ?'); args.push(extras.failureReason.slice(0, 500)); }
     args.push(jobId, from);
     const res = this.db.prepare(`UPDATE agent_jobs SET ${sets.join(', ')} WHERE job_id = ? AND status = ?`).run(...args);
+    return Number(res.changes) === 1;
+  }
+
+  /**
+   * Record the trusted source base commit for a staged sandbox workspace (A3+).
+   * Independent of the status CAS: base state is provenance, set once when a
+   * workspace is staged, and must not be re-inferred later from host HEAD.
+   */
+  setBaseCommit(jobId: string, baseCommit: string): boolean {
+    const res = this.db.prepare('UPDATE agent_jobs SET base_commit = ? WHERE job_id = ?').run(baseCommit, jobId);
     return Number(res.changes) === 1;
   }
 
@@ -305,5 +339,6 @@ function rowToJob(r: Record<string, unknown>): AgentJobRow {
     backendSessionId: (r.backend_session_id ?? null) as string | null,
     sessionPolicy: String(r.session_policy),
     writer: Number(r.writer) === 1,
+    baseCommit: (r.base_commit ?? null) as string | null,
   };
 }

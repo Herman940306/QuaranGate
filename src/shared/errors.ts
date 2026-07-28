@@ -28,6 +28,9 @@ export type BridgeErrorCode =
   | 'FORBIDDEN_BACKEND'
   | 'FORBIDDEN_PROFILE'
   | 'FORBIDDEN_JOB'
+  | 'FORBIDDEN_POLICY'
+  | 'PRECONDITION_FAILED'
+  | 'SANDBOX_FAILED'
   | 'INTERNAL';
 
 export class BridgeError extends Error {
