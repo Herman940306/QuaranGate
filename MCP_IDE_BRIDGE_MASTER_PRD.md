@@ -3,9 +3,9 @@
 **Document ID:** MIB-MASTER-PRD  
 **Version:** 1.0  
 **Date:** 2026-07-28  
-**Status:** Master baseline — current bridge verified; Agent Dispatch phase A0 complete (PASS); A1 ready for implementation  
-**Repository:** `/home/herman/projects/mcp-ide-bridge`  
-**Current verified Git HEAD:** `6bf16a8` — `docs: verify ChatGPT browser MCP integration`
+**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0 and A1 complete (PASS); A2 ready for implementation\
+**Repository:** `/home/herman/projects/mcp-ide-bridge`\
+**Current verified Git HEAD:** `c3cd057` — `feat: define agent control plane contracts` (A1 implementation evidence commit)
 
 ---
 
@@ -1944,12 +1944,12 @@ The Agent Dispatch program consists of **ten gated phases, A0 through A9**.
 
 This corrects an earlier shorthand that referred to “nine phases” while listing A0–A9. The canonical plan is ten gates.
 
-Status at PRD v1.0:
+Status at the A1 closeout:
 
 ```text
 A0  Forensic readiness audit        COMPLETE — PASS
-A1  Agent-control specification     READY FOR IMPLEMENTATION
-A2  Job engine + fake backend       NOT STARTED
+A1  Agent-control specification     COMPLETE — PASS
+A2  Job engine + fake backend       READY FOR IMPLEMENTATION
 A3  Runner sandbox                  NOT STARTED
 A4  Kiro ACP read-only              NOT STARTED
 A5  Kiro implementation             NOT STARTED
@@ -2213,6 +2213,38 @@ Single bounded commit/revertable patch.
 No real agent can execute yet.
 
 The contract must be reviewable before implementation complexity begins.
+
+## A1 completion record (2026-07-28)
+
+**Verdict: A1 COMPLETE — PASS. READY FOR A2.**
+
+Implementation evidence commit: `c3cd057a5bfa9e61dc9f6d448db5e5647c7a1a73` —
+`feat: define agent control plane contracts`.
+
+Full persisted report: `docs/audits/PHASE_A1_AGENT_CONTROL_SPECIFICATION.md`.
+Code-adjacent contract specification: `docs/AGENT_CONTROL_PLANE.md`.
+
+Delivered (contracts only — no agent runtime): shared agent types + pure job state machine
+(`src/shared/agents.ts`); scopes `agents:read/dispatch/cancel/apply` (Scope union 7 → 11) with
+deny-by-default principal grants `projects`/`agentBackends`/`agentProfiles`; pure authorization
+matrix (`src/gateway/agentAuthz.ts`); strict Zod contracts for all nine planned tools
+(`src/gateway/agentSchemas.ts`, **not registered**); trusted executor config validator
+(`src/executor/agentConfig.ts`) + `config/agents.example.yaml`; ResourcePolicy
+(`economy`/`standard`/`deep`, integer units, `deny|backend-only` network policy only); retention
+classes; v1 writer policy (1 global / 1 per project).
+
+Validation evidence executed during A1 (in-session):
+
+```text
+TypeScript typecheck: PASS
+Unit:                 73 / 73 PASS   (20 pre-existing + 53 new)
+Build:                PASS
+Config validation:    PASS (live configs + agents example)
+Live MCP tools:       14 operational, 0 agent tools registered
+```
+
+Historical live integration baseline (pre-A0, not rerun in A1 — no runtime behavior changed):
+40 / 40 PASS.
 
 ---
 
@@ -2811,9 +2843,9 @@ Use this table as the project checkpoint.
 | Existing | Claude browser external verification | COMPLETE | `966e10b` |
 | Existing | MCP structured output schemas | COMPLETE | `2729b5a` |
 | Existing | ChatGPT browser external verification docs | COMPLETE | `6bf16a8` |
-| A0 | Forensic readiness audit | COMPLETE — PASS | `e59703a` — `docs/audits/PHASE_A0_FORENSIC_READINESS_AUDIT.md` |
-| A1 | Agent-control specification | READY FOR IMPLEMENTATION | — |
-| A2 | Job engine + fake backend | NOT STARTED | — |
+| A0 | Forensic readiness audit | COMPLETE — PASS | `f179ba19a8beed412d51202691675e9539595bd0` (actual final closeout commit; supersedes the pre-amend `e59703a` reference) — `docs/audits/PHASE_A0_FORENSIC_READINESS_AUDIT.md` |
+| A1 | Agent-control specification | COMPLETE — PASS | `c3cd057a5bfa9e61dc9f6d448db5e5647c7a1a73` — `docs/audits/PHASE_A1_AGENT_CONTROL_SPECIFICATION.md` |
+| A2 | Job engine + fake backend | READY FOR IMPLEMENTATION | — |
 | A3 | Runner sandbox | NOT STARTED | — |
 | A4 | Kiro ACP read-only | NOT STARTED | — |
 | A5 | Kiro implementation | NOT STARTED | — |
@@ -3014,15 +3046,19 @@ The desired end state is:
 
 # 44. Immediate next action
 
-A0 is complete (PASS — see the completion record in §26 and `docs/audits/PHASE_A0_FORENSIC_READINESS_AUDIT.md`).
+A0 and A1 are complete (PASS — see the completion records in §26/§27 and
+`docs/audits/PHASE_A0_FORENSIC_READINESS_AUDIT.md` /
+`docs/audits/PHASE_A1_AGENT_CONTROL_SPECIFICATION.md`).
 
 The next implementation gate is:
 
 ```text
-A1 — AGENT-CONTROL SPECIFICATION
+A2 — JOB ENGINE WITH DETERMINISTIC FAKE BACKEND
 ```
 
-A1 produces the exact code-level Agent Control Plane specification (schemas, configuration model, state machine, scopes, ResourcePolicy) without starting a real AI backend.
+A2 introduces executor-owned persistence (SQLite; binding evaluated in A2), the asynchronous job
+engine, and the first registration of the agent tools against a deterministic fake backend —
+implementing against the A1 contracts without weakening any strict/deny-by-default property.
 
 ---
 
@@ -3077,6 +3113,12 @@ At every completed phase:
 5. record new known limitations;
 6. do not delete historical security decisions without documenting the superseding decision;
 7. keep the current verified state separate from future intent.
+
+**Commit-hash recording rule (adopted at A1 closeout):** a commit must never be required to
+contain its own final SHA. Phase evidence commit hashes are recorded by the subsequent
+documentation closeout commit or a later checkpoint. This prevents recursive hash invalidation
+(the A0 closeout's pre-amend `e59703a` self-reference is the motivating case; the actual final A0
+commit is `f179ba19a8beed412d51202691675e9539595bd0`).
 
 This file should answer three questions at any point in the project:
 
