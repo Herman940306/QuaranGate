@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, statSync, existsSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentJobStore, AGENT_JOB_SCHEMA_VERSION, type NewAgentJob } from '../../src/executor/agents/jobStore.js';
@@ -31,10 +31,35 @@ beforeEach(() => {
   store = new AgentJobStore(dbPath);
 });
 
+const mode = (p: string) => statSync(p).mode & 0o777;
+
 describe('agent job store', () => {
   it('initializes the schema at the expected version', () => {
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
     expect(store.schemaVersion).toBe(1);
+  });
+
+  it('creates SQLite files private to the runtime identity (0600, no group/other)', () => {
+    // A write forces WAL activity so the -wal/-shm sidecars exist for the check.
+    store.insert(newJob());
+    expect(mode(dbPath)).toBe(0o600);
+    for (const sidecar of [`${dbPath}-wal`, `${dbPath}-shm`]) {
+      if (existsSync(sidecar)) {
+        expect(mode(sidecar) & 0o077, `${sidecar} must not be group/world accessible`).toBe(0);
+      }
+    }
+  });
+
+  it('tightens a pre-existing world-readable database without recreating it', () => {
+    const j = store.insert(newJob());
+    store.close();
+    // Simulate a legacy 0644 database file left by an earlier build.
+    chmodSync(dbPath, 0o644);
+    expect(mode(dbPath)).toBe(0o644);
+    const reopened = new AgentJobStore(dbPath);
+    expect(mode(dbPath)).toBe(0o600); // hardened on open
+    expect(reopened.get(j.jobId)!.prompt).toBe('do the thing'); // durable state preserved
+    reopened.close();
   });
 
   it('reopening an existing DB preserves records and version', () => {

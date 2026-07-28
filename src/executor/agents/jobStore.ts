@@ -14,6 +14,7 @@
  *   retention-policy concern (A1 retention classes).
  */
 import { DatabaseSync } from 'node:sqlite';
+import { chmodSync, existsSync } from 'node:fs';
 import { BridgeError } from '../../shared/errors.js';
 import {
   assertAgentJobTransition,
@@ -80,14 +81,40 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/**
+ * The job DB may hold bounded raw agent prompts, so the SQLite files must be
+ * private to the executor runtime identity — not merely protected by the
+ * parent directory's mode. SQLite creates the main DB, the `-wal` and the
+ * `-shm` files under the process umask (default 022 -> world-readable 0644).
+ * Force 0600 on any that exist (idempotent; fixes pre-existing 0644 files
+ * without recreating the durable database). Skipped for in-memory DBs.
+ */
+function restrictSqliteFileModes(path: string): void {
+  if (path === ':memory:' || path === '') return;
+  for (const p of [path, `${path}-wal`, `${path}-shm`]) {
+    if (existsSync(p)) chmodSync(p, 0o600);
+  }
+}
+
 export class AgentJobStore {
   private db: DatabaseSync;
 
   constructor(path: string) {
-    this.db = new DatabaseSync(path);
-    this.db.exec('PRAGMA journal_mode=WAL');
-    this.db.exec('PRAGMA busy_timeout=5000');
-    this.db.exec('PRAGMA foreign_keys=ON');
+    // Create the DB (and, via WAL, the -wal/-shm sidecars) under a restrictive
+    // umask so they are private from creation. Scope is this synchronous
+    // constructor only (restored in finally); it never affects other executor
+    // runtime file behavior. On every restart/recreation this path runs again,
+    // so newly created sidecars are always private.
+    const prevUmask = process.umask(0o077);
+    try {
+      this.db = new DatabaseSync(path);
+      this.db.exec('PRAGMA journal_mode=WAL');
+      this.db.exec('PRAGMA busy_timeout=5000');
+      this.db.exec('PRAGMA foreign_keys=ON');
+    } finally {
+      process.umask(prevUmask);
+    }
+    restrictSqliteFileModes(path);
     this.migrate();
   }
 
