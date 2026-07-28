@@ -57,12 +57,18 @@ services:
       INTERNAL_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
       BRIDGE_CONFIG: "/config/bridge.yaml"
       DOCKER_SOCK: "/var/run/docker.sock"
+      # Agent Control Plane (A2): optional trusted config + durable job store.
+      AGENTS_CONFIG: "/config/agents.yaml"
+      JOBS_DB: "/jobs/agents.db"
     # Access to the docker socket is confined to THIS private service only.
     group_add:
       - "${DOCKER_GID:-1001}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config:/config:ro
+      # Executor-owned agent job persistence. NOT mounted into the gateway or
+      # any target; separate trust domain from the gateway OAuth /data volume.
+      - bridge-jobs:/jobs
     tmpfs:
       - /tmp
     networks:
@@ -86,3 +92,5 @@ networks:
 volumes:
   bridge-data:
     name: mcp-bridge-data
+  bridge-jobs:
+    name: mcp-bridge-jobs

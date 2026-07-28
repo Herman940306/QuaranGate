@@ -1,10 +1,70 @@
-# Agent Control Plane — A1 Contract Specification
+# Agent Control Plane — Contract Specification (A1) + Durable Job Engine (A2)
 
-**Status:** Phase A1 — contracts and enforcement scaffolding only. **No agent executes.**
-**Live MCP surface:** unchanged — the existing 14 tools. Zero agent tools are registered.
+**Status:** Phase A2 — durable orchestration active behind a deterministic **fake** backend. No real
+agent (Kiro/Copilot) runs; no runner container, sandbox, diff, or apply exists yet.
+**Live MCP surface:** 20 operational tools — the original 14 plus six activated Agent Control Plane
+tools (`agents_list`, `agent_projects`, `agent_dispatch`, `agent_status`, `agent_result`,
+`agent_cancel`). `agent_diff`, `agent_apply`, `agent_discard` remain **contract-only** until A6.
 **Authority:** this document is the code-adjacent specification; the Master PRD
 (`MCP_IDE_BRIDGE_MASTER_PRD.md`) is the product authority. Where this document summarizes the PRD,
-the PRD wins; where it records exact A1 code contracts, the code + unit tests are the evidence.
+the PRD wins; where it records exact code contracts, the code + tests are the evidence.
+
+---
+
+## 0. Phase A2 — durable job engine (what is now live)
+
+The asynchronous orchestration layer is implemented and deployed:
+
+```text
+MCP request -> Gateway (auth + A1 authorization matrix + strict schemas + audit)
+            -> private Executor API (internal-token, re-validates trusted config + job ownership)
+            -> durable SQLite job engine (node:sqlite, executor-owned /jobs volume)
+            -> deterministic fake backend (no shell/Docker/network/AI)
+            -> persistent state + concise result -> MCP status/result
+```
+
+- **SQLite binding:** the **built-in `node:sqlite`** (`DatabaseSync`) on Node 24.15.0 — WAL mode,
+  prepared statements, `BEGIN IMMEDIATE` transactions, synchronous single-writer semantics. **No new
+  npm dependency** was added.
+- **Persistence:** executor-owned Docker volume `mcp-bridge-jobs` mounted at `/jobs` (`0700`,
+  `node`), DB at `/jobs/agents.db`, `PRAGMA user_version = 1`. Separate trust domain from the
+  gateway OAuth `/data` volume; never mounted into the gateway or any target.
+- **`agent_dispatch`** validates authorization, then returns a `jobId` immediately (no long-held MCP
+  request). The bounded raw prompt is stored only in the executor DB (needed so queued jobs survive
+  the request and restarts); it is never logged, never returned by `agent_status`, and not returned
+  by `agent_result`. `promptHash` is always stored.
+- **State machine:** the shared A1 validator drives every transition; each transition is an atomic
+  compare-and-set (`UPDATE ... WHERE status = expected`). Normal fake path:
+  `QUEUED → PREPARING → RUNNING → VALIDATING → COMPLETED`. A2 never reaches `APPLIED`/`DISCARDED`.
+- **Writer classification** comes from the trusted profile contract (`workspaceAccess:
+  sandbox-write` ⇒ writer; `implement` only in v1) — never from prompt text.
+- **Concurrency:** persisted, restart-safe. A2 executes jobs serially (one active job globally);
+  writer admission additionally enforces ≤1 active writer globally and ≤1 per project inside the
+  same `BEGIN IMMEDIATE` claim transaction, so a restart can never double-admit. Excess jobs **wait
+  in QUEUED**, they are not rejected.
+- **Startup recovery:** on executor boot, any job found `PREPARING`/`RUNNING`/`VALIDATING` (no
+  attachable runner exists in A2) fails closed to `FAILED_INFRASTRUCTURE` with reason
+  `executor restarted during active fake execution`; `QUEUED` jobs remain eligible. Graceful SIGTERM
+  shutdown fails active work closed the same way.
+- **Cancellation** (`agent_cancel`): authorize + verify ownership → CAS to `CANCELLED` → cooperative
+  `AbortSignal` aborts active fake work → writer authority released. No Docker kill (no runner).
+- **Failure taxonomy in use:** `FAILED_AGENT` (deterministic backend failure), `FAILED_TIMEOUT`
+  (exceeds trusted `maxRuntimeMs`), `FAILED_INFRASTRUCTURE` (restart/shutdown), `CANCELLED`, plus
+  dispatch-time `UNKNOWN_PROJECT`/`FORBIDDEN_BACKEND`/`FORBIDDEN_PROFILE` before any job persists.
+- **Defense in depth:** the executor independently re-validates project/backend/profile/resource
+  policy against trusted `config/agents.yaml` and re-enforces job ownership — gateway checks are
+  never assumed sufficient.
+- **Resource policy:** the selected policy is persisted; the fake backend honors `maxRuntimeMs`.
+  A2 does not simulate CPU/RAM/PID limits (A3 runner concern) and fabricates no usage — results
+  carry `usage: { usageAvailable: false }` and `changedFiles: []`.
+
+Modules: `src/executor/agents/{jobStore,jobEngine,fakeBackend,routes}.ts`,
+`src/gateway/agentTools.ts`, executor client extensions in `src/gateway/executorClient.ts`. The
+subsystem is **optional**: without `config/agents.yaml` the executor logs "not configured" and the
+agent routes fail closed with `AGENTS_UNAVAILABLE` — the bridge runs exactly as before.
+
+**A2 boundary (not done here):** no real Kiro/Copilot, no runner container, no sandbox staging, no
+machine diff, no apply/discard, no Docker Engine capability expansion. Those are A3–A7.
 
 ---
 
@@ -39,7 +99,7 @@ A1 delivers the bones only:
 | Trusted config parser/validator | `src/executor/agentConfig.ts` | **not loaded** at startup |
 | Example trusted config | `config/agents.example.yaml` | example only; `agents.yaml` optional and absent |
 
-## 2. Planned MCP tools (contracts defined, none registered)
+## 2. Planned MCP tools (six activated in A2; three contract-only until A6)
 
 ```text
 agents_list      agent_projects
@@ -235,12 +295,12 @@ state.
 
 ## 11. Phase boundaries
 
-| Phase | Adds | Explicitly absent in A1 |
+| Phase | Adds | Status |
 |---|---|---|
-| **A1 (this)** | contracts, scopes, grants, state machine, config schema, docs, tests | any runtime behavior |
-| A2 | job engine, deterministic fake backend, SQLite persistence, first tool registration | — |
-| A3 | runner sandbox, Docker client expansion, resource enforcement, egress policy | — |
-| A4+ | real backends (Kiro, then Copilot at A7), review/apply (A6), sessions (A8), hardening (A9) | — |
+| A1 | contracts, scopes, grants, state machine, config schema, docs, tests | COMPLETE |
+| **A2 (current)** | durable SQLite job engine, deterministic fake backend, six activated tools, persistence, recovery, cancellation | COMPLETE |
+| A3 | runner sandbox, Docker client expansion, resource enforcement, egress policy | not started |
+| A4+ | real backends (Kiro, then Copilot at A7), review/apply (A6), sessions (A8), hardening (A9) | not started |
 
 ## 12. Security invariants (unchanged and extended)
 

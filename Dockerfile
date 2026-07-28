@@ -12,9 +12,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 # tini for correct signal handling / zombie reaping
 RUN apk add --no-cache tini \
-    && mkdir -p /data \
-    && chown node:node /data \
-    && chmod 0700 /data
+    && mkdir -p /data /jobs \
+    && chown node:node /data /jobs \
+    && chmod 0700 /data /jobs
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./

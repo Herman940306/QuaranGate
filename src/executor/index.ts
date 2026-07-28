@@ -3,6 +3,7 @@
  * Authenticated only by the shared INTERNAL_TOKEN over the internal network.
  * Re-enforces target allowlist + workspace confinement independently of the gateway.
  */
+import fs from 'node:fs';
 import express from 'express';
 import { asBridgeError, BridgeError } from '../shared/errors.js';
 import { EXECUTOR_DEFAULTS } from '../shared/types.js';
@@ -10,6 +11,10 @@ import { loadTargetConfig, listTargets, invalidateCache } from './targets.js';
 import { confinedTarget, confinePath, runArgv, runShell } from './execops.js';
 import * as fsops from './fsops.js';
 import { ping } from './docker.js';
+import { loadAgentConfig } from './agentConfig.js';
+import { AgentJobStore } from './agents/jobStore.js';
+import { AgentJobEngine } from './agents/jobEngine.js';
+import { registerAgentRoutes } from './agents/routes.js';
 
 const PORT = Number(process.env.EXECUTOR_PORT ?? 8990);
 const TOKEN = process.env.INTERNAL_TOKEN ?? '';
@@ -20,6 +25,26 @@ if (!TOKEN || TOKEN === '<SET_SECURELY>') {
 }
 
 loadTargetConfig();
+
+// Agent Control Plane (A2): OPTIONAL. Without config/agents.yaml the bridge
+// runs exactly as before and agent routes fail closed (AGENTS_UNAVAILABLE).
+const AGENTS_CONFIG = process.env.AGENTS_CONFIG ?? '/config/agents.yaml';
+const JOBS_DB = process.env.JOBS_DB ?? '/jobs/agents.db';
+let agentEngine: AgentJobEngine | null = null;
+let agentStore: AgentJobStore | null = null;
+if (fs.existsSync(AGENTS_CONFIG)) {
+  const agentConfig = loadAgentConfig(AGENTS_CONFIG);
+  agentStore = new AgentJobStore(JOBS_DB);
+  agentEngine = new AgentJobEngine(agentStore, agentConfig);
+  const recovered = agentEngine.recover();
+  console.log(JSON.stringify({
+    level: 'info', msg: 'agent control plane active',
+    projects: agentConfig.projects.length, backends: agentConfig.backends.length,
+    schemaVersion: agentStore.schemaVersion, recoveredJobs: recovered.length,
+  }));
+} else {
+  console.log(JSON.stringify({ level: 'info', msg: 'agent control plane not configured (optional)' }));
+}
 
 const app = express();
 app.use(express.json({ limit: '8mb' }));
@@ -136,6 +161,8 @@ app.post('/exec/shell', handle(async (req) => {
   });
 }));
 
+registerAgentRoutes(app, handle, () => agentEngine);
+
 app.post('/exec/argv', handle(async (req) => {
   const { targetId, argv, cwd, timeoutMs, principal } = req.body ?? {};
   if (!Array.isArray(argv) || argv.some((a) => typeof a !== 'string')) {
@@ -151,6 +178,8 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 });
 
 function shutdown() {
+  agentEngine?.shutdown();
+  try { agentStore?.close(); } catch { /* best effort */ }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 5000).unref();
 }

@@ -47,4 +47,51 @@ export const executor = {
     call<ExecResult>('/exec/argv', req),
   reload: () => call<{ ok: true }>('/reload', {}),
   readyz: () => call<{ ok: true }>('/readyz').then(() => true).catch(() => false),
+
+  // Agent Control Plane (A2). The executor independently re-validates and
+  // enforces job ownership; the raw prompt is never returned by these calls.
+  agentsList: () => call<{ backends: AgentBackendWire[] }>('/agents').then((r) => r.backends),
+  agentProjects: () => call<{ projects: AgentProjectWire[] }>('/agent/projects').then((r) => r.projects),
+  agentDispatch: (req: {
+    principal: string; backend: string; project: string; profile: string;
+    prompt: string; resourcePolicy?: string; sessionPolicy?: 'new' | 'resume';
+  }) => call<{ job: AgentJobWire }>('/agent/jobs', req).then((r) => r.job),
+  agentJob: (jobId: string, principal: string) =>
+    call<{ job: AgentJobWire }>(`/agent/jobs/${jobId}?principal=${encodeURIComponent(principal)}`).then((r) => r.job),
+  agentJobResult: (jobId: string, principal: string) =>
+    call<{ job: AgentJobWire }>(`/agent/jobs/${jobId}/result?principal=${encodeURIComponent(principal)}`).then((r) => r.job),
+  agentJobCancel: (jobId: string, principal: string) =>
+    call<{ job: AgentJobWire }>(`/agent/jobs/${jobId}/cancel`, { principal }).then((r) => r.job),
 };
+
+export interface AgentBackendWire {
+  id: string;
+  available: boolean;
+  profiles: string[];
+}
+
+export interface AgentProjectWire {
+  id: string;
+  gitRequired: boolean;
+  allowedBackends: string[];
+  allowedProfiles: string[];
+}
+
+export interface AgentJobWire {
+  jobId: string;
+  principalId: string;
+  backend: string;
+  project: string;
+  profile: string;
+  resourcePolicy: string;
+  status: string;
+  failureCode?: string;
+  failureReason?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  promptHash: string;
+  summary?: string;
+  exitCode?: number;
+  writer: boolean;
+}

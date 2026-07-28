@@ -21,6 +21,13 @@ export type BridgeErrorCode =
   | 'DOCKER_UNAVAILABLE'
   | 'MALFORMED_REQUEST'
   | 'INVALID_JOB_TRANSITION'
+  | 'AGENTS_UNAVAILABLE'
+  | 'UNKNOWN_JOB'
+  | 'UNKNOWN_PROJECT'
+  | 'FORBIDDEN_PROJECT'
+  | 'FORBIDDEN_BACKEND'
+  | 'FORBIDDEN_PROFILE'
+  | 'FORBIDDEN_JOB'
   | 'INTERNAL';
 
 export class BridgeError extends Error {

@@ -6,3 +6,4 @@ config/clients.yaml
 data/
 *.log
 .vitest-cache/
+config/agents.yaml

@@ -16,13 +16,20 @@ describe('MCP structured tool outputs', () => {
     await vscode?.close();
   });
 
-  it('advertises an object outputSchema for all 14 tools', async () => {
+  it('advertises an object outputSchema for all 20 operational tools', async () => {
+    // 14 original tools + 6 activated Agent Control Plane tools (Phase A2).
     const { tools } = await vscode.listTools();
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(20);
 
     for (const tool of tools) {
       expect(tool.outputSchema, `${tool.name} missing outputSchema`).toBeTruthy();
       expect(tool.outputSchema?.type, `${tool.name} outputSchema must be an object`).toBe('object');
+    }
+
+    // The three review/apply-lifecycle contracts stay unregistered until A6.
+    const names = tools.map((t) => t.name);
+    for (const t of ['agent_diff', 'agent_apply', 'agent_discard']) {
+      expect(names, `${t} must remain contract-only`).not.toContain(t);
     }
   });
 

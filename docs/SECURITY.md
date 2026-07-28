@@ -49,12 +49,36 @@ destructive annotation, nor use `terminal_exec` as a bypass for a client-side sa
 authorization and integration tests continue to verify the underlying `files:delete` capability for
 clients that are permitted to invoke it.
 
-## Agent Control Plane scopes (Phase A1 — contracts only, nothing live)
+## Agent Control Plane (Phase A2 — durable job engine behind a fake backend)
 
-Four additional scopes exist in the closed scope model: `agents:read`, `agents:dispatch`,
-`agents:cancel`, `agents:apply`. **No tool consumes them yet** — the nine agent tool contracts are
-defined but not registered, so granting these scopes enables nothing in the current bridge.
+Six of the nine agent tools are now live (`agents_list`, `agent_projects`, `agent_dispatch`,
+`agent_status`, `agent_result`, `agent_cancel`), executed by a **deterministic fake backend** —
+there is no real agent, runner container, sandbox, network egress, or file mutation. Scopes
+`agents:read`, `agents:dispatch`, `agents:cancel` are enforced; `agents:apply` remains defined but
+unconsumed (apply lands in A6). `agent_diff`/`agent_apply`/`agent_discard` stay unregistered.
 
+A2-specific security properties (unit- and live-integration-tested):
+
+- **Authorization before work.** `agent_dispatch` runs the full grant matrix (scope + project +
+  backend + profile) in the gateway *before* any executor call, and the executor independently
+  re-validates project/backend/profile/resource-policy against trusted `config/agents.yaml`
+  (defense in depth). An unauthenticated or unauthorized request never persists a job.
+- **Job ownership** is enforced for status/result/cancel in both the gateway (pure A1 matrix) and
+  the executor (by `principalId` on the persisted row). No cross-principal override exists.
+- **No caller-controlled execution.** Failure/delay behavior of the fake backend is selected only by
+  dependency injection in tests — never by a public MCP field. Strict schemas still reject
+  `hostPath`/`runnerImage`/`mounts`/`privileged`/`networkMode`/`dockerSocket`/unknown properties.
+- **Prompt confidentiality.** The bounded raw prompt lives only in the executor SQLite store; it is
+  never audited, never logged, never returned by status, and not returned by result. Only
+  `promptHash` is logged/audited. No provider credentials exist in A2, and none are stored.
+- **Storage isolation.** The job DB is on an executor-owned volume (`mcp-bridge-jobs`, `0700`,
+  `node`), a separate trust domain from the gateway OAuth `/data` volume; it is never mounted into
+  the gateway or any target. Restart fails active jobs closed to `FAILED_INFRASTRUCTURE` (never
+  silently resurrected) and cannot double-admit writers.
+- **Boundary unchanged.** Gateway still holds no docker.sock and binds loopback only; the executor
+  is still unpublished; no Docker Engine capability was added.
+
+Scopes in the closed model: `agents:read`, `agents:dispatch`, `agents:cancel`, `agents:apply`.
 Security properties fixed by the A1 contract (unit-tested):
 
 - **Deny by default.** Agent access requires both an `agents:*` scope and explicit

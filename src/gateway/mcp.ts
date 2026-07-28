@@ -15,6 +15,7 @@ import {
   principalHasScope,
 } from './config.js';
 import { currentPrincipal } from './context.js';
+import { registerAgentTools } from './agentTools.js';
 
 function require2(scope: Scope, targetId: string): Principal {
   const p = currentPrincipal();
@@ -266,6 +267,10 @@ export function buildServer(): McpServer {
     }
     return { target, result: res };
   }));
+
+  // Agent Control Plane (A2): activates exactly six of the nine contracts.
+  // agent_diff / agent_apply / agent_discard remain contract-only until A6.
+  registerAgentTools(server);
 
   return server;
 }

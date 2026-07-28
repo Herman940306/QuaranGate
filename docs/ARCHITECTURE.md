@@ -94,19 +94,28 @@ the canonical workspace root, which defeats symlink and nested-symlink escapes. 
 tar archive API and all other ops use argv-array `docker exec` (no shell), so there is no command
 injection surface on paths.
 
-## Agent Control Plane (specification only — Phase A1)
+## Agent Control Plane (Phase A2 — durable job engine, fake backend)
 
-The repository additionally carries the **contracts** for the future governed Agent Dispatch
-feature: shared types + a pure job state machine (`src/shared/agents.ts`), four `agents:*` scopes
-and per-principal project/backend/profile grants (`src/gateway/config.ts`), pure authorization
-helpers (`src/gateway/agentAuthz.ts`), strict Zod schemas for the nine planned agent tools
-(`src/gateway/agentSchemas.ts`), and an executor-side trusted-config validator
-(`src/executor/agentConfig.ts` + `config/agents.example.yaml`).
+The bridge now runs the governed Agent Dispatch **orchestration** layer behind a deterministic
+**fake** backend. The operational MCP surface is **20 tools**: the 14 above plus six activated
+agent tools — `agents_list`, `agent_projects`, `agent_dispatch`, `agent_status`, `agent_result`,
+`agent_cancel`. `agent_diff`/`agent_apply`/`agent_discard` remain contract-only until A6.
 
-**None of this is live.** No agent tool is registered with `buildServer()` (the operational MCP
-surface remains exactly the 14 tools above), no executor agent route exists, no job store exists,
-and `config/agents.yaml` is optional and absent. Activation begins in Phase A2 with a
-deterministic fake backend. See `docs/AGENT_CONTROL_PLANE.md` for the full contract.
+Flow: gateway (authenticate → A1 authorization matrix → strict A1 Zod schemas → audit) delegates to
+a **new private executor API** (`/agents`, `/agent/projects`, `/agent/jobs`,
+`/agent/jobs/:id[/result|/cancel]`) which owns a durable **SQLite job engine** (built-in
+`node:sqlite`, executor-owned `mcp-bridge-jobs` volume at `/jobs`). `agent_dispatch` returns a
+`jobId` immediately; a deterministic fake backend (no shell/Docker/network/AI, changes no files)
+drives `QUEUED → PREPARING → RUNNING → VALIDATING → COMPLETED` through atomic compare-and-set
+transitions. Jobs execute serially; writer concurrency (≤1 global, ≤1 per project) is a persisted,
+restart-safe lock. On executor restart, active jobs fail closed to `FAILED_INFRASTRUCTURE` and
+queued jobs resume. The executor re-validates trusted config and job ownership independently of the
+gateway. The subsystem is optional — without `config/agents.yaml` the bridge behaves exactly as
+before.
+
+**Still absent (A3+):** real Kiro/Copilot, runner containers, sandbox staging, machine diffs,
+apply/discard, and any Docker Engine capability expansion. The executor's Docker client is
+unchanged. See `docs/AGENT_CONTROL_PLANE.md` for the full contract and A2 details.
 
 ## Terminal model
 
