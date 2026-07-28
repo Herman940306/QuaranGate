@@ -13,9 +13,13 @@ import * as fsops from './fsops.js';
 import { ping } from './docker.js';
 import { loadAgentConfig } from './agentConfig.js';
 import { AgentJobStore } from './agents/jobStore.js';
-import { AgentJobEngine } from './agents/jobEngine.js';
+import { AgentJobEngine, type AgentBackendAdapter } from './agents/jobEngine.js';
 import { registerAgentRoutes } from './agents/routes.js';
 import { RunnerSandbox } from './agents/sandboxRunner.js';
+import { CredentialManager } from './agents/credentialManager.js';
+import { createKiroBackendFactory } from './agents/kiroFactory.js';
+import type { AgentJobRow } from './agents/jobStore.js';
+import type { AgentResourcePolicy } from '../shared/agents.js';
 
 const PORT = Number(process.env.EXECUTOR_PORT ?? 8990);
 const TOKEN = process.env.INTERNAL_TOKEN ?? '';
@@ -31,26 +35,61 @@ loadTargetConfig();
 // runs exactly as before and agent routes fail closed (AGENTS_UNAVAILABLE).
 const AGENTS_CONFIG = process.env.AGENTS_CONFIG ?? '/config/agents.yaml';
 const JOBS_DB = process.env.JOBS_DB ?? '/jobs/agents.db';
-// A3 sandbox image is TRUSTED configuration (never caller-selectable). Absent by
-// default: the deterministic fake backend remains the operational A2 backend and
-// the sandbox is exercised only through controlled tests until A4.
+// A3/A4 runner infrastructure is TRUSTED configuration (never caller-selectable).
+// When AGENT_RUNNER_IMAGE / AGENT_PROXY_IMAGE / AGENT_KIRO_KEY_PATH are all set,
+// the real read-only Kiro backend is wired for `backend: kiro`. Otherwise the
+// deterministic fake backend remains the operational backend (unchanged A2/A3
+// behavior). None of these are ever caller-selectable.
 const RUNNER_IMAGE = process.env.AGENT_RUNNER_IMAGE ?? '';
+const PROXY_IMAGE = process.env.AGENT_PROXY_IMAGE ?? '';
+const HELPER_IMAGE = process.env.AGENT_HELPER_IMAGE ?? RUNNER_IMAGE;
+const KIRO_KEY_PATH = process.env.AGENT_KIRO_KEY_PATH ?? '';
+// Trusted zero-inference verification switch. When set truthy the real Kiro
+// backend stops after ACP session/new (no session/prompt, no model turn) — used
+// by the live deployment gate / as a health probe. Never caller-selectable.
+const KIRO_DRY_RUN = /^(1|true|yes)$/i.test(process.env.AGENT_KIRO_DRY_RUN ?? '');
 let agentEngine: AgentJobEngine | null = null;
 let agentStore: AgentJobStore | null = null;
 if (fs.existsSync(AGENTS_CONFIG)) {
   const agentConfig = loadAgentConfig(AGENTS_CONFIG);
   agentStore = new AgentJobStore(JOBS_DB);
-  agentEngine = new AgentJobEngine(agentStore, agentConfig);
+  const sandbox = new RunnerSandbox({ image: RUNNER_IMAGE });
+
+  // A4: wire the real Kiro backend when the trusted runner infrastructure is
+  // configured. The factory selects KiroBackend ONLY for backend=kiro and falls
+  // back to the fake backend otherwise. KiroBackend launches the runner purely
+  // through the Docker Engine API (no docker CLI) and denies write profiles.
+  let backendFactory:
+    | ((job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null)
+    | undefined;
+  let kiroEnabled = false;
+  if (RUNNER_IMAGE && PROXY_IMAGE && KIRO_KEY_PATH) {
+    const credentialManager = new CredentialManager({ credentialPath: KIRO_KEY_PATH, helperImage: HELPER_IMAGE });
+    backendFactory = createKiroBackendFactory(agentConfig.projects, {
+      runnerImage: RUNNER_IMAGE,
+      helperImage: HELPER_IMAGE,
+      proxyImage: PROXY_IMAGE,
+      // The proxy runs the bridge's own image, which contains the compiled
+      // egress proxy — no host bind of the project or dist is needed.
+      proxyCmd: ['node', '/app/dist/executor/agents/egressProxyMain.js'],
+      credentialManager,
+      sandbox,
+      dryRun: KIRO_DRY_RUN,
+    });
+    kiroEnabled = true;
+  }
+
+  agentEngine = new AgentJobEngine(agentStore, agentConfig, undefined, backendFactory);
   const recovered = agentEngine.recover();
   console.log(JSON.stringify({
     level: 'info', msg: 'agent control plane active',
     projects: agentConfig.projects.length, backends: agentConfig.backends.length,
     schemaVersion: agentStore.schemaVersion, recoveredJobs: recovered.length,
+    kiroBackend: kiroEnabled ? (KIRO_DRY_RUN ? 'enabled(dry-run)' : 'enabled') : 'fake-only',
   }));
   // A3: label-scoped reconciliation of any bridge-owned runner sandbox resources
   // left after a restart (fail closed). Only exact ownership labels are touched;
   // this never enumerates or deletes unrelated Docker resources.
-  const sandbox = new RunnerSandbox({ image: RUNNER_IMAGE });
   sandbox.reconcileOrphans()
     .then((r) => console.log(JSON.stringify({ level: 'info', msg: 'sandbox orphan reconciliation', removedContainers: r.removedContainers.length, removedVolumes: r.removedVolumes.length })))
     .catch((e) => console.log(JSON.stringify({ level: 'warn', msg: 'sandbox orphan reconciliation failed', error: e instanceof Error ? e.message.slice(0, 200) : String(e) })));

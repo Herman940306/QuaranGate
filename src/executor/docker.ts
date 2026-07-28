@@ -309,6 +309,56 @@ export async function removeContainer(id: string, force = true): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// A4 network primitives (job-scoped backend-only egress).
+//
+// Added strictly for the trusted internal runner sandbox. Never exposed as an
+// executor route; bodies are built from trusted policy only. Enumeration and
+// removal are always scoped by the managed-ownership label filter.
+// ---------------------------------------------------------------------------
+
+export interface NetworkSummary { Id: string; Name: string; Labels: Record<string, string> | null }
+
+/** Create a user-defined network. `internal:true` gives NO external route. */
+export async function createNetwork(name: string, opts: { internal: boolean; labels: Record<string, string> }): Promise<string> {
+  const r = await dockerJson<{ Id: string }>('POST', `${API}/networks/create`, {
+    Name: name,
+    Driver: 'bridge',
+    Internal: opts.internal,
+    CheckDuplicate: true,
+    Labels: opts.labels,
+  });
+  return r.Id;
+}
+
+export async function removeNetwork(idOrName: string): Promise<void> {
+  const res = await client.request({ method: 'DELETE', path: `${API}/networks/${encodeURIComponent(idOrName)}` });
+  const text = await res.body.text();
+  if (res.statusCode >= 400 && res.statusCode !== 404) {
+    throw new BridgeError('DOCKER_UNAVAILABLE', `network remove failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
+  }
+}
+
+export async function listNetworksByFilter(filters: Record<string, string[]>): Promise<NetworkSummary[]> {
+  return dockerJson<NetworkSummary[]>('GET', `${API}/networks?${filtersParam(filters)}`);
+}
+
+/** Attach an existing container to a network, optionally with DNS aliases. */
+export async function connectNetwork(networkIdOrName: string, containerId: string, aliases?: string[]): Promise<void> {
+  const body: Record<string, unknown> = { Container: containerId };
+  if (aliases?.length) body.EndpointConfig = { Aliases: aliases };
+  const res = await client.request({
+    method: 'POST',
+    path: `${API}/networks/${encodeURIComponent(networkIdOrName)}/connect`,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await res.body.text();
+  if (res.statusCode >= 400) {
+    throw new BridgeError('DOCKER_UNAVAILABLE', `network connect failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
+  }
+}
+
 export async function ping(): Promise<boolean> {
   try {
     const res = await client.request({ method: 'GET', path: '/_ping' });

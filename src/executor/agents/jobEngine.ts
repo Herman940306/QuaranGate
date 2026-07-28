@@ -21,6 +21,19 @@ import type { AgentControlPlaneConfig } from '../agentConfig.js';
 import { AgentJobStore, type AgentJobRow } from './jobStore.js';
 import { FakeAgentBackend, type FakeBackendOptions } from './fakeBackend.js';
 
+/**
+ * Generic backend interface. Both FakeAgentBackend and KiroBackend implement
+ * this contract. The job engine uses it to drive the lifecycle.
+ */
+export interface AgentBackendAdapter {
+  prepare(signal: AbortSignal): Promise<void>;
+  run(signal: AbortSignal): Promise<void>;
+  validate(signal: AbortSignal): Promise<{ summary: string; exitCode: number }>;
+  isAgentFailure(e: unknown): boolean;
+  /** Cleanup resources on failure/cancellation (best-effort). */
+  cleanup?(): Promise<void>;
+}
+
 export interface DispatchRequest {
   principal: string;
   backend: string;
@@ -43,6 +56,32 @@ function log(msg: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ level: 'info', msg, ...fields }));
 }
 
+/** Authorization/policy BridgeError codes → a deliberate policy denial. */
+const POLICY_ERROR_CODES: ReadonlySet<string> = new Set([
+  'FORBIDDEN_PROFILE', 'FORBIDDEN_BACKEND', 'FORBIDDEN_POLICY',
+  'FORBIDDEN_PROJECT', 'FORBIDDEN_JOB', 'FORBIDDEN_SCOPE',
+]);
+
+/**
+ * Map a non-cancel/non-timeout execution error onto the canonical failure
+ * taxonomy. A deliberate profile/backend prohibition (e.g. the A4 read-only
+ * backend refusing `implement`) is a POLICY failure, NOT infrastructure. A
+ * failed trusted precondition (e.g. dirty staging source) is a PRECONDITION
+ * failure. A genuine agent-execution error is FAILED_AGENT. Everything else is
+ * infrastructure.
+ */
+function classifyExecutionFailure(
+  e: unknown,
+  backend: AgentBackendAdapter | null,
+): 'FAILED_POLICY' | 'FAILED_PRECONDITION' | 'FAILED_AGENT' | 'FAILED_INFRASTRUCTURE' {
+  if (e instanceof BridgeError) {
+    if (POLICY_ERROR_CODES.has(e.code)) return 'FAILED_POLICY';
+    if (e.code === 'PRECONDITION_FAILED') return 'FAILED_PRECONDITION';
+  }
+  if (backend?.isAgentFailure(e) ?? false) return 'FAILED_AGENT';
+  return 'FAILED_INFRASTRUCTURE';
+}
+
 export class AgentJobEngine {
   private active = new Map<string, ActiveExecution>();
   private processing = false;
@@ -53,6 +92,11 @@ export class AgentJobEngine {
     private readonly config: AgentControlPlaneConfig,
     /** Test seam: inject deterministic fake behaviors. Production uses defaults. */
     private readonly backendOptions: (job: AgentJobRow) => FakeBackendOptions = () => ({}),
+    /**
+     * Backend factory (A4+). If provided, the engine uses this to create the
+     * backend adapter for a job. If it returns null, falls back to FakeAgentBackend.
+     */
+    private readonly backendFactory?: (job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null,
   ) {}
 
   /** Startup reconciliation per the documented A2 policy (fail closed). */
@@ -199,10 +243,10 @@ export class AgentJobEngine {
       exec.controller.abort(new Error(`exceeded maxRuntimeMs ${policy.maxRuntimeMs}`));
     }, policy.maxRuntimeMs);
 
-    const backend = new FakeAgentBackend(
-      { jobId: job.jobId, backend: job.backend, project: job.project, profile: job.profile, maxRuntimeMs: policy.maxRuntimeMs },
-      this.backendOptions(job),
-    );
+    // Backend construction can legitimately FAIL CLOSED (e.g. the Kiro backend
+    // denies a write profile). Construct inside the guarded block so such a
+    // denial fails the job rather than leaving it stuck in PREPARING.
+    let backend: AgentBackendAdapter | null = null;
 
     const step = (from: AgentJobStatus, to: AgentJobStatus, extras = {}): void => {
       if (!this.store.transition(job.jobId, from, to, extras)) {
@@ -213,6 +257,11 @@ export class AgentJobEngine {
     };
 
     try {
+      // Select backend: factory (A4 real Kiro) or fallback (A2 fake).
+      backend = this.backendFactory?.(job, policy) ?? new FakeAgentBackend(
+        { jobId: job.jobId, backend: job.backend, project: job.project, profile: job.profile, maxRuntimeMs: policy.maxRuntimeMs },
+        this.backendOptions(job),
+      );
       // claimNext already moved QUEUED -> PREPARING.
       await backend.prepare(exec.controller.signal);
       step('PREPARING', 'RUNNING');
@@ -225,6 +274,8 @@ export class AgentJobEngine {
         exitCode: result.exitCode,
       });
     } catch (e) {
+      // Ensure cleanup on any failure path.
+      if (backend?.cleanup) { await backend.cleanup().catch(() => {}); }
       this.failActive(job.jobId, exec, backend, e);
     } finally {
       clearTimeout(timeout);
@@ -233,7 +284,7 @@ export class AgentJobEngine {
   }
 
   /** Map an execution error onto the failure taxonomy and persist it (CAS). */
-  private failActive(jobId: string, exec: ActiveExecution, backend: FakeAgentBackend, e: unknown): void {
+  private failActive(jobId: string, exec: ActiveExecution, backend: AgentBackendAdapter | null, e: unknown): void {
     const current = this.store.get(jobId);
     if (!current) return;
     const s = current.status;
@@ -242,8 +293,7 @@ export class AgentJobEngine {
     const failureCode = exec.cause === 'timeout' ? 'FAILED_TIMEOUT'
       : exec.cause === 'shutdown' ? 'FAILED_INFRASTRUCTURE'
       : exec.cause === 'cancel' ? 'CANCELLED'
-      : backend.isAgentFailure(e) ? 'FAILED_AGENT'
-      : 'FAILED_INFRASTRUCTURE';
+      : classifyExecutionFailure(e, backend);
     if (failureCode === 'CANCELLED') return; // cancel() persists CANCELLED itself
     this.store.transition(jobId, s, failureCode, {
       completedAt: new Date().toISOString(),

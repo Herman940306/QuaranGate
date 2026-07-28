@@ -1,0 +1,9 @@
+{
+  "telemetry": {
+    "enabled": false
+  },
+  "updates": {
+    "autoCheck": false,
+    "autoInstall": false
+  }
+}

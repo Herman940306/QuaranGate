@@ -60,6 +60,18 @@ services:
       # Agent Control Plane (A2): optional trusted config + durable job store.
       AGENTS_CONFIG: "/config/agents.yaml"
       JOBS_DB: "/jobs/agents.db"
+      # A4 real read-only Kiro backend (trusted, executor-only). When these are
+      # all set the factory wires the real KiroBackend for backend=kiro; unset =
+      # fake-only. None are caller-selectable. The runner image MUST be the real
+      # :a4 (kiro-cli + kiro-cli-chat), never the :a4-test stub. The proxy runs
+      # the bridge image itself (contains the compiled egress proxy; no bind).
+      AGENT_RUNNER_IMAGE: "${AGENT_RUNNER_IMAGE:-}"
+      AGENT_PROXY_IMAGE: "${AGENT_PROXY_IMAGE:-}"
+      # Executor-internal path of the RO key FILE (never the value). The key is
+      # delivered via the compose secret below, executor-only.
+      AGENT_KIRO_KEY_PATH: "${AGENT_KIRO_KEY_PATH:-}"
+      # Zero-inference verification switch (stop after ACP session/new).
+      AGENT_KIRO_DRY_RUN: "${AGENT_KIRO_DRY_RUN:-}"
     # Access to the docker socket is confined to THIS private service only.
     group_add:
       - "${DOCKER_GID:-1001}"
@@ -69,6 +81,17 @@ services:
       # Executor-owned agent job persistence. NOT mounted into the gateway or
       # any target; separate trust domain from the gateway OAuth /data volume.
       - bridge-jobs:/jobs
+    # A4 dedicated Kiro API key — delivered ONLY to the executor (the trusted
+    # execution authority), as a read-only file, owned by the runtime user
+    # (uid 1000) mode 0400. The raw value never appears in env/labels/args/logs;
+    # the executor reads the FILE and hands the bytes to the runner via a
+    # job-scoped secret volume (never Docker Env). The gateway never receives it.
+    secrets:
+      - source: kiro_api_key
+        target: kiro-api-key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
     tmpfs:
       - /tmp
     networks:
@@ -94,3 +117,10 @@ volumes:
     name: mcp-bridge-data
   bridge-jobs:
     name: mcp-bridge-jobs
+
+secrets:
+  # Dedicated Kiro API key host file (0600, herman-owned). Read by the docker
+  # daemon at deploy time and mounted read-only into the EXECUTOR only. Never
+  # committed to Git; only the file path is referenced here.
+  kiro_api_key:
+    file: ${AGENT_KIRO_KEY_FILE:-/home/herman/.config/mcp-ide-bridge/kiro-api-key}
