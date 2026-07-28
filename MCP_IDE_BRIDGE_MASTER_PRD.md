@@ -3,7 +3,7 @@
 **Document ID:** MIB-MASTER-PRD  
 **Version:** 1.0  
 **Date:** 2026-07-28  
-**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0, A1, A2 and A3 complete (PASS); A4 ready for implementation\
+**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0, A1, A2, A3 and A4 complete (PASS); A5 ready for implementation\
 **Repository:** `/home/herman/projects/mcp-ide-bridge`\
 **Current verified Git HEAD:** `bd1137c` — `feat: add durable agent job engine` (A2 implementation evidence commit)
 
@@ -2934,7 +2934,7 @@ Use this table as the project checkpoint.
 | A1 | Agent-control specification | COMPLETE — PASS | `c3cd057a5bfa9e61dc9f6d448db5e5647c7a1a73` — `docs/audits/PHASE_A1_AGENT_CONTROL_SPECIFICATION.md` |
 | A2 | Job engine + fake backend | COMPLETE — PASS | `bd1137c138598ddc88e57e6be4edcdc0a413ca62` — `docs/audits/PHASE_A2_DURABLE_JOB_ENGINE.md`; post-closeout SQLite security remediation `9e52d5bde11bcabd370fd45baac9021ea955fa04` — `security: restrict agent job database permissions` |
 | A3 | Runner sandbox | COMPLETE — PASS | `7df2e09c9cf1c426d91641894dfb11693cc41439` — `docs/audits/PHASE_A3_RUNNER_SANDBOX.md` |
-| A4 | Kiro ACP read-only | READY FOR IMPLEMENTATION | — |
+| A4 | Kiro ACP read-only | COMPLETE — PASS | `8a0d145b15925a310442d7227fd131fa8b2b3705` — `feat: add read-only Kiro ACP backend`; `docs/audits/PHASE_A4_KIRO_ACP_READ_ONLY.md`. Real Kiro CLI 2.5.0 ACP backend; Docker Engine API launch + runner-internal driver; per-job read-only agent; backend-only egress; provider acceptance job `job_17d4f0186616651450bf6a12c050055d` (model `claude-sonnet-4`, session `855c613a-772c-48f1-be02-fdc158955c8c`). |
 | A5 | Kiro implementation | NOT STARTED | — |
 | A6 | Review / apply / discard | NOT STARTED | — |
 | A7 | GitHub Copilot backend | NOT STARTED | — |
