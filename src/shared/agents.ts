@@ -135,6 +135,107 @@ export function isTerminalAgentJobStatus(s: AgentJobStatus): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// A6 internal apply-attempt lifecycle (NOT public job status) — Phase A6-B1
+// ---------------------------------------------------------------------------
+
+/**
+ * Internal apply-attempt lifecycle. This is durable state persisted
+ * separately from the public {@link AgentJobStatus} above (see jobStore.ts
+ * `apply_attempts` table). It is never returned as a job's public `status`
+ * and no MCP tool exposes these values directly; only the public
+ * COMPLETED -> APPLIED/DISCARDED disposition is ever visible.
+ *
+ * Invariant (drives restart recovery in jobStore.ts `recoverApplyAttempts`):
+ * - STARTED / VERIFYING mean host mutation has NOT begun.
+ * - APPLYING means host mutation MAY have begun.
+ * Therefore an orphaned STARTED/VERIFYING attempt found at startup is safe to
+ * abort with zero mutation; an orphaned APPLYING attempt is not — its
+ * outcome is UNKNOWN and must never be auto-retried.
+ */
+export const AGENT_APPLY_ATTEMPT_STATES = [
+  'STARTED',
+  'VERIFYING',
+  'APPLYING',
+  'VERIFIED_SUCCESS',
+  'PRECONDITION_FAILED',
+  'ARTIFACT_INVALID',
+  'FAILED_ROLLED_BACK',
+  'ABORTED_NO_MUTATION',
+  'UNCERTAIN',
+] as const;
+export type AgentApplyAttemptState = (typeof AGENT_APPLY_ATTEMPT_STATES)[number];
+
+/** States during which an attempt owns exclusive per-project/per-job admission. */
+export const AGENT_APPLY_ATTEMPT_ACTIVE_STATES = ['STARTED', 'VERIFYING', 'APPLYING'] as const;
+
+/** Zero-mutation terminal states: the host project was never touched. */
+export const AGENT_APPLY_ATTEMPT_ZERO_MUTATION_TERMINALS = [
+  'PRECONDITION_FAILED',
+  'ARTIFACT_INVALID',
+  'ABORTED_NO_MUTATION',
+] as const;
+
+/**
+ * The complete internal transition matrix. Anything not listed is rejected.
+ * Restart recovery uses these SAME legal edges (STARTED/VERIFYING ->
+ * ABORTED_NO_MUTATION, APPLYING -> UNCERTAIN) — there is no separate
+ * recovery-only transition rule.
+ */
+const AGENT_APPLY_ATTEMPT_TRANSITIONS: Record<AgentApplyAttemptState, readonly AgentApplyAttemptState[]> = {
+  STARTED: ['VERIFYING', 'PRECONDITION_FAILED', 'ARTIFACT_INVALID', 'ABORTED_NO_MUTATION'],
+  VERIFYING: ['APPLYING', 'PRECONDITION_FAILED', 'ARTIFACT_INVALID', 'ABORTED_NO_MUTATION'],
+  APPLYING: ['VERIFIED_SUCCESS', 'FAILED_ROLLED_BACK', 'UNCERTAIN'],
+  VERIFIED_SUCCESS: [],
+  PRECONDITION_FAILED: [],
+  ARTIFACT_INVALID: [],
+  FAILED_ROLLED_BACK: [],
+  ABORTED_NO_MUTATION: [],
+  UNCERTAIN: [],
+};
+
+export function canTransitionApplyAttempt(from: AgentApplyAttemptState, to: AgentApplyAttemptState): boolean {
+  return (AGENT_APPLY_ATTEMPT_TRANSITIONS[from] ?? []).includes(to);
+}
+
+export function assertApplyAttemptTransition(from: AgentApplyAttemptState, to: AgentApplyAttemptState): void {
+  if (!canTransitionApplyAttempt(from, to)) {
+    throw new BridgeError('INVALID_ATTEMPT_TRANSITION', `invalid apply attempt transition ${from} -> ${to}`, 409);
+  }
+}
+
+export function isActiveApplyAttemptState(s: AgentApplyAttemptState): boolean {
+  return (AGENT_APPLY_ATTEMPT_ACTIVE_STATES as readonly string[]).includes(s);
+}
+
+/** No outgoing transitions exist: every terminal apply-attempt outcome, including UNCERTAIN. */
+export function isTerminalApplyAttemptState(s: AgentApplyAttemptState): boolean {
+  return AGENT_APPLY_ATTEMPT_TRANSITIONS[s].length === 0;
+}
+
+/**
+ * Project apply-admission state (Phase A6). Persisted separately from any
+ * job. QUARANTINED is permanent within A6-B1: no MCP tool clears it, and
+ * discarding a job never clears it either.
+ */
+export const AGENT_PROJECT_APPLY_STATES = ['NORMAL', 'QUARANTINED'] as const;
+export type AgentProjectApplyState = (typeof AGENT_PROJECT_APPLY_STATES)[number];
+
+/**
+ * Internal artifact cache/index lifecycle state (Phase A6-B1 schema
+ * foundation). Persisted in `agent_jobs.artifact_state`. This is NOT a
+ * public job status and is never returned by any MCP tool directly.
+ *
+ * NONE     — no artifact has been produced for this job.
+ * AVAILABLE — an artifact has been produced and is indexed; eligible for
+ *             applicability evaluation (re-verification still required at
+ *             apply time — this is cache/index state only, not authority).
+ * EXPIRED  — artifact was previously available but has been invalidated
+ *             (e.g. volume evicted, TTL expired). Cannot be applied.
+ */
+export const ARTIFACT_STATES = ['NONE', 'AVAILABLE', 'EXPIRED'] as const;
+export type ArtifactState = (typeof ARTIFACT_STATES)[number];
+
+// ---------------------------------------------------------------------------
 // Writer policy (v1)
 // ---------------------------------------------------------------------------
 
