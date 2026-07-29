@@ -138,7 +138,9 @@ describe('A4 production path — runner-internal ACP driver via Docker Engine AP
     const r = parseRunnerResult(stdout);
     expect(r!.ok).toBe(true);
     expect(r!.stopReason).toBe('end_turn');
-    expect(r!.toolCalls).toEqual([{ kind: 'read', count: 1 }]);
+    // toolCalls now carry the ACP terminal status alongside kind+count (A5
+    // result-semantics evidence). The read tool completed successfully.
+    expect(r!.toolCalls).toEqual([{ kind: 'read', status: 'completed', count: 1 }]);
     expect(r!.assistantText).toContain('MARKER:FIND-TOKEN');
     expect(exit).toBe(0);
   });

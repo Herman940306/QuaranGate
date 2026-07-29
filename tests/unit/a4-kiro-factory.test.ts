@@ -61,11 +61,11 @@ describe('createKiroBackendFactory — selection', () => {
     expect(factory(row({ backend: 'copilot' }), policy())).toBeNull();
   });
 
-  it('DENIES implement (write capability is A5) — fails closed at construction', () => {
-    expect(() => factory(row({ profile: 'implement' }), policy())).toThrow(/write capability/);
-    try { factory(row({ profile: 'implement' }), policy()); } catch (e: any) {
-      expect(e.code).toBe('FORBIDDEN_PROFILE');
-    }
+  it('ACCEPTS implement (A5 write lane) — constructs a write-mode KiroBackend', () => {
+    const b = factory(row({ profile: 'implement', writer: true }), policy());
+    expect(b).toBeInstanceOf(KiroBackend);
+    expect((b as KiroBackend).isWriteMode()).toBe(true);
+    expect(/^mcp_impl_[0-9a-f]{32}$/.test((b as KiroBackend).getAgentName())).toBe(true);
   });
 
   it('uses an advertised model (never haiku)', () => {
@@ -74,25 +74,28 @@ describe('createKiroBackendFactory — selection', () => {
   });
 });
 
-describe('engine + kiro factory — implement fails closed (never runs, never stuck)', () => {
+describe('engine + kiro factory — implement is ADMITTED (A5), not a policy denial', () => {
   let store: AgentJobStore;
   let engine: AgentJobEngine;
 
   beforeEach(() => {
     const dbPath = join(mkdtempSync(join(tmpdir(), 'mcpb-kf-')), 'agents.db');
     store = new AgentJobStore(dbPath);
-    // A config where the project+backend both allow implement, so dispatch
-    // validation passes and denial must come from the backend factory.
     const c = parseAgentConfigYaml(readFileSync(join(repoRoot, 'config', 'agents.example.yaml'), 'utf8'));
     engine = new AgentJobEngine(store, c, undefined, createKiroBackendFactory(projects, deps()));
   });
   afterEach(() => { engine.shutdown(); try { store.close(); } catch { /* noop */ } });
 
-  it('a kiro+implement job is classified FAILED_POLICY (not INFRA/AGENT/COMPLETED) before any runner', async () => {
+  it('a kiro+implement job passes the policy/construction gate (no longer FAILED_POLICY)', async () => {
+    // A5 owns write capability, so implement is admitted and begins execution.
+    // With deliberately broken (empty) backend deps it can only fail at PREPARE
+    // as INFRASTRUCTURE — which itself proves it was NOT denied at the policy
+    // gate and NOT auto-completed/applied.
     const job = engine.dispatch({
       principal: 'owner', backend: 'kiro', project: 'example-project',
       profile: 'implement', prompt: 'please edit files',
     });
+    expect(job.writer).toBe(true);
     const start = Date.now();
     let row = store.get(job.jobId)!;
     for (;;) {
@@ -101,14 +104,8 @@ describe('engine + kiro factory — implement fails closed (never runs, never st
       if (Date.now() - start > 4000) break;
       await new Promise((r) => setTimeout(r, 10));
     }
-    // A deliberate profile prohibition is a POLICY denial, not infrastructure.
-    expect(row.status).toBe('FAILED_POLICY');
-    expect(row.failureCode).toBe('FAILED_POLICY');
-    expect(row.status).not.toBe('COMPLETED');
-    expect(row.status).not.toBe('FAILED_INFRASTRUCTURE');
-    expect(row.status).not.toBe('FAILED_AGENT');
-    // Denied before execution: no runner ever started (no baseCommit staged).
-    expect(row.baseCommit ?? null).toBeNull();
-    expect(String(row.failureReason)).toMatch(/write capability/);
+    expect(row.failureCode).not.toBe('FAILED_POLICY');
+    expect(row.status).not.toBe('COMPLETED'); // never auto-completes/applies
+    expect(row.status).toBe('FAILED_INFRASTRUCTURE'); // broken deps, past policy gate
   });
 });

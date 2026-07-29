@@ -84,7 +84,18 @@ export class RunnerSandbox {
    * Fails closed (PRECONDITION_FAILED) on a dirty/invalid source. The real
    * source is only ever visible to the trusted stager helper, read-only.
    */
-  async stageWorkspace(opts: { jobId: string; hostPath: string; gitRequired: boolean }): Promise<StageResult> {
+  async stageWorkspace(opts: {
+    jobId: string;
+    hostPath: string;
+    gitRequired: boolean;
+    /**
+     * A5 implement fail-closed policy: when true, staging rejects a source
+     * whose committed HEAD contains ANY tracked symlink (Git mode 120000) with
+     * PRECONDITION_FAILED, BEFORE the workspace is materialized. Read-only
+     * profiles leave this false (A4 parity).
+     */
+    rejectTrackedSymlinks?: boolean;
+  }): Promise<StageResult> {
     if (!opts.gitRequired) {
       // v1 is git-project-first; a non-git snapshot policy is a later decision.
       throw new BridgeError('PRECONDITION_FAILED', 'A3 staging requires a git project (gitRequired=true)', 412);
@@ -93,7 +104,10 @@ export class RunnerSandbox {
     await createVolume(volumeName, ownershipLabels('workspace', opts.jobId));
 
     const name = stagerContainerName(opts.jobId);
-    const body = buildStagerCreateBody({ image: this.opts.image, jobId: opts.jobId, hostPath: opts.hostPath, volumeName });
+    const body = buildStagerCreateBody({
+      image: this.opts.image, jobId: opts.jobId, hostPath: opts.hostPath, volumeName,
+      rejectTrackedSymlinks: opts.rejectTrackedSymlinks,
+    });
     let containerId: string | undefined;
     try {
       containerId = await createContainer(name, body as unknown as Record<string, unknown>);
@@ -105,6 +119,7 @@ export class RunnerSandbox {
         const reason = waited.statusCode === 3 ? 'source working tree is not clean'
           : waited.statusCode === 4 ? 'source is not a git repository'
           : waited.statusCode === 5 ? 'source HEAD cannot be resolved'
+          : waited.statusCode === 6 ? 'source contains a tracked symlink (Git mode 120000); rejected for an implement (write) job'
           : `staging failed (exit ${waited.statusCode})`;
         throw new BridgeError('PRECONDITION_FAILED', reason, 412);
       }

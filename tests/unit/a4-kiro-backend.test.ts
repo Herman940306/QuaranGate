@@ -44,9 +44,16 @@ describe('KiroBackend — profile enforcement', () => {
       expect(() => new KiroBackend(makeJob({ profile: p }), makeOpts())).not.toThrow();
     });
   }
-  it('DENIES implement (write capability — A5)', () => {
-    expect(() => new KiroBackend(makeJob({ profile: 'implement' }), makeOpts())).toThrow(/write capability/);
-    try { new KiroBackend(makeJob({ profile: 'implement' }), makeOpts()); } catch (e: any) {
+  it('ACCEPTS implement (A5 write mode) with an mcp_impl_ identity', () => {
+    // A5: implement is now Kiro-servable through the write lane. audit/plan/
+    // review above remain read-only; a non-Kiro profile still fails closed.
+    const b = new KiroBackend(makeJob({ profile: 'implement' }), makeOpts());
+    expect(b.isWriteMode()).toBe(true);
+    expect(/^mcp_impl_[0-9a-f]{32}$/.test(b.getAgentName())).toBe(true);
+  });
+  it('DENIES a non-Kiro profile (fail closed)', () => {
+    expect(() => new KiroBackend(makeJob({ profile: 'nonsense' as any }), makeOpts())).toThrow();
+    try { new KiroBackend(makeJob({ profile: 'nonsense' as any }), makeOpts()); } catch (e: any) {
       expect(e.code).toBe('FORBIDDEN_PROFILE');
       expect(e.httpStatus).toBe(403);
     }
@@ -101,6 +108,7 @@ describe('buildRunnerCreateBody — hardened Docker Engine API body (no CLI)', (
     controlVolume: 'ctl-vol',
     internalNetwork: 'jobnet-int', proxyUrl: 'http://egress-proxy:8080',
     memoryBytes: 1_073_741_824, nanoCpus: 1_000_000_000, pidsLimit: 128,
+    workspaceReadOnly: true,
   }) as any;
   const hc = body.HostConfig;
   const env: string[] = body.Env;

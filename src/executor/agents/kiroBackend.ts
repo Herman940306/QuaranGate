@@ -33,17 +33,21 @@ import { readFileSync } from 'node:fs';
 import { BridgeError } from '../../shared/errors.js';
 import type { AgentResourcePolicy, AgentProfileId } from '../../shared/agents.js';
 import {
-  ACP_TRUST_TOOLS_FLAG, ACP_AGENT_NAME_PREFIX, assertReadonlyProfile,
+  assertKiroProfile, isWriteProfile,
+  resolveProfileCapability, type ProfileCapability, failedMutationToolCalls,
 } from './acpDriver.js';
 import { CredentialManager, RUNNER_SECRET_PATH, secretVolumeName } from './credentialManager.js';
 import { buildTar, populateVolume } from './runnerAssets.js';
 import { RunnerSandbox, type StageResult } from './sandboxRunner.js';
 import {
   SANDBOX_LABEL_NS, LABEL_MANAGED, LABEL_JOB, LABEL_RESOURCE,
-  RUNNER_USER, WORKSPACE_PATH, toRunnerLimits,
+  RUNNER_USER, WORKSPACE_PATH, toRunnerLimits, buildManifestCreateBody,
 } from './sandboxSpec.js';
 import { jobNetworkName } from './egressProxy.js';
 import { RESULT_MARKER, type RunnerResult } from './runnerMain.js';
+import {
+  parseManifest, diffManifests, type WorkspaceManifest, type ChangeSet,
+} from './changeDetection.js';
 import {
   createNetwork, removeNetwork, connectNetwork, createContainer, startContainer,
   waitContainer, getContainerLogs, inspectContainerFull,
@@ -73,6 +77,7 @@ function homeVolumeName(jobId: string): string { return `${ns()}-home-${jobId}`;
 function controlVolumeName(jobId: string): string { return `${ns()}-control-${jobId}`; }
 function runnerContainerName(jobId: string): string { return `${ns()}-krunner-${jobId}`; }
 function proxyContainerName(jobId: string): string { return `${ns()}-proxy-${jobId}`; }
+function manifestContainerName(jobId: string, phase: string): string { return `${ns()}-manifest-${phase}-${jobId}`; }
 function intNetName(jobId: string): string { return jobNetworkName(jobId); }
 function extNetName(jobId: string): string { return `${jobNetworkName(jobId)}-ext`; }
 
@@ -95,8 +100,16 @@ export interface KiroBackendResult {
   summary: string;
   exitCode: number;
   sessionId: string | null;
-  toolCalls: { kind: string; count: number }[];
+  toolCalls: { kind: string; status?: string; count: number }[];
   stopReason: string;
+  /** Trusted source base commit of the staged workspace (persisted by engine). */
+  baseCommit: string | null;
+  /** Deterministic sandbox change evidence (implement jobs only). */
+  changeSet?: ChangeSet;
+  /** Convenience: changeSet.changedFiles (implement jobs only). */
+  changedFiles?: string[];
+  /** True for A5 implement jobs (write capability was granted). */
+  writeMode: boolean;
 }
 
 export interface KiroBackendOptions {
@@ -151,7 +164,50 @@ export function resolveModel(modelClass: string): string {
  * glob with no MCP, no hooks, no wildcard, no fixed model. Exported so tests can
  * assert the effective capability set directly.
  */
-export function bridgeAgentConfig(name: string): Record<string, unknown> {
+export function bridgeAgentConfig(name: string, opts: { write?: boolean } = {}): Record<string, unknown> {
+  if (opts.write) {
+    // A5 implement lane (documented write-policy remediation): read/grep/glob
+    // PLUS the single canonical `write` mutation tool (official Built-in Tools
+    // name; aliases fs_write/fsWrite). Permission model per the official Kiro
+    // docs:
+    //   - `tools` makes `write` AVAILABLE.
+    //   - `allowedTools` pre-approves ONLY read/grep/glob. `write` is
+    //     deliberately EXCLUDED from allowedTools: the Agent Configuration
+    //     Reference states allowedTools OVERRIDES toolsSettings allowable
+    //     patterns, so including `write` there would nullify the path scoping.
+    //   - `toolsSettings.write.allowedPaths` grants non-interactive writes ONLY
+    //     under /workspace (a tool not in allowedTools is auto-allowed by its
+    //     toolSettings), and `deniedPaths` explicitly denies non-workspace
+    //     locations as defense-in-depth. This matches Kiro's own Development
+    //     Workflow Agent example (write in tools, NOT in allowedTools, scoped
+    //     by toolsSettings).
+    // Still NO mcp, NO hooks, NO wildcard, NO fixed model, NO shell/web/aws/
+    // delegation. `includeMcpJson:false` and empty `mcpServers` prevent any
+    // workspace `.kiro/mcp.json` from being pulled in.
+    return {
+      name,
+      description: 'Bridge-controlled sandbox implementation agent (writes ONLY inside the disposable job workspace).',
+      prompt: 'You are an implementation agent operating inside the MCP IDE Bridge disposable '
+        + 'job sandbox. You may read files, search with grep, list with glob, and CREATE or '
+        + 'MODIFY files ONLY within your workspace. You must NEVER use shell, terminal, web, '
+        + 'MCP, AWS, subagents, delegation, or any tool not explicitly available. Do not '
+        + 'attempt to reach the network or escape the workspace.',
+      mcpServers: {},
+      tools: ['read', 'grep', 'glob', 'write'],
+      toolAliases: {},
+      allowedTools: ['read', 'grep', 'glob'],
+      resources: [],
+      hooks: {},
+      toolsSettings: {
+        write: {
+          allowedPaths: [WORKSPACE_PATH],
+          deniedPaths: [RUNNER_HOME, '/tmp', '/run/secrets', RUNNER_CONTROL_PATH],
+        },
+      },
+      includeMcpJson: false,
+      model: null,
+    };
+  }
   return {
     name,
     description: 'Bridge-controlled read-only analysis agent.',
@@ -192,6 +248,14 @@ export function buildRunnerCreateBody(opts: {
   memoryBytes: number;
   nanoCpus: number;
   pidsLimit: number;
+  /**
+   * Workspace mount mode. A4 read-only profiles (audit/plan/review) mount the
+   * staged snapshot READ-ONLY (true). The A5 `implement` profile mounts the
+   * job-owned workspace volume WRITABLE (false) so Kiro can mutate it in-place.
+   * It remains a Docker-managed job volume staged from the trusted snapshot —
+   * NEVER a host project bind. The host project path is never visible here.
+   */
+  workspaceReadOnly: boolean;
 }): Record<string, unknown> {
   const env = [
     `HTTPS_PROXY=${opts.proxyUrl}`,
@@ -242,7 +306,7 @@ export function buildRunnerCreateBody(opts: {
       PidsLimit: opts.pidsLimit,
       Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=16m' },
       Mounts: [
-        { Type: 'volume', Source: opts.workspaceVolume, Target: WORKSPACE_PATH, ReadOnly: true },
+        { Type: 'volume', Source: opts.workspaceVolume, Target: WORKSPACE_PATH, ReadOnly: opts.workspaceReadOnly },
         { Type: 'volume', Source: opts.secretVolume, Target: '/run/secrets', ReadOnly: true },
         { Type: 'volume', Source: opts.homeVolume, Target: RUNNER_HOME, ReadOnly: false },
         { Type: 'volume', Source: opts.controlVolume, Target: RUNNER_CONTROL_PATH, ReadOnly: true },
@@ -292,17 +356,33 @@ export class KiroBackend {
   private imageId: string | null = null;
   private readonly agentName: string;
   private readonly model: string;
+  private readonly capability: ProfileCapability;
+  private readonly writeMode: boolean;
+  /** Pristine post-staging manifest, captured before the runner writes (write mode only). */
+  private baselineManifest: WorkspaceManifest | null = null;
+  private changeSet: ChangeSet | null = null;
 
   constructor(
     private readonly job: KiroBackendJobInput,
     private readonly opts: KiroBackendOptions,
   ) {
-    assertReadonlyProfile(job.profile);
-    // Unguessable per-job agent name: a staged/tracked project cannot ship a
-    // same-named .kiro/agents/<name>.json to override the bridge agent.
-    this.agentName = `${ACP_AGENT_NAME_PREFIX}${randomBytes(16).toString('hex')}`;
+    // A5: audit/plan/review AND implement are Kiro-servable. The capability
+    // (workspace mode, tools, agent identity, allowed tool kinds) is resolved
+    // from TRUSTED profile policy only — never from the prompt.
+    assertKiroProfile(job.profile);
+    this.capability = resolveProfileCapability(job.profile);
+    this.writeMode = isWriteProfile(job.profile);
+    // Unguessable per-job agent name (mcp_ro_ for read-only, mcp_impl_ for
+    // implement): a staged/tracked project cannot ship a same-named
+    // .kiro/agents/<name>.json to override the bridge agent.
+    this.agentName = `${this.capability.agentNamePrefix}${randomBytes(16).toString('hex')}`;
     this.model = job.model || resolveModel(job.policy.modelClass);
   }
+
+  /** Evidence accessor: whether this job runs in A5 write mode. */
+  isWriteMode(): boolean { return this.writeMode; }
+  /** Evidence accessor: the deterministic change set (implement jobs after validate). */
+  getChangeSet(): ChangeSet | null { return this.changeSet; }
 
   isAgentFailure(e: unknown): boolean { return e instanceof KiroAgentFailure; }
 
@@ -324,8 +404,21 @@ export class KiroBackend {
       log('kiro backend: staging workspace', { jobId: this.job.jobId, project: this.job.project });
       this.staged = await this.opts.sandbox.stageWorkspace({
         jobId: this.job.jobId, hostPath: this.job.hostPath, gitRequired: true,
+        // A5 fail-closed: an implement (write) job whose committed source tree
+        // contains any tracked symlink is rejected at staging (FAILED_
+        // PRECONDITION) before the provider is ever reached. Read-only profiles
+        // are unaffected.
+        rejectTrackedSymlinks: this.writeMode,
       });
       this.checkAbort(signal);
+
+      if (this.writeMode) {
+        // Capture the PRISTINE snapshot manifest before any write can occur.
+        // This is the deterministic baseline change detection compares against.
+        log('kiro backend: capturing baseline manifest', { jobId: this.job.jobId });
+        this.baselineManifest = await this.computeManifest('base');
+        this.checkAbort(signal);
+      }
 
       log('kiro backend: provisioning credential', { jobId: this.job.jobId });
       this.secretVolume = await this.opts.credentialManager.provisionSecret(this.job.jobId);
@@ -355,7 +448,7 @@ export class KiroBackend {
   /** Build the per-job home volume: the bridge agent (random name) + settings. */
   private async provisionHome(): Promise<string> {
     const volName = homeVolumeName(this.job.jobId);
-    const agentJson = JSON.stringify(bridgeAgentConfig(this.agentName), null, 2);
+    const agentJson = JSON.stringify(bridgeAgentConfig(this.agentName, { write: this.writeMode }), null, 2);
     const settingsJson = JSON.stringify({ telemetry: { enabled: false }, updates: { autoCheck: false, autoInstall: false } });
 
     const tar = await buildTar({
@@ -400,7 +493,7 @@ export class KiroBackend {
     const control = {
       agent: this.agentName,
       model: this.model,
-      trustTools: ACP_TRUST_TOOLS_FLAG,
+      trustTools: this.capability.trustTools,
       cwd: WORKSPACE_PATH,
       prompt: this.job.prompt,
       dryRun: Boolean(this.opts.dryRun),
@@ -507,6 +600,9 @@ export class KiroBackend {
       memoryBytes: limits.memoryBytes,
       nanoCpus: limits.nanoCpus,
       pidsLimit: limits.pidsLimit,
+      // A5 core invariant: implement mounts the job workspace WRITABLE; all
+      // read-only profiles keep the A4 read-only mount.
+      workspaceReadOnly: !this.writeMode,
     });
 
     log('kiro backend: launching runner', {
@@ -563,20 +659,75 @@ export class KiroBackend {
       if (!this.turnResult) {
         throw new KiroAgentFailure('no turn result available — run() may have failed');
       }
-      const READONLY_KINDS = new Set(['read', 'grep', 'glob', 'search', 'fetch_read', 'list']);
-      const disallowed = this.turnResult.toolCalls.filter((tc) => !READONLY_KINDS.has(tc.kind));
+      // Enforce the trusted per-profile tool-kind allowlist. Read-only profiles
+      // permit only read/grep/glob/search/list; implement additionally permits
+      // the file-mutation kinds. Shell/web/mcp/aws/delegation kinds fail closed
+      // for EVERY profile (defense in depth even though they were never granted).
+      const r = this.turnResult;
+      const allowed = this.capability.allowedToolKinds;
+      const disallowed = r.toolCalls.filter((tc) => !allowed.has(tc.kind));
       if (disallowed.length > 0) {
         throw new KiroAgentFailure(
-          `agent attempted non-read-only tools: ${disallowed.map((t) => t.kind).join(', ')}`);
+          `agent attempted tools outside the ${this.job.profile} profile policy: `
+          + `${disallowed.map((t) => t.kind).join(', ')}`);
       }
 
-      const r = this.turnResult;
-      const summary = r.dryRun
-        ? `Kiro ACP dry-run OK (protocol=${r.protocolVersion}, agent=${r.agentInfo?.version ?? '?'}, `
-          + `session=${r.sessionId ?? '?'}, model=${this.model})`
-        : (r.assistantText.length > 0
+      // A5 result-semantics correctness (root-cause of the two real failures):
+      // a write/edit tool being CALLED is NOT proof it SUCCEEDED. Inspect the
+      // bounded ACP tool OUTCOME/STATUS evidence — never the assistant prose. If
+      // ANY file-mutation-kind tool call ended in a failure status (failed/
+      // denied/refused/error/…), the implement job is a canonical agent failure
+      // (FAILED_AGENT) even though the turn reached end_turn. Checked BEFORE the
+      // (expensive) change-detection step so a denied write fails fast.
+      if (this.writeMode && !r.dryRun) {
+        const failed = failedMutationToolCalls(r.toolCalls);
+        if (failed.length > 0) {
+          throw new KiroAgentFailure(
+            'sandbox implement job had failed file-mutation tool call(s): '
+            + `${failed.map((t) => `${t.kind}:${t.status}`).join(', ')}; `
+            + 'the write did not succeed — check allowedTools and '
+            + 'toolsSettings.fsWrite.allowedPaths in the agent config');
+        }
+      }
+
+      // A5: deterministic change detection against the pristine baseline. Done
+      // here (before cleanup disposes the workspace) so the evidence is captured
+      // even though A5 never applies it. A zero-diff run with NO failed mutation
+      // is NOT an automatic failure — the change set is recorded as-is and the
+      // job may reach COMPLETED (COMPLETED is never an apply; A6 owns apply).
+      if (this.writeMode) {
+        this.changeSet = await this.detectChanges();
+      }
+
+      const baseCommit = this.staged?.baseCommit ?? null;
+
+      let summary: string;
+      if (r.dryRun) {
+        summary = `Kiro ACP dry-run OK (protocol=${r.protocolVersion}, agent=${r.agentInfo?.version ?? '?'}, `
+          + `session=${r.sessionId ?? '?'}, model=${this.model})`;
+      } else if (this.writeMode) {
+        const c = this.changeSet;
+        const head = r.assistantText.length > 0 ? r.assistantText.slice(0, 3072) + '\n\n' : '';
+        summary = `${head}Kiro implementation completed in sandbox (base=${baseCommit ?? '?'}, `
+          + `changed=${c?.changedCount ?? 0}: +${c?.added.length ?? 0} ~${c?.modified.length ?? 0} `
+          + `-${c?.deleted.length ?? 0}, bytes=${c?.changedBytes ?? 0}). NOT applied to host.`;
+      } else {
+        summary = r.assistantText.length > 0
           ? r.assistantText.slice(0, 4096)
-          : `Kiro analysis completed (profile=${this.job.profile}, tools=${r.toolCalls.length}, stop=${r.stopReason})`);
+          : `Kiro analysis completed (profile=${this.job.profile}, tools=${r.toolCalls.length}, stop=${r.stopReason})`;
+      }
+
+      if (this.writeMode) {
+        log('kiro backend: sandbox change evidence', {
+          jobId: this.job.jobId, baseCommit,
+          added: this.changeSet?.added.length ?? 0,
+          modified: this.changeSet?.modified.length ?? 0,
+          deleted: this.changeSet?.deleted.length ?? 0,
+          changedBytes: this.changeSet?.changedBytes ?? 0,
+          truncated: this.changeSet?.truncated ?? false,
+          diffHash: this.changeSet?.diffHash,
+        });
+      }
 
       return {
         summary,
@@ -584,9 +735,64 @@ export class KiroBackend {
         sessionId: r.sessionId ?? null,
         toolCalls: r.toolCalls,
         stopReason: r.stopReason,
+        baseCommit,
+        changeSet: this.changeSet ?? undefined,
+        changedFiles: this.changeSet?.changedFiles,
+        writeMode: this.writeMode,
       };
     } finally {
       await this.cleanup();
+    }
+  }
+
+  /**
+   * Compare the pristine baseline manifest with a fresh post-run manifest to
+   * produce deterministic change evidence. Never trusts the model's own
+   * account of what it changed. Fails closed if the baseline is missing.
+   */
+  private async detectChanges(): Promise<ChangeSet> {
+    if (!this.baselineManifest) {
+      throw new KiroAgentFailure('baseline manifest missing — cannot compute change evidence');
+    }
+    const post = await this.computeManifest('post');
+    if (!post.ok) {
+      throw new KiroAgentFailure(`post-run manifest failed: ${post.error ?? 'unknown'}`);
+    }
+    return diffManifests(this.baselineManifest, post);
+  }
+
+  /**
+   * Run the hardened, READ-ONLY manifest helper against the staged workspace
+   * volume and parse its single JSON manifest line. No network, non-root, RO
+   * rootfs, no host bind, no docker.sock. Always removes the helper container.
+   */
+  private async computeManifest(phase: 'base' | 'post'): Promise<WorkspaceManifest> {
+    if (!this.staged) {
+      throw new KiroAgentFailure('cannot manifest before staging');
+    }
+    const limits = toRunnerLimits(this.job.policy);
+    const body = buildManifestCreateBody({
+      image: this.opts.runnerImage,
+      jobId: this.job.jobId,
+      volumeName: this.staged.volumeName,
+      limits,
+    });
+    const name = manifestContainerName(this.job.jobId, phase);
+    let containerId: string | undefined;
+    try {
+      containerId = await createContainer(name, body as unknown as Record<string, unknown>);
+      await startContainer(containerId);
+      const waited = await waitContainer(containerId, { timeoutMs: Math.min(limits.maxRuntimeMs, 120_000) });
+      const logs = await getContainerLogs(containerId, limits.maxOutputBytes);
+      if (waited.timedOut) throw new KiroAgentFailure(`${phase} manifest timed out`);
+      const manifest = parseManifest(logs.stdout);
+      if (!manifest) {
+        throw new KiroAgentFailure(`${phase} manifest produced no parseable output (stderr: ${logs.stderr.slice(0, 200)})`);
+      }
+      return manifest;
+    } finally {
+      if (containerId) await removeContainer(containerId, true).catch(() => {});
+      await removeContainer(name, true).catch(() => {});
     }
   }
 

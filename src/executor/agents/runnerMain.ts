@@ -66,7 +66,13 @@ export interface RunnerResult {
   sessionId?: string;
   models?: unknown;
   modes?: unknown;
-  toolCalls: { kind: string; count: number }[];
+  /**
+   * Bounded tool-call OUTCOME evidence, aggregated by (kind, status). The
+   * `status` is the ACP terminal tool status (completed/failed/…) — carried
+   * across the runner boundary so the Executor can tell a SUCCESSFUL mutation
+   * from one that was CALLED but failed/denied (A5 result-semantics fix).
+   */
+  toolCalls: { kind: string; status?: string; count: number }[];
   assistantText: string;
   stopReason: string;
   refusedRequestCount: number;
@@ -134,11 +140,19 @@ export async function runAcpJob(control: RunnerControl): Promise<RunnerResult> {
       timeoutMs: control.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS,
     });
 
-    const counts = new Map<string, number>();
-    for (const tc of turn.toolCalls) counts.set(tc.kind, (counts.get(tc.kind) ?? 0) + 1);
+    // Aggregate by (kind, status) so counts are preserved AND a failed mutation
+    // is not collapsed into a same-kind successful one. A write tool that was
+    // CALLED but ended `failed` therefore survives as its own bounded entry.
+    const counts = new Map<string, { kind: string; status?: string; count: number }>();
+    for (const tc of turn.toolCalls) {
+      const key = `${tc.kind}\u0000${tc.status ?? ''}`;
+      const existing = counts.get(key);
+      if (existing) existing.count += 1;
+      else counts.set(key, { kind: tc.kind, status: tc.status, count: 1 });
+    }
 
     base.ok = true;
-    base.toolCalls = [...counts.entries()].map(([kind, count]) => ({ kind, count }));
+    base.toolCalls = [...counts.values()];
     base.assistantText = turn.assistantText.slice(0, control.maxAssistantBytes ?? DEFAULT_MAX_ASSISTANT_BYTES);
     base.stopReason = turn.stopReason;
     base.refusedRequestCount = driver.getRefusedRequestCount();

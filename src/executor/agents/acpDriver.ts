@@ -236,6 +236,10 @@ export class AcpDriver extends EventEmitter {
   /** Send initialize and verify the negotiated protocol version. */
   async initialize(): Promise<AcpInitResult> {
     this.assertAlive();
+    // Always advertise no client filesystem capability. Kiro performs its
+    // file mutations IN-PROCESS against its own cwd (the writable /workspace
+    // volume). No server->client fs/* delegation is ever needed, and the
+    // fail-closed request backstop below remains fully intact for every profile.
     const result = await this.sendRequest('initialize', {
       protocolVersion: ACP_PROTOCOL_VERSION,
       clientCapabilities: {},
@@ -433,8 +437,12 @@ export class AcpDriver extends EventEmitter {
       return;
     }
     if (hasMethod && hasId) {
-      // Server -> client REQUEST. Fail closed.
-      this.handleServerRequest(msg.method as string, msg.id as number | string);
+      // Server -> client REQUEST.
+      this.handleServerRequest(
+        msg.method as string,
+        msg.id as number | string,
+        msg.params as Record<string, unknown> | undefined,
+      );
       return;
     }
     if (hasMethod) {
@@ -459,15 +467,17 @@ export class AcpDriver extends EventEmitter {
     }
   }
 
-  /** A server-initiated request. We NEVER grant privileged capability. */
-  private handleServerRequest(method: string, id: number | string): void {
+  /**
+   * A server-initiated request. We NEVER grant privileged capability. Any
+   * server->client request (fs/*, terminal/*, permission, …) is answered with
+   * a JSON-RPC error to fail closed WITHOUT hanging the turn.
+   */
+  private handleServerRequest(method: string, id: number | string, params?: Record<string, unknown>): void {
+    void params; // not used — fail closed regardless of params
     this.refusedRequestCount++;
     this.emit('request_refused', method);
-    // Respond with a JSON-RPC error so the agent turn does not hang, but grant
-    // nothing. This is the backstop that keeps write/shell/mcp/web unreachable
-    // even if the available tool set were somehow widened.
     this.sendResponse(id, {
-      error: { code: -32601, message: `method not permitted in read-only bridge session: ${method}` },
+      error: { code: -32601, message: `method not permitted in bridge session: ${method}` },
     });
   }
 
@@ -614,4 +624,192 @@ export function assertReadonlyProfile(profile: string): void {
     throw new BridgeError('FORBIDDEN_PROFILE',
       `profile "${profile}" requires write capability (A5); denied in A4 read-only backend`, 403);
   }
+}
+
+// ---------------------------------------------------------------------------
+// A5 — implement profile write capability policy.
+//
+// A5 grants a SINGLE additional profile (`implement`) the minimum capability to
+// mutate files inside the disposable job workspace. The capability is TRUSTED
+// CODE POLICY, keyed on the profile id only — never inferred from prompt text.
+//
+// Write-tool identity (official Kiro Built-in Tools documentation):
+//   Tool name: `write`. Documented aliases: `fs_write`, `fsWrite`. The
+//   canonical documented identifier `write` is used here (schema-validated with
+//   `kiro-cli 2.5.0 agent validate`). Operations: create + modify + insert, NO
+//   shell. Read stays `read`+`grep`+`glob` exactly as A4.
+//
+//   Kiro performs these writes IN-PROCESS against its own cwd (the writable
+//   job /workspace volume). The client advertises NO fs capability
+//   (clientCapabilities:{}) — no server->client fs/* delegation ever occurs.
+//   The A4 fail-closed server-request backstop (PRIVILEGED_REQUEST_PREFIXES)
+//   remains fully intact and unchanged.
+//
+// Permission model (documented, corrected in the A5 write-policy remediation):
+//   - `tools` makes the write tool AVAILABLE/visible to the agent.
+//   - `allowedTools` pre-approves a tool WITHOUT prompting AND, per the official
+//     Agent Configuration Reference, OVERRIDES any allowable pattern configured
+//     in `toolsSettings`. Therefore `write` MUST NOT appear in `allowedTools`:
+//     doing so would nullify the path scoping. Only read/grep/glob are globally
+//     pre-approved.
+//   - `toolsSettings.write.allowedPaths` provides the path-scoped, non-
+//     interactive write permission ("paths that can be written to without
+//     prompting"); `deniedPaths` explicitly denies non-workspace locations.
+//     This is the intended A5 write-permission primitive — no globally trusted
+//     write is required (mirrors Kiro's own Development Workflow Agent example,
+//     where `write` is in `tools` but NOT in `allowedTools`).
+//   - `--trust-tools` (headless upfront permission) likewise carries ONLY
+//     read/grep/glob — never write.
+//
+// Deliberately NOT granted: shell/terminal (executeCmd), web (web_search/
+// web_fetch), MCP, AWS (use_aws), subagents/delegation (agent_crew/delegate),
+// hooks, or any wildcard. No `-a`/`--trust-all-tools`/`--yolo`.
+// ---------------------------------------------------------------------------
+
+/** The canonical Kiro 2.5.0 file-mutation tool name (aliases: fs_write, fsWrite). */
+export const ACP_WRITE_TOOL = 'write' as const;
+
+/** implement: read/grep/glob (A4) PLUS the single canonical `write` mutation tool. */
+export const ACP_IMPLEMENT_TOOLS = [...ACP_READONLY_TOOLS, ACP_WRITE_TOOL] as const;
+export type AcpImplementTool = (typeof ACP_IMPLEMENT_TOOLS)[number];
+
+/**
+ * The --trust-tools value for implement. Documented policy: write is NEVER
+ * globally trusted — it is path-scoped via toolsSettings.write.allowedPaths.
+ * So implement's upfront trust set is EXACTLY the read-only set (read,grep,glob),
+ * identical to {@link ACP_TRUST_TOOLS_FLAG}.
+ */
+export const ACP_IMPLEMENT_TRUST_TOOLS_FLAG = ACP_READONLY_TOOLS.join(',');
+
+/**
+ * Separate bridge-owned agent identity prefix for implement jobs. A distinct,
+ * still-unguessable per-job name (mcp_impl_<random>) — never a fixed/predictable
+ * name — so a staged/tracked project cannot ship a same-named agent to override
+ * bridge policy (same defense as A4's mcp_ro_).
+ */
+export const ACP_IMPL_AGENT_NAME_PREFIX = 'mcp_impl_';
+export const ACP_IMPL_AGENT_NAME_PATTERN = /^mcp_impl_[0-9a-f]{32}$/;
+
+/** The four profiles the Kiro backend may serve (A4 read-only three + A5 implement). */
+const KIRO_PROFILES = [...READONLY_PROFILES, 'implement'] as const;
+
+/** Only `implement` receives A5 write capability. */
+const WRITE_PROFILES = ['implement'] as const;
+
+export function isWriteProfile(profile: string): boolean {
+  return (WRITE_PROFILES as readonly string[]).includes(profile);
+}
+
+/**
+ * Assert a profile is a Kiro-servable profile (audit/plan/review/implement).
+ * Throws FORBIDDEN_PROFILE for anything else (fail closed). Unlike A4's
+ * assertReadonlyProfile, `implement` is now accepted — but ONLY through the
+ * write-capability lane resolved by {@link resolveProfileCapability}.
+ */
+export function assertKiroProfile(profile: string): void {
+  if (!(KIRO_PROFILES as readonly string[]).includes(profile)) {
+    throw new BridgeError('FORBIDDEN_PROFILE',
+      `profile "${profile}" is not a Kiro-servable profile`, 403);
+  }
+}
+
+/**
+ * ACP tool_call `kind` categories permitted for a READ-ONLY profile. These are
+ * the coarse ACP categories reported in session/update, NOT agent tool ids.
+ * (A4 parity — audit/plan/review.)
+ */
+export const READONLY_TOOL_KINDS: ReadonlySet<string> = new Set([
+  'read', 'grep', 'glob', 'search', 'fetch_read', 'list',
+]);
+
+/**
+ * Additional ACP tool_call `kind` categories permitted for the IMPLEMENT
+ * profile: the file-mutation categories only. Shell/execute, web/fetch(write),
+ * mcp, aws and delegation kinds remain disallowed and fail validation.
+ */
+export const WRITE_TOOL_KINDS: ReadonlySet<string> = new Set([
+  'edit', 'create', 'write', 'fsWrite', 'fs_write', 'delete', 'move',
+]);
+
+// ---------------------------------------------------------------------------
+// A5 — tool OUTCOME semantics.
+//
+// A write/mutation tool being CALLED is NOT proof it SUCCEEDED. ACP reports a
+// terminal `status` on each tool_call / tool_call_update (validated against
+// Kiro 2.5.0: pending | in_progress | completed | failed). A mutation whose
+// terminal status is a failure (failed/denied/refused/error/…) means the write
+// did not land — even if the assistant turn still reaches `end_turn`. These
+// helpers evaluate the bounded status EVIDENCE only; assistant prose is NEVER
+// inspected for failure keywords.
+// ---------------------------------------------------------------------------
+
+/** ACP tool_call `status` values that mean the tool did NOT succeed. */
+export const FAILED_TOOL_STATUSES: ReadonlySet<string> = new Set([
+  'failed', 'error', 'errored', 'denied', 'refused', 'rejected',
+  'cancelled', 'canceled', 'aborted', 'timeout', 'timed_out',
+]);
+
+/** True when a tool_call status denotes an unsuccessful terminal outcome. */
+export function isFailedToolStatus(status: string | undefined | null): boolean {
+  return typeof status === 'string' && FAILED_TOOL_STATUSES.has(status.toLowerCase());
+}
+
+/** Minimal tool-call outcome shape carried across the runner result boundary. */
+export interface ToolCallOutcome {
+  kind: string;
+  status?: string;
+}
+
+/**
+ * Return the file-mutation tool calls that ended in a FAILURE status. A
+ * non-empty result is proof that at least one attempted write/edit did not
+ * succeed and the implement job must fail (FAILED_AGENT), regardless of the
+ * assistant stopReason. Pure + bounded — unit-testable without Docker or a
+ * provider call.
+ */
+export function failedMutationToolCalls<T extends ToolCallOutcome>(toolCalls: readonly T[]): T[] {
+  return toolCalls.filter((tc) => WRITE_TOOL_KINDS.has(tc.kind) && isFailedToolStatus(tc.status));
+}
+
+export interface ProfileCapability {
+  /** true only for implement: the job workspace volume is mounted writable. */
+  workspaceWritable: boolean;
+  /** Agent-config `tools` array (available + trusted). */
+  agentTools: readonly string[];
+  /** --trust-tools flag value. */
+  trustTools: string;
+  /** Unguessable per-job agent-name prefix for this lane. */
+  agentNamePrefix: string;
+  /** Regex the generated agent name must match (evidence/tests). */
+  agentNamePattern: RegExp;
+  /** ACP tool_call kinds allowed during validation (superset for implement). */
+  allowedToolKinds: ReadonlySet<string>;
+}
+
+/**
+ * Resolve the trusted capability set for a Kiro profile. Read-only profiles get
+ * the exact A4 capability; `implement` gets read + the single fsWrite tool, a
+ * writable workspace, the mcp_impl_ identity, and the write tool-kind allowlist.
+ * Throws for non-Kiro profiles (fail closed).
+ */
+export function resolveProfileCapability(profile: string): ProfileCapability {
+  assertKiroProfile(profile);
+  if (isWriteProfile(profile)) {
+    return {
+      workspaceWritable: true,
+      agentTools: ACP_IMPLEMENT_TOOLS,
+      trustTools: ACP_IMPLEMENT_TRUST_TOOLS_FLAG,
+      agentNamePrefix: ACP_IMPL_AGENT_NAME_PREFIX,
+      agentNamePattern: ACP_IMPL_AGENT_NAME_PATTERN,
+      allowedToolKinds: new Set([...READONLY_TOOL_KINDS, ...WRITE_TOOL_KINDS]),
+    };
+  }
+  return {
+    workspaceWritable: false,
+    agentTools: ACP_READONLY_TOOLS,
+    trustTools: ACP_TRUST_TOOLS_FLAG,
+    agentNamePrefix: ACP_AGENT_NAME_PREFIX,
+    agentNamePattern: ACP_AGENT_NAME_PATTERN,
+    allowedToolKinds: READONLY_TOOL_KINDS,
+  };
 }

@@ -28,7 +28,17 @@ import { FakeAgentBackend, type FakeBackendOptions } from './fakeBackend.js';
 export interface AgentBackendAdapter {
   prepare(signal: AbortSignal): Promise<void>;
   run(signal: AbortSignal): Promise<void>;
-  validate(signal: AbortSignal): Promise<{ summary: string; exitCode: number }>;
+  validate(signal: AbortSignal): Promise<{
+    summary: string;
+    exitCode: number;
+    /**
+     * Trusted source base commit of the staged workspace (A3+). When present
+     * the engine persists it as job provenance. Set once; never re-inferred.
+     */
+    baseCommit?: string | null;
+    /** Deterministic changed-path evidence (A5 implement jobs). */
+    changedFiles?: string[];
+  }>;
   isAgentFailure(e: unknown): boolean;
   /** Cleanup resources on failure/cancellation (best-effort). */
   cleanup?(): Promise<void>;
@@ -268,6 +278,13 @@ export class AgentJobEngine {
       await backend.run(exec.controller.signal);
       step('RUNNING', 'VALIDATING');
       const result = await backend.validate(exec.controller.signal);
+      // Persist trusted provenance BEFORE completion. base_commit is set once
+      // (independent of the status CAS) so it survives and is available to the
+      // review/apply lifecycle (A6). Reaching COMPLETED is NOT an apply.
+      if (result.baseCommit) {
+        this.store.setBaseCommit(job.jobId, result.baseCommit);
+        log('agent job base commit recorded', { jobId: job.jobId, changedFiles: result.changedFiles?.length ?? 0 });
+      }
       step('VALIDATING', 'COMPLETED', {
         completedAt: new Date().toISOString(),
         summary: result.summary,

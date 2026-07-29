@@ -9,10 +9,12 @@
  *   - resolves the logical project id to its trusted host path (never from a
  *     caller), the concrete model, and the per-job resource policy.
  *
- * `implement` is NOT special-cased here: {@link KiroBackend}'s constructor calls
- * `assertReadonlyProfile`, so a kiro+implement job fails closed (the engine
- * catches the construction error and marks the job failed) — write capability
- * is A5's, never A4's.
+ * Profiles are NOT special-cased here: {@link KiroBackend}'s constructor calls
+ * `assertKiroProfile` and resolves the trusted per-profile capability. As of
+ * A5 the `implement` profile is accepted and granted a writable JOB SANDBOX
+ * (read/grep/glob + fsWrite, mcp_impl_ identity); audit/plan/review remain
+ * strictly read-only. Reaching COMPLETED is never an apply — the host project
+ * is never modified (A6 owns review/apply/discard).
  */
 import type { AgentProfileId, AgentResourcePolicy } from '../../shared/agents.js';
 import type { AgentBackendAdapter } from './jobEngine.js';

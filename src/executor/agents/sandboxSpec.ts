@@ -130,7 +130,17 @@ export function resolveNetworkMode(policy: AgentNetworkPolicy): 'none' {
  * Staging command for a git project: verify a clean checkpoint, then stage the
  * tracked committed content of HEAD ONLY (no untracked, no ignored, no .git,
  * no host secrets). Emits `BASE_COMMIT=<sha>` on stdout. Fails closed:
- *   exit 3 = dirty working tree, 4 = not a git repo, 5 = no resolvable HEAD.
+ *   exit 3 = dirty working tree, 4 = not a git repo, 5 = no resolvable HEAD,
+ *   exit 6 = tracked symlink present while REJECT_SYMLINKS is set (A5 implement).
+ *
+ * A5 tracked-symlink policy (fail closed): when the env var REJECT_SYMLINKS is
+ * non-empty (set ONLY for write/implement jobs — see buildStagerCreateBody),
+ * the committed HEAD tree is scanned with `git ls-files -s` for ANY Git mode
+ * 120000 (symlink) entry. If one exists, staging aborts with exit 6 BEFORE the
+ * workspace is archived — so no symlink is ever materialized and the provider is
+ * never reached. This applies to ALL tracked symlinks regardless of where their
+ * target points (inside or outside the workspace). Read-only profiles leave
+ * REJECT_SYMLINKS unset and are unaffected (A4 parity).
  */
 export const GIT_STAGING_SCRIPT = [
   'set -e',
@@ -140,6 +150,10 @@ export const GIT_STAGING_SCRIPT = [
   'if ! HEAD=$($GIT rev-parse HEAD 2>/dev/null); then echo NO_RESOLVABLE_HEAD >&2; exit 5; fi',
   'STATUS=$($GIT status --porcelain --untracked-files=all)',
   'if [ -n "$STATUS" ]; then echo DIRTY_WORKING_TREE >&2; exit 3; fi',
+  'if [ -n "$REJECT_SYMLINKS" ]; then',
+  '  SYMS=$($GIT ls-files -s | awk \'$1=="120000"{print $4}\');',
+  '  if [ -n "$SYMS" ]; then echo "TRACKED_SYMLINK $SYMS" >&2; exit 6; fi',
+  'fi',
   `$GIT archive --format=tar HEAD | tar -x -C ${WORKSPACE_PATH}`,
   'echo "BASE_COMMIT=$HEAD"',
 ].join('\n');
@@ -212,17 +226,25 @@ export function buildStagerCreateBody(opts: {
   jobId: string;
   hostPath: string;
   volumeName: string;
+  /**
+   * A5: when true (write/implement jobs), the stager fails closed (exit 6) if
+   * the committed HEAD tree contains ANY tracked symlink (Git mode 120000).
+   * Read-only profiles omit this (default false) — A4 parity.
+   */
+  rejectTrackedSymlinks?: boolean;
 }): DockerCreateBody {
   assertJobId(opts.jobId);
   if (!opts.hostPath.startsWith('/') || opts.hostPath.includes('\0')) {
     throw new BridgeError('MALFORMED_REQUEST', 'stager hostPath must be a trusted absolute path', 400);
   }
+  const env = ['HOME=/tmp', 'GIT_OPTIONAL_LOCKS=0'];
+  if (opts.rejectTrackedSymlinks) env.push('REJECT_SYMLINKS=1');
   return {
     Image: opts.image,
     User: RUNNER_USER,
     WorkingDir: '/tmp',
     Cmd: ['sh', '-c', GIT_STAGING_SCRIPT],
-    Env: ['HOME=/tmp', 'GIT_OPTIONAL_LOCKS=0'],
+    Env: env,
     Labels: ownershipLabels('stager', opts.jobId),
     NetworkDisabled: true,
     HostConfig: hardenedHostConfig({
@@ -271,6 +293,85 @@ export function buildRunnerCreateBody(opts: {
       Binds: [],
       Mounts: [{ Type: 'volume', Source: opts.volumeName, Target: WORKSPACE_PATH, ReadOnly: false }],
       NetworkMode: opts.networkMode,
+      Memory: l.memoryBytes,
+      MemorySwap: l.memorySwapBytes,
+      NanoCpus: l.nanoCpus,
+      PidsLimit: l.pidsLimit,
+      Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=16m' },
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// A5 — deterministic workspace content manifest (change detection input).
+//
+// Walks /workspace and emits ONE JSON line describing every regular file as
+// [relPath, size, sha256hex]. Run by a trusted, hardened helper against the
+// workspace volume mounted READ-ONLY (see buildManifestCreateBody) — the agent
+// never produces this. Captured once on the pristine staged snapshot (baseline)
+// and once after the runner exits (post); the pure diff lives in
+// changeDetection.ts. NOT caller-configurable. Bounded: at most MANIFEST_MAX
+// files, and files larger than the per-file hash bound are recorded as
+// `LARGE:<size>` (still detected as changed on size delta) rather than hashed.
+// ---------------------------------------------------------------------------
+
+const MANIFEST_MAX_FILES = 20000;
+const MANIFEST_MAX_HASH_BYTES = 8 * 1024 * 1024;
+
+export const MANIFEST_SCRIPT = [
+  'const fs=require("fs"),cp=require("crypto"),path=require("path");',
+  'const ROOT="' + WORKSPACE_PATH + '";',
+  'const MAXF=' + MANIFEST_MAX_FILES + ',MAXB=' + MANIFEST_MAX_HASH_BYTES + ';',
+  'const out=[];let truncated=false;',
+  'function walk(dir){',
+  '  let ents;try{ents=fs.readdirSync(dir,{withFileTypes:true});}catch(e){return;}',
+  '  ents.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);',
+  '  for(const e of ents){',
+  '    if(out.length>=MAXF){truncated=true;return;}',
+  '    const abs=path.join(dir,e.name);',
+  '    if(e.isSymbolicLink())continue;',
+  '    if(e.isDirectory()){walk(abs);continue;}',
+  '    if(!e.isFile())continue;',
+  '    let st;try{st=fs.statSync(abs);}catch(_){continue;}',
+  '    const rel=abs.slice(ROOT.length+1);',
+  '    let sha;',
+  '    if(st.size>MAXB){sha="LARGE:"+st.size;}',
+  '    else{try{sha=cp.createHash("sha256").update(fs.readFileSync(abs)).digest("hex");}catch(_){sha="ERR";}}',
+  '    out.push([rel,st.size,sha]);',
+  '  }',
+  '}',
+  'try{walk(ROOT);}catch(e){process.stdout.write(JSON.stringify({__manifest:true,ok:false,count:0,truncated:false,entries:[],error:String(e&&e.code||e)})+"\\n");process.exit(0);}',
+  'out.sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);',
+  'process.stdout.write(JSON.stringify({__manifest:true,ok:true,count:out.length,truncated:truncated,entries:out})+"\\n");',
+].join('');
+
+/**
+ * Hardened helper that reads the workspace volume READ-ONLY and emits the
+ * content manifest. Same isolation as the A3 runner (non-root, RO rootfs,
+ * cap-drop ALL, no host bind, no docker.sock, network denied) — but the
+ * workspace is mounted READ-ONLY here because manifesting must never mutate the
+ * snapshot it measures.
+ */
+export function buildManifestCreateBody(opts: {
+  image: string;
+  jobId: string;
+  volumeName: string;
+  limits: RunnerLimits;
+}): DockerCreateBody {
+  assertJobId(opts.jobId);
+  const l = opts.limits;
+  return {
+    Image: opts.image,
+    User: RUNNER_USER,
+    WorkingDir: '/tmp',
+    Cmd: ['node', '-e', MANIFEST_SCRIPT],
+    Env: ['HOME=/tmp'],
+    Labels: ownershipLabels('runner', opts.jobId),
+    NetworkDisabled: true,
+    HostConfig: hardenedHostConfig({
+      Binds: [],
+      Mounts: [{ Type: 'volume', Source: opts.volumeName, Target: WORKSPACE_PATH, ReadOnly: true }],
+      NetworkMode: 'none',
       Memory: l.memoryBytes,
       MemorySwap: l.memorySwapBytes,
       NanoCpus: l.nanoCpus,
