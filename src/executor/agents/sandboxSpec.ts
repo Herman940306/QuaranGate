@@ -27,7 +27,7 @@ export const LABEL_MANAGED = `${SANDBOX_LABEL_NS}.managed`;
 export const LABEL_RESOURCE = `${SANDBOX_LABEL_NS}.resource`;
 export const LABEL_JOB = `${SANDBOX_LABEL_NS}.job`;
 
-export type SandboxResourceKind = 'runner' | 'stager' | 'workspace';
+export type SandboxResourceKind = 'runner' | 'stager' | 'workspace' | 'evidence';
 
 /** The Docker `filters` selector that matches ALL bridge-owned A3 resources. */
 export const MANAGED_FILTER: Record<string, string[]> = { label: [`${LABEL_MANAGED}=true`] };

@@ -48,6 +48,7 @@ import { RESULT_MARKER, type RunnerResult } from './runnerMain.js';
 import {
   parseManifest, diffManifests, type WorkspaceManifest, type ChangeSet,
 } from './changeDetection.js';
+import { captureBeforeEvidence, type BeforeCaptureResult } from './beforeCapture.js';
 import {
   createNetwork, removeNetwork, connectNetwork, createContainer, startContainer,
   waitContainer, getContainerLogs, inspectContainerFull,
@@ -361,6 +362,12 @@ export class KiroBackend {
   /** Pristine post-staging manifest, captured before the runner writes (write mode only). */
   private baselineManifest: WorkspaceManifest | null = null;
   private changeSet: ChangeSet | null = null;
+  /**
+   * A6-B2 STAGED_BEFORE evidence captured after staging and before the model
+   * starts (write-mode jobs only). Immutable after capture; the runner cannot
+   * alter it because it is stored outside the workspace volume.
+   */
+  private beforeCapture: BeforeCaptureResult | null = null;
 
   constructor(
     private readonly job: KiroBackendJobInput,
@@ -383,6 +390,8 @@ export class KiroBackend {
   isWriteMode(): boolean { return this.writeMode; }
   /** Evidence accessor: the deterministic change set (implement jobs after validate). */
   getChangeSet(): ChangeSet | null { return this.changeSet; }
+  /** Evidence accessor: A6-B2 STAGED_BEFORE capture result (implement jobs after prepare). */
+  getBeforeCapture(): BeforeCaptureResult | null { return this.beforeCapture; }
 
   isAgentFailure(e: unknown): boolean { return e instanceof KiroAgentFailure; }
 
@@ -413,6 +422,25 @@ export class KiroBackend {
       this.checkAbort(signal);
 
       if (this.writeMode) {
+        // A6-B2: capture pristine STAGED_BEFORE evidence AFTER staging and BEFORE
+        // any mutation-capable runner/model starts. Evidence is stored on a dedicated
+        // per-job Docker volume (never host filesystem). Fail closed: if capture
+        // fails, prepare() rethrows and the job never reaches run().
+        log('kiro backend: capturing STAGED_BEFORE evidence', { jobId: this.job.jobId });
+        this.beforeCapture = await captureBeforeEvidence({
+          jobId: this.job.jobId,
+          volumeName: this.staged.volumeName,
+          helperImage: this.opts.helperImage,
+          maxEvidenceBytes: this.job.policy.maxEvidenceBytes,
+        });
+        log('kiro backend: STAGED_BEFORE captured', {
+          jobId: this.job.jobId,
+          evidenceVolume: this.beforeCapture.evidenceVolume,
+          entryCount: this.beforeCapture.entryCount,
+          totalBytes: this.beforeCapture.totalBytes,
+        });
+        this.checkAbort(signal);
+
         // Capture the PRISTINE snapshot manifest before any write can occur.
         // This is the deterministic baseline change detection compares against.
         log('kiro backend: capturing baseline manifest', { jobId: this.job.jobId });

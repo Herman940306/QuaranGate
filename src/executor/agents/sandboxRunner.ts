@@ -258,6 +258,8 @@ export class RunnerSandbox {
     const volumes = await listVolumesByFilter(MANAGED_FILTER).catch(() => []);
     for (const v of volumes) {
       if (!isBridgeManaged(v.Labels)) continue;
+      // A6-B2: evidence volumes are retained (not ephemeral) — never reconcile them.
+      if (v.Labels?.[LABEL_RESOURCE] === 'evidence') continue;
       await removeVolume(v.Name, true).catch(() => {});
       removedVolumes.push(v.Name);
       log('sandbox orphan volume reconciled', { volume: v.Name, job: v.Labels?.[LABEL_JOB] });
