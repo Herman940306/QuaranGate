@@ -156,6 +156,7 @@ export const agentDiffInput = z.object({
 }).strict();
 export const agentDiffOutput = z.object({
   jobId,
+  /** Verified artifactHash — the sole approval identity, present on every chunk. */
   diffHash: sha256Hex,
   path: relPath.optional(),
   chunk: z.string().max(MAX_AGENT_DIFF_CHUNK_BYTES),
@@ -163,6 +164,17 @@ export const agentDiffOutput = z.object({
   totalBytes: z.number().int().nonnegative(),
   truncated: z.boolean(),
   cursor: z.string().max(256).optional(),
+  // First-chunk verified canonical metadata (A6-B4). Present only on the first
+  // chunk (absent cursor / validated cursor offset 0). Unknown fields remain
+  // rejected by .strict(); there is deliberately NO structured changes[] array.
+  artifactHash: sha256Hex.optional(),
+  changeSetHash: sha256Hex.optional(),
+  baseCommit: z.string().regex(/^[0-9a-f]{40}$/).optional(),
+  contentComplete: z.boolean().optional(),
+  applicable: z.boolean().optional(),
+  reason: z.string().max(4096).nullable().optional(),
+  opCount: z.number().int().nonnegative().optional(),
+  artifactBytes: z.number().int().nonnegative().optional(),
 }).strict();
 
 export const agentCancelInput = z.object({ jobId }).strict();

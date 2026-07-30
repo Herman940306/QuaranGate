@@ -31,6 +31,18 @@ const dispatchBody = z.object({
 
 const cancelBody = z.object({ principal: principalSchema }).strict();
 
+/** Workspace-relative selection path — never an absolute/host/traversal path. */
+const diffPath = z.string().min(1).max(512).refine(
+  (p) => !p.startsWith('/') && !p.includes('..') && !p.includes('\0') && !p.includes('\\'),
+  'workspace-relative path required',
+);
+const diffBody = z.object({
+  principal: principalSchema,
+  path: diffPath.optional(),
+  cursor: z.string().max(256).optional(),
+  maxBytes: z.number().int().min(1024).max(256 * 1024).optional(),
+}).strict();
+
 function requireJobId(id: unknown): string {
   if (typeof id !== 'string' || !AGENT_JOB_ID_PATTERN.test(id)) {
     throw new BridgeError('MALFORMED_REQUEST', 'invalid job id', 400);
@@ -110,5 +122,24 @@ export function registerAgentRoutes(
     const parsed = cancelBody.safeParse(req.body ?? {});
     if (!parsed.success) throw new BridgeError('MALFORMED_REQUEST', 'cancel: principal required', 400);
     return { job: jobWire(engine().cancel(jobId, parsed.data.principal)) };
+  }));
+
+  // A6-B4: read-only canonical review. The executor re-derives job ownership +
+  // trusted project + artifact volume from durable state (never caller input).
+  app.post('/agent/jobs/:id/diff', handle(async (req) => {
+    const jobId = requireJobId(req.params.id);
+    const parsed = diffBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      throw new BridgeError('MALFORMED_REQUEST', `diff: ${issue?.path.join('.') ?? '?'}: ${issue?.message ?? 'invalid'}`, 400);
+    }
+    const diff = await engine().diff({
+      jobId,
+      principal: parsed.data.principal,
+      path: parsed.data.path,
+      cursor: parsed.data.cursor,
+      maxBytes: parsed.data.maxBytes,
+    });
+    return { diff };
   }));
 }

@@ -407,10 +407,19 @@ export interface AgentResult {
   telemetry?: AgentResourceTelemetry;
 }
 
-/** One bounded chunk of the machine-derived diff (selective retrieval). */
+/**
+ * One bounded chunk of the machine-derived diff (selective retrieval).
+ *
+ * A6-B4: the review surface is derived ONLY from the immutable canonical B3
+ * artifact. `diffHash` is the verified artifactHash (the sole approval
+ * identity — there is deliberately no second approval hash). The optional
+ * verified canonical metadata fields are populated only on the first chunk
+ * (absent cursor or a validated cursor at byte offset 0); they are read back
+ * from the VERIFIED artifact manifest, never copied blindly from SQLite.
+ */
 export interface AgentDiff {
   jobId: AgentJobId;
-  /** sha256 hex of the FULL diff, regardless of chunking. */
+  /** sha256 hex of the FULL diff identity == verified artifactHash. */
   diffHash: string;
   /** Optional single-file selection (workspace-relative). */
   path?: string;
@@ -420,4 +429,15 @@ export interface AgentDiff {
   truncated: boolean;
   /** Opaque continuation token when truncated. */
   cursor?: string;
+
+  // First-chunk verified canonical metadata (A6-B4). Optional because it is
+  // only carried on the first chunk; never an unbounded structured changes[].
+  artifactHash?: string;
+  changeSetHash?: string;
+  baseCommit?: string;
+  contentComplete?: boolean;
+  applicable?: boolean;
+  reason?: string | null;
+  opCount?: number;
+  artifactBytes?: number;
 }

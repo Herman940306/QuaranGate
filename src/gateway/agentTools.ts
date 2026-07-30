@@ -194,6 +194,47 @@ export function registerAgentTools(server: McpServer): void {
     };
   }));
 
+  server.registerTool('agent_diff', {
+    title: 'Review agent job diff',
+    description: 'Review the canonical change set produced by an agent job. Returns verified evidence derived only from the immutable canonical artifact. Read-only; does not mutate the job, project, apply state, or evidence.',
+    inputSchema: AGENT_TOOL_SCHEMAS.agent_diff.input,
+    outputSchema: AGENT_TOOL_SCHEMAS.agent_diff.output,
+    annotations: READ,
+  }, agentGuarded('agent_diff', async (args, p) => {
+    // Executor enforces ownership on this read (UNKNOWN_JOB / FORBIDDEN_JOB).
+    const job = await executor.agentJob(args.jobId, p.id);
+    // Full A1 matrix incl. the A6-B4 refinement: agents:read + ownership +
+    // CURRENT grant for the job's project (project taken from the trusted job
+    // record, never caller input) → FORBIDDEN_PROJECT on revocation.
+    requireAgentAuthz({ tool: 'agent_diff', principal: p, job: jobRef(job) });
+    const diff = await executor.agentDiff({
+      jobId: args.jobId, principal: p.id, path: args.path, cursor: args.cursor, maxBytes: args.maxBytes,
+    });
+    const result: Record<string, unknown> = {
+      jobId: diff.jobId,
+      diffHash: diff.diffHash,
+      chunk: diff.chunk,
+      chunkBytes: diff.chunkBytes,
+      totalBytes: diff.totalBytes,
+      truncated: diff.truncated,
+    };
+    if (diff.path !== undefined) result.path = diff.path;
+    if (diff.cursor !== undefined) result.cursor = diff.cursor;
+    if (diff.artifactHash !== undefined) result.artifactHash = diff.artifactHash;
+    if (diff.changeSetHash !== undefined) result.changeSetHash = diff.changeSetHash;
+    if (diff.baseCommit !== undefined) result.baseCommit = diff.baseCommit;
+    if (diff.contentComplete !== undefined) result.contentComplete = diff.contentComplete;
+    if (diff.applicable !== undefined) result.applicable = diff.applicable;
+    if (diff.reason !== undefined) result.reason = diff.reason;
+    if (diff.opCount !== undefined) result.opCount = diff.opCount;
+    if (diff.artifactBytes !== undefined) result.artifactBytes = diff.artifactBytes;
+    // Bounded audit metadata only — never the diff text or the raw selection path.
+    return {
+      meta: `job=${job.jobId} artifact=${diff.diffHash.slice(0, 12)} bytes=${diff.chunkBytes}/${diff.totalBytes} sel=${diff.path !== undefined ? 'path' : 'all'}${diff.truncated ? ' more' : ''}`,
+      result,
+    };
+  }));
+
   server.registerTool('agent_cancel', {
     title: 'Cancel an agent job',
     description: 'Cancel a queued or running agent job this client owns. Cancellation is final: the job cannot resume (a retry is a new job).',

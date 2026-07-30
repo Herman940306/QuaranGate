@@ -20,6 +20,8 @@ import {
 import type { AgentControlPlaneConfig } from '../agentConfig.js';
 import { AgentJobStore, type AgentJobRow } from './jobStore.js';
 import { FakeAgentBackend, type FakeBackendOptions } from './fakeBackend.js';
+import { verifyCanonicalArtifact, type ReadonlyEvidenceSource } from './artifactReader.js';
+import { renderDiffPage, type DiffPageResult } from './diffRenderer.js';
 
 /**
  * B3 artifact result returned by a backend that constructed a canonical
@@ -82,6 +84,32 @@ export interface DispatchRequest {
   resourcePolicy?: string;
   sessionPolicy?: 'new' | 'resume';
 }
+
+/** A6-B4 review request. path/cursor/maxBytes are bounded caller inputs. */
+export interface DiffRequest {
+  jobId: string;
+  principal: string;
+  path?: string;
+  cursor?: string;
+  maxBytes?: number;
+}
+
+/**
+ * A6-B4 reviewable job statuses. Explicit allowlist (§12): only a job that has
+ * finished executing (COMPLETED) or reached a disposition (APPLIED/DISCARDED)
+ * AND whose artifact_state is AVAILABLE is reviewable. Every other status
+ * (QUEUED, PREPARING, RUNNING, VALIDATING, any FAILED_ code, CANCELLED) is not.
+ */
+const REVIEWABLE_JOB_STATUSES: ReadonlySet<AgentJobStatus> = new Set<AgentJobStatus>([
+  'COMPLETED', 'APPLIED', 'DISCARDED',
+]);
+
+/**
+ * A6-B4 factory for a trusted read-only evidence source. Injected so the
+ * engine never imports Docker directly for review and tests can supply an
+ * in-memory source. The volume comes ONLY from AgentJobRow.artifactVolume.
+ */
+export type EvidenceReaderFactory = (volume: string, jobId: string) => ReadonlyEvidenceSource;
 
 type AbortCause = 'cancel' | 'timeout' | 'shutdown';
 
@@ -173,6 +201,12 @@ export class AgentJobEngine {
      * backend adapter for a job. If it returns null, falls back to FakeAgentBackend.
      */
     private readonly backendFactory?: (job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null,
+    /**
+     * A6-B4 trusted evidence reader factory. Absent in fake-only deployments
+     * (no real artifacts are ever AVAILABLE there, so agent_diff fails closed
+     * with ARTIFACT_NOT_AVAILABLE before a reader would be needed).
+     */
+    private readonly evidenceReaderFactory?: EvidenceReaderFactory,
   ) {}
 
   /** Startup reconciliation per the documented A2 policy (fail closed). */
@@ -257,6 +291,72 @@ export class AgentJobEngine {
       throw new BridgeError('FORBIDDEN_JOB', `job ${jobId} is not owned by client ${principal}`, 403);
     }
     return job;
+  }
+
+  /**
+   * A6-B4: read-only canonical review of an owned job's artifact.
+   *
+   * Option D executor defense-in-depth (per-principal grant enforcement stays
+   * at the gateway; this executor path is independent of clients.yaml):
+   *   1. job exists                              (else UNKNOWN_JOB)
+   *   2. requesting principal owns the job       (else FORBIDDEN_JOB)
+   *   3. project comes ONLY from AgentJobRow.project (never caller input) and
+   *      must still exist in the trusted registry (else FORBIDDEN_PROJECT)
+   *   4. job is reviewable AND its artifact is AVAILABLE (else ARTIFACT_NOT_AVAILABLE)
+   * Then the full B3 identity chain is verified from the trusted evidence
+   * volume and the deterministic renderer produces a bounded page. Non-mutating.
+   */
+  async diff(req: DiffRequest): Promise<DiffPageResult> {
+    const job = this.getOwnedJob(req.jobId, req.principal);
+
+    // Option D: project identity is the trusted job row's project; it must
+    // still be a currently-configured trusted project. Caller can never
+    // substitute a project id here (there is no caller project field).
+    const project = this.config.projects.find((p) => p.id === job.project);
+    if (!project) {
+      throw new BridgeError('FORBIDDEN_PROJECT', `project ${job.project} is not in the trusted registry`, 403);
+    }
+
+    // Reviewable status + AVAILABLE artifact guard (fail closed to a single code).
+    if (
+      !REVIEWABLE_JOB_STATUSES.has(job.status) ||
+      job.artifactState !== 'AVAILABLE' ||
+      !job.artifactHash ||
+      !job.artifactVolume
+    ) {
+      throw new BridgeError('ARTIFACT_NOT_AVAILABLE', `job ${req.jobId} has no reviewable canonical artifact`, 404);
+    }
+
+    if (!this.evidenceReaderFactory) {
+      throw new BridgeError('ARTIFACT_STORAGE_INTEGRITY_FAILED', 'no trusted evidence reader is configured', 500);
+    }
+
+    const source = this.evidenceReaderFactory(job.artifactVolume, job.jobId);
+    try {
+      const verified = await verifyCanonicalArtifact(source, {
+        jobId: job.jobId,
+        principalId: job.principalId,
+        projectId: job.project,
+        backend: job.backend,
+        profile: job.profile,
+        expectedArtifactHash: job.artifactHash,
+        baseCommit: job.baseCommit,
+        changeSetHash: job.changeSetHash,
+        contentComplete: job.artifactContentComplete,
+        applicable: job.artifactApplicable,
+        reason: job.artifactReason,
+        opCount: job.artifactOpCount,
+        artifactBytes: job.artifactBytes,
+      });
+      return renderDiffPage(verified, {
+        jobId: job.jobId,
+        path: req.path,
+        cursor: req.cursor,
+        maxBytes: req.maxBytes,
+      });
+    } finally {
+      if (source.close) await source.close().catch(() => {});
+    }
   }
 
   /**

@@ -118,11 +118,17 @@ const JOB_ADDRESSED: readonly AgentToolName[] = [
  *   agent_projects  agents:read
  *   agent_status    agents:read      + job ownership
  *   agent_result    agents:read      + job ownership
- *   agent_diff      agents:read      + job ownership
+ *   agent_diff      agents:read      + job ownership + CURRENT project grant (job's project)
  *   agent_dispatch  agents:dispatch  + project grant + backend grant + profile grant
  *   agent_cancel    agents:cancel    + job ownership
  *   agent_apply     agents:apply     + job ownership + project grant (job's project)
  *   agent_discard   agents:dispatch  + job ownership
+ *
+ * A6-B4 refinement (approved): agent_diff additionally requires the CURRENT
+ * grant for the job's project — it exposes retained canonical source-code
+ * contents, so a project-grant revocation must also revoke retained review
+ * access. This is DELIBERATELY not applied to agent_status / agent_result
+ * (bounded metadata only), and agent_apply behavior is unchanged.
  */
 export function authorizeAgentTool(req: AgentAuthzRequest): AgentAuthzDecision {
   const { tool, principal } = req;
@@ -152,7 +158,10 @@ export function authorizeAgentTool(req: AgentAuthzRequest): AgentAuthzDecision {
     if (!principalOwnsAgentJob(principal, req.job)) {
       return deny('FORBIDDEN_JOB', `job ${req.job.jobId} is not owned by client ${principal.id}`);
     }
-    if (tool === 'agent_apply' && !principalMayUseAgentProject(principal, req.job.project)) {
+    // agent_apply and agent_diff both require a CURRENT grant for the job's
+    // project (the project is taken from the trusted job record, never caller
+    // input, so a caller can never substitute a project it happens to hold).
+    if ((tool === 'agent_apply' || tool === 'agent_diff') && !principalMayUseAgentProject(principal, req.job.project)) {
       return deny('FORBIDDEN_PROJECT', `project ${req.job.project} not granted to client ${principal.id}`);
     }
     return allow;

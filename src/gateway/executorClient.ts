@@ -62,6 +62,10 @@ export const executor = {
     call<{ job: AgentJobWire }>(`/agent/jobs/${jobId}/result?principal=${encodeURIComponent(principal)}`).then((r) => r.job),
   agentJobCancel: (jobId: string, principal: string) =>
     call<{ job: AgentJobWire }>(`/agent/jobs/${jobId}/cancel`, { principal }).then((r) => r.job),
+  agentDiff: (req: { jobId: string; principal: string; path?: string; cursor?: string; maxBytes?: number }) =>
+    call<{ diff: AgentDiffWire }>(`/agent/jobs/${req.jobId}/diff`, {
+      principal: req.principal, path: req.path, cursor: req.cursor, maxBytes: req.maxBytes,
+    }).then((r) => r.diff),
 };
 
 export interface AgentBackendWire {
@@ -94,4 +98,24 @@ export interface AgentJobWire {
   summary?: string;
   exitCode?: number;
   writer: boolean;
+}
+
+/** A6-B4 bounded review chunk from the executor. Mirrors the public agentDiffOutput. */
+export interface AgentDiffWire {
+  jobId: string;
+  diffHash: string;
+  path?: string;
+  chunk: string;
+  chunkBytes: number;
+  totalBytes: number;
+  truncated: boolean;
+  cursor?: string;
+  artifactHash?: string;
+  changeSetHash?: string;
+  baseCommit?: string;
+  contentComplete?: boolean;
+  applicable?: boolean;
+  reason?: string | null;
+  opCount?: number;
+  artifactBytes?: number;
 }

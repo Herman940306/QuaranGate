@@ -13,7 +13,8 @@ import * as fsops from './fsops.js';
 import { ping } from './docker.js';
 import { loadAgentConfig } from './agentConfig.js';
 import { AgentJobStore } from './agents/jobStore.js';
-import { AgentJobEngine, type AgentBackendAdapter } from './agents/jobEngine.js';
+import { AgentJobEngine, type AgentBackendAdapter, type EvidenceReaderFactory } from './agents/jobEngine.js';
+import { createDockerEvidenceReader } from './agents/artifactReader.js';
 import { registerAgentRoutes } from './agents/routes.js';
 import { RunnerSandbox } from './agents/sandboxRunner.js';
 import { CredentialManager } from './agents/credentialManager.js';
@@ -79,7 +80,16 @@ if (fs.existsSync(AGENTS_CONFIG)) {
     kiroEnabled = true;
   }
 
-  agentEngine = new AgentJobEngine(agentStore, agentConfig, undefined, backendFactory);
+  // A6-B4: trusted read-only evidence reader for agent_diff. Uses the same
+  // trusted helper image as B3 evidence I/O; the volume is always taken from
+  // AgentJobRow.artifactVolume (never caller input). Absent when no helper
+  // image is configured (fake-only deployments never publish an AVAILABLE
+  // artifact, so agent_diff fails closed with ARTIFACT_NOT_AVAILABLE first).
+  const evidenceReaderFactory: EvidenceReaderFactory | undefined = HELPER_IMAGE
+    ? (volume, jobId) => createDockerEvidenceReader(volume, HELPER_IMAGE, jobId)
+    : undefined;
+
+  agentEngine = new AgentJobEngine(agentStore, agentConfig, undefined, backendFactory, evidenceReaderFactory);
   const recovered = agentEngine.recover();
   console.log(JSON.stringify({
     level: 'info', msg: 'agent control plane active',
