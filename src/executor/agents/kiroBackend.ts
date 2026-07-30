@@ -30,6 +30,8 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { Readable } from 'node:stream';
+import { extract as tarExtract } from 'tar-stream';
 import { BridgeError } from '../../shared/errors.js';
 import type { AgentResourcePolicy, AgentProfileId } from '../../shared/agents.js';
 import {
@@ -49,10 +51,15 @@ import {
   parseManifest, diffManifests, type WorkspaceManifest, type ChangeSet,
 } from './changeDetection.js';
 import { captureBeforeEvidence, type BeforeCaptureResult } from './beforeCapture.js';
+import { assertWriteQuiescence, parsePostTarStream, type PostCaptureResult } from './postCapture.js';
+import { constructArtifact, type ArtifactResult, type EvidenceVolumeIO } from './artifactConstructor.js';
+import type { GitObjectReader } from './baseCertifier.js';
+import { createDockerGitObjectReader } from './gitHelper.js';
 import {
   createNetwork, removeNetwork, connectNetwork, createContainer, startContainer,
   waitContainer, getContainerLogs, inspectContainerFull,
   killContainer, removeContainer, removeVolume,
+  getArchive, putArchive,
 } from '../docker.js';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +80,29 @@ const RUNNER_DRIVER_ENTRY = `${RUNNER_CONTROL_PATH}/executor/agents/runnerMain.j
 /** Assistant-text bound carried into the runner result (kept small). */
 const MAX_ASSISTANT_BYTES = 16 * 1024;
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Extract the first regular file's content from a tar stream (used by volume I/O). */
+async function extractSingleFile(tarStream: Readable): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const ex = tarExtract();
+    let found = false;
+    ex.on('entry', (header, stream, next) => {
+      if (found || header.type !== 'file') { stream.resume(); next(); return; }
+      found = true;
+      const chunks: Buffer[] = [];
+      stream.on('data', (c: Buffer) => chunks.push(c));
+      stream.on('end', () => { resolve(Buffer.concat(chunks)); next(); });
+      stream.on('error', reject);
+    });
+    ex.on('finish', () => { if (!found) reject(new Error('no file in tar')); });
+    ex.on('error', reject);
+    tarStream.pipe(ex);
+  });
+}
+
 const ns = (): string => SANDBOX_LABEL_NS.replace(/\./g, '-');
 function homeVolumeName(jobId: string): string { return `${ns()}-home-${jobId}`; }
 function controlVolumeName(jobId: string): string { return `${ns()}-control-${jobId}`; }
@@ -88,6 +118,7 @@ function extNetName(jobId: string): string { return `${jobNetworkName(jobId)}-ex
 
 export interface KiroBackendJobInput {
   jobId: string;
+  principalId: string;
   backend: 'kiro';
   project: string;
   profile: AgentProfileId;
@@ -111,6 +142,8 @@ export interface KiroBackendResult {
   changedFiles?: string[];
   /** True for A5 implement jobs (write capability was granted). */
   writeMode: boolean;
+  /** B3 canonical artifact result (real Kiro writer non-dry-run jobs only). */
+  artifactResult?: ArtifactResult;
 }
 
 export interface KiroBackendOptions {
@@ -317,6 +350,123 @@ export function buildRunnerCreateBody(opts: {
 }
 
 // ---------------------------------------------------------------------------
+// Pure: unique BEFORE budget computation
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the BEFORE budget consumption from UNIQUE regular-file SHA-256
+ * identities. Each unique hash contributes its size exactly once. Duplicate
+ * entries with the same hash contribute zero additional bytes. Inconsistent
+ * sizes for the same hash fail closed (evidence integrity violation).
+ *
+ * Exported for unit testing.
+ */
+export function computeUniqueBeforeBudget(
+  entries: ReadonlyArray<{ kind: string; sha256?: string; sizeBytes?: number }>,
+): { uniqueBeforeBytes: number; knownBeforeHashes: Set<string> } {
+  const hashSizes = new Map<string, number>(); // hash → sizeBytes (first seen)
+  const knownBeforeHashes = new Set<string>();
+
+  for (const entry of entries) {
+    if (entry.kind !== 'file' || !entry.sha256) continue;
+    const hash = entry.sha256;
+    const size = entry.sizeBytes ?? 0;
+    knownBeforeHashes.add(hash);
+
+    const existing = hashSizes.get(hash);
+    if (existing === undefined) {
+      hashSizes.set(hash, size);
+    } else if (existing !== size) {
+      // Inconsistent sizes for the same hash — B2 evidence integrity failure
+      throw new BridgeError(
+        'ARTIFACT_B2_INTEGRITY_FAILED',
+        `BEFORE entries with hash ${hash} have inconsistent sizes: ${existing} vs ${size}`,
+        500,
+      );
+    }
+    // else: duplicate with consistent size — no additional contribution
+  }
+
+  let uniqueBeforeBytes = 0;
+  for (const size of hashSizes.values()) {
+    uniqueBeforeBytes += size;
+  }
+
+  return { uniqueBeforeBytes, knownBeforeHashes };
+}
+
+// ---------------------------------------------------------------------------
+// Pure: cleanup helper Docker spec (test seam)
+// ---------------------------------------------------------------------------
+
+export interface CleanupHelperSpec {
+  Image: string;
+  User: string;
+  Cmd: string[];
+  Labels: Record<string, string>;
+  NetworkDisabled: boolean;
+  HostConfig: {
+    AutoRemove: boolean;
+    Privileged: boolean;
+    ReadonlyRootfs: boolean;
+    CapDrop: string[];
+    SecurityOpt: string[];
+    NetworkMode: string;
+    Mounts: Array<{ Type: string; Source: string; Target: string; ReadOnly: boolean }>;
+    Memory: number;
+    PidsLimit: number;
+  };
+}
+
+/**
+ * Construct and validate the trusted .b3-temp cleanup helper Docker spec.
+ * Production remove() MUST use this exact function. Exported for unit testing.
+ *
+ * @param path - The path to delete (must be '.b3-temp' or start with '.b3-temp/')
+ * @param evidenceVolume - The evidence Docker volume name
+ * @param helperImage - The helper image to use
+ * @param jobId - The job ID (for labels)
+ * @returns The validated Docker container-create spec
+ * @throws BridgeError if the path is invalid
+ */
+export function buildCleanupHelperSpec(
+  path: string,
+  evidenceVolume: string,
+  helperImage: string,
+  jobId: string,
+): CleanupHelperSpec {
+  // Validate path: restricted to the exact .b3-temp directory and descendants.
+  // Reject: absolute paths, traversal (..), dot-only, sibling names (.b3-temp-old)
+  if (path.startsWith('/') || path.includes('..') || path === '.' ||
+      (path !== '.b3-temp' && !path.startsWith('.b3-temp/'))) {
+    throw new BridgeError(
+      'ARTIFACT_STORAGE_INTEGRITY_FAILED',
+      `remove restricted to .b3-temp; rejected path: ${path}`,
+      500,
+    );
+  }
+
+  return {
+    Image: helperImage,
+    User: '0:0',
+    Cmd: ['rm', '-rf', `/evidence/${path}`],
+    Labels: { [LABEL_MANAGED]: 'true', [LABEL_RESOURCE]: 'evidence-rm', [LABEL_JOB]: jobId },
+    NetworkDisabled: true,
+    HostConfig: {
+      AutoRemove: false,
+      Privileged: false,
+      ReadonlyRootfs: false,
+      CapDrop: ['ALL'],
+      SecurityOpt: ['no-new-privileges'],
+      NetworkMode: 'none',
+      Mounts: [{ Type: 'volume', Source: evidenceVolume, Target: '/evidence', ReadOnly: false }],
+      Memory: 32 * 1024 * 1024,
+      PidsLimit: 4,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Backend
 // ---------------------------------------------------------------------------
 
@@ -394,6 +544,18 @@ export class KiroBackend {
   getBeforeCapture(): BeforeCaptureResult | null { return this.beforeCapture; }
 
   isAgentFailure(e: unknown): boolean { return e instanceof KiroAgentFailure; }
+
+  /**
+   * Trusted dry-run indicator (A6-B3 trust-gate remediation). Reports the
+   * TRUSTED CONSTRUCTION-TIME configuration this backend instance was built
+   * with (`KiroBackendOptions.dryRun`, wired from the executor's own
+   * `AGENT_KIRO_DRY_RUN` startup flag in src/executor/index.ts via
+   * kiroFactory.ts) — never the ACP turn's own `RunnerResult.dryRun` echo,
+   * never `result.baseCommit`, never `result.writeMode`. Those are
+   * execution-time/backend-returned values and must never be authority for
+   * whether a B3 artifact is required.
+   */
+  isDryRun(): boolean { return Boolean(this.opts.dryRun); }
 
   /** Evidence accessors (tests / diagnostics). */
   getAgentName(): string { return this.agentName; }
@@ -729,6 +891,46 @@ export class KiroBackend {
 
       const baseCommit = this.staged?.baseCommit ?? null;
 
+      // A6-B3: For real Kiro writer non-dry-run jobs, construct the canonical
+      // artifact BEFORE cleanup disposes the workspace volume. This requires
+      // write-quiescence (runner removed) and POST capture from the workspace.
+      let artifactResult: ArtifactResult | undefined;
+      if (this.writeMode && !r.dryRun && baseCommit && this.beforeCapture && this.staged) {
+        // Step 1: Remove runner container (write-quiescence gate)
+        await this.removeRunner();
+        assertWriteQuiescence(this.runnerContainerId);
+
+        // Step 2: Capture POST workspace state
+        log('kiro backend: capturing POST workspace', { jobId: this.job.jobId });
+        const postCapture = await this.capturePost();
+
+        // Step 3: Construct canonical artifact
+        log('kiro backend: constructing B3 artifact', { jobId: this.job.jobId });
+        const volumeIO = this.createEvidenceVolumeIO();
+        const git = this.createGitObjectReader();
+        artifactResult = await constructArtifact({
+          jobId: this.job.jobId,
+          projectId: this.job.project,
+          principalId: this.job.principalId,
+          backend: this.job.backend,
+          profile: this.job.profile,
+          baseCommit,
+          evidenceVolume: this.beforeCapture.evidenceVolume,
+          maxEvidenceBytes: this.job.policy.maxEvidenceBytes,
+          beforeCapture: this.beforeCapture,
+          postCapture,
+          git,
+          volumeIO,
+        });
+        log('kiro backend: B3 artifact constructed', {
+          jobId: this.job.jobId,
+          artifactHash: artifactResult.artifactHash,
+          opCount: artifactResult.opCount,
+          applicable: artifactResult.applicable,
+          contentComplete: artifactResult.contentComplete,
+        });
+      }
+
       let summary: string;
       if (r.dryRun) {
         summary = `Kiro ACP dry-run OK (protocol=${r.protocolVersion}, agent=${r.agentInfo?.version ?? '?'}, `
@@ -767,6 +969,7 @@ export class KiroBackend {
         changeSet: this.changeSet ?? undefined,
         changedFiles: this.changeSet?.changedFiles,
         writeMode: this.writeMode,
+        artifactResult,
       };
     } finally {
       await this.cleanup();
@@ -822,6 +1025,223 @@ export class KiroBackend {
       if (containerId) await removeContainer(containerId, true).catch(() => {});
       await removeContainer(name, true).catch(() => {});
     }
+  }
+
+  /**
+   * Remove the runner container explicitly (write-quiescence gate). After this
+   * call, this.runnerContainerId is null. Normal cleanup must tolerate the
+   * runner already having been removed.
+   */
+  private async removeRunner(): Promise<void> {
+    if (this.runnerContainerId) {
+      await killContainer(this.runnerContainerId).catch(() => {});
+      await removeContainer(this.runnerContainerId, true);
+      this.runnerContainerId = null;
+    }
+    // Also ensure named container is gone (defense in depth)
+    await killContainer(runnerContainerName(this.job.jobId)).catch(() => {});
+    await removeContainer(runnerContainerName(this.job.jobId), true).catch(() => {});
+  }
+
+  /**
+   * Capture the POST workspace state by streaming the workspace volume via
+   * a short-lived helper container (same approach as B2 BEFORE capture).
+   * Requires write-quiescence (runner already removed).
+   */
+  private async capturePost(): Promise<PostCaptureResult> {
+    if (!this.staged) {
+      throw new BridgeError('POST_CAPTURE_IO', 'cannot capture POST: workspace not staged', 500);
+    }
+    const name = `${ns()}-post-${this.job.jobId}`;
+    const labels: Record<string, string> = {
+      [LABEL_MANAGED]: 'true',
+      [LABEL_RESOURCE]: 'post-capture',
+      [LABEL_JOB]: this.job.jobId,
+    };
+    let containerId: string | undefined;
+    try {
+      containerId = await createContainer(name, {
+        Image: this.opts.helperImage,
+        User: RUNNER_USER,
+        Cmd: ['true'],
+        Labels: labels,
+        NetworkDisabled: true,
+        HostConfig: {
+          AutoRemove: false,
+          Privileged: false,
+          ReadonlyRootfs: true,
+          CapDrop: ['ALL'],
+          SecurityOpt: ['no-new-privileges'],
+          NetworkMode: 'none',
+          Mounts: [{
+            Type: 'volume',
+            Source: this.staged.volumeName,
+            Target: WORKSPACE_PATH,
+            ReadOnly: true,
+          }],
+          Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=1m' },
+          Memory: 64 * 1024 * 1024,
+          PidsLimit: 8,
+        },
+      });
+      await startContainer(containerId);
+      await waitContainer(containerId, { timeoutMs: 10_000 });
+      const { body } = await getArchive(containerId, WORKSPACE_PATH);
+      // Remaining budget: compute from UNIQUE BEFORE blob bytes (not totalBytes).
+      // Each unique SHA-256 hash contributes its size once. Duplicate BEFORE
+      // entries with the same hash are counted once. Inconsistent sizes for
+      // the same hash fail closed (B2 evidence integrity violation).
+      const { uniqueBeforeBytes, knownBeforeHashes } = computeUniqueBeforeBudget(
+        this.beforeCapture?.entries ?? [],
+      );
+      const remainingBudget = this.job.policy.maxEvidenceBytes - uniqueBeforeBytes;
+      const result = await parsePostTarStream(body, remainingBudget, knownBeforeHashes,
+        this.job.policy.maxEvidenceBytes);
+      return result;
+    } finally {
+      if (containerId) await removeContainer(containerId, true).catch(() => {});
+      await removeContainer(name, true).catch(() => {});
+    }
+  }
+
+  /**
+   * Create an EvidenceVolumeIO adapter that reads/writes to the B2 evidence
+   * Docker volume via short-lived helper containers.
+   * R2-G: fileExists is fail-closed (only FILE_NOT_FOUND → false; other errors throw).
+   * R2-D: remove is restricted to .b3-temp paths only.
+   */
+  private createEvidenceVolumeIO(): EvidenceVolumeIO {
+    const evidenceVol = this.beforeCapture!.evidenceVolume;
+    const helperImage = this.opts.helperImage;
+    const jobId = this.job.jobId;
+    const helperCounter = { n: 0 };
+
+    const withHelper = async <T>(fn: (containerId: string) => Promise<T>): Promise<T> => {
+      const n = helperCounter.n++;
+      const name = `${ns()}-evio-${jobId}-${n}`;
+      let containerId: string | undefined;
+      try {
+        containerId = await createContainer(name, {
+          Image: helperImage,
+          User: '0:0',
+          Cmd: ['true'],
+          Labels: { [LABEL_MANAGED]: 'true', [LABEL_RESOURCE]: 'evidence-io', [LABEL_JOB]: jobId },
+          NetworkDisabled: true,
+          HostConfig: {
+            AutoRemove: false,
+            Privileged: false,
+            ReadonlyRootfs: true,
+            CapDrop: ['ALL'],
+            SecurityOpt: ['no-new-privileges'],
+            NetworkMode: 'none',
+            Mounts: [{ Type: 'volume', Source: evidenceVol, Target: '/evidence', ReadOnly: false }],
+            Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=1m' },
+            Memory: 64 * 1024 * 1024,
+            PidsLimit: 8,
+          },
+        });
+        await startContainer(containerId);
+        await waitContainer(containerId, { timeoutMs: 10_000 });
+        return await fn(containerId);
+      } finally {
+        if (containerId) await removeContainer(containerId, true).catch(() => {});
+        await removeContainer(name, true).catch(() => {});
+      }
+    };
+
+    return {
+      async readFile(path: string): Promise<Buffer> {
+        return withHelper(async (cid) => {
+          const { body } = await getArchive(cid, `/evidence/${path}`);
+          return extractSingleFile(body);
+        });
+      },
+      async fileExists(path: string): Promise<boolean> {
+        // R2-G: fail-closed. Only structured FILE_NOT_FOUND → false.
+        // Other errors (Docker/transport/archive) → THROW unchanged.
+        try {
+          return await withHelper(async (cid) => {
+            const { body } = await getArchive(cid, `/evidence/${path}`);
+            // Drain the response body to release resources
+            const ex = (await import('tar-stream')).extract();
+            await new Promise<void>((resolve, reject) => {
+              ex.on('entry', (_h, stream, next) => { stream.resume(); next(); });
+              ex.on('finish', resolve);
+              ex.on('error', reject);
+              body.pipe(ex);
+            });
+            return true;
+          });
+        } catch (e: unknown) {
+          // R2-G: Only the structured FILE_NOT_FOUND error code → false.
+          // Never decide based on error message substrings.
+          if (e instanceof BridgeError && e.code === 'FILE_NOT_FOUND') {
+            return false;
+          }
+          // All other errors propagate unchanged (fail-closed)
+          throw e;
+        }
+      },
+      async writeFile(path: string, content: Buffer): Promise<void> {
+        await withHelper(async (cid) => {
+          const { pack } = await import('tar-stream');
+          const p = pack();
+          const chunks: Buffer[] = [];
+          const archiveP = new Promise<Buffer>((res, rej) => {
+            p.on('data', (c: Buffer) => chunks.push(c));
+            p.on('end', () => res(Buffer.concat(chunks)));
+            p.on('error', rej);
+          });
+          // Create parent dirs in tar
+          const parts = path.split('/');
+          let dir = '/evidence';
+          for (let i = 0; i < parts.length - 1; i++) {
+            dir += '/' + parts[i];
+            p.entry({ name: dir + '/', type: 'directory', mode: 0o755 }, '');
+          }
+          p.entry({ name: `/evidence/${path}`, type: 'file', mode: 0o644, size: content.length }, content);
+          p.finalize();
+          const tar = await archiveP;
+          await putArchive(cid, '/', tar);
+        });
+      },
+      async remove(path: string): Promise<void> {
+        // R2-D: Path validation and spec construction via the shared pure function.
+        // Production remove() MUST use buildCleanupHelperSpec (test seam).
+        const spec = buildCleanupHelperSpec(path, evidenceVol, helperImage, jobId);
+
+        const n = helperCounter.n++;
+        const rmName = `${ns()}-evrm-${jobId}-${n}`;
+        let rmContainerId: string | undefined;
+        try {
+          rmContainerId = await createContainer(rmName, spec as unknown as Record<string, unknown>);
+          await startContainer(rmContainerId);
+          const waited = await waitContainer(rmContainerId, { timeoutMs: 30_000 });
+          if (waited.timedOut || (waited.statusCode !== null && waited.statusCode !== 0)) {
+            throw new BridgeError(
+              'ARTIFACT_STORAGE_INTEGRITY_FAILED',
+              `temp cleanup helper failed: timeout=${waited.timedOut}, exitCode=${waited.statusCode}`,
+              500,
+            );
+          }
+        } finally {
+          if (rmContainerId) await removeContainer(rmContainerId, true).catch(() => {});
+          await removeContainer(rmName, true).catch(() => {});
+        }
+      },
+    };
+  }
+
+  /**
+   * Create a GitObjectReader via trusted Docker helper containers.
+   * The host project is mounted READ-ONLY. No direct host Git execution.
+   */
+  private createGitObjectReader(): GitObjectReader {
+    return createDockerGitObjectReader({
+      helperImage: this.opts.helperImage,
+      hostPath: this.job.hostPath,
+      jobId: this.job.jobId,
+    });
   }
 
   /** Remove ALL job-scoped resources (success / failure / timeout / cancel). */

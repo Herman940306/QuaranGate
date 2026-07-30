@@ -49,6 +49,7 @@ export function createKiroBackendFactory(
     return new KiroBackend(
       {
         jobId: job.jobId,
+        principalId: job.principalId,
         backend: 'kiro',
         project: job.project,
         profile: job.profile as AgentProfileId,

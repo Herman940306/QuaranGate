@@ -3,11 +3,14 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AgentJobStore } from '../../src/executor/agents/jobStore.js';
-import { AgentJobEngine, type DispatchRequest } from '../../src/executor/agents/jobEngine.js';
+import { AgentJobStore, type AgentJobRow } from '../../src/executor/agents/jobStore.js';
+import {
+  AgentJobEngine, type DispatchRequest, type AgentBackendAdapter, type ArtifactResult,
+} from '../../src/executor/agents/jobEngine.js';
 import { parseAgentConfigYaml, type AgentControlPlaneConfig } from '../../src/executor/agentConfig.js';
 import type { FakeBackendOptions } from '../../src/executor/agents/fakeBackend.js';
 import { BridgeError } from '../../src/shared/errors.js';
+import type { AgentResourcePolicy } from '../../src/shared/agents.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -185,7 +188,11 @@ describe('agent job engine — execution lifecycle', () => {
   });
 
   it('serializes writer jobs per project through the persisted lock', async () => {
-    backendOpts = { prepareMs: 1, runMs: 80, validateMs: 1 };
+    // dryRun: true — this test exercises concurrency admission only, not A6-B3
+    // artifact evidence. Without it, the fake backend (standing in for a
+    // 'kiro' writer job with no factory wired) now correctly fails closed
+    // under the A6-B3 trust gate, since it never produces a real artifact.
+    backendOpts = { prepareMs: 1, runMs: 80, validateMs: 1, dryRun: true };
     const w1 = dispatch({ profile: 'implement' });
     const w2 = dispatch({ profile: 'implement' });
     await new Promise((r) => setTimeout(r, 30));
@@ -287,6 +294,130 @@ describe('agent job engine — startup recovery', () => {
     }
     engine2.shutdown();
     store2.close();
+  });
+});
+
+describe('agent job engine — A6-B3 trust-gate remediation (artifact requirement)', () => {
+  /**
+   * Minimal AgentBackendAdapter test double standing in for a real Kiro
+   * writer. Exercised through the REAL AgentJobEngine.execute() path (via
+   * backendFactory), never by calling artifactRequired()/publishArtifact()
+   * directly — this proves the engine's own trust-gate wiring, not just the
+   * predicate function in isolation.
+   */
+  class StubKiroWriterBackend implements AgentBackendAdapter {
+    constructor(
+      private readonly dryRun: boolean,
+      private readonly opts: { baseCommit?: string | null; artifactResult?: ArtifactResult } = {},
+    ) {}
+    async prepare(): Promise<void> {}
+    async run(): Promise<void> {}
+    async validate(): Promise<{
+      summary: string; exitCode: number; baseCommit?: string | null;
+      changedFiles?: string[]; artifactResult?: ArtifactResult;
+    }> {
+      const baseCommit = this.dryRun
+        ? null
+        : ('baseCommit' in this.opts ? this.opts.baseCommit : 'a'.repeat(40));
+      return {
+        summary: 'stub kiro writer done',
+        exitCode: 0,
+        baseCommit,
+        artifactResult: this.dryRun ? undefined : this.opts.artifactResult,
+      };
+    }
+    isAgentFailure(): boolean { return false; }
+    isDryRun(): boolean { return this.dryRun; }
+    async cleanup(): Promise<void> {}
+  }
+
+  const fakeArtifact: ArtifactResult = {
+    artifactHash: 'h'.repeat(64),
+    changeSetHash: 'c'.repeat(64),
+    contentComplete: true,
+    applicable: true,
+    reason: null,
+    artifactVolume: 'io-mcp-ide-bridge-evidence-test',
+    artifactBytes: 42,
+    opCount: 1,
+  };
+
+  function makeStubEngine(
+    factory: (job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null,
+  ): AgentJobEngine {
+    return new AgentJobEngine(store, testConfig(), () => backendOpts, factory);
+  }
+
+  it('required writer (non-dry-run) with a published artifact reaches COMPLETED with AVAILABLE artifact', async () => {
+    engine = makeStubEngine(() => new StubKiroWriterBackend(false, { artifactResult: fakeArtifact }));
+    const j = dispatch({ profile: 'implement' });
+    await waitFor(j.jobId, (s) => s === 'COMPLETED');
+    const row = store.get(j.jobId)!;
+    expect(row.status).toBe('COMPLETED');
+    expect(row.artifactState).toBe('AVAILABLE');
+    expect(row.artifactHash).toBe('h'.repeat(64));
+  });
+
+  it('required writer (non-dry-run) missing baseCommit fails ARTIFACT_REQUIRED, never reaches COMPLETED', async () => {
+    engine = makeStubEngine(() => new StubKiroWriterBackend(false, { baseCommit: null }));
+    const j = dispatch({ profile: 'implement' });
+    await waitFor(j.jobId, (s) => s !== 'QUEUED' && s !== 'PREPARING' && s !== 'RUNNING' && s !== 'VALIDATING');
+    const row = store.get(j.jobId)!;
+    expect(row.status).not.toBe('COMPLETED');
+    expect(row.failureCode).toBe('FAILED_INFRASTRUCTURE');
+    expect(row.failureReason).toContain('did not produce a baseCommit');
+    expect(row.artifactState).toBeNull();
+  });
+
+  it('required writer (non-dry-run) missing artifactResult fails ARTIFACT_REQUIRED, never reaches COMPLETED', async () => {
+    engine = makeStubEngine(() => new StubKiroWriterBackend(false, { baseCommit: 'a'.repeat(40) }));
+    const j = dispatch({ profile: 'implement' });
+    await waitFor(j.jobId, (s) => s !== 'QUEUED' && s !== 'PREPARING' && s !== 'RUNNING' && s !== 'VALIDATING');
+    const row = store.get(j.jobId)!;
+    expect(row.status).not.toBe('COMPLETED');
+    expect(row.artifactState).toBeNull();
+  });
+
+  it('dry-run Kiro writer reaches COMPLETED with NO artifact required, even with no baseCommit', async () => {
+    engine = makeStubEngine(() => new StubKiroWriterBackend(true));
+    const j = dispatch({ profile: 'implement' });
+    await waitFor(j.jobId, (s) => s === 'COMPLETED');
+    const row = store.get(j.jobId)!;
+    expect(row.status).toBe('COMPLETED');
+    expect(row.artifactState).toBeNull();
+    expect(row.baseCommit).toBeNull();
+  });
+
+  it('read-only Kiro job (writer=false) reaches COMPLETED with no artifact required', async () => {
+    engine = makeStubEngine(() => new StubKiroWriterBackend(false, { baseCommit: 'a'.repeat(40) }));
+    const j = dispatch({ profile: 'audit' }); // audit is not a writer profile
+    await waitFor(j.jobId, (s) => s === 'COMPLETED');
+    const row = store.get(j.jobId)!;
+    expect(row.status).toBe('COMPLETED');
+    expect(row.artifactState).toBeNull();
+  });
+
+  it('fake backend reports isDryRun()=false by default and is honestly gated like any other adapter', async () => {
+    // The FakeAgentBackend fallback is a stand-in for backend='kiro' when no
+    // real Kiro factory is wired. Its default isDryRun()=false means a
+    // dispatched writer job is correctly held to the SAME A6-B3 trust gate
+    // as a real Kiro writer — it fails closed rather than being silently
+    // exempt just because it is "the fake backend".
+    const j = dispatch({ profile: 'implement' });
+    await waitFor(j.jobId, (s) => s !== 'QUEUED' && s !== 'PREPARING' && s !== 'RUNNING' && s !== 'VALIDATING');
+    const row = store.get(j.jobId)!;
+    expect(row.status).not.toBe('COMPLETED');
+    expect(row.failureCode).toBe('FAILED_INFRASTRUCTURE');
+    expect(row.artifactState).toBeNull();
+  });
+
+  it('fake backend with dryRun test seam reaches COMPLETED with no artifact required', async () => {
+    backendOpts = { prepareMs: 1, runMs: 5, validateMs: 1, dryRun: true };
+    const j = dispatch({ profile: 'implement' });
+    await waitFor(j.jobId, (s) => s === 'COMPLETED');
+    const row = store.get(j.jobId)!;
+    expect(row.status).toBe('COMPLETED');
+    expect(row.artifactState).toBeNull();
   });
 });
 

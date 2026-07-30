@@ -22,6 +22,21 @@ import { AgentJobStore, type AgentJobRow } from './jobStore.js';
 import { FakeAgentBackend, type FakeBackendOptions } from './fakeBackend.js';
 
 /**
+ * B3 artifact result returned by a backend that constructed a canonical
+ * artifact. The engine uses this to drive atomic publication.
+ */
+export interface ArtifactResult {
+  artifactHash: string;
+  changeSetHash: string;
+  contentComplete: boolean;
+  applicable: boolean;
+  reason: string | null;
+  artifactVolume: string;
+  artifactBytes: number;
+  opCount: number;
+}
+
+/**
  * Generic backend interface. Both FakeAgentBackend and KiroBackend implement
  * this contract. The job engine uses it to drive the lifecycle.
  */
@@ -38,8 +53,22 @@ export interface AgentBackendAdapter {
     baseCommit?: string | null;
     /** Deterministic changed-path evidence (A5 implement jobs). */
     changedFiles?: string[];
+    /** B3 canonical artifact result (real Kiro writer jobs only). */
+    artifactResult?: ArtifactResult;
   }>;
   isAgentFailure(e: unknown): boolean;
+  /**
+   * Trusted dry-run indicator (A6-B3 trust-gate remediation). Reports the
+   * TRUSTED CONFIGURATION the backend was constructed with (e.g. the
+   * production-execution-gate flag threaded into KiroBackendOptions at
+   * executor startup) — an adapter-identity fact set at construction time,
+   * never derived from model/agent behavior, tool-call outcomes, or any
+   * other execution RESULT (never inferred from validate()'s baseCommit or
+   * writeMode). FakeAgentBackend always reports false (it never dry-runs).
+   * The engine's artifact-requirement decision depends on this value and
+   * must never fall back to inferring dry-run from execution results.
+   */
+  isDryRun(): boolean;
   /** Cleanup resources on failure/cancellation (best-effort). */
   cleanup?(): Promise<void>;
 }
@@ -71,6 +100,43 @@ const POLICY_ERROR_CODES: ReadonlySet<string> = new Set([
   'FORBIDDEN_PROFILE', 'FORBIDDEN_BACKEND', 'FORBIDDEN_POLICY',
   'FORBIDDEN_PROJECT', 'FORBIDDEN_JOB', 'FORBIDDEN_SCOPE',
 ]);
+
+// ---------------------------------------------------------------------------
+// Artifact-required predicate (A6-B3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Single trusted predicate: does this job require canonical B3 artifact
+ * publication before it can reach COMPLETED?
+ *
+ * True IFF:
+ *   - backend == 'kiro' (real Kiro ACP execution — trusted dispatch state,
+ *     `AgentJobRow.backend`, set once at dispatch() and never caller-revised)
+ *   - writer == true (mutation-capable sandbox — trusted dispatch state,
+ *     `AgentJobRow.writer`, derived ONLY from the trusted profile contract
+ *     at dispatch(), never from the prompt or from any execution result)
+ *   - dryRun == false — a TRUSTED CONSTRUCTION-TIME fact reported by the
+ *     backend adapter itself via {@link AgentBackendAdapter.isDryRun}. This
+ *     traces back to the executor's own startup configuration
+ *     (`AGENT_KIRO_DRY_RUN` -> `KIRO_DRY_RUN` -> `KiroBackendOptions.dryRun`
+ *     -> `KiroBackend.isDryRun()`, wired in src/executor/index.ts and
+ *     src/executor/agents/kiroFactory.ts) — NEVER from any backend-returned
+ *     execution RESULT (result.baseCommit, result.writeMode, or any ACP
+ *     turn/tool-call outcome). FakeAgentBackend.isDryRun() always returns
+ *     false.
+ *
+ * This predicate governs:
+ *   1. Whether B3 construction is required
+ *   2. Whether JobEngine requires an ArtifactResult from validate()
+ *   3. Whether COMPLETED requires AVAILABLE artifact metadata
+ *
+ * It does NOT use backend-returned result.baseCommit or result.writeMode as
+ * authority, and it never falls back to inferring dry-run from either.
+ * Read-only jobs, dry-run writer jobs, and fake backend jobs are unaffected.
+ */
+export function artifactRequired(job: AgentJobRow, dryRun: boolean): boolean {
+  return job.backend === 'kiro' && job.writer === true && !dryRun;
+}
 
 /**
  * Map a non-cancel/non-timeout execution error onto the canonical failure
@@ -285,6 +351,40 @@ export class AgentJobEngine {
         this.store.setBaseCommit(job.jobId, result.baseCommit);
         log('agent job base commit recorded', { jobId: job.jobId, changedFiles: result.changedFiles?.length ?? 0 });
       }
+
+      // A6-B3: if this job requires a canonical artifact, validate() must have
+      // produced one. Publish it atomically before COMPLETED transition.
+      // Trust-gate remediation: dry-run status comes ONLY from the backend
+      // adapter's own trusted construction-time flag (isDryRun()) — never
+      // inferred from result.baseCommit or result.writeMode. A missing
+      // baseCommit on a REQUIRED (non-dry-run) job is a hard failure below,
+      // not a silent bypass of the artifact requirement.
+      const required = artifactRequired(job, backend.isDryRun());
+      if (required) {
+        if (!result.baseCommit) {
+          throw new BridgeError(
+            'ARTIFACT_REQUIRED',
+            `job ${job.jobId} is a real Kiro writer (non-dry-run) but validate() did not produce a baseCommit`,
+            500,
+          );
+        }
+        if (!result.artifactResult) {
+          throw new BridgeError(
+            'ARTIFACT_REQUIRED',
+            `job ${job.jobId} is a real Kiro writer but validate() did not produce an artifact`,
+            500,
+          );
+        }
+        // Atomic publication via JobStore (CAS: artifact_state must be NULL)
+        this.store.publishArtifact(job.jobId, result.artifactResult);
+        log('agent job artifact published', {
+          jobId: job.jobId,
+          artifactHash: result.artifactResult.artifactHash,
+          opCount: result.artifactResult.opCount,
+          applicable: result.artifactResult.applicable,
+        });
+      }
+
       step('VALIDATING', 'COMPLETED', {
         completedAt: new Date().toISOString(),
         summary: result.summary,

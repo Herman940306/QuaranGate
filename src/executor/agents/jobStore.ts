@@ -508,6 +508,73 @@ export class AgentJobStore {
     return Number(res.changes) === 1;
   }
 
+  // -------------------------------------------------------------------------
+  // A6-B3: Atomic artifact publication
+  // -------------------------------------------------------------------------
+
+  /**
+   * Atomically publish a finalized B3 artifact for a job. Inside
+   * BEGIN IMMEDIATE, verifies:
+   *   - job exists and is in VALIDATING state
+   *   - artifact_state is currently NULL (never overwrite AVAILABLE)
+   *
+   * Then atomically sets ALL artifact metadata columns. If no row matches
+   * the CAS predicate, throws ARTIFACT_PUBLICATION_FAILED (fail closed).
+   *
+   * Once AVAILABLE, B3 must never overwrite the artifact — repeated
+   * publication fails closed.
+   */
+  publishArtifact(jobId: string, artifact: {
+    artifactHash: string;
+    changeSetHash: string;
+    contentComplete: boolean;
+    applicable: boolean;
+    reason: string | null;
+    artifactVolume: string;
+    artifactBytes: number;
+    opCount: number;
+  }): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const res = this.db.prepare(`
+        UPDATE agent_jobs
+        SET artifact_hash = ?,
+            change_set_hash = ?,
+            artifact_state = 'AVAILABLE',
+            artifact_content_complete = ?,
+            artifact_applicable = ?,
+            artifact_reason = ?,
+            artifact_volume = ?,
+            artifact_bytes = ?,
+            artifact_op_count = ?
+        WHERE job_id = ?
+          AND status = 'VALIDATING'
+          AND artifact_state IS NULL
+      `).run(
+        artifact.artifactHash,
+        artifact.changeSetHash,
+        artifact.contentComplete ? 1 : 0,
+        artifact.applicable ? 1 : 0,
+        artifact.reason,
+        artifact.artifactVolume,
+        artifact.artifactBytes,
+        artifact.opCount,
+        jobId,
+      );
+      if (Number(res.changes) !== 1) {
+        throw new BridgeError(
+          'ARTIFACT_PUBLICATION_FAILED',
+          `atomic artifact publication failed for job ${jobId}: job not in VALIDATING state or artifact already published`,
+          500,
+        );
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
   countActive(): number {
     const r = this.db.prepare(`SELECT COUNT(*) AS n FROM agent_jobs WHERE status IN (${ACTIVE_SQL_LIST})`).get() as { n: number };
     return Number(r.n);

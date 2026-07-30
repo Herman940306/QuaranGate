@@ -18,6 +18,17 @@ export interface FakeBackendOptions {
   /** Inject a deterministic failure in the named phase (tests only). */
   failAt?: 'prepare' | 'run' | 'validate';
   failureMessage?: string;
+  /**
+   * Test seam ONLY (dependency injection, never caller-controlled): report
+   * this value from {@link FakeAgentBackend.isDryRun}. Defaults to false —
+   * the fake backend does not dry-run by default. Tests that dispatch a
+   * `backend: 'kiro'` writer job through the FakeAgentBackend fallback
+   * (i.e. no real Kiro backend factory wired) purely to exercise generic
+   * engine behavior (concurrency, timeout, cancellation) — and are not
+   * exercising A6-B3 artifact evidence — should set this true so the
+   * engine's artifact-required trust gate does not apply to them.
+   */
+  dryRun?: boolean;
 }
 
 export interface FakeBackendJobInput {
@@ -59,6 +70,7 @@ export class FakeAgentBackend {
       validateMs: opts.validateMs ?? 25,
       failAt: opts.failAt,
       failureMessage: opts.failureMessage,
+      dryRun: opts.dryRun,
     };
     this.job = job;
   }
@@ -67,6 +79,15 @@ export class FakeAgentBackend {
 
   isAgentFailure(e: unknown): boolean {
     return e instanceof FakeAgentFailure;
+  }
+
+  /**
+   * Reports the trusted, test-injected `dryRun` seam (default false — the
+   * fake backend "executes" deterministically by default). Never derived
+   * from any execution result.
+   */
+  isDryRun(): boolean {
+    return Boolean(this.opts.dryRun);
   }
 
   private async phase(name: 'prepare' | 'run' | 'validate', ms: number, signal: AbortSignal): Promise<void> {
