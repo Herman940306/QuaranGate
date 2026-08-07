@@ -30,6 +30,7 @@ const dispatchBody = z.object({
 }).strict();
 
 const cancelBody = z.object({ principal: principalSchema }).strict();
+const applyBody = z.object({ principal: principalSchema }).strict();
 
 /** Workspace-relative selection path — never an absolute/host/traversal path. */
 const diffPath = z.string().min(1).max(512).refine(
@@ -141,5 +142,19 @@ export function registerAgentRoutes(
       maxBytes: parsed.data.maxBytes,
     });
     return { diff };
+  }));
+
+  // A6-B5: apply the job's verified canonical artifact to its registered real
+  // project. The executor re-derives job ownership + trusted project + base
+  // commit + artifact volume from durable state (never caller input). The
+  // request body carries only `principal` — no patch text, no host path, no
+  // Docker options are expressible (agentApplyInput is `{jobId}` only at the
+  // public contract; jobId arrives via the URL param exactly like /cancel).
+  app.post('/agent/jobs/:id/apply', handle(async (req) => {
+    const jobId = requireJobId(req.params.id);
+    const parsed = applyBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw new BridgeError('MALFORMED_REQUEST', 'apply: principal required', 400);
+    const result = await engine().apply({ jobId, principal: parsed.data.principal });
+    return { apply: result, job: jobWire(engine().getOwnedJob(jobId, parsed.data.principal)) };
   }));
 }

@@ -22,6 +22,7 @@ import { AgentJobStore, type AgentJobRow } from './jobStore.js';
 import { FakeAgentBackend, type FakeBackendOptions } from './fakeBackend.js';
 import { verifyCanonicalArtifact, type ReadonlyEvidenceSource } from './artifactReader.js';
 import { renderDiffPage, type DiffPageResult } from './diffRenderer.js';
+import { runApplyAttempt, type ApplierIO, type ApplyAttemptSuccess } from './applyEngine.js';
 
 /**
  * B3 artifact result returned by a backend that constructed a canonical
@@ -207,6 +208,15 @@ export class AgentJobEngine {
      * with ARTIFACT_NOT_AVAILABLE before a reader would be needed).
      */
     private readonly evidenceReaderFactory?: EvidenceReaderFactory,
+    /**
+     * A6-B5: trusted applier image (same non-caller-selectable image family
+     * as the A3 sandbox/A4 Kiro runner — see PHASE_A6_B5_AGENT_APPLY.md §9)
+     * and the injectable Docker seam for the applier lifecycle. Both absent
+     * in fake-only deployments — agent_apply then fails closed with
+     * SANDBOX_FAILED before any admission occurs.
+     */
+    private readonly applierImage?: string,
+    private readonly applierIO?: ApplierIO,
   ) {}
 
   /** Startup reconciliation per the documented A2 policy (fail closed). */
@@ -357,6 +367,39 @@ export class AgentJobEngine {
     } finally {
       if (source.close) await source.close().catch(() => {});
     }
+  }
+
+  /**
+   * A6-B5: apply an owned, COMPLETED job's verified artifact to its
+   * registered real project. Delegates the full flow (admission, artifact
+   * re-verification, host preconditions, mutation, POST verification,
+   * rollback/UNCERTAIN) to {@link runApplyAttempt} — this method only
+   * resolves the trusted inputs runApplyAttempt needs (owned job, trusted
+   * project, resource policy) and fails closed if the applier infrastructure
+   * isn't configured, mirroring {@link diff}'s handling of a missing
+   * evidence reader.
+   */
+  async apply(req: { jobId: string; principal: string }): Promise<ApplyAttemptSuccess> {
+    const job = this.getOwnedJob(req.jobId, req.principal);
+
+    const project = this.config.projects.find((p) => p.id === job.project);
+    if (!project) {
+      throw new BridgeError('FORBIDDEN_PROJECT', `project ${job.project} is not in the trusted registry`, 403);
+    }
+    if (!this.evidenceReaderFactory) {
+      throw new BridgeError('ARTIFACT_STORAGE_INTEGRITY_FAILED', 'no trusted evidence reader is configured', 500);
+    }
+    if (!this.applierImage || !this.applierIO) {
+      throw new BridgeError('SANDBOX_FAILED', 'no trusted applier is configured on this executor', 500);
+    }
+
+    const policy = this.resolvePolicy(job.resourcePolicy);
+    return runApplyAttempt(
+      { store: this.store, evidenceReaderFactory: this.evidenceReaderFactory, applierImage: this.applierImage, applierIO: this.applierIO },
+      job,
+      project,
+      policy,
+    );
   }
 
   /**

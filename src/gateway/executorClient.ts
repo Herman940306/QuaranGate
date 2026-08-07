@@ -66,6 +66,8 @@ export const executor = {
     call<{ diff: AgentDiffWire }>(`/agent/jobs/${req.jobId}/diff`, {
       principal: req.principal, path: req.path, cursor: req.cursor, maxBytes: req.maxBytes,
     }).then((r) => r.diff),
+  agentApply: (req: { jobId: string; principal: string }) =>
+    call<{ apply: AgentApplyResultWire; job: AgentJobWire }>(`/agent/jobs/${req.jobId}/apply`, { principal: req.principal }),
 };
 
 export interface AgentBackendWire {
@@ -79,6 +81,12 @@ export interface AgentProjectWire {
   gitRequired: boolean;
   allowedBackends: string[];
   allowedProfiles: string[];
+}
+
+/** A6-B5 apply result. `status` mirrors the job's new public status (APPLIED on success). */
+export interface AgentApplyResultWire {
+  status: 'APPLIED';
+  appliedAt: string;
 }
 
 export interface AgentJobWire {

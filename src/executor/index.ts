@@ -19,6 +19,7 @@ import { registerAgentRoutes } from './agents/routes.js';
 import { RunnerSandbox } from './agents/sandboxRunner.js';
 import { CredentialManager } from './agents/credentialManager.js';
 import { createKiroBackendFactory } from './agents/kiroFactory.js';
+import { createDockerApplierIO } from './agents/applyEngine.js';
 import type { AgentJobRow } from './agents/jobStore.js';
 import type { AgentResourcePolicy } from '../shared/agents.js';
 
@@ -89,13 +90,29 @@ if (fs.existsSync(AGENTS_CONFIG)) {
     ? (volume, jobId) => createDockerEvidenceReader(volume, HELPER_IMAGE, jobId)
     : undefined;
 
-  agentEngine = new AgentJobEngine(agentStore, agentConfig, undefined, backendFactory, evidenceReaderFactory);
+  // A6-B5: the trusted applier reuses the SAME helper image family as B2/B3/B4
+  // (never a caller-selectable image — PHASE_A6_B5_AGENT_APPLY.md §9). Absent
+  // when no helper image is configured (fake-only deployments) — agent_apply
+  // then fails closed with SANDBOX_FAILED before any admission occurs.
+  const applierIO = HELPER_IMAGE ? createDockerApplierIO() : undefined;
+
+  agentEngine = new AgentJobEngine(agentStore, agentConfig, undefined, backendFactory, evidenceReaderFactory, HELPER_IMAGE || undefined, applierIO);
   const recovered = agentEngine.recover();
+  // A6-B5 §15: restart reconciliation for apply attempts. Must run before the
+  // executor accepts new apply admission (recover() above already reopens job
+  // admission synchronously) so a restart can never leave a stale APPLYING
+  // attempt able to race a fresh one. STARTED/VERIFYING orphans -> zero-mutation
+  // ABORTED_NO_MUTATION; APPLYING orphans -> UNCERTAIN + project QUARANTINED,
+  // atomically, never auto-retried (jobStore.ts recoverApplyAttempts, frozen B1).
+  const applyRecovery = agentStore.recoverApplyAttempts('executor restarted with an active apply attempt');
   console.log(JSON.stringify({
     level: 'info', msg: 'agent control plane active',
     projects: agentConfig.projects.length, backends: agentConfig.backends.length,
     schemaVersion: agentStore.schemaVersion, recoveredJobs: recovered.length,
     kiroBackend: kiroEnabled ? (KIRO_DRY_RUN ? 'enabled(dry-run)' : 'enabled') : 'fake-only',
+    applierConfigured: !!applierIO,
+    abortedApplyAttempts: applyRecovery.abortedNoMutation.length,
+    uncertainApplyAttempts: applyRecovery.uncertain.length,
   }));
   // A3: label-scoped reconciliation of any bridge-owned runner sandbox resources
   // left after a restart (fail closed). Only exact ownership labels are touched;

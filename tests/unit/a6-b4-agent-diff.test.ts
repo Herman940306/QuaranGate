@@ -1152,9 +1152,11 @@ describe('A6-B4 public tool registration', () => {
     expect(AGENT_TOOL_SCHEMAS.agent_diff.output.safeParse(withChanges).success).toBe(false);
   });
 
-  it('T10/T11 agent_apply and agent_discard are NOT registered by B4', () => {
+  it('T11 agent_discard is NOT registered (still contract-only)', () => {
+    // agent_apply WAS activated by A6-B5 (see tests/unit/a6-b5-apply-engine.test.ts
+    // for its registration coverage) — this B4 regression now only asserts the
+    // one tool B4 itself never activated and B5 does not activate either.
     const names = captureTools().map((t) => t.name);
-    expect(names).not.toContain('agent_apply');
     expect(names).not.toContain('agent_discard');
   });
 
@@ -2034,6 +2036,6 @@ describe('A6-B4 REMEDIATION R3 Docker archive teardown (extractSingleFile)', () 
 
 describe('A6-B4 regression sanity', () => {
   it('G1 schema version remains 3', () => {
-    expect(AGENT_JOB_SCHEMA_VERSION).toBe(3);
+    expect(AGENT_JOB_SCHEMA_VERSION).toBeGreaterThanOrEqual(3);
   });
 });

@@ -648,8 +648,13 @@ describe('A6-B1 foreign key: agent_apply_attempts.job_id -> agent_jobs.job_id', 
   });
 });
 
-describe('A6-B1 regression: schema stays v3', () => {
-  it('schema version remains 3 after all remediation changes', () => {
-    expect(store.schemaVersion).toBe(3);
+describe('A6-B1 regression: schema stays v3 through B1 remediation', () => {
+  it('schema version is at least v3 (B1 apply-state tables present) after all B1 remediation changes', () => {
+    // A6-B5 additively bumped the schema to v4 (agent_apply_journal table).
+    // This regression's intent — B1's apply-state tables are present and
+    // untouched by later remediation — still holds; it no longer pins the
+    // exact version number, since a later additive bump is expected and
+    // correct (see PHASE_A6_B5_AGENT_APPLY.md §8).
+    expect(store.schemaVersion).toBeGreaterThanOrEqual(3);
   });
 });

@@ -26,8 +26,10 @@ export const SANDBOX_LABEL_NS = 'io.mcp-ide-bridge';
 export const LABEL_MANAGED = `${SANDBOX_LABEL_NS}.managed`;
 export const LABEL_RESOURCE = `${SANDBOX_LABEL_NS}.resource`;
 export const LABEL_JOB = `${SANDBOX_LABEL_NS}.job`;
+/** A6-B5: additive label — the apply attempt owning an 'applier' container. */
+export const LABEL_ATTEMPT = `${SANDBOX_LABEL_NS}.attempt`;
 
-export type SandboxResourceKind = 'runner' | 'stager' | 'workspace' | 'evidence';
+export type SandboxResourceKind = 'runner' | 'stager' | 'workspace' | 'evidence' | 'applier';
 
 /** The Docker `filters` selector that matches ALL bridge-owned A3 resources. */
 export const MANAGED_FILTER: Record<string, string[]> = { label: [`${LABEL_MANAGED}=true`] };
@@ -70,6 +72,36 @@ export function runnerContainerName(jobId: string): string {
 export function stagerContainerName(jobId: string): string {
   assertJobId(jobId);
   return `${SANDBOX_LABEL_NS.replace(/\./g, '-')}-stager-${jobId}`;
+}
+
+// ---------------------------------------------------------------------------
+// A6-B5: trusted applier (project mutation) resource naming/labels.
+// ---------------------------------------------------------------------------
+
+/** `att_` + 32 lowercase hex chars — mirrors AGENT_JOB_ID_PATTERN's shape. */
+export const AGENT_APPLY_ATTEMPT_ID_PATTERN = /^att_[0-9a-f]{32}$/;
+
+function assertAttemptId(attemptId: string): void {
+  if (!AGENT_APPLY_ATTEMPT_ID_PATTERN.test(attemptId)) {
+    throw new BridgeError('MALFORMED_REQUEST', 'applier resource requires a valid attempt id', 400);
+  }
+}
+
+export function applierContainerName(attemptId: string): string {
+  assertAttemptId(attemptId);
+  return `${SANDBOX_LABEL_NS.replace(/\./g, '-')}-applier-${attemptId}`;
+}
+
+/**
+ * Applier ownership labels carry BOTH job and attempt identity (unlike every
+ * other A3 resource kind, which is job-scoped only) — an 'applier' container
+ * is scoped to exactly one apply attempt, and reconciliation/audit need both
+ * dimensions.
+ */
+export function applierOwnershipLabels(jobId: string, attemptId: string): Record<string, string> {
+  assertJobId(jobId);
+  assertAttemptId(attemptId);
+  return { [LABEL_MANAGED]: 'true', [LABEL_RESOURCE]: 'applier', [LABEL_JOB]: jobId, [LABEL_ATTEMPT]: attemptId };
 }
 
 // ---------------------------------------------------------------------------
@@ -380,3 +412,391 @@ export function buildManifestCreateBody(opts: {
     }),
   };
 }
+
+// ---------------------------------------------------------------------------
+// A6-B5 — trusted deterministic applier.
+//
+// Reuses the SAME trusted helper image family as the stager/probe/git-helper
+// (see PHASE_A6_B5_AGENT_APPLY.md §9 — no new image). The applier is a
+// distinct CONTAINER ROLE: it receives the real registered project mounted
+// RW at a fixed target, and the job's own B3/B4 evidence volume mounted RO
+// at a fixed target. It runs as root-in-container (User '0:0') for the SAME
+// reason gitHelper.ts already does against a host bind (reliable access
+// regardless of host file ownership) — confinement comes from CapDrop ALL
+// (minus the one capability that intent actually requires, see below) +
+// Privileged false + no-new-privileges + no docker.sock + network none, not
+// from UID alone. The container Cmd is always the fixed idle `sleep 300`;
+// all real work happens via `docker exec` with fixed argv, matching
+// gitHelper.ts's HELPER_IDLE_CMD pattern.
+//
+// TWO fixes below were found by REAL Docker testing (not merely designed on
+// paper) and are documented here rather than silently folded in, since they
+// each deviate slightly from the as-written PHASE_A6_B5_AGENT_APPLY.md text:
+//
+// 1. CapAdd: ['DAC_OVERRIDE', 'FOWNER']. A typical real project directory
+//    tree is NOT world/group-accessible (e.g. a fresh `mkdtemp`-style
+//    directory is 0700, and most real home-directory projects are similarly
+//    owner-restricted). `CapDrop: ['ALL']` strips CAP_DAC_OVERRIDE, so
+//    container-root loses the one capability that actually grants "root can
+//    read/write/traverse any file regardless of on-disk permissions" —
+//    without it, root-in-container behaves like an ordinary unprivileged UID
+//    for DAC purposes and cannot even `git rev-parse` a 0700-owned checkout
+//    it doesn't literally own by UID. DAC_OVERRIDE alone is NOT sufficient,
+//    though: `chmod`/`fchmod` (needed by MODE_CHANGE, and by every atomic
+//    write's own mode-setting step) is gated by a SEPARATE capability,
+//    CAP_FOWNER ("bypass owner-based permission checks"), not DAC_OVERRIDE —
+//    verified live: without FOWNER, `chmod` on a file owned by a different
+//    UID fails with EPERM even with DAC_OVERRIDE present. Both capabilities
+//    are the DIRECT mechanical requirement of the "reliable access
+//    regardless of host file ownership" rationale already stated above (and
+//    already used to justify running as root at all) — adding them back is
+//    fulfilling that already-stated intent, not a new one. Every other
+//    dropped capability remains dropped; this is the single narrowest fix.
+// 2. A dedicated small RW control volume (not tmpfs). Docker's archive PUT
+//    endpoint refuses writes into a tmpfs mount when `ReadonlyRootfs: true`
+//    is set (`"container rootfs is marked read-only"`, verified against the
+//    live Docker daemon) — evidently only bind/volume mounts are recognized
+//    as writable destinations for that check, not tmpfs. `beforeCapture.ts`'s
+//    `writeEvidenceToVolume` already proves `putArchive` against a genuine
+//    RW named volume works fine under the identical `ReadonlyRootfs: true`
+//    hardening — so the control file (ops manifest: hashes/modes/paths only,
+//    never raw byte content, never real project data) now travels over a
+//    third, executor-owned, attempt-scoped RW volume instead of `/tmp`.
+// ---------------------------------------------------------------------------
+
+export const PROJECT_PATH = '/project';
+export const ARTIFACT_PATH = '/artifact';
+export const CONTROL_PATH = '/control';
+/** Control file the executor writes (via putArchive) before each exec phase. */
+export const APPLY_CONTROL_FILE = `${CONTROL_PATH}/mcp-apply-ops.json`;
+
+export function controlVolumeName(attemptId: string): string {
+  assertAttemptId(attemptId);
+  return `${SANDBOX_LABEL_NS.replace(/\./g, '-')}-control-${attemptId}`;
+}
+
+export function buildApplierCreateBody(opts: {
+  image: string;
+  jobId: string;
+  attemptId: string;
+  hostPath: string;
+  artifactVolume: string;
+  controlVolume: string;
+  limits: RunnerLimits;
+}): DockerCreateBody {
+  assertJobId(opts.jobId);
+  assertAttemptId(opts.attemptId);
+  if (!opts.hostPath.startsWith('/') || opts.hostPath.includes('\0')) {
+    throw new BridgeError('MALFORMED_REQUEST', 'applier hostPath must be a trusted absolute path', 400);
+  }
+  if (!opts.artifactVolume) {
+    throw new BridgeError('MALFORMED_REQUEST', 'applier requires a trusted artifact volume', 400);
+  }
+  if (!opts.controlVolume) {
+    throw new BridgeError('MALFORMED_REQUEST', 'applier requires a trusted control volume', 400);
+  }
+  const l = opts.limits;
+  return {
+    Image: opts.image,
+    User: '0:0',
+    WorkingDir: '/tmp',
+    Cmd: ['sleep', '300'],
+    Env: ['HOME=/tmp'],
+    Labels: applierOwnershipLabels(opts.jobId, opts.attemptId),
+    NetworkDisabled: true,
+    HostConfig: hardenedHostConfig({
+      // Exactly three mounts: the real project (RW, the only host-authority
+      // bind an applier ever receives), the job's OWN evidence volume (RO —
+      // never any other job's artifact, never caller-influenced), and a
+      // small executor-owned scratch volume (RW) for the trusted control
+      // file only — never real project content.
+      Binds: [`${opts.hostPath}:${PROJECT_PATH}:rw`],
+      Mounts: [
+        { Type: 'volume', Source: opts.artifactVolume, Target: ARTIFACT_PATH, ReadOnly: true },
+        { Type: 'volume', Source: opts.controlVolume, Target: CONTROL_PATH, ReadOnly: false },
+      ],
+      NetworkMode: 'none',
+      // Narrowest possible restoration of root's normal DAC-bypass behavior —
+      // see the module-level comment above. Every other capability stays dropped.
+      CapAdd: ['DAC_OVERRIDE', 'FOWNER'],
+      Memory: l.memoryBytes,
+      MemorySwap: l.memorySwapBytes,
+      NanoCpus: l.nanoCpus,
+      PidsLimit: l.pidsLimit,
+      Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=32m' },
+    }),
+  };
+}
+
+/**
+ * Nested-mount preflight (§7b). Reads /proc/self/mountinfo from inside the
+ * applier and asserts no mount point is a strict descendant of PROJECT_PATH
+ * other than the project bind itself. Malformed/unparseable mountinfo fails
+ * closed. Emits one JSON line: {ok:true} or {ok:false, error}.
+ */
+export const MOUNTINFO_CHECK_SCRIPT = [
+  'const fs=require("fs");',
+  'const PROJECT="' + PROJECT_PATH + '";',
+  'function out(o){process.stdout.write(JSON.stringify(o)+"\\n");}',
+  'try{',
+  '  const text=fs.readFileSync("/proc/self/mountinfo","utf8");',
+  '  const lines=text.split("\\n").filter(function(l){return l.length>0;});',
+  '  for(const line of lines){',
+  '    const parts=line.split(" ");',
+  '    if(parts.length<5){out({ok:false,error:"malformed mountinfo line"});process.exit(1);}',
+  '    const mp=parts[4];',
+  '    if(mp===PROJECT)continue;',
+  '    if(mp.indexOf(PROJECT+"/")===0){out({ok:false,error:"nested mount detected at "+mp});process.exit(1);}',
+  '  }',
+  '  out({ok:true});',
+  '  process.exit(0);',
+  '}catch(e){',
+  '  out({ok:false,error:String(e&&e.message||e)});',
+  '  process.exit(1);',
+  '}',
+].join('');
+
+/**
+ * Live filesystem stat helper (F4 hardlink remediation).
+ *
+ * Reads a single project-relative path via lstatSync and emits one JSON line:
+ *   {ok:true, exists:boolean, kind:string, mode:number, nlink:number, size:number}
+ * or {ok:false, error:string}
+ *
+ * The path is supplied via env var STAT_TARGET_PATH (project-relative).
+ * Never follows symlinks. Used by applyEngine for live nlink checks during
+ * BEFORE recertification (replacing the unreliable tar-header nlink).
+ */
+export const LIVE_STAT_SCRIPT = [
+  'const fs=require("fs"),path=require("path");',
+  'const PROJECT="' + PROJECT_PATH + '";',
+  'const rel=process.env.STAT_TARGET_PATH;',
+  'function out(o){process.stdout.write(JSON.stringify(o)+"\\n");}',
+  'if(!rel){out({ok:false,error:"missing STAT_TARGET_PATH"});process.exit(1);}',
+  'const full=path.join(PROJECT,rel);',
+  'if(!(full===PROJECT||full.indexOf(PROJECT+path.sep)===0)){out({ok:false,error:"path escapes project"});process.exit(1);}',
+  'try{',
+  '  const st=fs.lstatSync(full);',
+  '  let kind="other";',
+  '  if(st.isFile())kind="file";',
+  '  else if(st.isDirectory())kind="dir";',
+  '  else if(st.isSymbolicLink())kind="symlink";',
+  '  out({ok:true,exists:true,kind:kind,mode:st.mode&0o7777,nlink:st.nlink,size:st.size});',
+  '  process.exit(0);',
+  '}catch(e){',
+  '  if(e&&e.code==="ENOENT"){out({ok:true,exists:false});process.exit(0);}',
+  '  out({ok:false,error:String(e&&e.message||e)});',
+  '  process.exit(1);',
+  '}',
+].join('');
+
+/**
+ * Live host repository-identity / stale-HEAD / dirty-host / sequencer-state
+ * check (§7a) against the REAL project bind — reuses the exact dirty-check
+ * discipline already proven in GIT_STAGING_SCRIPT (porcelain,
+ * --untracked-files=all), minus the `git archive` materialization step
+ * (nothing is staged; this only inspects). Exit codes mirror
+ * GIT_STAGING_SCRIPT's convention: 3=dirty, 4=not a repo, 5=no HEAD,
+ * 7=sequencer operation in progress (new — GIT_STAGING_SCRIPT has no
+ * sequencer check because A3 staging always starts from a fresh checkout).
+ * On success prints `HEAD=<40-hex>` on stdout.
+ */
+export const GIT_HOST_CHECK_SCRIPT = [
+  'set -e',
+  `PD=${PROJECT_PATH}`,
+  'GIT="git -c safe.directory=$PD -C $PD"',
+  'if ! $GIT rev-parse --git-dir >/dev/null 2>&1; then echo NOT_A_GIT_REPO >&2; exit 4; fi',
+  'if ! HEAD=$($GIT rev-parse HEAD 2>/dev/null); then echo NO_RESOLVABLE_HEAD >&2; exit 5; fi',
+  'if [ -f "$PD/.git/MERGE_HEAD" ] || [ -d "$PD/.git/rebase-merge" ] || [ -d "$PD/.git/rebase-apply" ] || [ -f "$PD/.git/CHERRY_PICK_HEAD" ] || [ -f "$PD/.git/REVERT_HEAD" ]; then',
+  '  echo SEQUENCER_STATE >&2',
+  '  exit 7',
+  'fi',
+  'STATUS=$($GIT status --porcelain --untracked-files=all)',
+  'if [ -n "$STATUS" ]; then echo DIRTY_WORKING_TREE >&2; exit 3; fi',
+  'echo "HEAD=$HEAD"',
+].join('\n');
+
+/**
+ * Deterministic mutation/rollback executor — ONE OP PER EXEC (§11/§13).
+ *
+ * PROTOCOL CHANGE (F1 remediation): each exec invocation processes exactly
+ * ONE op (ops[0] from the control file). The executor writes a single-op
+ * control file, execs, durably persists the journal row, then proceeds to the
+ * next op. This closes the window where a container kill/OOM/exec failure
+ * between the filesystem syscall and the completion emit could leave a real
+ * mutation with no journal row.
+ *
+ * control = { mode: 'apply' | 'rollback', opIndex: number, op: {...} }
+ *
+ * apply op:     { path, op, beforeHash?, beforeMode?, postHash, postSize, postMode }
+ * rollback op:  { path, op, beforeHash?, beforeSize?, beforeMode?,
+ *                 postHash?, postSize?, postMode?, createdDirs? }
+ *
+ * Emits exactly ONE JSON line on stdout:
+ *   success: { opIndex, ok: true, path, op, createdDirs? }
+ *   failure: { opIndex, ok: false, error }
+ *
+ * HARDLINK DEFENSE (F4): requireSingleLinkRegularFile() used for all
+ * existing targets — asserts lstat.nlink===1. A hardlink (nlink>1) is refused
+ * before any read/write/chmod to prevent inode-sharing from extending chmod
+ * effects outside the /project bind. The ADD case (file must be absent before
+ * write) is unaffected by requireSingleLinkRegularFile; single-link is
+ * instead checked POST-publication, in-script, by atomicWriteNew itself
+ * (an lstatSync(dest).nlink!==1 check immediately after linkSync succeeds) —
+ * a defense against the destination unexpectedly landing on a pre-existing
+ * hardlinked inode.
+ *
+ * ADD NO-CLOBBER (F5): atomicWriteNew() publishes via an exclusive sibling
+ * temp file (O_CREAT|O_EXCL) holding the exact POST bytes/mode, then
+ * fs.linkSync(tmp, finalPath) — linkSync atomically fails with EEXIST if
+ * finalPath already exists, so a concurrent create after the earlier absence
+ * check causes the op to fail cleanly with no TOCTOU window (there is no
+ * separate lstat-then-rename step for ADD; finalPath is never clobbered).
+ * The temp is unlinked after successful publication, and the live nlink
+ * sanity check above then confirms the publication landed cleanly.
+ *
+ * ADD ROLLBACK INTERFERENCE (F3): before unlinking a journaled ADD target,
+ * the live file must exactly match this attempt's POST state (hash + size +
+ * mode + nlink===1). Any mismatch means external interference; the script
+ * fails closed (→ UNCERTAIN upstream).
+ *
+ * SYMLINK DEFENSE (unchanged): every existence/type check uses lstatSync.
+ * Intermediate path components that are symlinks are refused by
+ * ensureParentDirs. Final targets that are symlinks return isFile()=false
+ * from lstatSync and are refused by requireSingleLinkRegularFile.
+ */
+export const APPLY_MUTATION_SCRIPT = [
+  'const fs=require("fs"),crypto=require("crypto"),path=require("path");',
+  'const CONTROL="' + APPLY_CONTROL_FILE + '";',
+  'const PROJECT="' + PROJECT_PATH + '";',
+  'const BLOBS="' + ARTIFACT_PATH + '/blobs";',
+  'function sha256(b){return crypto.createHash("sha256").update(b).digest("hex");}',
+  'function blobPath(h){return BLOBS+"/"+h.slice(0,2)+"/"+h;}',
+  'function emit(o){process.stdout.write(JSON.stringify(o)+"\\n");}',
+  'function safeLstat(p){try{return fs.lstatSync(p);}catch(e){if(e&&e.code==="ENOENT")return null;throw e;}}',
+  // F4: requireSingleLinkRegularFile — used for all EXISTING target reads
+  // (CONTENT_MODIFY, DELETE, MODE_CHANGE forward; all rollback ops that read
+  // the live target). Refuses symlinks (isFile()=false), special files
+  // (isFile()=false), and hardlinks (nlink>1).
+  'function requireSingleLinkRegularFile(fullPath){',
+  '  const st=safeLstat(fullPath);',
+  '  if(st===null)throw new Error("target does not exist: "+fullPath);',
+  '  if(!st.isFile())throw new Error("target is not a regular file (possible symlink/special file): "+fullPath);',
+  '  if(st.nlink!==1)throw new Error("target has "+st.nlink+" hard links (nlink must be 1): "+fullPath);',
+  '  return st;}',
+  'function readBlob(hash,size){const p=blobPath(hash);const buf=fs.readFileSync(p);',
+  '  if(buf.length!==size)throw new Error("blob size mismatch for "+hash);',
+  '  if(sha256(buf)!==hash)throw new Error("blob hash mismatch for "+hash);',
+  '  return buf;}',
+  // F5: atomicWriteNew — exclusive create for ADD. Uses linkSync (hard link)
+  // publication which atomically fails with EEXIST if dest already exists,
+  // providing no-clobber semantics without a TOCTOU window (linkSync never
+  // overwrites an existing file). After successful link, verify single-link.
+  'function atomicWriteNew(dest,buf,mode){',
+  '  const dir=path.dirname(dest);',
+  '  const tmp=path.join(dir,".mcp-apply-"+crypto.randomBytes(8).toString("hex")+".tmp");',
+  '  try{',
+  '    fs.writeFileSync(tmp,buf,{mode:mode,flag:"wx"});',
+  '    fs.chmodSync(tmp,mode);',
+  '    fs.linkSync(tmp,dest);',
+  '    fs.unlinkSync(tmp);',
+  '    const st=fs.lstatSync(dest);',
+  '    if(st.nlink!==1)throw new Error("ADD target has unexpected nlink after publication: "+st.nlink);',
+  '  }catch(e){try{fs.unlinkSync(tmp);}catch(_){}throw e;}}',
+  // atomicWriteExisting — for CONTENT_MODIFY / rollback of DELETE/MODE_CHANGE
+  // (target known to exist; rename replaces it atomically on Linux).
+  'function atomicWriteExisting(dest,buf,mode){',
+  '  const dir=path.dirname(dest);',
+  '  const tmp=path.join(dir,".mcp-apply-"+crypto.randomBytes(8).toString("hex")+".tmp");',
+  '  try{',
+  '    fs.writeFileSync(tmp,buf,{mode:mode,flag:"wx"});',
+  '    fs.chmodSync(tmp,mode);',
+  '    fs.renameSync(tmp,dest);',
+  '  }catch(e){try{fs.unlinkSync(tmp);}catch(_){}throw e;}}',
+  'function ensureParentDirs(fullPath,createdOut){const rel=path.relative(PROJECT,fullPath);',
+  '  const segs=rel.split(path.sep).slice(0,-1);let cur=PROJECT;',
+  '  for(const seg of segs){cur=path.join(cur,seg);',
+  '    const st=safeLstat(cur);',
+  '    if(st===null){fs.mkdirSync(cur,{recursive:false,mode:0o755});fs.chmodSync(cur,0o755);createdOut.push(cur);}',
+  '    else if(!st.isDirectory())throw new Error("path component exists and is not a real directory (possible symlink): "+cur);}}',
+  'let control;',
+  'try{control=JSON.parse(fs.readFileSync(CONTROL,"utf8"));}',
+  'catch(e){emit({opIndex:-1,ok:false,error:"cannot read control file: "+(e&&e.message||e)});process.exit(1);}',
+  // Single-op protocol: control has { mode, opIndex, op } not { mode, ops[] }
+  'const mode=control.mode;',
+  'const opIndex=control.opIndex;',
+  'const op=control.op;',
+  'if(typeof opIndex!=="number"||!op){emit({opIndex:-1,ok:false,error:"malformed control: missing opIndex or op"});process.exit(1);}',
+  'const finalPath=path.join(PROJECT,op.path);',  // note: referenced in atomicWriteNew closure above
+  'if(!(finalPath===PROJECT||finalPath.indexOf(PROJECT+path.sep)===0)){',
+  '  emit({opIndex:opIndex,ok:false,error:"path escapes project root: "+op.path});process.exit(1);}',
+  'try{',
+  '  if(mode==="apply"){',
+  '    if(op.op==="ADD"){',
+  // F5: check absence first
+  '      if(safeLstat(finalPath)!==null)throw new Error("ADD target unexpectedly exists before write");',
+  '      const created=[];ensureParentDirs(finalPath,created);',
+  '      const buf=readBlob(op.postHash,op.postSize);',
+  // F5: atomicWriteNew checks finalPath again before rename
+  '      atomicWriteNew(finalPath,buf,op.postMode);',
+  '      emit({opIndex:opIndex,ok:true,path:op.path,op:op.op,createdDirs:created});',
+  '    }else if(op.op==="CONTENT_MODIFY"){',
+  // F4: single-link check
+  '      const lst=requireSingleLinkRegularFile(finalPath);',
+  '      const cur=fs.readFileSync(finalPath);if(sha256(cur)!==op.beforeHash)throw new Error("preimage content mismatch");',
+  '      if((lst.mode&0o7777)!==op.beforeMode)throw new Error("preimage mode mismatch");',
+  '      const buf=readBlob(op.postHash,op.postSize);atomicWriteExisting(finalPath,buf,op.postMode);',
+  '      emit({opIndex:opIndex,ok:true,path:op.path,op:op.op});',
+  '    }else if(op.op==="DELETE"){',
+  // F4: single-link check
+  '      const lst=requireSingleLinkRegularFile(finalPath);',
+  '      const cur=fs.readFileSync(finalPath);if(sha256(cur)!==op.beforeHash)throw new Error("preimage content mismatch");',
+  '      if((lst.mode&0o7777)!==op.beforeMode)throw new Error("preimage mode mismatch");',
+  '      fs.unlinkSync(finalPath);emit({opIndex:opIndex,ok:true,path:op.path,op:op.op});',
+  '    }else if(op.op==="MODE_CHANGE"){',
+  // F4: single-link check
+  '      const lst=requireSingleLinkRegularFile(finalPath);',
+  '      const cur=fs.readFileSync(finalPath);if(sha256(cur)!==op.beforeHash)throw new Error("content changed, refusing mode change");',
+  '      if((lst.mode&0o7777)!==op.beforeMode)throw new Error("preimage mode mismatch");',
+  '      fs.chmodSync(finalPath,op.postMode);emit({opIndex:opIndex,ok:true,path:op.path,op:op.op});',
+  '    }else{throw new Error("unsupported op: "+op.op);}',
+  '  }else if(mode==="rollback"){',
+  '    if(op.op==="ADD"){',
+  // F3: verify live target still exactly matches this attempt's POST before deleting
+  '      const lst=requireSingleLinkRegularFile(finalPath);',
+  '      const cur=fs.readFileSync(finalPath);',
+  '      if(sha256(cur)!==op.postHash)throw new Error("ADD rollback: live file hash no longer matches attempt POST; refusing to delete (external interference?)");',
+  '      if(cur.length!==op.postSize)throw new Error("ADD rollback: live file size no longer matches attempt POST; refusing to delete");',
+  '      if((lst.mode&0o7777)!==op.postMode)throw new Error("ADD rollback: live file mode no longer matches attempt POST; refusing to delete");',
+  '      fs.unlinkSync(finalPath);',
+  '      const dirs=(op.createdDirs||[]).slice().reverse();',
+  '      for(const d of dirs){const dst=safeLstat(d);if(dst===null)continue;',
+  '        if(!dst.isDirectory())throw new Error("journaled created dir is not a real directory: "+d);',
+  '        const entries=fs.readdirSync(d);',
+  '        if(entries.length===0)fs.rmdirSync(d);else throw new Error("cannot remove non-empty created directory: "+d);}',
+  '      emit({opIndex:opIndex,ok:true,path:op.path,op:op.op});',
+  '    }else if(op.op==="CONTENT_MODIFY"){',
+  // F4: single-link check on rollback read
+  '      const lst=requireSingleLinkRegularFile(finalPath);',
+  '      const cur=fs.readFileSync(finalPath);',
+  '      if(sha256(cur)!==op.postHash)throw new Error("live file no longer matches what this attempt wrote; refusing to roll back");',
+  '      if((lst.mode&0o7777)!==op.postMode)throw new Error("live mode no longer matches what this attempt wrote; refusing to roll back");',
+  '      const buf=readBlob(op.beforeHash,op.beforeSize);atomicWriteExisting(finalPath,buf,op.beforeMode);',
+  '      emit({opIndex:opIndex,ok:true,path:op.path,op:op.op});',
+  '    }else if(op.op==="DELETE"){',
+  '      if(safeLstat(finalPath)!==null)throw new Error("live path unexpectedly exists; refusing to recreate over it");',
+  '      const created=[];ensureParentDirs(finalPath,created);',
+  '      const buf=readBlob(op.beforeHash,op.beforeSize);atomicWriteNew(finalPath,buf,op.beforeMode);',
+  '      emit({opIndex:opIndex,ok:true,path:op.path,op:op.op});',
+  '    }else if(op.op==="MODE_CHANGE"){',
+  // F4: single-link check on rollback read
+  '      const lst=requireSingleLinkRegularFile(finalPath);',
+  '      const cur=fs.readFileSync(finalPath);',
+  '      if(sha256(cur)!==op.postHash)throw new Error("live content no longer matches what this attempt wrote; refusing to roll back");',
+  '      if((lst.mode&0o7777)!==op.postMode)throw new Error("live mode no longer matches what this attempt wrote; refusing to roll back");',
+  '      fs.chmodSync(finalPath,op.beforeMode);emit({opIndex:opIndex,ok:true,path:op.path,op:op.op});',
+  '    }else{throw new Error("unsupported rollback op: "+op.op);}',
+  '  }else{throw new Error("unknown mode: "+mode);}',
+  '}catch(e){emit({opIndex:opIndex,ok:false,error:e&&e.message?e.message:String(e)});process.exit(1);}',
+  'process.exit(0);',
+].join('');

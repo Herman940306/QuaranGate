@@ -105,7 +105,7 @@ describe('A6-B1 job store migration v2 -> v3', () => {
     const ids = seedV2Db(dbPath, 12);
 
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(3);
+    expect(store.schemaVersion).toBe(4);
 
     for (const id of ids) {
       const got = store.get(id);
@@ -132,7 +132,7 @@ describe('A6-B1 job store migration v2 -> v3', () => {
     const ids = seedV2Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v2 -> v3
     const reopened = new AgentJobStore(dbPath); // v3 -> v3 (no-op)
-    expect(reopened.schemaVersion).toBe(3);
+    expect(reopened.schemaVersion).toBe(4);
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -149,7 +149,7 @@ describe('A3 job store migration v1 -> current (v3)', () => {
 
     const store = new AgentJobStore(dbPath); // opening runs migrate() cumulatively (v1 -> v2 -> v3)
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(3);
+    expect(store.schemaVersion).toBe(4);
 
     for (const id of ids) {
       const got = store.get(id);
@@ -176,7 +176,7 @@ describe('A3 job store migration v1 -> current (v3)', () => {
     const ids = seedV1Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v1 -> v3
     const reopened = new AgentJobStore(dbPath); // v3 -> v3 (no-op)
-    expect(reopened.schemaVersion).toBe(3);
+    expect(reopened.schemaVersion).toBe(4);
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -215,7 +215,7 @@ describe('A6-B1 artifact metadata columns — fresh v3 schema', () => {
   it('fresh v3 DB contains all nine required artifact metadata columns', () => {
     const store = new AgentJobStore(dbPath);
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(3);
+    expect(store.schemaVersion).toBe(4);
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -288,7 +288,7 @@ describe('A6-B1 artifact metadata columns — v2→v3 migration', () => {
   it('v2→v3 migration adds all nine artifact metadata columns', () => {
     seedV2Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(3);
+    expect(store.schemaVersion).toBe(4);
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -399,7 +399,7 @@ describe('A6-B1 artifact metadata columns — v1→v3 migration', () => {
   it('v1→v3 migration adds all nine artifact metadata columns', () => {
     seedV1Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(3);
+    expect(store.schemaVersion).toBe(4);
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -452,7 +452,7 @@ describe('A6-B1 artifact metadata columns — fresh-v3 and migrated-v3 schema eq
     seedV2Db(p, 2);
     new AgentJobStore(p).close(); // v2→v3
     const reopened = new AgentJobStore(p); // v3→v3 (no-op)
-    expect(reopened.schemaVersion).toBe(3);
+    expect(reopened.schemaVersion).toBe(4);
     reopened.close();
 
     const db = new DatabaseSync(p);

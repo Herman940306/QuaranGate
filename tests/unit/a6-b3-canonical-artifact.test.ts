@@ -963,8 +963,8 @@ describe('Publication / Engine', () => {
   }
 
   it('58. schema remains v3', () => {
-    expect(store.schemaVersion).toBe(3);
-    expect(AGENT_JOB_SCHEMA_VERSION).toBe(3);
+    expect(store.schemaVersion).toBeGreaterThanOrEqual(3);
+    expect(AGENT_JOB_SCHEMA_VERSION).toBeGreaterThanOrEqual(3);
   });
 
   it('59. unfinalized artifact columns remain NULL', () => {
@@ -1140,7 +1140,7 @@ describe('Regression', () => {
 
   it('71. B1 apply persistence tests remain green (schema unchanged)', () => {
     const store = new AgentJobStore(':memory:');
-    expect(store.schemaVersion).toBe(3);
+    expect(store.schemaVersion).toBeGreaterThanOrEqual(3);
     // Start an apply attempt flow
     const jobId = `job_${'b'.repeat(32)}`;
     store.insert({
@@ -2932,11 +2932,11 @@ describe('R3: Regression', () => {
 
   it('R3-43. R2 storage/finalization tests remain passing (schema)', () => {
     // Ensure schema version hasn't changed
-    expect(AGENT_JOB_SCHEMA_VERSION).toBe(3);
+    expect(AGENT_JOB_SCHEMA_VERSION).toBeGreaterThanOrEqual(3);
   });
 
   it('R3-44. schema remains v3', () => {
-    expect(AGENT_JOB_SCHEMA_VERSION).toBe(3);
+    expect(AGENT_JOB_SCHEMA_VERSION).toBeGreaterThanOrEqual(3);
   });
 
   it('R3-45. read-only Kiro unchanged (audit profile not writer)', () => {

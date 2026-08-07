@@ -1,10 +1,10 @@
 /**
- * Agent Control Plane MCP tools (Phase A2) — the first six activated tools:
- * agents_list, agent_projects, agent_dispatch, agent_status, agent_result,
- * agent_cancel.
- *
- * agent_diff, agent_apply and agent_discard remain CONTRACT-ONLY (A6): a fake
- * diff or apply path must not establish a misleading production contract.
+ * Agent Control Plane MCP tools. A2 activated the first six: agents_list,
+ * agent_projects, agent_dispatch, agent_status, agent_result, agent_cancel.
+ * A6-B4 activated agent_diff (read-only canonical review). A6-B5 activates
+ * agent_apply (applies an already-reviewed job's verified artifact to its
+ * registered real project). agent_discard remains CONTRACT-ONLY: its
+ * schema/authz exist, but no implementation is registered here.
  *
  * Gateway stays thin: authenticate (transport) → authorize via the pure A1
  * matrix → validate (strict A1 Zod schemas, registered directly so unknown
@@ -34,6 +34,8 @@ const READ = { readOnlyHint: true, destructiveHint: false, openWorldHint: false 
 const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
 /** Cancellation permanently terminates a job (a retry is a new job). */
 const CANCEL = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
+/** Apply mutates the real registered project on disk — destructive-class from the caller's perspective. */
+const APPLY = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
 
 type ToolResult = {
   content: { type: 'text'; text: string }[];
@@ -232,6 +234,25 @@ export function registerAgentTools(server: McpServer): void {
     return {
       meta: `job=${job.jobId} artifact=${diff.diffHash.slice(0, 12)} bytes=${diff.chunkBytes}/${diff.totalBytes} sel=${diff.path !== undefined ? 'path' : 'all'}${diff.truncated ? ' more' : ''}`,
       result,
+    };
+  }));
+
+  server.registerTool('agent_apply', {
+    title: 'Apply an agent job to its project',
+    description: 'Apply an already-reviewed COMPLETED job\'s independently re-verified canonical artifact to its registered real project. Takes no patch text, host path, or Docker options — only stored, re-verified evidence is ever applied. One-time: applying an already-APPLIED job performs zero writes. Fails closed on stale HEAD, a dirty host, a guarded-path match, or any live host mismatch; a failure after mutation begins is either fully rolled back or the project is quarantined pending recovery.',
+    inputSchema: AGENT_TOOL_SCHEMAS.agent_apply.input,
+    outputSchema: AGENT_TOOL_SCHEMAS.agent_apply.output,
+    annotations: APPLY,
+  }, agentGuarded('agent_apply', async (args, p) => {
+    // Executor enforces ownership on this read (UNKNOWN_JOB / FORBIDDEN_JOB).
+    const job = await executor.agentJob(args.jobId, p.id);
+    // Full A1 matrix: agents:apply + ownership + CURRENT grant for the job's
+    // project (from the trusted job record, never caller input).
+    requireAgentAuthz({ tool: 'agent_apply', principal: p, job: jobRef(job) });
+    const { apply, job: updated } = await executor.agentApply({ jobId: args.jobId, principal: p.id });
+    return {
+      meta: `job=${updated.jobId} status=${apply.status}`,
+      result: { jobId: updated.jobId, status: apply.status, project: updated.project, appliedAt: apply.appliedAt },
     };
   }));
 

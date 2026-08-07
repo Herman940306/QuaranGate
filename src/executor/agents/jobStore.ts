@@ -28,7 +28,7 @@ import {
   type ArtifactState,
 } from '../../shared/agents.js';
 
-export const AGENT_JOB_SCHEMA_VERSION = 3;
+export const AGENT_JOB_SCHEMA_VERSION = 4;
 
 /**
  * Concurrency admission counts EXECUTING jobs only. QUEUED jobs are "active"
@@ -214,6 +214,39 @@ export interface ApplyAttemptTransitionExtras {
   rollbackEvidence?: string;
   mutatedPathCount?: number;
   applierImage?: string;
+}
+
+/**
+ * One completed mutation-op record for an apply attempt (Phase A6-B5). Never
+ * holds source bytes — the canonical apply authority remains the verified
+ * artifact manifest + content-addressed blobs (outside SQLite). `opIndex` is
+ * the operation's position in the canonical sorted change list, so rollback
+ * can process journal rows in exact reverse order without re-deriving it
+ * from the artifact.
+ */
+export interface AgentApplyJournalRow {
+  id: number;
+  attemptId: string;
+  opIndex: number;
+  path: string;
+  op: string;
+  beforeExisted: boolean | null;
+  beforeContentHash: string | null;
+  beforeMode: number | null;
+  /** Directory paths this op created, shallowest-first (JSON array), or null. */
+  createdDirs: string[] | null;
+  completedAt: string;
+}
+
+export interface NewApplyJournalRow {
+  attemptId: string;
+  opIndex: number;
+  path: string;
+  op: string;
+  beforeExisted: boolean | null;
+  beforeContentHash: string | null;
+  beforeMode: number | null;
+  createdDirs: string[] | null;
 }
 
 export interface NewAgentJob {
@@ -426,6 +459,28 @@ export class AgentJobStore {
             ON agent_apply_attempts(job_id) WHERE state IN (${ACTIVE_ATTEMPT_SQL_LIST});
           CREATE UNIQUE INDEX IF NOT EXISTS idx_apply_attempts_active_project
             ON agent_apply_attempts(project_id) WHERE state IN (${ACTIVE_ATTEMPT_SQL_LIST});
+        `);
+      }
+      if (version < 4) {
+        // v3 (A6-B1/B2/B3/B4) → v4 (A6-B5): per-attempt mutation journal.
+        // Additive only; no column changes to agent_jobs or agent_apply_attempts.
+        // Never holds source bytes — path/hash/mode metadata only (the canonical
+        // apply authority remains the verified artifact manifest + blobs).
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS agent_apply_journal (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_id          TEXT NOT NULL REFERENCES agent_apply_attempts(attempt_id),
+            op_index            INTEGER NOT NULL,
+            path                TEXT NOT NULL,
+            op                  TEXT NOT NULL,
+            before_existed      INTEGER,
+            before_content_hash TEXT,
+            before_mode         INTEGER,
+            created_dirs        TEXT,
+            completed_at        TEXT NOT NULL,
+            UNIQUE(attempt_id, op_index)
+          );
+          CREATE INDEX IF NOT EXISTS idx_apply_journal_attempt ON agent_apply_journal(attempt_id);
         `);
       }
       this.db.exec(`PRAGMA user_version=${AGENT_JOB_SCHEMA_VERSION}`);
@@ -976,6 +1031,102 @@ export class AgentJobStore {
     return { abortedNoMutation, uncertain };
   }
 
+  // -------------------------------------------------------------------------
+  // A6-B5: apply-attempt mutation journal
+  // -------------------------------------------------------------------------
+
+  /**
+   * Persist one completed mutation op for an attempt. Called by the applier
+   * orchestration AFTER each op's exec-stream JSON line arrives (one op at a
+   * time, each its own committed transaction) — so a crash between ops
+   * leaves an exact, provable record of which ops actually landed. Throws on
+   * a duplicate `(attempt_id, op_index)` pair (the UNIQUE constraint) rather
+   * than silently overwriting — journal rows are append-only.
+   */
+  insertApplyJournalRow(row: NewApplyJournalRow): AgentApplyJournalRow {
+    const completedAt = nowIso();
+    try {
+      this.db.prepare(`
+        INSERT INTO agent_apply_journal
+          (attempt_id, op_index, path, op, before_existed, before_content_hash, before_mode, created_dirs, completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        row.attemptId, row.opIndex, row.path, row.op,
+        row.beforeExisted === null ? null : (row.beforeExisted ? 1 : 0),
+        row.beforeContentHash, row.beforeMode,
+        row.createdDirs === null ? null : JSON.stringify(row.createdDirs),
+        completedAt,
+      );
+    } catch (e) {
+      if (isUniqueConstraintViolation(e)) {
+        throw new BridgeError(
+          'APPLY_MUTATION_FAILED',
+          `duplicate journal entry for attempt ${row.attemptId} op ${row.opIndex}`,
+          500,
+        );
+      }
+      throw e;
+    }
+    const r = this.db.prepare(
+      'SELECT * FROM agent_apply_journal WHERE attempt_id = ? AND op_index = ?',
+    ).get(row.attemptId, row.opIndex) as Record<string, unknown>;
+    return rowToApplyJournal(r);
+  }
+
+  /** All journal rows for one attempt, ordered by op_index ascending. */
+  listApplyJournalForAttempt(attemptId: string): AgentApplyJournalRow[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM agent_apply_journal WHERE attempt_id = ? ORDER BY op_index ASC',
+    ).all(attemptId) as Record<string, unknown>[];
+    return rows.map(rowToApplyJournal);
+  }
+
+  /**
+   * Atomically commit a runtime (non-restart) UNCERTAIN outcome: in ONE DB
+   * transaction, attempt APPLYING -> UNCERTAIN AND the owning project ->
+   * QUARANTINED, exactly like {@link recoverApplyAttempts}'s startup path —
+   * this method reuses the SAME idempotent quarantine upsert SQL so the two
+   * call sites (runtime failure vs. restart recovery) can never produce
+   * divergent durable outcomes. Called when rollback fails or cannot be
+   * verified during a live apply attempt (never called for a restart-found
+   * orphan — that path is {@link recoverApplyAttempts} exclusively).
+   */
+  markApplyUncertain(attemptId: string, jobId: string, projectId: string, reason: string): boolean {
+    const boundedReason = reason.slice(0, MAX_APPLY_ATTEMPT_REASON_CHARS);
+    const now = nowIso();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const res = this.db.prepare(`
+        UPDATE agent_apply_attempts
+        SET state = 'UNCERTAIN', finished_at = ?, reason = ?
+        WHERE attempt_id = ? AND job_id = ? AND state = 'APPLYING'
+      `).run(now, boundedReason, attemptId, jobId);
+      if (Number(res.changes) !== 1) { this.db.exec('ROLLBACK'); return false; }
+
+      this.db.prepare(`
+        INSERT INTO agent_project_apply_state
+          (project_id, state, quarantined_at, quarantine_causing_job_id, quarantine_causing_attempt_id, quarantine_reason)
+        VALUES (?, 'QUARANTINED', ?, ?, ?, ?)
+        ON CONFLICT(project_id) DO UPDATE SET
+          state = 'QUARANTINED',
+          quarantined_at = CASE WHEN agent_project_apply_state.state = 'QUARANTINED'
+            THEN agent_project_apply_state.quarantined_at ELSE excluded.quarantined_at END,
+          quarantine_causing_job_id = CASE WHEN agent_project_apply_state.state = 'QUARANTINED'
+            THEN agent_project_apply_state.quarantine_causing_job_id ELSE excluded.quarantine_causing_job_id END,
+          quarantine_causing_attempt_id = CASE WHEN agent_project_apply_state.state = 'QUARANTINED'
+            THEN agent_project_apply_state.quarantine_causing_attempt_id ELSE excluded.quarantine_causing_attempt_id END,
+          quarantine_reason = CASE WHEN agent_project_apply_state.state = 'QUARANTINED'
+            THEN agent_project_apply_state.quarantine_reason ELSE excluded.quarantine_reason END
+      `).run(projectId, now, jobId, attemptId, boundedReason);
+
+      this.db.exec('COMMIT');
+      return true;
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
   close(): void {
     this.db.close();
   }
@@ -1034,6 +1185,21 @@ function rowToProjectApplyState(r: Record<string, unknown>): AgentProjectApplyRo
     quarantineCausingJobId: (r.quarantine_causing_job_id ?? null) as string | null,
     quarantineCausingAttemptId: (r.quarantine_causing_attempt_id ?? null) as string | null,
     quarantineReason: (r.quarantine_reason ?? null) as string | null,
+  };
+}
+
+function rowToApplyJournal(r: Record<string, unknown>): AgentApplyJournalRow {
+  return {
+    id: Number(r.id),
+    attemptId: String(r.attempt_id),
+    opIndex: Number(r.op_index),
+    path: String(r.path),
+    op: String(r.op),
+    beforeExisted: r.before_existed === null || r.before_existed === undefined ? null : Number(r.before_existed) === 1,
+    beforeContentHash: (r.before_content_hash ?? null) as string | null,
+    beforeMode: r.before_mode === null || r.before_mode === undefined ? null : Number(r.before_mode),
+    createdDirs: r.created_dirs ? (JSON.parse(String(r.created_dirs)) as string[]) : null,
+    completedAt: String(r.completed_at),
   };
 }
 
