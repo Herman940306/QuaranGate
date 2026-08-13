@@ -384,6 +384,33 @@ describe('A6-B1 atomic success / discard primitives', () => {
     expect(reopened.get(job.jobId)!.status).toBe('DISCARDED');
     reopened.close();
   });
+
+  it('A6-B6: discardJob on an already-DISCARDED job returns false (double discard), not a throw', () => {
+    const job = completeJob();
+    expect(store.discardJob(job.jobId)).toBe(true);
+    expect(store.get(job.jobId)!.status).toBe('DISCARDED');
+    const dispositionAt = store.get(job.jobId)!.dispositionAt;
+    expect(store.discardJob(job.jobId)).toBe(false);
+    // No mutation from the second call: status/dispositionAt unchanged.
+    expect(store.get(job.jobId)!.status).toBe('DISCARDED');
+    expect(store.get(job.jobId)!.dispositionAt).toBe(dispositionAt);
+  });
+
+  it('A6-B6: discardJob on an APPLIED job returns false, not a throw', () => {
+    const job = completeJob();
+    const attempt = store.startApplyAttempt(newAttempt({ jobId: job.jobId }));
+    store.transitionApplyAttempt(attempt.attemptId, 'STARTED', 'VERIFYING');
+    store.transitionApplyAttempt(attempt.attemptId, 'VERIFYING', 'APPLYING');
+    expect(store.markApplySuccess(attempt.attemptId, job.jobId, { mutatedPathCount: 1 })).toBe(true);
+    expect(store.get(job.jobId)!.status).toBe('APPLIED');
+
+    expect(store.discardJob(job.jobId)).toBe(false);
+    // No mutation: job remains APPLIED, never DISCARDED. dispositionAt is
+    // the DISCARDED-only column and must stay null; appliedAt is untouched.
+    expect(store.get(job.jobId)!.status).toBe('APPLIED');
+    expect(store.get(job.jobId)!.appliedAt).not.toBeNull();
+    expect(store.get(job.jobId)!.dispositionAt).toBeNull();
+  });
 });
 
 describe('A6-B1 UNCERTAIN blocks discardJob (section 6, locked correction)', () => {

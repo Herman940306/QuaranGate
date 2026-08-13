@@ -31,6 +31,7 @@ const dispatchBody = z.object({
 
 const cancelBody = z.object({ principal: principalSchema }).strict();
 const applyBody = z.object({ principal: principalSchema }).strict();
+const discardBody = z.object({ principal: principalSchema }).strict();
 
 /** Workspace-relative selection path — never an absolute/host/traversal path. */
 const diffPath = z.string().min(1).max(512).refine(
@@ -156,5 +157,16 @@ export function registerAgentRoutes(
     if (!parsed.success) throw new BridgeError('MALFORMED_REQUEST', 'apply: principal required', 400);
     const result = await engine().apply({ jobId, principal: parsed.data.principal });
     return { apply: result, job: jobWire(engine().getOwnedJob(jobId, parsed.data.principal)) };
+  }));
+
+  // A6-B6: discard — a durable logical disposition change only (no Docker
+  // I/O, no project filesystem access; see PHASE_A6_B6_AGENT_DISCARD.md
+  // §11). The executor re-derives job ownership from durable state (never
+  // caller input). Mirrors POST /agent/jobs/:id/cancel exactly.
+  app.post('/agent/jobs/:id/discard', handle(async (req) => {
+    const jobId = requireJobId(req.params.id);
+    const parsed = discardBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw new BridgeError('MALFORMED_REQUEST', 'discard: principal required', 400);
+    return { job: jobWire(engine().discard(jobId, parsed.data.principal)) };
   }));
 }

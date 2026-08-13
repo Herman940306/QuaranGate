@@ -1152,14 +1152,6 @@ describe('A6-B4 public tool registration', () => {
     expect(AGENT_TOOL_SCHEMAS.agent_diff.output.safeParse(withChanges).success).toBe(false);
   });
 
-  it('T11 agent_discard is NOT registered (still contract-only)', () => {
-    // agent_apply WAS activated by A6-B5 (see tests/unit/a6-b5-apply-engine.test.ts
-    // for its registration coverage) — this B4 regression now only asserts the
-    // one tool B4 itself never activated and B5 does not activate either.
-    const names = captureTools().map((t) => t.name);
-    expect(names).not.toContain('agent_discard');
-  });
-
   it('input contract: jobId pattern + bounded path/cursor/maxBytes', () => {
     const inp = AGENT_TOOL_SCHEMAS.agent_diff.input;
     expect(inp.safeParse({ jobId: JOB_ID }).success).toBe(true);

@@ -1,10 +1,12 @@
 /**
- * Agent Control Plane MCP tools. A2 activated the first six: agents_list,
- * agent_projects, agent_dispatch, agent_status, agent_result, agent_cancel.
- * A6-B4 activated agent_diff (read-only canonical review). A6-B5 activates
- * agent_apply (applies an already-reviewed job's verified artifact to its
- * registered real project). agent_discard remains CONTRACT-ONLY: its
- * schema/authz exist, but no implementation is registered here.
+ * Agent Control Plane MCP tools. A2 activated agents_list, agent_projects,
+ * agent_dispatch, agent_status, agent_result, agent_cancel. A6-B4 activated
+ * agent_diff (read-only canonical review). A6-B5 activated agent_apply
+ * (applies an already-reviewed job's verified artifact to its registered
+ * real project). A6-B6 activates agent_discard (durably records a
+ * COMPLETED job's artifact as not applied — a logical disposition change
+ * only; no Docker I/O, no project filesystem access). All nine Agent
+ * Control Plane tools are now registered.
  *
  * Gateway stays thin: authenticate (transport) → authorize via the pure A1
  * matrix → validate (strict A1 Zod schemas, registered directly so unknown
@@ -36,6 +38,8 @@ const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: fals
 const CANCEL = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
 /** Apply mutates the real registered project on disk — destructive-class from the caller's perspective. */
 const APPLY = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
+/** Discard permanently records a job's artifact as not applied (no host mutation). */
+const DISCARD = { readOnlyHint: false, destructiveHint: true, openWorldHint: false } as const;
 
 type ToolResult = {
   content: { type: 'text'; text: string }[];
@@ -267,5 +271,18 @@ export function registerAgentTools(server: McpServer): void {
     requireAgentAuthz({ tool: 'agent_cancel', principal: p, job: jobRef(job) });
     const cancelled = await executor.agentJobCancel(args.jobId, p.id);
     return { meta: `job=${cancelled.jobId} status=${cancelled.status}`, result: { jobId: cancelled.jobId, status: cancelled.status } };
+  }));
+
+  server.registerTool('agent_discard', {
+    title: 'Discard an agent job',
+    description: 'Durably record that a COMPLETED job\'s verified artifact will not be applied. Logical disposition only: leaves live source unchanged, never mutates the project or Docker resources, and never deletes evidence. One-time: a job that is not COMPLETED (already APPLIED, already DISCARDED, or still active/failed) is refused.',
+    inputSchema: AGENT_TOOL_SCHEMAS.agent_discard.input,
+    outputSchema: AGENT_TOOL_SCHEMAS.agent_discard.output,
+    annotations: DISCARD,
+  }, agentGuarded('agent_discard', async (args, p) => {
+    const job = await executor.agentJob(args.jobId, p.id); // ownership enforced executor-side
+    requireAgentAuthz({ tool: 'agent_discard', principal: p, job: jobRef(job) });
+    const discarded = await executor.agentJobDiscard(args.jobId, p.id);
+    return { meta: `job=${discarded.jobId} status=${discarded.status}`, result: { jobId: discarded.jobId, status: discarded.status } };
   }));
 }

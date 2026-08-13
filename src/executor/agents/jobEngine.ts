@@ -403,6 +403,30 @@ export class AgentJobEngine {
   }
 
   /**
+   * A6-B6: discard an owned, COMPLETED job — a durable logical disposition
+   * change only (PHASE_A6_B6_AGENT_DISCARD.md §11: no Docker I/O, no
+   * artifact read, no project filesystem access, no cleanup/retention
+   * operation — there is no physical sandbox left to remove by the time a
+   * job reaches COMPLETED). `store.discardJob(jobId)` is called exactly
+   * once and is the sole mutating call; its `false` return (job was not
+   * COMPLETED — already DISCARDED, already APPLIED, still active, or
+   * failed/cancelled) is never retried and never treated as success.
+   */
+  discard(jobId: string, principal: string): AgentJobRow {
+    const job = this.getOwnedJob(jobId, principal);
+    const ok = this.store.discardJob(job.jobId);
+    if (!ok) {
+      const current = this.store.get(job.jobId)!;
+      throw new BridgeError(
+        'PRECONDITION_FAILED',
+        `job ${jobId} is ${current.status}, not COMPLETED; discard may only be performed on a COMPLETED job`,
+        409,
+      );
+    }
+    return this.store.get(job.jobId)!;
+  }
+
+  /**
    * Cancel a job the principal owns. QUEUED jobs cancel directly; active jobs
    * are CAS-transitioned to CANCELLED and then cooperatively aborted.
    * Terminal jobs return their current status unchanged.

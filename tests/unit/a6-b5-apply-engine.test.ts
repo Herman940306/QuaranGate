@@ -1662,11 +1662,6 @@ describe('A6-B5 gateway registration', () => {
     expect(ann.readOnlyHint).toBe(false);
   });
 
-  it('agent_discard is still NOT registered (unimplemented, unactivated)', () => {
-    const names = captureTools().map((t) => t.name);
-    expect(names).not.toContain('agent_discard');
-  });
-
   it('agentApplyInput rejects patch text / host path / Docker options (strict, jobId-only)', () => {
     const schema = AGENT_TOOL_SCHEMAS.agent_apply.input;
     expect(schema.safeParse({ jobId: JOB_ID }).success).toBe(true);

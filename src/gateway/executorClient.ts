@@ -62,6 +62,8 @@ export const executor = {
     call<{ job: AgentJobWire }>(`/agent/jobs/${jobId}/result?principal=${encodeURIComponent(principal)}`).then((r) => r.job),
   agentJobCancel: (jobId: string, principal: string) =>
     call<{ job: AgentJobWire }>(`/agent/jobs/${jobId}/cancel`, { principal }).then((r) => r.job),
+  agentJobDiscard: (jobId: string, principal: string) =>
+    call<{ job: AgentJobWire }>(`/agent/jobs/${jobId}/discard`, { principal }).then((r) => r.job),
   agentDiff: (req: { jobId: string; principal: string; path?: string; cursor?: string; maxBytes?: number }) =>
     call<{ diff: AgentDiffWire }>(`/agent/jobs/${req.jobId}/diff`, {
       principal: req.principal, path: req.path, cursor: req.cursor, maxBytes: req.maxBytes,

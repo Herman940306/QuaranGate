@@ -128,6 +128,31 @@ describe('agent authorization matrix', () => {
       .toMatchObject({ allowed: false, code: 'FORBIDDEN_SCOPE' });
   });
 
+  it('A6-B6: discard is allowed even when the principal\'s current project grant has been revoked (deliberate asymmetry vs. apply/diff)', () => {
+    const revokedProjectGrant = makePrincipal({ scopes: ['agents:read', 'agents:dispatch', 'agents:apply'], projects: [] });
+    // Same principal/job would be denied FORBIDDEN_PROJECT for apply/diff...
+    expect(authorizeAgentTool({ tool: 'agent_apply', principal: revokedProjectGrant, job: ownJob }))
+      .toMatchObject({ allowed: false, code: 'FORBIDDEN_PROJECT' });
+    expect(authorizeAgentTool({ tool: 'agent_diff', principal: revokedProjectGrant, job: ownJob }))
+      .toMatchObject({ allowed: false, code: 'FORBIDDEN_PROJECT' });
+    // ...but discard has no project-grant check at all (agentAuthz.ts's
+    // JOB_ADDRESSED block only re-checks the project grant for
+    // 'agent_apply'/'agent_diff', deliberately excluding 'agent_discard').
+    expect(authorizeAgentTool({ tool: 'agent_discard', principal: revokedProjectGrant, job: ownJob }).allowed).toBe(true);
+  });
+
+  it('discard denies a non-owner even with full agents:dispatch scope', () => {
+    const p = makePrincipal({ scopes: ['agents:read', 'agents:dispatch'] });
+    expect(authorizeAgentTool({ tool: 'agent_discard', principal: p, job: foreignJob }))
+      .toMatchObject({ allowed: false, code: 'FORBIDDEN_JOB' });
+  });
+
+  it('discard is not authorized by agents:apply alone (agents:dispatch is not implied)', () => {
+    const applyOnly = makePrincipal({ scopes: ['agents:read', 'agents:apply'] });
+    expect(authorizeAgentTool({ tool: 'agent_discard', principal: applyOnly, job: ownJob }))
+      .toMatchObject({ allowed: false, code: 'FORBIDDEN_SCOPE' });
+  });
+
   it('list/projects need only agents:read', () => {
     const p = makePrincipal({ scopes: ['agents:read'], projects: [], agentBackends: [], agentProfiles: [] });
     expect(authorizeAgentTool({ tool: 'agents_list', principal: p }).allowed).toBe(true);
