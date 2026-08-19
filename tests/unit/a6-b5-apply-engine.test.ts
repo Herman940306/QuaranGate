@@ -13,6 +13,10 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { BridgeError } from '../../src/shared/errors.js';
 import {
   canonicalSerialize,
@@ -46,7 +50,7 @@ import {
   isBridgeManaged,
 } from '../../src/executor/agents/sandboxSpec.js';
 import type { AgentProjectConfig } from '../../src/executor/agentConfig.js';
-import type { AgentResourcePolicy } from '../../src/shared/agents.js';
+import { AGENT_RETENTION_DURATION_MS, type AgentResourcePolicy } from '../../src/shared/agents.js';
 import { authorizeAgentTool } from '../../src/gateway/agentAuthz.js';
 import { AGENT_TOOL_SCHEMAS } from '../../src/gateway/agentSchemas.js';
 import { registerAgentTools } from '../../src/gateway/agentTools.js';
@@ -402,6 +406,8 @@ function insertCompletedJob(store: AgentJobStore, overrides: Partial<NewAgentJob
     prompt: 'test prompt',
     sessionPolicy: 'new',
     writer: true,
+    retentionClass: 'ephemeral',
+    retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
     ...overrides,
   });
   // Drive QUEUED -> PREPARING -> RUNNING -> VALIDATING -> COMPLETED via the
@@ -567,6 +573,50 @@ describe('A6-B5 apply engine', () => {
       const applier = new FakeApplierIO(artifact.evidenceStore);
       const code = await expectCode(attempt(store, applier, artifact));
       expect(code).toBe('ARTIFACT_NOT_AVAILABLE');
+    });
+
+    // A6 lifecycle regression: an EXPIRED artifact must keep failing with the
+    // SAME existing code. The lifecycle adds no new apply error contract, and
+    // an expired artifact must never be applied from stale cached metadata.
+    it('refuses apply when the artifact is EXPIRED (existing ARTIFACT_NOT_AVAILABLE contract)', async () => {
+      const artifact = makeArtifact(
+        [{ path: 'a.txt', kind: 'file', mode: 0o644, content: Buffer.from('x') }],
+        [{ path: 'a.txt', kind: 'file', mode: 0o644, content: Buffer.from('y') }],
+      );
+      const dbFile = join(mkdtempSync(join(tmpdir(), 'mcpb-b5-expired-')), 'agents.db');
+      const fileStore = new AgentJobStore(dbFile);
+      insertCompletedJob(fileStore);
+      publishArtifact(fileStore, artifact);
+      expect(fileStore.get(JOB_ID)!.artifactState).toBe('AVAILABLE');
+
+      // Force the artifact to EXPIRED. Lane A only ever expires APPLIED/
+      // DISCARDED jobs, so a COMPLETED job holding an EXPIRED artifact is
+      // corrupt/edited state — precisely what this guard defends against.
+      const raw = new DatabaseSync(dbFile);
+      raw.prepare(`UPDATE agent_jobs SET artifact_state='EXPIRED' WHERE job_id=?`).run(JOB_ID);
+      raw.close();
+
+      const applier = new FakeApplierIO(artifact.evidenceStore);
+      const code = await expectCode(runApplyAttempt(
+        {
+          store: fileStore,
+          evidenceReaderFactory: () => memorySource(artifact.evidenceStore),
+          applierImage: 'mcp-ide-bridge-sandbox:test',
+          applierIO: applier,
+        },
+        fileStore.get(JOB_ID)!,
+        PROJECT,
+        RESOURCE_POLICY,
+      ));
+      expect(code).toBe('ARTIFACT_NOT_AVAILABLE');
+
+      // Zero mutation, and the attempt is recorded as ARTIFACT_INVALID.
+      const attempts = fileStore.listApplyAttemptsForJob(JOB_ID);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]!.state).toBe('ARTIFACT_INVALID');
+      expect(fileStore.get(JOB_ID)!.status).toBe('COMPLETED');
+      expect(fileStore.listApplyJournalForAttempt(attempts[0]!.attemptId)).toEqual([]);
+      fileStore.close();
     });
 
     it('refuses apply when the artifact is not applicable', async () => {

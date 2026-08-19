@@ -30,7 +30,7 @@ import {
 } from '../../src/executor/agents/canonicalJson.js';
 import { computeCanonicalDiff, computeChangeSetHash } from '../../src/executor/agents/canonicalDiff.js';
 import type { AgentControlPlaneConfig } from '../../src/executor/agentConfig.js';
-import type { AgentJobStatus } from '../../src/shared/agents.js';
+import { AGENT_RETENTION_DURATION_MS, type AgentJobStatus } from '../../src/shared/agents.js';
 import type { Principal } from '../../src/gateway/config.js';
 
 // ---------------------------------------------------------------------------
@@ -65,6 +65,7 @@ function seedJob(store: AgentJobStore, jobId: string, status: AgentJobStatus, pr
   store.insert({
     jobId, principalId, backend: 'kiro', project: 'proj1', profile: 'implement',
     resourcePolicy: 'standard', promptHash: 'h'.repeat(64), prompt: 'p', sessionPolicy: 'new', writer: true,
+    retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
   });
   if (status === 'QUEUED') return;
   if (status === 'FAILED_PRECONDITION') {
@@ -168,6 +169,7 @@ function seedCompletedJobWithArtifact(store: AgentJobStore, jobId: string): Retu
   store.insert({
     jobId, principalId: PRINCIPAL_ID, backend: 'kiro', project: 'proj1', profile: 'implement',
     resourcePolicy: 'standard', promptHash: 'h'.repeat(64), prompt: 'p', sessionPolicy: 'new', writer: true,
+    retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
   });
   store.transition(jobId, 'QUEUED', 'PREPARING');
   store.transition(jobId, 'PREPARING', 'RUNNING');

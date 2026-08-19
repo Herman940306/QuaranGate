@@ -16,6 +16,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentJobStore, type NewAgentJob, type NewApplyAttempt } from '../../src/executor/agents/jobStore.js';
+import { AGENT_RETENTION_DURATION_MS } from '../../src/shared/agents.js';
 import { BridgeError } from '../../src/shared/errors.js';
 
 let store: AgentJobStore;
@@ -36,6 +37,11 @@ function newJob(over: Partial<NewAgentJob> = {}): NewAgentJob {
     prompt: 'do the thing',
     sessionPolicy: 'new',
     writer: true,
+    // v5 requires an explicit durable retention snapshot at job creation.
+    // Deterministic fixture value from the shared product-policy map — the
+    // store deliberately has no implicit default.
+    retentionClass: 'ephemeral',
+    retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
     ...over,
   };
 }
@@ -402,14 +408,25 @@ describe('A6-B1 atomic success / discard primitives', () => {
     store.transitionApplyAttempt(attempt.attemptId, 'STARTED', 'VERIFYING');
     store.transitionApplyAttempt(attempt.attemptId, 'VERIFYING', 'APPLYING');
     expect(store.markApplySuccess(attempt.attemptId, job.jobId, { mutatedPathCount: 1 })).toBe(true);
-    expect(store.get(job.jobId)!.status).toBe('APPLIED');
+
+    // APPLIED is a success disposition: applied_at and disposition_at are both
+    // written from the SAME canonical timestamp T (frozen A6 Decision R2, which
+    // anchors retain_until = disposition_at + retention_duration_ms).
+    const applied = store.get(job.jobId)!;
+    expect(applied.status).toBe('APPLIED');
+    expect(applied.appliedAt).not.toBeNull();
+    expect(applied.dispositionAt).not.toBeNull();
+    expect(applied.dispositionAt).toBe(applied.appliedAt);
 
     expect(store.discardJob(job.jobId)).toBe(false);
-    // No mutation: job remains APPLIED, never DISCARDED. dispositionAt is
-    // the DISCARDED-only column and must stay null; appliedAt is untouched.
-    expect(store.get(job.jobId)!.status).toBe('APPLIED');
-    expect(store.get(job.jobId)!.appliedAt).not.toBeNull();
-    expect(store.get(job.jobId)!.dispositionAt).toBeNull();
+    // No mutation: the job remains APPLIED, never DISCARDED, and every
+    // disposition value is byte-identical to the pre-discard state.
+    const after = store.get(job.jobId)!;
+    expect(after.status).toBe('APPLIED');
+    expect(after.appliedAt).toBe(applied.appliedAt);
+    expect(after.dispositionAt).toBe(applied.dispositionAt);
+    expect(after.dispositionAt).toBe(after.appliedAt);
+    expect(after.retainUntil).toBe(applied.retainUntil);
   });
 });
 

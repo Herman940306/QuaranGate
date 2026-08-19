@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pack as tarPack, type Headers as TarHeaders } from 'tar-stream';
 import { BridgeError } from '../../src/shared/errors.js';
+import { AGENT_RETENTION_DURATION_MS } from '../../src/shared/agents.js';
 
 // B3 modules
 import {
@@ -948,6 +949,8 @@ describe('Publication / Engine', () => {
       prompt: 'implement something',
       sessionPolicy: 'new',
       writer: opts.writer ?? true,
+      retentionClass: 'ephemeral',
+      retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
     });
     // Advance to VALIDATING state
     if ((opts.status ?? 'VALIDATING') !== 'QUEUED') {
@@ -1147,6 +1150,7 @@ describe('Regression', () => {
       jobId, principalId: 'u', backend: 'kiro', project: 'p',
       profile: 'implement', resourcePolicy: 'standard',
       promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true,
+      retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
     });
     store.transition(jobId, 'QUEUED', 'PREPARING', { startedAt: new Date().toISOString() });
     store.transition(jobId, 'PREPARING', 'RUNNING');

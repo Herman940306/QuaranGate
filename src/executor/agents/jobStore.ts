@@ -21,14 +21,16 @@ import {
   assertApplyAttemptTransition,
   MAX_AGENT_PROMPT_CHARS,
   AGENT_APPLY_ATTEMPT_ACTIVE_STATES,
+  AGENT_RETENTION_CLASSES,
   type AgentJobStatus,
   type AgentFailureCode,
   type AgentApplyAttemptState,
   type AgentProjectApplyState,
   type ArtifactState,
+  type AgentRetentionClass,
 } from '../../shared/agents.js';
 
-export const AGENT_JOB_SCHEMA_VERSION = 4;
+export const AGENT_JOB_SCHEMA_VERSION = 5;
 
 /**
  * Concurrency admission counts EXECUTING jobs only. QUEUED jobs are "active"
@@ -49,6 +51,61 @@ const ACTIVE_ATTEMPT_SQL_LIST = AGENT_APPLY_ATTEMPT_ACTIVE_STATES.map((s) => `'$
  */
 export const MAX_APPLY_ATTEMPT_REASON_CHARS = 2000;
 export const MAX_APPLY_ATTEMPT_EVIDENCE_CHARS = 4000;
+
+/**
+ * The exact schema shape a database claiming `user_version = 5` MUST have.
+ * Used by {@link AgentJobStore.assertSchemaShape} to fail closed rather than
+ * trust the bare version stamp. Declared here (not inline) so the fresh-install
+ * DDL and the acceptance check stay reviewable side by side.
+ */
+const REQUIRED_V5_TABLES = [
+  'agent_jobs',
+  'agent_project_apply_state',
+  'agent_apply_attempts',
+  'agent_apply_journal',
+] as const;
+
+/** Required column -> declared SQLite affinity, per table. */
+const REQUIRED_V5_COLUMNS: Record<string, Record<string, string>> = {
+  agent_jobs: {
+    job_id: 'TEXT', principal_id: 'TEXT', backend: 'TEXT', project: 'TEXT',
+    profile: 'TEXT', resource_policy: 'TEXT', status: 'TEXT',
+    failure_code: 'TEXT', failure_reason: 'TEXT', created_at: 'TEXT',
+    started_at: 'TEXT', completed_at: 'TEXT', prompt_hash: 'TEXT',
+    prompt: 'TEXT', summary: 'TEXT', exit_code: 'INTEGER',
+    backend_session_id: 'TEXT', session_policy: 'TEXT', writer: 'INTEGER',
+    base_commit: 'TEXT', applied_at: 'TEXT', disposition_at: 'TEXT',
+    artifact_hash: 'TEXT', change_set_hash: 'TEXT', artifact_state: 'TEXT',
+    artifact_content_complete: 'INTEGER', artifact_applicable: 'INTEGER',
+    artifact_reason: 'TEXT', artifact_volume: 'TEXT', artifact_bytes: 'INTEGER',
+    artifact_op_count: 'INTEGER',
+    // v5 durable retention snapshot — the fields the whole A6 lifecycle rests on.
+    retention_class: 'TEXT', retention_duration_ms: 'INTEGER', retain_until: 'TEXT',
+  },
+  agent_project_apply_state: {
+    project_id: 'TEXT', state: 'TEXT', quarantined_at: 'TEXT',
+    quarantine_causing_job_id: 'TEXT', quarantine_causing_attempt_id: 'TEXT',
+    quarantine_reason: 'TEXT',
+  },
+  agent_apply_attempts: {
+    attempt_id: 'TEXT', job_id: 'TEXT', project_id: 'TEXT', principal_id: 'TEXT',
+    expected_artifact_hash: 'TEXT', base_commit: 'TEXT', state: 'TEXT',
+    reason: 'TEXT', started_at: 'TEXT', finished_at: 'TEXT',
+    success_evidence: 'TEXT', rollback_evidence: 'TEXT',
+    mutated_path_count: 'INTEGER', applier_image: 'TEXT',
+  },
+  agent_apply_journal: {
+    id: 'INTEGER', attempt_id: 'TEXT', op_index: 'INTEGER', path: 'TEXT',
+    op: 'TEXT', before_existed: 'INTEGER', before_content_hash: 'TEXT',
+    before_mode: 'INTEGER', created_dirs: 'TEXT', completed_at: 'TEXT',
+  },
+};
+
+/** Partial unique indexes that ARE the active-attempt exclusion authority. */
+const REQUIRED_V5_INDEXES = [
+  'idx_apply_attempts_active_job',
+  'idx_apply_attempts_active_project',
+] as const;
 
 export interface AgentJobRow {
   jobId: string;
@@ -82,6 +139,30 @@ export interface AgentJobRow {
    * (Phase A6). Never set independently of status.
    */
   dispositionAt: string | null;
+
+  // -------------------------------------------------------------------------
+  // A6 durable retention snapshot (schema v5). All three fields NULL for
+  // jobs created before v5. GC MUST use persisted values — never re-resolve
+  // from current config/AGENT_RETENTION_DURATION_MS.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Retention class snapshot persisted at job creation. NULL for pre-v5 jobs
+   * (legacy). Never backfilled or inferred from current resource policy config.
+   */
+  retentionClass: AgentRetentionClass | null;
+  /**
+   * Resolved duration (milliseconds) persisted at job creation from
+   * AGENT_RETENTION_DURATION_MS[retentionClass]. NULL for pre-v5 jobs.
+   * GC uses this persisted value; never re-resolves from the live map.
+   */
+  retentionDurationMs: number | null;
+  /**
+   * Absolute ISO 8601 expiry timestamp. NULL until final disposition
+   * (APPLIED or DISCARDED). Computed as disposition_at + retention_duration_ms
+   * in the SAME atomic transaction as the disposition transition.
+   */
+  retainUntil: string | null;
 
   // -------------------------------------------------------------------------
   // A6 artifact cache/index lifecycle metadata (schema v3 foundation).
@@ -260,6 +341,10 @@ export interface NewAgentJob {
   prompt: string;
   sessionPolicy: string;
   writer: boolean;
+  /** Retention class resolved from the resource policy at dispatch time (v5+). */
+  retentionClass: AgentRetentionClass;
+  /** Duration in ms resolved from AGENT_RETENTION_DURATION_MS at dispatch time (v5+). */
+  retentionDurationMs: number;
 }
 
 export interface TransitionExtras {
@@ -318,6 +403,68 @@ export class AgentJobStore {
   }
 
   /**
+   * Verify that a database claiming `user_version = AGENT_JOB_SCHEMA_VERSION`
+   * actually HAS the schema-v5 shape before it is accepted.
+   *
+   * `PRAGMA user_version` is a bare integer stamp with no relationship to the
+   * objects that actually exist: a database can be stamped v5 by an
+   * interrupted or out-of-tree migration and still be missing the durable
+   * lifecycle columns the retention model depends on. Trusting the stamp
+   * alone would let the executor start against a database where
+   * retention_class / retention_duration_ms / retain_until do not exist —
+   * every retention query would then fail at runtime, or worse, be silently
+   * skipped.
+   *
+   * Fail closed instead. This NEVER migrates, backfills, or repairs: a
+   * malformed v5 database is an operator-visible fault, and inferring
+   * retention semantics for it is exactly what the frozen A6 model forbids.
+   */
+  private assertSchemaShape(): void {
+    const missing: string[] = [];
+
+    const tableExists = (t: string): boolean =>
+      this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(t) !== undefined;
+    const indexExists = (i: string): boolean =>
+      this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?`).get(i) !== undefined;
+
+    for (const t of REQUIRED_V5_TABLES) {
+      if (!tableExists(t)) missing.push(`table ${t}`);
+    }
+
+    // Column presence + declared affinity for every table that exists. A
+    // missing table is already reported above; do not double-report its columns.
+    for (const [table, columns] of Object.entries(REQUIRED_V5_COLUMNS)) {
+      if (!tableExists(table)) continue;
+      const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string }[];
+      for (const [column, affinity] of Object.entries(columns)) {
+        const got = info.find((c) => c.name === column);
+        if (!got) { missing.push(`${table}.${column}`); continue; }
+        if (String(got.type).toUpperCase() !== affinity) {
+          missing.push(`${table}.${column} has type ${String(got.type)}, expected ${affinity}`);
+        }
+      }
+    }
+
+    // The per-job / per-project active-attempt exclusion is enforced by these
+    // partial unique indexes, not by any in-memory lock. Without them a v5 DB
+    // would silently permit two concurrently active apply attempts.
+    if (tableExists('agent_apply_attempts')) {
+      for (const idx of REQUIRED_V5_INDEXES) {
+        if (!indexExists(idx)) missing.push(`index ${idx}`);
+      }
+    }
+
+    if (missing.length > 0) {
+      throw new BridgeError(
+        'INTERNAL',
+        `agent job DB is stamped schema v${AGENT_JOB_SCHEMA_VERSION} but its schema is incomplete/incompatible ` +
+        `(missing or malformed: ${missing.join(', ')}); refusing to open — no automatic repair or retention backfill is performed`,
+        500,
+      );
+    }
+  }
+
+  /**
    * Explicit, stepwise, forward-only migration. A fresh DB is created directly
    * at the latest shape; an existing A2 (v1) DB is migrated in place with
    * `ALTER TABLE ... ADD COLUMN` so every historical job record is preserved
@@ -326,7 +473,12 @@ export class AgentJobStore {
   private migrate(): void {
     const row = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
     const version = Number(row?.user_version ?? 0);
-    if (version === AGENT_JOB_SCHEMA_VERSION) return;
+    if (version === AGENT_JOB_SCHEMA_VERSION) {
+      // Already at the supported version — but the stamp alone proves nothing.
+      // Verify the real schema shape before accepting the database.
+      this.assertSchemaShape();
+      return;
+    }
     if (version > AGENT_JOB_SCHEMA_VERSION) {
       throw new BridgeError('INTERNAL', `agent job DB schema v${version} is newer than supported v${AGENT_JOB_SCHEMA_VERSION}`, 500);
     }
@@ -334,7 +486,8 @@ export class AgentJobStore {
     try {
       if (version < 1) {
         // Fresh install → create at the latest shape (base_commit, applied_at,
-        // disposition_at, and all A6 artifact metadata columns included).
+        // disposition_at, all A6 artifact metadata columns, and v5 retention
+        // snapshot columns included).
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS agent_jobs (
             job_id             TEXT PRIMARY KEY,
@@ -367,7 +520,10 @@ export class AgentJobStore {
             artifact_reason    TEXT,
             artifact_volume    TEXT,
             artifact_bytes     INTEGER,
-            artifact_op_count  INTEGER
+            artifact_op_count  INTEGER,
+            retention_class    TEXT,
+            retention_duration_ms INTEGER,
+            retain_until       TEXT
           );
           CREATE INDEX IF NOT EXISTS idx_agent_jobs_status ON agent_jobs(status);
           CREATE INDEX IF NOT EXISTS idx_agent_jobs_principal ON agent_jobs(principal_id);
@@ -483,12 +639,31 @@ export class AgentJobStore {
           CREATE INDEX IF NOT EXISTS idx_apply_journal_attempt ON agent_apply_journal(attempt_id);
         `);
       }
+      if (version < 5) {
+        // v4 (A6-B5) → v5 (A6 retention lifecycle): durable per-job retention
+        // snapshot. Additive only — all three columns NULL for every pre-v5 row.
+        // Never backfilled from current config. GC eligibility proof requires all
+        // three to be non-NULL; legacy rows fail closed (RETAIN + REPORT).
+        if (!this.columnExists('agent_jobs', 'retention_class')) {
+          this.db.exec('ALTER TABLE agent_jobs ADD COLUMN retention_class TEXT');
+        }
+        if (!this.columnExists('agent_jobs', 'retention_duration_ms')) {
+          this.db.exec('ALTER TABLE agent_jobs ADD COLUMN retention_duration_ms INTEGER');
+        }
+        if (!this.columnExists('agent_jobs', 'retain_until')) {
+          this.db.exec('ALTER TABLE agent_jobs ADD COLUMN retain_until TEXT');
+        }
+      }
       this.db.exec(`PRAGMA user_version=${AGENT_JOB_SCHEMA_VERSION}`);
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
     }
+    // A forward migration that stamped v5 must also have PRODUCED v5. Verify
+    // the same way an already-v5 database is verified, so an incomplete
+    // migration can never be accepted just because it reached the stamp.
+    this.assertSchemaShape();
   }
 
   get schemaVersion(): number {
@@ -500,12 +675,22 @@ export class AgentJobStore {
     if (job.prompt.length > MAX_AGENT_PROMPT_CHARS) {
       throw new BridgeError('MALFORMED_REQUEST', `prompt exceeds ${MAX_AGENT_PROMPT_CHARS} chars`, 400);
     }
+    // Validate the durable retention snapshot before any INSERT. Fail closed:
+    // a new job must never be created with invalid bridge-owned retention data.
+    if (!(AGENT_RETENTION_CLASSES as readonly string[]).includes(job.retentionClass)) {
+      throw new BridgeError('MALFORMED_REQUEST', `invalid retentionClass: ${String(job.retentionClass)}`, 400);
+    }
+    if (!Number.isSafeInteger(job.retentionDurationMs) || job.retentionDurationMs <= 0) {
+      throw new BridgeError('MALFORMED_REQUEST', `retentionDurationMs must be a positive safe integer (got ${job.retentionDurationMs})`, 400);
+    }
     this.db.prepare(`
       INSERT INTO agent_jobs (job_id, principal_id, backend, project, profile, resource_policy,
-        status, created_at, prompt_hash, prompt, session_policy, writer)
-      VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?)
+        status, created_at, prompt_hash, prompt, session_policy, writer,
+        retention_class, retention_duration_ms)
+      VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?, ?)
     `).run(job.jobId, job.principalId, job.backend, job.project, job.profile, job.resourcePolicy,
-      nowIso(), job.promptHash, job.prompt, job.sessionPolicy, job.writer ? 1 : 0);
+      nowIso(), job.promptHash, job.prompt, job.sessionPolicy, job.writer ? 1 : 0,
+      job.retentionClass, job.retentionDurationMs);
     return this.get(job.jobId)!;
   }
 
@@ -872,13 +1057,17 @@ export class AgentJobStore {
   /**
    * Atomically commit a verified successful apply: in ONE DB transaction,
    * attempt APPLYING -> VERIFIED_SUCCESS AND job COMPLETED -> APPLIED with
-   * applied_at set. Neither half is ever persisted without the other — a
-   * restart mid-transaction rolls back to the pre-success state entirely
-   * (SQLite transaction durability), so a job can never be seen as APPLIED
-   * without its causing attempt being VERIFIED_SUCCESS, or vice versa.
+   * applied_at = disposition_at = T and retain_until = T + retention_duration_ms.
    *
-   * NOT called from any public runtime path in B1 (no applier exists yet);
-   * exists so a future B6 applier has a single atomic primitive to call.
+   * Generates ONE canonical timestamp T for applied_at, disposition_at, and
+   * retain_until derivation — never calls nowIso() independently for each.
+   *
+   * Fails closed if retention_duration_ms is missing/invalid on a new post-v5
+   * row. Legacy rows (NULL retention_duration_ms) receive NULL retain_until —
+   * they are not eligible for automatic GC (RETAIN + REPORT by the collector).
+   *
+   * Neither half is ever persisted without the other — a restart mid-transaction
+   * rolls back to the pre-success state entirely (SQLite transaction durability).
    */
   markApplySuccess(
     attemptId: string,
@@ -887,7 +1076,8 @@ export class AgentJobStore {
   ): boolean {
     assertApplyAttemptTransition('APPLYING', 'VERIFIED_SUCCESS');
     assertAgentJobTransition('COMPLETED', 'APPLIED');
-    const now = nowIso();
+    // ONE canonical timestamp — applied_at and disposition_at receive the SAME value.
+    const T = nowIso();
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const a = this.db.prepare(`
@@ -895,15 +1085,42 @@ export class AgentJobStore {
         SET state = 'VERIFIED_SUCCESS', finished_at = ?, success_evidence = ?, mutated_path_count = ?
         WHERE attempt_id = ? AND job_id = ? AND state = 'APPLYING'
       `).run(
-        now,
+        T,
         extras.successEvidence !== undefined ? extras.successEvidence.slice(0, MAX_APPLY_ATTEMPT_EVIDENCE_CHARS) : null,
         extras.mutatedPathCount ?? null,
         attemptId, jobId,
       );
       if (Number(a.changes) !== 1) { this.db.exec('ROLLBACK'); return false; }
+
+      // Compute retain_until from the persisted retention_duration_ms of this
+      // exact job row. Fail closed if the value is invalid: never fabricate a
+      // retention anchor for a post-v5 job that is missing its snapshot.
+      const jobRow = this.db.prepare(
+        'SELECT retention_duration_ms FROM agent_jobs WHERE job_id = ?',
+      ).get(jobId) as { retention_duration_ms: number | null } | undefined;
+      let retainUntil: string | null = null;
+      if (jobRow?.retention_duration_ms !== null && jobRow?.retention_duration_ms !== undefined) {
+        const rdms = jobRow.retention_duration_ms;
+        if (!Number.isSafeInteger(rdms) || rdms <= 0) {
+          // Throw only — the catch below owns the single ROLLBACK for this
+          // transaction. Rolling back here as well would leave no active
+          // transaction for the catch, and SQLite's resulting
+          // "cannot rollback - no transaction is active" error would replace
+          // this BridgeError as the error the caller sees.
+          throw new BridgeError(
+            'MALFORMED_REQUEST',
+            `job ${jobId} has invalid retention_duration_ms (${rdms}); refusing to produce APPLIED state with fabricated retention metadata`,
+            500,
+          );
+        }
+        retainUntil = new Date(Date.parse(T) + rdms).toISOString();
+      }
+
       const j = this.db.prepare(`
-        UPDATE agent_jobs SET status = 'APPLIED', applied_at = ? WHERE job_id = ? AND status = 'COMPLETED'
-      `).run(now, jobId);
+        UPDATE agent_jobs
+        SET status = 'APPLIED', applied_at = ?, disposition_at = ?, retain_until = ?
+        WHERE job_id = ? AND status = 'COMPLETED'
+      `).run(T, T, retainUntil, jobId);
       if (Number(j.changes) !== 1) { this.db.exec('ROLLBACK'); return false; }
       this.db.exec('COMMIT');
       return true;
@@ -915,26 +1132,24 @@ export class AgentJobStore {
 
   /**
    * Atomically discard a completed job: in ONE DB transaction, job
-   * COMPLETED -> DISCARDED with disposition_at set. Denies the discard (no
-   * mutation) if:
+   * COMPLETED -> DISCARDED with disposition_at = T and
+   * retain_until = T + retention_duration_ms (when available).
+   *
+   * Generates ONE canonical timestamp T. Fails closed if retention_duration_ms
+   * is invalid on a post-v5 row. Legacy rows (NULL retention_duration_ms)
+   * receive NULL retain_until — not eligible for automatic GC.
+   *
+   * Denies the discard (no mutation) if:
    * - an apply attempt is currently active (STARTED/VERIFYING/APPLYING) for
-   *   this job — throws APPLY_ATTEMPT_ACTIVE. A job must never be discarded
-   *   while an apply attempt may be mutating (or about to mutate) the host
-   *   project.
+   *   this job — throws APPLY_ATTEMPT_ACTIVE.
    * - ANY apply attempt for this job is UNCERTAIN — throws
-   *   APPLY_ATTEMPT_UNCERTAIN. UNCERTAIN means host mutation may have
-   *   happened and the outcome is unknown; the job must stay COMPLETED with
-   *   its evidence reviewable rather than being disposed of, and the owning
-   *   project's quarantine (set by {@link recoverApplyAttempts}) must remain
-   *   the sole path back to normal admission. This is independent of the
-   *   active-attempt check above: UNCERTAIN is a terminal apply-attempt
-   *   state, not an active one.
-   * Discarding a job never clears any project quarantine (this method never
-   * touches agent_project_apply_state).
+   *   APPLY_ATTEMPT_UNCERTAIN.
+   * Discarding a job never clears any project quarantine.
    */
   discardJob(jobId: string): boolean {
     assertAgentJobTransition('COMPLETED', 'DISCARDED');
-    const now = nowIso();
+    // ONE canonical timestamp.
+    const T = nowIso();
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const active = this.db.prepare(
@@ -949,15 +1164,209 @@ export class AgentJobStore {
       if (Number(uncertain.n) > 0) {
         throw new BridgeError('APPLY_ATTEMPT_UNCERTAIN', `job ${jobId} has an UNCERTAIN apply attempt and cannot be discarded`, 409);
       }
+
+      // Compute retain_until from the persisted retention_duration_ms.
+      const jobRow = this.db.prepare(
+        'SELECT retention_duration_ms FROM agent_jobs WHERE job_id = ?',
+      ).get(jobId) as { retention_duration_ms: number | null } | undefined;
+      let retainUntil: string | null = null;
+      if (jobRow?.retention_duration_ms !== null && jobRow?.retention_duration_ms !== undefined) {
+        const rdms = jobRow.retention_duration_ms;
+        if (!Number.isSafeInteger(rdms) || rdms <= 0) {
+          // Throw only — see markApplySuccess: the catch below is the single
+          // ROLLBACK owner, and a second rollback here would mask this error.
+          throw new BridgeError(
+            'MALFORMED_REQUEST',
+            `job ${jobId} has invalid retention_duration_ms (${rdms}); refusing to produce DISCARDED state with fabricated retention metadata`,
+            500,
+          );
+        }
+        retainUntil = new Date(Date.parse(T) + rdms).toISOString();
+      }
+
       const res = this.db.prepare(
-        `UPDATE agent_jobs SET status = 'DISCARDED', disposition_at = ? WHERE job_id = ? AND status = 'COMPLETED'`,
-      ).run(now, jobId);
+        `UPDATE agent_jobs SET status = 'DISCARDED', disposition_at = ?, retain_until = ? WHERE job_id = ? AND status = 'COMPLETED'`,
+      ).run(T, retainUntil, jobId);
       this.db.exec('COMMIT');
       return Number(res.changes) === 1;
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // A6 evidence lifecycle: expiry and retention queries
+  // -------------------------------------------------------------------------
+
+  /**
+   * Atomically transition artifact_state AVAILABLE -> EXPIRED for a single
+   * job. This is the durable authorization step (Proof A) — physical volume
+   * deletion (Proof B, delete completion) follows after this succeeds.
+   *
+   * The UPDATE predicate mirrors the full Lane A admission proof:
+   *   - artifact_state = AVAILABLE
+   *   - status IN ('APPLIED', 'DISCARDED')
+   *   - all retention snapshot fields present and retain_until elapsed
+   *   - no active apply attempt (STARTED/VERIFYING/APPLYING)
+   *   - no UNCERTAIN apply attempt
+   *   - job is not the quarantine_causing_job_id for any QUARANTINED project
+   *
+   * `nowIso` is the collector's single canonical timestamp for the pass.
+   * Returns true if the transition succeeded (rows_changed === 1).
+   * Returns false if any predicate failed (race lost, already EXPIRED, etc.).
+   * Never transitions back from EXPIRED to AVAILABLE.
+   */
+  markExpired(jobId: string, nowIso: string): boolean {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const res = this.db.prepare(`
+        UPDATE agent_jobs
+        SET artifact_state = 'EXPIRED'
+        WHERE job_id = ?
+          AND artifact_state = 'AVAILABLE'
+          AND status IN ('APPLIED', 'DISCARDED')
+          AND disposition_at IS NOT NULL
+          AND retention_class IS NOT NULL
+          AND retention_duration_ms IS NOT NULL
+          AND retain_until IS NOT NULL
+          AND julianday(retain_until) <= julianday(?)
+          AND NOT EXISTS (
+            SELECT 1 FROM agent_apply_attempts
+            WHERE job_id = agent_jobs.job_id
+              AND state IN (${ACTIVE_ATTEMPT_SQL_LIST})
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM agent_apply_attempts
+            WHERE job_id = agent_jobs.job_id
+              AND state = 'UNCERTAIN'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM agent_project_apply_state
+            WHERE quarantine_causing_job_id = agent_jobs.job_id
+              AND state = 'QUARANTINED'
+          )
+      `).run(jobId, nowIso);
+      this.db.exec('COMMIT');
+      return Number(res.changes) === 1;
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  /**
+   * Query all Lane A candidates: jobs with artifact_state=AVAILABLE,
+   * terminal success disposition, and all retention snapshot fields populated,
+   * where retain_until <= nowIso (by julianday comparison).
+   *
+   * Returns only the fields needed by the collector. Caller must perform
+   * full ownership/safety proof before calling markExpired().
+   */
+  queryRetentionEligible(nowIso: string): Array<{
+    jobId: string;
+    artifactVolume: string;
+    retentionClass: string;
+    retentionDurationMs: number;
+    retainUntil: string;
+    dispositionAt: string;
+    status: string;
+  }> {
+    const rows = this.db.prepare(`
+      SELECT job_id, artifact_volume, retention_class, retention_duration_ms,
+             retain_until, disposition_at, status
+      FROM agent_jobs
+      WHERE artifact_state = 'AVAILABLE'
+        AND status IN ('APPLIED', 'DISCARDED')
+        AND artifact_volume IS NOT NULL
+        AND disposition_at IS NOT NULL
+        AND retention_class IS NOT NULL
+        AND retention_duration_ms IS NOT NULL
+        AND retain_until IS NOT NULL
+        AND julianday(retain_until) <= julianday(?)
+    `).all(nowIso) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      jobId: String(r.job_id),
+      artifactVolume: String(r.artifact_volume),
+      retentionClass: String(r.retention_class),
+      retentionDurationMs: Number(r.retention_duration_ms),
+      retainUntil: String(r.retain_until),
+      dispositionAt: String(r.disposition_at),
+      status: String(r.status),
+    }));
+  }
+
+  /**
+   * Query all jobs where artifact_state=EXPIRED and artifact_volume is
+   * recorded (for delete-completion reconciliation at startup).
+   */
+  queryExpiredWithVolume(): Array<{ jobId: string; artifactVolume: string }> {
+    const rows = this.db.prepare(`
+      SELECT job_id, artifact_volume
+      FROM agent_jobs
+      WHERE artifact_state = 'EXPIRED'
+        AND artifact_volume IS NOT NULL
+    `).all() as Array<{ job_id: string; artifact_volume: string }>;
+    return rows.map((r) => ({ jobId: String(r.job_id), artifactVolume: String(r.artifact_volume) }));
+  }
+
+  /**
+   * Query all jobs that could be Lane B candidates: jobs whose artifact_state
+   * is NULL (no artifact lifecycle started), NONE, or has a published artifact
+   * but with anomalous state combinations. Returns a representative sample
+   * of the full job population for the classifier to inspect.
+   *
+   * The collector uses Docker volume discovery (not this query) as the primary
+   * Lane B discovery path. This query provides the DB-side view for
+   * cross-referencing volume labels against persisted job state.
+   */
+  getJobForClassification(jobId: string): {
+    jobId: string;
+    status: string;
+    artifactState: string | null;
+    artifactVolume: string | null;
+    retentionClass: string | null;
+    retentionDurationMs: number | null;
+    retainUntil: string | null;
+    dispositionAt: string | null;
+  } | undefined {
+    const r = this.db.prepare(`
+      SELECT job_id, status, artifact_state, artifact_volume,
+             retention_class, retention_duration_ms, retain_until, disposition_at
+      FROM agent_jobs WHERE job_id = ?
+    `).get(jobId) as Record<string, unknown> | undefined;
+    if (!r) return undefined;
+    return {
+      jobId: String(r.job_id),
+      status: String(r.status),
+      artifactState: (r.artifact_state ?? null) as string | null,
+      artifactVolume: (r.artifact_volume ?? null) as string | null,
+      retentionClass: (r.retention_class ?? null) as string | null,
+      retentionDurationMs: r.retention_duration_ms === null || r.retention_duration_ms === undefined
+        ? null : Number(r.retention_duration_ms),
+      retainUntil: (r.retain_until ?? null) as string | null,
+      dispositionAt: (r.disposition_at ?? null) as string | null,
+    };
+  }
+
+  /**
+   * Query jobs where artifact_state=AVAILABLE but the volume is expected to be
+   * absent (for integrity anomaly detection). Returns jobs that have an
+   * AVAILABLE artifact_state and a recorded artifact_volume — the collector
+   * then checks Docker to see which volumes are missing.
+   */
+  queryAvailableWithVolume(): Array<{ jobId: string; artifactVolume: string; status: string }> {
+    const rows = this.db.prepare(`
+      SELECT job_id, artifact_volume, status
+      FROM agent_jobs
+      WHERE artifact_state = 'AVAILABLE'
+        AND artifact_volume IS NOT NULL
+    `).all() as Array<{ job_id: string; artifact_volume: string; status: string }>;
+    return rows.map((r) => ({
+      jobId: String(r.job_id),
+      artifactVolume: String(r.artifact_volume),
+      status: String(r.status),
+    }));
   }
 
   /**
@@ -1163,6 +1572,10 @@ function rowToJob(r: Record<string, unknown>): AgentJobRow {
     baseCommit: (r.base_commit ?? null) as string | null,
     appliedAt: (r.applied_at ?? null) as string | null,
     dispositionAt: (r.disposition_at ?? null) as string | null,
+    retentionClass: (r.retention_class ?? null) as AgentRetentionClass | null,
+    retentionDurationMs: r.retention_duration_ms === null || r.retention_duration_ms === undefined
+      ? null : Number(r.retention_duration_ms),
+    retainUntil: (r.retain_until ?? null) as string | null,
     artifactHash: (r.artifact_hash ?? null) as string | null,
     changeSetHash: (r.change_set_hash ?? null) as string | null,
     artifactState: (r.artifact_state ?? null) as ArtifactState | null,

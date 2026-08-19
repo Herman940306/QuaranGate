@@ -8,6 +8,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { Readable } from 'node:stream';
 import { pack as tarPack } from 'tar-stream';
 import { BridgeError } from '../../src/shared/errors.js';
@@ -53,7 +57,7 @@ import type { Principal } from '../../src/gateway/config.js';
 import { AgentJobEngine } from '../../src/executor/agents/jobEngine.js';
 import { AgentJobStore, AGENT_JOB_SCHEMA_VERSION } from '../../src/executor/agents/jobStore.js';
 import type { AgentControlPlaneConfig } from '../../src/executor/agentConfig.js';
-import type { AgentJobStatus } from '../../src/shared/agents.js';
+import { AGENT_RETENTION_DURATION_MS, type AgentJobStatus } from '../../src/shared/agents.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -339,6 +343,7 @@ function seedJob(store: AgentJobStore, status: AgentJobStatus, art?: BuiltArtifa
   store.insert({
     jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: 'proj1', profile: 'implement',
     resourcePolicy: 'standard', promptHash: sha256hex('p'), prompt: 'p', sessionPolicy: 'new', writer: true,
+    retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
   });
   if (status === 'QUEUED') return;
   store.transition(JOB_ID, 'QUEUED', 'PREPARING');
@@ -500,6 +505,35 @@ describe('A6-B4 executor defense-in-depth (Option D) + state', () => {
       const store = new AgentJobStore(':memory:');
       seedJob(store, s);
       expect(await errCode(() => engineFor(store, undefined).diff({ jobId: JOB_ID, principal: 'client-a' }))).toBe('ARTIFACT_NOT_AVAILABLE');
+      store.close();
+    });
+  }
+
+  // A6 lifecycle regression: once Lane A expires an artifact, review of it must
+  // keep failing with the SAME existing code — the lifecycle introduces no new
+  // gateway/API/error contract for expired evidence.
+  for (const s of ['APPLIED', 'DISCARDED'] as AgentJobStatus[]) {
+    it(`EXPIRED artifact (${s}) → agent_diff fails with ARTIFACT_NOT_AVAILABLE`, async () => {
+      const art = makeArtifact([], [{ path: 'a.txt', kind: 'file', mode: 0o644, content: Buffer.from('hi\n') }]);
+      const dbFile = join(mkdtempSync(join(tmpdir(), 'mcpb-b4-expired-')), 'agents.db');
+      const store = new AgentJobStore(dbFile);
+      seedJob(store, s, art);
+      // Review works while the artifact is AVAILABLE...
+      expect((await engineFor(store, art).diff({ jobId: JOB_ID, principal: 'client-a' })).diffHash).toBe(art.artifactHash);
+
+      // ...then Lane A expires it (retain_until forced elapsed, as at startup).
+      const past = new Date(Date.now() - 365 * 86_400_000).toISOString();
+      const raw = new DatabaseSync(dbFile);
+      raw.prepare('UPDATE agent_jobs SET disposition_at = ?, retain_until = ? WHERE job_id = ?')
+        .run(past, past, JOB_ID);
+      raw.close();
+      expect(store.markExpired(JOB_ID, new Date().toISOString())).toBe(true);
+      expect(store.get(JOB_ID)!.artifactState).toBe('EXPIRED');
+
+      expect(await errCode(() => engineFor(store, art).diff({ jobId: JOB_ID, principal: 'client-a' })))
+        .toBe('ARTIFACT_NOT_AVAILABLE');
+      // Expiry is artifact-only: the public job status is never rewritten.
+      expect(store.get(JOB_ID)!.status).toBe(s);
       store.close();
     });
   }

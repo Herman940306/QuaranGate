@@ -274,6 +274,27 @@ export const AGENT_RETENTION_CLASSES = ['ephemeral', 'short', 'audit'] as const;
 export type AgentRetentionClass = (typeof AGENT_RETENTION_CLASSES)[number];
 
 /**
+ * Authoritative retention duration mapping (Phase A6). Product policy — NOT
+ * operator configuration. Operators select retention classes in resource
+ * policies; the duration mapping is fixed by the bridge implementation and
+ * may not be overridden via agents.yaml or any runtime config.
+ *
+ * This map is consulted ONLY at job creation time to snapshot the duration
+ * per-job. Historical GC MUST use the persisted per-job retention_duration_ms,
+ * never this map — so future changes to these values affect only NEW jobs.
+ *
+ * Values:
+ *   ephemeral =  24 hours  (86,400,000 ms)
+ *   short     =  14 days   (1,209,600,000 ms)
+ *   audit     = 180 days   (15,552,000,000 ms)
+ */
+export const AGENT_RETENTION_DURATION_MS: Record<AgentRetentionClass, number> = {
+  ephemeral: 86_400_000,       // 24 * 60 * 60 * 1000
+  short:     1_209_600_000,    // 14 * 24 * 60 * 60 * 1000
+  audit:     15_552_000_000,   // 180 * 24 * 60 * 60 * 1000
+};
+
+/**
  * Provider-neutral model tier. Backend adapters (A4/A7) map a class to a
  * concrete pinned model; callers never name provider models directly.
  */

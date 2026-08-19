@@ -20,6 +20,7 @@ import { RunnerSandbox } from './agents/sandboxRunner.js';
 import { CredentialManager } from './agents/credentialManager.js';
 import { createKiroBackendFactory } from './agents/kiroFactory.js';
 import { createDockerApplierIO } from './agents/applyEngine.js';
+import { runStartupEvidenceLifecycle } from './agents/evidenceCollector.js';
 import type { AgentJobRow } from './agents/jobStore.js';
 import type { AgentResourcePolicy } from '../shared/agents.js';
 
@@ -50,79 +51,15 @@ const KIRO_KEY_PATH = process.env.AGENT_KIRO_KEY_PATH ?? '';
 // backend stops after ACP session/new (no session/prompt, no model turn) — used
 // by the live deployment gate / as a health probe. Never caller-selectable.
 const KIRO_DRY_RUN = /^(1|true|yes)$/i.test(process.env.AGENT_KIRO_DRY_RUN ?? '');
+
+// Mutable handles assigned inside the startup sequence; used by shutdown().
 let agentEngine: AgentJobEngine | null = null;
 let agentStore: AgentJobStore | null = null;
-if (fs.existsSync(AGENTS_CONFIG)) {
-  const agentConfig = loadAgentConfig(AGENTS_CONFIG);
-  agentStore = new AgentJobStore(JOBS_DB);
-  const sandbox = new RunnerSandbox({ image: RUNNER_IMAGE });
 
-  // A4: wire the real Kiro backend when the trusted runner infrastructure is
-  // configured. The factory selects KiroBackend ONLY for backend=kiro and falls
-  // back to the fake backend otherwise. KiroBackend launches the runner purely
-  // through the Docker Engine API (no docker CLI) and denies write profiles.
-  let backendFactory:
-    | ((job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null)
-    | undefined;
-  let kiroEnabled = false;
-  if (RUNNER_IMAGE && PROXY_IMAGE && KIRO_KEY_PATH) {
-    const credentialManager = new CredentialManager({ credentialPath: KIRO_KEY_PATH, helperImage: HELPER_IMAGE });
-    backendFactory = createKiroBackendFactory(agentConfig.projects, {
-      runnerImage: RUNNER_IMAGE,
-      helperImage: HELPER_IMAGE,
-      proxyImage: PROXY_IMAGE,
-      // The proxy runs the bridge's own image, which contains the compiled
-      // egress proxy — no host bind of the project or dist is needed.
-      proxyCmd: ['node', '/app/dist/executor/agents/egressProxyMain.js'],
-      credentialManager,
-      sandbox,
-      dryRun: KIRO_DRY_RUN,
-    });
-    kiroEnabled = true;
-  }
-
-  // A6-B4: trusted read-only evidence reader for agent_diff. Uses the same
-  // trusted helper image as B3 evidence I/O; the volume is always taken from
-  // AgentJobRow.artifactVolume (never caller input). Absent when no helper
-  // image is configured (fake-only deployments never publish an AVAILABLE
-  // artifact, so agent_diff fails closed with ARTIFACT_NOT_AVAILABLE first).
-  const evidenceReaderFactory: EvidenceReaderFactory | undefined = HELPER_IMAGE
-    ? (volume, jobId) => createDockerEvidenceReader(volume, HELPER_IMAGE, jobId)
-    : undefined;
-
-  // A6-B5: the trusted applier reuses the SAME helper image family as B2/B3/B4
-  // (never a caller-selectable image — PHASE_A6_B5_AGENT_APPLY.md §9). Absent
-  // when no helper image is configured (fake-only deployments) — agent_apply
-  // then fails closed with SANDBOX_FAILED before any admission occurs.
-  const applierIO = HELPER_IMAGE ? createDockerApplierIO() : undefined;
-
-  agentEngine = new AgentJobEngine(agentStore, agentConfig, undefined, backendFactory, evidenceReaderFactory, HELPER_IMAGE || undefined, applierIO);
-  const recovered = agentEngine.recover();
-  // A6-B5 §15: restart reconciliation for apply attempts. Must run before the
-  // executor accepts new apply admission (recover() above already reopens job
-  // admission synchronously) so a restart can never leave a stale APPLYING
-  // attempt able to race a fresh one. STARTED/VERIFYING orphans -> zero-mutation
-  // ABORTED_NO_MUTATION; APPLYING orphans -> UNCERTAIN + project QUARANTINED,
-  // atomically, never auto-retried (jobStore.ts recoverApplyAttempts, frozen B1).
-  const applyRecovery = agentStore.recoverApplyAttempts('executor restarted with an active apply attempt');
-  console.log(JSON.stringify({
-    level: 'info', msg: 'agent control plane active',
-    projects: agentConfig.projects.length, backends: agentConfig.backends.length,
-    schemaVersion: agentStore.schemaVersion, recoveredJobs: recovered.length,
-    kiroBackend: kiroEnabled ? (KIRO_DRY_RUN ? 'enabled(dry-run)' : 'enabled') : 'fake-only',
-    applierConfigured: !!applierIO,
-    abortedApplyAttempts: applyRecovery.abortedNoMutation.length,
-    uncertainApplyAttempts: applyRecovery.uncertain.length,
-  }));
-  // A3: label-scoped reconciliation of any bridge-owned runner sandbox resources
-  // left after a restart (fail closed). Only exact ownership labels are touched;
-  // this never enumerates or deletes unrelated Docker resources.
-  sandbox.reconcileOrphans()
-    .then((r) => console.log(JSON.stringify({ level: 'info', msg: 'sandbox orphan reconciliation', removedContainers: r.removedContainers.length, removedVolumes: r.removedVolumes.length })))
-    .catch((e) => console.log(JSON.stringify({ level: 'warn', msg: 'sandbox orphan reconciliation failed', error: e instanceof Error ? e.message.slice(0, 200) : String(e) })));
-} else {
-  console.log(JSON.stringify({ level: 'info', msg: 'agent control plane not configured (optional)' }));
-}
+// ---------------------------------------------------------------------------
+// Express app — constructed in memory here; does NOT accept requests until
+// server.listen() is called at the end of the async startup sequence below.
+// ---------------------------------------------------------------------------
 
 const app = express();
 app.use(express.json({ limit: '8mb' }));
@@ -251,14 +188,120 @@ app.post('/exec/argv', handle(async (req) => {
   return runArgv(t, argv, { cwdAbs, timeoutMs: timeoutMs ?? EXECUTOR_DEFAULTS.timeoutMs, principal: String(principal ?? 'unknown') });
 }));
 
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(JSON.stringify({ level: 'info', msg: 'executor listening', port: PORT }));
+// ---------------------------------------------------------------------------
+// Async startup sequence (A6 Decision R5 — startup-only collection).
+//
+// Security boundary: server.listen() is called ONLY after all steps 1-7
+// complete. No externally reachable agent request can race the lifecycle pass.
+//
+// Required order:
+//   1. AgentJobStore construction + migration      (synchronous, done above)
+//   2. recoverActive — fail active jobs closed     (synchronous, in recover())
+//   3. recoverApplyAttempts                        (synchronous)
+//   4. AWAIT sandbox.reconcileOrphans()            (was fire-and-forget; now awaited)
+//   5. AWAIT reconcileExpiredEvidence()            (via runStartupEvidenceLifecycle)
+//   6. AWAIT collectExpiredEvidence()              (via runStartupEvidenceLifecycle)
+//   7. AWAIT classifyIncompleteEvidence()          (via runStartupEvidenceLifecycle)
+//   8. server.listen()                             (executor becomes externally reachable)
+//
+// Global lifecycle failure (Docker unavailable, SQLite corrupt, unexpected
+// throw) propagates out of the IIFE and calls process.exit(1) — FAIL CLOSED.
+// ---------------------------------------------------------------------------
+
+let server: ReturnType<typeof app.listen>;
+
+(async () => {
+  // Steps 1-3: synchronous ACP setup (if agents.yaml exists).
+  if (fs.existsSync(AGENTS_CONFIG)) {
+    const agentConfig = loadAgentConfig(AGENTS_CONFIG);
+    // Step 1: construct + migrate DB.
+    agentStore = new AgentJobStore(JOBS_DB);
+    const sandbox = new RunnerSandbox({ image: RUNNER_IMAGE });
+
+    // A4: wire the real Kiro backend when the trusted runner infrastructure is
+    // configured. The factory selects KiroBackend ONLY for backend=kiro and
+    // falls back to the fake backend otherwise.
+    let backendFactory:
+      | ((job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null)
+      | undefined;
+    let kiroEnabled = false;
+    if (RUNNER_IMAGE && PROXY_IMAGE && KIRO_KEY_PATH) {
+      const credentialManager = new CredentialManager({ credentialPath: KIRO_KEY_PATH, helperImage: HELPER_IMAGE });
+      backendFactory = createKiroBackendFactory(agentConfig.projects, {
+        runnerImage: RUNNER_IMAGE,
+        helperImage: HELPER_IMAGE,
+        proxyImage: PROXY_IMAGE,
+        proxyCmd: ['node', '/app/dist/executor/agents/egressProxyMain.js'],
+        credentialManager,
+        sandbox,
+        dryRun: KIRO_DRY_RUN,
+      });
+      kiroEnabled = true;
+    }
+
+    const evidenceReaderFactory: EvidenceReaderFactory | undefined = HELPER_IMAGE
+      ? (volume, jobId) => createDockerEvidenceReader(volume, HELPER_IMAGE, jobId)
+      : undefined;
+
+    const applierIO = HELPER_IMAGE ? createDockerApplierIO() : undefined;
+
+    agentEngine = new AgentJobEngine(
+      agentStore, agentConfig, undefined, backendFactory,
+      evidenceReaderFactory, HELPER_IMAGE || undefined, applierIO,
+    );
+
+    // Step 2: recover active jobs (fail closed to FAILED_INFRASTRUCTURE).
+    const recovered = agentEngine.recover();
+
+    // Step 3: recover apply attempts (APPLYING → UNCERTAIN + quarantine).
+    const applyRecovery = agentStore.recoverApplyAttempts('executor restarted with an active apply attempt');
+
+    console.log(JSON.stringify({
+      level: 'info', msg: 'agent control plane active',
+      projects: agentConfig.projects.length, backends: agentConfig.backends.length,
+      schemaVersion: agentStore.schemaVersion, recoveredJobs: recovered.length,
+      kiroBackend: kiroEnabled ? (KIRO_DRY_RUN ? 'enabled(dry-run)' : 'enabled') : 'fake-only',
+      applierConfigured: !!applierIO,
+      abortedApplyAttempts: applyRecovery.abortedNoMutation.length,
+      uncertainApplyAttempts: applyRecovery.uncertain.length,
+    }));
+
+    // Step 4: AWAIT sandbox orphan reconciliation (was fire-and-forget; A6 requires
+    // synchronous completion before evidence lifecycle runs). Global failure here
+    // propagates and fails startup closed.
+    const orphanResult = await sandbox.reconcileOrphans();
+    console.log(JSON.stringify({
+      level: 'info', msg: 'sandbox orphan reconciliation',
+      removedContainers: orphanResult.removedContainers.length,
+      removedVolumes: orphanResult.removedVolumes.length,
+    }));
+
+    // Steps 5-7: A6 evidence lifecycle (reconcile EXPIRED → Lane A → Lane B).
+    // Global failure propagates and fails startup closed.
+    // Per-resource failures are retained and reported inside the lifecycle.
+    await runStartupEvidenceLifecycle(agentStore);
+
+  } else {
+    console.log(JSON.stringify({ level: 'info', msg: 'agent control plane not configured (optional)' }));
+  }
+
+  // Step 8: all lifecycle steps complete — executor is now safe to accept requests.
+  server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(JSON.stringify({ level: 'info', msg: 'executor listening', port: PORT }));
+  });
+
+})().catch((e) => {
+  console.error(JSON.stringify({
+    level: 'fatal', msg: 'executor startup failed — fail closed',
+    error: e instanceof Error ? e.message.slice(0, 500) : String(e),
+  }));
+  process.exit(1);
 });
 
 function shutdown() {
   agentEngine?.shutdown();
   try { agentStore?.close(); } catch { /* best effort */ }
-  server.close(() => process.exit(0));
+  server?.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 5000).unref();
 }
 process.on('SIGTERM', shutdown);

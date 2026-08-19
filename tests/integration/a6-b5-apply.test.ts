@@ -39,7 +39,7 @@ import { createDockerApplierIO, runApplyAttempt } from '../../src/executor/agent
 import { AgentJobStore } from '../../src/executor/agents/jobStore.js';
 import { BridgeError } from '../../src/shared/errors.js';
 import type { AgentProjectConfig } from '../../src/executor/agentConfig.js';
-import type { AgentResourcePolicy } from '../../src/shared/agents.js';
+import { AGENT_RETENTION_DURATION_MS, type AgentResourcePolicy } from '../../src/shared/agents.js';
 
 const IMAGE = 'mcp-ide-bridge-sandbox:a3'; // same trusted helper image family as A3/B2/B3/B4 — no new image (§9)
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -359,6 +359,7 @@ describe('A6-B5 agent_apply — Docker integration', () => {
     store.insert({
       jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement',
       resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true,
+      retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
     });
     store.transition(JOB_ID, 'QUEUED', 'PREPARING');
     store.transition(JOB_ID, 'PREPARING', 'RUNNING');
@@ -436,7 +437,7 @@ describe('A6-B5 agent_apply — Docker integration', () => {
 
   async function runE2E(dir: string, head: string, artifact: BuiltArtifact, evidenceVol: string): Promise<{ store: AgentJobStore }> {
     const store = new AgentJobStore(':memory:');
-    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true });
+    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true, retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral });
     store.transition(JOB_ID, 'QUEUED', 'PREPARING');
     store.transition(JOB_ID, 'PREPARING', 'RUNNING');
     store.transition(JOB_ID, 'RUNNING', 'VALIDATING');
@@ -492,7 +493,7 @@ async function packControl(content: unknown): Promise<Buffer> {
     const evidenceVol = `b5-ev-${randomBytes(6).toString('hex')}`;
     await pushArtifactToVolume(evidenceVol, artifact);
     const store = new AgentJobStore(':memory:');
-    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true });
+    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true, retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral });
     store.transition(JOB_ID, 'QUEUED', 'PREPARING'); store.transition(JOB_ID, 'PREPARING', 'RUNNING');
     store.transition(JOB_ID, 'RUNNING', 'VALIDATING'); store.setBaseCommit(JOB_ID, head);
     store.publishArtifact(JOB_ID, { artifactHash: artifact.artifactHash, changeSetHash: artifact.manifest.changeSetHash, contentComplete: true, applicable: true, reason: null, artifactVolume: evidenceVol, artifactBytes: artifact.manifest.artifactBytes, opCount: artifact.manifest.opCount });
@@ -531,7 +532,7 @@ async function packControl(content: unknown): Promise<Buffer> {
     const evidenceVol = `b5-ev-${randomBytes(6).toString('hex')}`;
     await pushArtifactToVolume(evidenceVol, artifact);
     const store = new AgentJobStore(':memory:');
-    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true });
+    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true, retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral });
     store.transition(JOB_ID, 'QUEUED', 'PREPARING'); store.transition(JOB_ID, 'PREPARING', 'RUNNING');
     store.transition(JOB_ID, 'RUNNING', 'VALIDATING'); store.setBaseCommit(JOB_ID, headWithIgnore);
     store.publishArtifact(JOB_ID, { artifactHash: artifact.artifactHash, changeSetHash: artifact.manifest.changeSetHash, contentComplete: true, applicable: true, reason: null, artifactVolume: evidenceVol, artifactBytes: artifact.manifest.artifactBytes, opCount: artifact.manifest.opCount });
@@ -564,7 +565,7 @@ async function packControl(content: unknown): Promise<Buffer> {
     const evidenceVol = `b5-ev-${randomBytes(6).toString('hex')}`;
     await pushArtifactToVolume(evidenceVol, { artifactHash: mhash, manifest: mf, blobs: new Map(), manifestFiles: es });
     const store = new AgentJobStore(':memory:');
-    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true });
+    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true, retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral });
     store.transition(JOB_ID, 'QUEUED', 'PREPARING'); store.transition(JOB_ID, 'PREPARING', 'RUNNING');
     store.transition(JOB_ID, 'RUNNING', 'VALIDATING'); store.setBaseCommit(JOB_ID, head);
     store.publishArtifact(JOB_ID, { artifactHash: mhash, changeSetHash: csHash, contentComplete: true, applicable: true, reason: null, artifactVolume: evidenceVol, artifactBytes: 0, opCount: 1 });
@@ -626,7 +627,7 @@ async function packControl(content: unknown): Promise<Buffer> {
     const evidenceVol = `b5-ev-${randomBytes(6).toString('hex')}`;
     await pushArtifactToVolume(evidenceVol, artifact);
     const store = new AgentJobStore(':memory:');
-    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true });
+    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true, retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral });
     store.transition(JOB_ID, 'QUEUED', 'PREPARING'); store.transition(JOB_ID, 'PREPARING', 'RUNNING');
     store.transition(JOB_ID, 'RUNNING', 'VALIDATING'); store.setBaseCommit(JOB_ID, head);
     store.publishArtifact(JOB_ID, { artifactHash: artifact.artifactHash, changeSetHash: artifact.manifest.changeSetHash, contentComplete: true, applicable: true, reason: null, artifactVolume: evidenceVol, artifactBytes: artifact.manifest.artifactBytes, opCount: artifact.manifest.opCount });
@@ -777,7 +778,7 @@ async function packControl(content: unknown): Promise<Buffer> {
     const evidenceVol = `b5-ev-${randomBytes(6).toString('hex')}`;
     await pushArtifactToVolume(evidenceVol, artifact);
     const store = new AgentJobStore(':memory:');
-    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true });
+    store.insert({ jobId: JOB_ID, principalId: 'client-a', backend: 'kiro', project: project.id, profile: 'implement', resourcePolicy: 'economy', promptHash: 'h'.repeat(64), prompt: 'test', sessionPolicy: 'new', writer: true, retentionClass: 'ephemeral', retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral });
     store.transition(JOB_ID, 'QUEUED', 'PREPARING'); store.transition(JOB_ID, 'PREPARING', 'RUNNING');
     store.transition(JOB_ID, 'RUNNING', 'VALIDATING'); store.setBaseCommit(JOB_ID, head);
     store.publishArtifact(JOB_ID, { artifactHash: artifact.artifactHash, changeSetHash: artifact.manifest.changeSetHash, contentComplete: true, applicable: true, reason: null, artifactVolume: evidenceVol, artifactBytes: artifact.manifest.artifactBytes, opCount: artifact.manifest.opCount });

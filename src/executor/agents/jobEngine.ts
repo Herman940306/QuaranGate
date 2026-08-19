@@ -14,8 +14,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { BridgeError } from '../../shared/errors.js';
 import {
   MAX_AGENT_PROMPT_CHARS,
+  AGENT_RETENTION_DURATION_MS,
+  AGENT_RETENTION_CLASSES,
   type AgentJobStatus,
   type AgentResourcePolicy,
+  type AgentRetentionClass,
 } from '../../shared/agents.js';
 import type { AgentControlPlaneConfig } from '../agentConfig.js';
 import { AgentJobStore, type AgentJobRow } from './jobStore.js';
@@ -274,7 +277,20 @@ export class AgentJobEngine {
       throw new BridgeError('FORBIDDEN_PROFILE', `profile ${req.profile} not supported by backend ${req.backend}`, 403);
     }
     const policyId = req.resourcePolicy ?? profile.defaultResourcePolicy;
-    this.resolvePolicy(policyId);
+    const policy = this.resolvePolicy(policyId);
+
+    // Snapshot the immutable retention policy at dispatch time.
+    // retentionClass comes from the trusted resource policy; retentionDurationMs
+    // is resolved ONCE here from AGENT_RETENTION_DURATION_MS and persisted.
+    // Historical GC MUST use the persisted retentionDurationMs — never re-resolve.
+    const retentionClass: AgentRetentionClass = policy.retentionClass;
+    if (!(AGENT_RETENTION_CLASSES as readonly string[]).includes(retentionClass)) {
+      throw new BridgeError('MALFORMED_REQUEST', `resource policy ${policyId} has invalid retentionClass: ${String(retentionClass)}`, 400);
+    }
+    const retentionDurationMs = AGENT_RETENTION_DURATION_MS[retentionClass];
+    if (!Number.isSafeInteger(retentionDurationMs) || retentionDurationMs <= 0) {
+      throw new BridgeError('MALFORMED_REQUEST', `AGENT_RETENTION_DURATION_MS[${retentionClass}] is not a valid positive integer`, 500);
+    }
 
     const job = this.store.insert({
       jobId: `job_${randomBytes(16).toString('hex')}`,
@@ -288,6 +304,8 @@ export class AgentJobEngine {
       sessionPolicy: req.sessionPolicy ?? 'new',
       // Writer classification comes from the trusted profile contract only.
       writer: profile.workspaceAccess === 'sandbox-write',
+      retentionClass,
+      retentionDurationMs,
     });
     log('agent job queued', { jobId: job.jobId, principal: job.principalId, backend: job.backend, project: job.project, profile: job.profile, writer: job.writer });
     this.kick();

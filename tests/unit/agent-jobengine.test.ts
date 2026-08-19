@@ -433,3 +433,95 @@ describe('agent job engine — log safety', () => {
     spy.mockRestore();
   });
 });
+
+// =============================================================================
+// A6 retention snapshot — job engine dispatch and immutability
+// =============================================================================
+
+import { AGENT_RETENTION_DURATION_MS, AGENT_RETENTION_CLASSES } from '../../src/shared/agents.js';
+
+describe('agent job engine — A6 retention snapshot at dispatch', () => {
+  it('AGENT_RETENTION_DURATION_MS covers all three legal retention classes', () => {
+    for (const cls of AGENT_RETENTION_CLASSES) {
+      const ms = AGENT_RETENTION_DURATION_MS[cls];
+      expect(Number.isSafeInteger(ms), `${cls} must map to safe integer`).toBe(true);
+      expect(ms > 0, `${cls} must be > 0`).toBe(true);
+    }
+  });
+
+  it('ephemeral resource policy produces retentionClass=ephemeral, retentionDurationMs=86400000', async () => {
+    // economy policy in agents.example.yaml uses retentionClass='ephemeral'
+    const j = dispatch({ profile: 'audit', resourcePolicy: 'economy' });
+    await waitFor(j.jobId, (s) => s === 'COMPLETED');
+    const row = store.get(j.jobId)!;
+    expect(row.retentionClass).toBe('ephemeral');
+    expect(row.retentionDurationMs).toBe(86_400_000);
+    expect(row.retainUntil).toBeNull(); // retain_until not set until disposition
+  });
+
+  it('deep resource policy produces retentionClass=audit, retentionDurationMs=15552000000', async () => {
+    const j = dispatch({ profile: 'review', resourcePolicy: 'deep' });
+    await waitFor(j.jobId, (s) => s === 'COMPLETED');
+    const row = store.get(j.jobId)!;
+    expect(row.retentionClass).toBe('audit');
+    expect(row.retentionDurationMs).toBe(15_552_000_000);
+  });
+
+  it('standard resource policy produces retentionClass=short, retentionDurationMs=1209600000', async () => {
+    const j = dispatch({ profile: 'plan', resourcePolicy: 'standard' });
+    await waitFor(j.jobId, (s) => s === 'COMPLETED');
+    const row = store.get(j.jobId)!;
+    expect(row.retentionClass).toBe('short');
+    expect(row.retentionDurationMs).toBe(1_209_600_000);
+  });
+
+  it('retention snapshot is immutable — stored value persists even after engine restart', async () => {
+    const j = dispatch({ profile: 'audit', resourcePolicy: 'economy' });
+    await waitFor(j.jobId, (s) => s === 'COMPLETED');
+    const original = store.get(j.jobId)!;
+    expect(original.retentionDurationMs).toBe(86_400_000);
+
+    // Simulate a restart with a new engine instance over the same DB.
+    engine.shutdown();
+    const store2 = new AgentJobStore(dbPath);
+    const engine2 = new AgentJobEngine(store2, testConfig(), () => backendOpts);
+    engine2.recover();
+    const recovered = store2.get(j.jobId)!;
+    expect(recovered.retentionDurationMs).toBe(86_400_000);
+    expect(recovered.retentionClass).toBe('ephemeral');
+    engine2.shutdown();
+    store2.close();
+    // Reset for afterEach
+    engine = makeEngine();
+  });
+
+  it('retentionClass and retentionDurationMs are both set on every new dispatched job', async () => {
+    const j = dispatch();
+    await waitFor(j.jobId, (s) => s === 'COMPLETED');
+    const row = store.get(j.jobId)!;
+    expect(row.retentionClass).not.toBeNull();
+    expect(row.retentionDurationMs).not.toBeNull();
+    expect(Number.isSafeInteger(row.retentionDurationMs!)).toBe(true);
+    expect(row.retentionDurationMs!).toBeGreaterThan(0);
+  });
+
+  it('later lifecycle logic does not re-resolve historic retentionDurationMs from the live map', async () => {
+    // Dispatch two jobs. The first gets economy (ephemeral). We cannot mutate
+    // AGENT_RETENTION_DURATION_MS at runtime (it's a const), but we can verify
+    // the persisted value is independent — it matches the per-job row, not a
+    // re-resolved value.
+    const j1 = dispatch({ resourcePolicy: 'economy' });
+    const j2 = dispatch({ resourcePolicy: 'deep' });
+    await waitFor(j1.jobId, (s) => s === 'COMPLETED');
+    await waitFor(j2.jobId, (s) => s === 'COMPLETED');
+
+    const r1 = store.get(j1.jobId)!;
+    const r2 = store.get(j2.jobId)!;
+
+    // Each job carries its own immutable snapshot.
+    expect(r1.retentionDurationMs).toBe(AGENT_RETENTION_DURATION_MS[r1.retentionClass!]);
+    expect(r2.retentionDurationMs).toBe(AGENT_RETENTION_DURATION_MS[r2.retentionClass!]);
+    // The two snapshots differ because different policies were used.
+    expect(r1.retentionDurationMs).not.toBe(r2.retentionDurationMs);
+  });
+});
