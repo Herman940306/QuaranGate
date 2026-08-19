@@ -3,9 +3,9 @@
 **Document ID:** MIB-MASTER-PRD  
 **Version:** 1.0  
 **Date:** 2026-07-28  
-**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0, A1, A2, A3 and A4 complete (PASS); A5 ready for implementation\
+**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0 through A6 complete (PASS); A7 next gate\
 **Repository:** `/home/herman/projects/mcp-ide-bridge`\
-**Current verified Git HEAD:** `bd1137c` — `feat: add durable agent job engine` (A2 implementation evidence commit)
+**Current verified baseline:** `0d88688` — `chore: add python tooling to review targets` (verified pre-closeout repository baseline)
 
 ---
 
@@ -1944,17 +1944,17 @@ The Agent Dispatch program consists of **ten gated phases, A0 through A9**.
 
 This corrects an earlier shorthand that referred to “nine phases” while listing A0–A9. The canonical plan is ten gates.
 
-Status at the A2 closeout:
+Status at the current checkpoint:
 
 ```text
 A0  Forensic readiness audit        COMPLETE — PASS
 A1  Agent-control specification     COMPLETE — PASS
 A2  Job engine + fake backend       COMPLETE — PASS
 A3  Runner sandbox                  COMPLETE — PASS
-A4  Kiro ACP read-only              READY FOR IMPLEMENTATION
-A5  Kiro implementation             NOT STARTED
-A6  Review / apply / discard        NOT STARTED
-A7  GitHub Copilot backend          NOT STARTED
+A4  Kiro ACP read-only              COMPLETE — PASS
+A5  Kiro implementation             COMPLETE — PASS
+A6  Review / apply / discard        COMPLETE — PASS
+A7  GitHub Copilot backend          NEXT GATE
 A8  Session continuity              NOT STARTED
 A9  Production hardening + E2E      NOT STARTED
 ```
@@ -2935,8 +2935,8 @@ Use this table as the project checkpoint.
 | A2 | Job engine + fake backend | COMPLETE — PASS | `bd1137c138598ddc88e57e6be4edcdc0a413ca62` — `docs/audits/PHASE_A2_DURABLE_JOB_ENGINE.md`; post-closeout SQLite security remediation `9e52d5bde11bcabd370fd45baac9021ea955fa04` — `security: restrict agent job database permissions` |
 | A3 | Runner sandbox | COMPLETE — PASS | `7df2e09c9cf1c426d91641894dfb11693cc41439` — `docs/audits/PHASE_A3_RUNNER_SANDBOX.md` |
 | A4 | Kiro ACP read-only | COMPLETE — PASS | `8a0d145b15925a310442d7227fd131fa8b2b3705` — `feat: add read-only Kiro ACP backend`; `docs/audits/PHASE_A4_KIRO_ACP_READ_ONLY.md`. Real Kiro CLI 2.5.0 ACP backend; Docker Engine API launch + runner-internal driver; per-job read-only agent; backend-only egress; provider acceptance job `job_17d4f0186616651450bf6a12c050055d` (model `claude-sonnet-4`, session `855c613a-772c-48f1-be02-fdc158955c8c`). |
-| A5 | Kiro implementation | NOT STARTED | — |
-| A6 | Review / apply / discard | NOT STARTED | — |
+| A5 | Kiro implementation | COMPLETE — PASS | `846ce502ca69eb915a8cbb8286aa6008a38818fa` — `feat: add sandboxed Kiro implementation profile`; `docs/audits/PHASE_A5_KIRO_SANDBOX_IMPLEMENTATION.md`. Full implement-profile Kiro ACP backend with sandboxed workspace write; TypeScript/Node execution with build validation; backend-managed credential injection; provider acceptance job `job_45f03a0f32ccecd3a0f3e3c23a24ff02` (model `claude-sonnet-4`, sandbox mutation verified). Documentation closeout `819ae215556bb8d403efac5bcb502231b72c7575`. |
+| A6 | Review / apply / discard | COMPLETE — PASS | `0121b31d56bdab85663d8a8bfb36a3e41dc6a575` — `feat: add retained-resource lifecycle`; `docs/audits/PHASE_A6_RESOURCE_LIFECYCLE.md` + B1-B6 series. Guarded agent_diff/agent_apply/agent_discard activated; retained-resource lifecycle (Lane A published-evidence expiry + Lane B incomplete-evidence classification); durable schema-v5 retention metadata; fail-closed eligibility proofs; startup lifecycle ordering; full regression validation (1398/1398 unit, 126/126 P1, 188/188 lifecycle PASS). Post-implementation remediation `91fb583ff26cfb7a59c1a8ba71be706e252cdd55`. |
 | A7 | GitHub Copilot backend | NOT STARTED | — |
 | A8 | Session continuity | NOT STARTED | — |
 | A9 | Production hardening + E2E | NOT STARTED | — |
@@ -3133,23 +3133,25 @@ The desired end state is:
 
 # 44. Immediate next action
 
-A0, A1 and A2 are complete (PASS — see the completion records in §26/§27/§28 and
-`docs/audits/PHASE_A0_FORENSIC_READINESS_AUDIT.md`,
-`docs/audits/PHASE_A1_AGENT_CONTROL_SPECIFICATION.md`,
-`docs/audits/PHASE_A2_DURABLE_JOB_ENGINE.md`).
+A0, A1, A2, A3, A4, A5, and A6 are complete (PASS — see the completion records in §26/§27/§28
+and the full audit document series in `docs/audits/`).
 
 The next implementation gate is:
 
 ```text
-A3 — RUNNER SANDBOX
+A7 — GITHUB COPILOT BACKEND
 ```
 
-A3 creates the isolated container execution foundation (runner image contract, job-volume/project
-snapshot materialization, resource limits, timeout, orphan cleanup, result/diff collector
-foundation) — expanding the executor's Docker capability while keeping the public MCP contract
-backend-neutral and the runner free of docker.sock, host mounts, and caller-supplied Docker options.
-The deterministic fake backend from A2 remains for offline tests; the first real backend (Kiro ACP)
-arrives in A4.
+A7 extends the governed agent execution plane to support GitHub Copilot as a second implementation
+worker backend, providing the same orchestration workflow (dispatch, status, result, diff, apply,
+discard) through a backend-neutral MCP contract. Before implementation, A7 must compare Copilot SDK,
+Copilot ACP, and non-interactive Copilot CLI transport options using selection criteria: structured
+events, cancellation, session persistence, permission control, maintenance burden, stability,
+security, and ability to run inside the runner model. The Copilot adapter must enforce least
+privilege (no `--allow-all` / `--yolo` defaults), support the same profile enforcement (audit, plan,
+implement, review), and integrate with the existing agent job engine, sandbox lifecycle, and
+retained-resource management. Exit gate: ChatGPT can choose between `backend: kiro` or
+`backend: copilot` without changing orchestration logic.
 
 ---
 

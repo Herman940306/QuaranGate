@@ -49,34 +49,51 @@ destructive annotation, nor use `terminal_exec` as a bypass for a client-side sa
 authorization and integration tests continue to verify the underlying `files:delete` capability for
 clients that are permitted to invoke it.
 
-## Agent Control Plane (Phase A2 — durable job engine behind a fake backend)
+## Agent Control Plane (Phase A6 — implementation complete)
 
-Six of the nine agent tools are now live (`agents_list`, `agent_projects`, `agent_dispatch`,
-`agent_status`, `agent_result`, `agent_cancel`), executed by a **deterministic fake backend** —
-there is no real agent, runner container, sandbox, network egress, or file mutation. Scopes
-`agents:read`, `agents:dispatch`, `agents:cancel` are enforced; `agents:apply` remains defined but
-unconsumed (apply lands in A6). `agent_diff`/`agent_apply`/`agent_discard` stay unregistered.
+All nine of the Agent Control Plane tools are now operational (`agents_list`, `agent_projects`, `agent_dispatch`, `agent_status`, `agent_result`, `agent_cancel`, `agent_diff`, `agent_apply`, `agent_discard`), executed by a real **Kiro ACP backend** through isolated sandboxed runners with bounded resource limits and fail-closed security controls.
 
-A2-specific security properties (unit- and live-integration-tested):
+A6-specific security properties (unit- and integration-tested):
 
 - **Authorization before work.** `agent_dispatch` runs the full grant matrix (scope + project +
   backend + profile) in the gateway *before* any executor call, and the executor independently
   re-validates project/backend/profile/resource-policy against trusted `config/agents.yaml`
   (defense in depth). An unauthenticated or unauthorized request never persists a job.
-- **Job ownership** is enforced for status/result/cancel in both the gateway (pure A1 matrix) and
-  the executor (by `principalId` on the persisted row). No cross-principal override exists.
-- **No caller-controlled execution.** Failure/delay behavior of the fake backend is selected only by
-  dependency injection in tests — never by a public MCP field. Strict schemas still reject
-  `hostPath`/`runnerImage`/`mounts`/`privileged`/`networkMode`/`dockerSocket`/unknown properties.
+- **Job ownership** is enforced for status/result/cancel/diff/apply/discard in both the gateway
+  (pure A1 matrix) and the executor (by `principalId` on the persisted row). No cross-principal
+  override exists.
+- **Sandboxed execution.** Real Kiro ACP backend executes inside ephemeral runners (non-root,
+  non-privileged, CapDrop=ALL, no-new-privileges, read-only rootfs, NetworkMode=backend-only, no
+  host binds, no docker.sock) with exact-integer resource limits (CPU/memory/PIDs/runtime/output).
+  Workspace is a Docker-managed volume snapshot, never a raw host bind to the real project.
+- **Guarded apply policy.** `agent_apply` enforces agents:apply scope, job ownership, project grant,
+  COMPLETED status prerequisite, unapplied disposition, base-state verification (stale HEAD refusal),
+  guarded-path validation (project-configurable forbidden/protected paths), one-time apply, and
+  fail-closed patch validation. Apply uses a dedicated short-lived applier container, never reusing
+  the unrestricted agent runner.
+- **Governed discard.** `agent_discard` enforces agents:dispatch scope, job ownership, disposition
+  rules (no double-disposition, no active/UNCERTAIN apply attempt interference), leaves live source
+  unchanged, and removes sandbox according to retained-resource lifecycle policy.
+- **Retained-resource lifecycle.** Automatic evidence expiry for APPLIED/DISCARDED jobs with published
+  artifacts (Lane A: durable retention snapshot, fail-closed eligibility proofs, atomic
+  AVAILABLE → EXPIRED transition); incomplete-evidence classification/reporting for failed/orphaned
+  evidence (Lane B: IDENTIFY + CLASSIFY + REPORT + RETAIN, no automatic deletion); startup-only
+  collection (awaited synchronous execution before service availability, no concurrent agent operations
+  during collection); metadata retention (job rows, apply attempts, apply journal, project quarantine
+  state retained indefinitely, only physical evidence bytes expire).
+- **No caller-controlled execution.** Caller supplies logical project/backend/profile IDs only —
+  never host paths, runner images, Docker options, or execution configuration.
 - **Prompt confidentiality.** The bounded raw prompt lives only in the executor SQLite store; it is
   never audited, never logged, never returned by status, and not returned by result. Only
-  `promptHash` is logged/audited. No provider credentials exist in A2, and none are stored.
+  `promptHash` is logged/audited. Provider credentials are injected at runner startup, never stored
+  in job metadata.
 - **Storage isolation.** The job DB is on an executor-owned volume (`mcp-bridge-jobs`, `0700`,
   `node`), a separate trust domain from the gateway OAuth `/data` volume; it is never mounted into
   the gateway or any target. Restart fails active jobs closed to `FAILED_INFRASTRUCTURE` (never
   silently resurrected) and cannot double-admit writers.
 - **Boundary unchanged.** Gateway still holds no docker.sock and binds loopback only; the executor
-  is still unpublished; no Docker Engine capability was added.
+  is still unpublished; agent runners receive no docker.sock, no arbitrary host binds, no privileged
+  mode.
 
 Scopes in the closed model: `agents:read`, `agents:dispatch`, `agents:cancel`, `agents:apply`.
 Security properties fixed by the A1 contract (unit-tested):

@@ -94,28 +94,27 @@ the canonical workspace root, which defeats symlink and nested-symlink escapes. 
 tar archive API and all other ops use argv-array `docker exec` (no shell), so there is no command
 injection surface on paths.
 
-## Agent Control Plane (Phase A2 — durable job engine, fake backend)
+## Agent Control Plane (Phase A6 complete)
 
-The bridge now runs the governed Agent Dispatch **orchestration** layer behind a deterministic
-**fake** backend. The operational MCP surface is **20 tools**: the 14 above plus six activated
-agent tools — `agents_list`, `agent_projects`, `agent_dispatch`, `agent_status`, `agent_result`,
-`agent_cancel`. `agent_diff`/`agent_apply`/`agent_discard` remain contract-only until A6.
+The bridge now runs the complete governed Agent Dispatch execution layer with real sandboxed Kiro backend, guarded diff/apply/discard, and retained-resource lifecycle. The operational MCP surface is **23 tools**: the 14 original plus all nine Agent Control Plane tools — `agents_list`, `agent_projects`, `agent_dispatch`, `agent_status`, `agent_result`, `agent_cancel`, `agent_diff`, `agent_apply`, `agent_discard`.
 
 Flow: gateway (authenticate → A1 authorization matrix → strict A1 Zod schemas → audit) delegates to
-a **new private executor API** (`/agents`, `/agent/projects`, `/agent/jobs`,
-`/agent/jobs/:id[/result|/cancel]`) which owns a durable **SQLite job engine** (built-in
-`node:sqlite`, executor-owned `mcp-bridge-jobs` volume at `/jobs`). `agent_dispatch` returns a
-`jobId` immediately; a deterministic fake backend (no shell/Docker/network/AI, changes no files)
-drives `QUEUED → PREPARING → RUNNING → VALIDATING → COMPLETED` through atomic compare-and-set
-transitions. Jobs execute serially; writer concurrency (≤1 global, ≤1 per project) is a persisted,
-restart-safe lock. On executor restart, active jobs fail closed to `FAILED_INFRASTRUCTURE` and
-queued jobs resume. The executor re-validates trusted config and job ownership independently of the
-gateway. The subsystem is optional — without `config/agents.yaml` the bridge behaves exactly as
-before.
+a **private executor API** which owns a durable **SQLite job engine** (built-in `node:sqlite`,
+executor-owned `mcp-bridge-jobs` volume at `/jobs`). `agent_dispatch` returns a `jobId` immediately;
+a real **Kiro ACP backend** drives job execution through isolated sandboxed runners with bounded
+resource limits, network isolation, and fail-closed security controls. Sandboxed workspace write (A5),
+machine-generated diffs (A6), guarded apply with path validation (A6), and retained-resource lifecycle
+with automatic evidence expiry (A6) are all implemented and operational. Jobs execute serially with
+persisted restart-safe writer concurrency control (≤1 global, ≤1 per project). The executor
+re-validates trusted config and job ownership independently of the gateway.
 
-**Still absent (A3+):** real Kiro/Copilot, runner containers, sandbox staging, machine diffs,
-apply/discard, and any Docker Engine capability expansion. The executor's Docker client is
-unchanged. See `docs/AGENT_CONTROL_PLANE.md` for the full contract and A2 details.
+**Implemented (A3-A6):** real Kiro ACP agent execution, ephemeral sandboxed runners (non-root,
+non-privileged, CapDrop=ALL, no-new-privileges, read-only rootfs, NetworkMode=backend-only, no host
+binds, no docker.sock, bounded CPU/memory/PIDs/runtime), exact-integer resource limits, guarded
+apply with path validation and base-state verification, machine-generated diffs, governed discard,
+retained-resource lifecycle (automatic evidence expiry + incomplete-evidence classification), and
+durable schema-v5 retention metadata. See `docs/AGENT_CONTROL_PLANE.md` for the full contract and
+implementation status.
 
 ## Terminal model
 

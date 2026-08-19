@@ -268,8 +268,8 @@ export function buildServer(): McpServer {
     return { target, result: res };
   }));
 
-  // Agent Control Plane (A2): activates exactly six of the nine contracts.
-  // agent_diff / agent_apply / agent_discard remain contract-only until A6.
+  // Agent Control Plane: all nine contracts are now registered.
+  // A6 activated agent_diff, agent_apply, and agent_discard.
   registerAgentTools(server);
 
   return server;

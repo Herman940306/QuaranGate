@@ -1,13 +1,8 @@
-# Agent Control Plane — Contract Specification (A1) + Durable Job Engine (A2)
+# Agent Control Plane — Contract Specification (A1) + Implementation Complete (A6)
 
-**Status:** Phase A2 — durable orchestration active behind a deterministic **fake** backend. No real
-agent (Kiro/Copilot) runs; no runner container, sandbox, diff, or apply exists yet.
-**Live MCP surface:** 20 operational tools — the original 14 plus six activated Agent Control Plane
-tools (`agents_list`, `agent_projects`, `agent_dispatch`, `agent_status`, `agent_result`,
-`agent_cancel`). `agent_diff`, `agent_apply`, `agent_discard` remain **contract-only** until A6.
-**Authority:** this document is the code-adjacent specification; the Master PRD
-(`MCP_IDE_BRIDGE_MASTER_PRD.md`) is the product authority. Where this document summarizes the PRD,
-the PRD wins; where it records exact code contracts, the code + tests are the evidence.
+**Status:** Phase A6 complete — all nine Agent Control Plane tools now registered and operational. Sandboxed Kiro execution with workspace write (A5), guarded apply/discard (A6), and retained-resource lifecycle (A6) are implemented and verified.
+**Live MCP surface:** 23 operational tools — the original 14 plus all nine Agent Control Plane tools (`agents_list`, `agent_projects`, `agent_dispatch`, `agent_status`, `agent_result`, `agent_cancel`, `agent_diff`, `agent_apply`, `agent_discard`).
+**Authority:** this document is the code-adjacent specification; the Master PRD (`MCP_IDE_BRIDGE_MASTER_PRD.md`) is the product authority. Where this document summarizes the PRD, the PRD wins; where it records exact code contracts, the code + tests are the evidence.
 
 ---
 
@@ -99,13 +94,15 @@ A1 delivers the bones only:
 | Trusted config parser/validator | `src/executor/agentConfig.ts` | **not loaded** at startup |
 | Example trusted config | `config/agents.example.yaml` | example only; `agents.yaml` optional and absent |
 
-## 2. Planned MCP tools (six activated in A2; three contract-only until A6)
+## 2. MCP tools (all nine now registered)
 
 ```text
 agents_list      agent_projects
 agent_dispatch   agent_status   agent_result   agent_diff   agent_cancel
 agent_apply      agent_discard
 ```
+
+All nine Agent Control Plane tools are now registered and operational.
 
 All nine input/output contracts are strict Zod objects in `src/gateway/agentSchemas.ts`:
 
@@ -298,9 +295,14 @@ state.
 | Phase | Adds | Status |
 |---|---|---|
 | A1 | contracts, scopes, grants, state machine, config schema, docs, tests | COMPLETE |
-| **A2 (current)** | durable SQLite job engine, deterministic fake backend, six activated tools, persistence, recovery, cancellation | COMPLETE |
-| A3 | runner sandbox, Docker client expansion, resource enforcement, egress policy | not started |
-| A4+ | real backends (Kiro, then Copilot at A7), review/apply (A6), sessions (A8), hardening (A9) | not started |
+| A2 | durable SQLite job engine, deterministic fake backend, six activated tools, persistence, recovery, cancellation | COMPLETE |
+| A3 | runner sandbox, Docker client expansion, resource enforcement, egress policy | COMPLETE |
+| A4 | real Kiro ACP backend (read-only audit profile) | COMPLETE |
+| A5 | sandboxed Kiro implementation profile (workspace write, validation execution) | COMPLETE |
+| A6 | guarded agent_diff/agent_apply/agent_discard, retained-resource lifecycle | COMPLETE |
+| A7 | GitHub Copilot backend | NOT STARTED |
+| A8 | session continuity | NOT STARTED |
+| A9 | production hardening + E2E | NOT STARTED |
 
 ## 12. Security invariants (unchanged and extended)
 
