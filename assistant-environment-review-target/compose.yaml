@@ -1,0 +1,32 @@
+# Read-only review target for the Secure Dev assistant environment project.
+# Exposes the development project to ChatGPT for independent code review.
+# The source mount is read-only.
+name: assistant-environment-review
+
+services:
+  review:
+    build:
+      context: .
+    image: assistant-environment-review:latest
+    container_name: assistant-environment-review
+    working_dir: /workspace
+    # Opt-in discovery labels
+    labels:
+      mcp.bridge.enabled: "true"
+      mcp.bridge.workspace: "/workspace"
+      mcp.bridge.name: "assistant-environment-review"
+    # git, bash, and python3 are baked into the image at build time — no runtime apk.
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+    volumes:
+      # READ-ONLY mount of the source repository
+      - /home/herman/projects/Secure Dev:/workspace:ro
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: false  # Container filesystem is read-only except tmpfs
+    pids_limit: 256
+    mem_limit: 1g

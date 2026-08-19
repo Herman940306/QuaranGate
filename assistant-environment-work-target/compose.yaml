@@ -1,0 +1,54 @@
+# Read/WRITE work target for the Secure Dev assistant environment project.
+# Exposes the development project to ChatGPT for controlled implementation work.
+#
+# Authority model (deliberately narrower than plain "writable"):
+#   /workspace       project source   READ/WRITE
+#   /workspace/.git  Git metadata     READ-ONLY  (nested bind overrides the parent)
+#
+# The read-only .git overlay is the hard technical boundary: the agent may edit
+# source, run tests and read Git history, but cannot stage, commit, branch,
+# tag, stash, rebase, merge, push or otherwise mutate repository metadata.
+#
+# This is the WRITE lane. The read-only lane (assistant-environment-review)
+# stays untouched and independent.
+name: assistant-environment-work
+
+services:
+  work:
+    build:
+      context: .
+    image: assistant-environment-work:latest
+    container_name: assistant-environment-work
+    working_dir: /workspace
+    # Unprivileged, and deliberately matched to the host project owner (uid 1000).
+    # With cap_drop: ALL there is no CAP_DAC_OVERRIDE, so write access to the
+    # host-owned source comes from ordinary file permissions rather than from
+    # privilege — and files created here stay owned by the host user.
+    user: "1000:1000"
+    # Opt-in discovery labels (identity only — authorization is per-client in
+    # config/clients.yaml). The manual entry in config/bridge.yaml wins, so the
+    # target resolves with source=manual.
+    labels:
+      mcp.bridge.enabled: "true"
+      mcp.bridge.workspace: "/workspace"
+      mcp.bridge.name: "assistant-environment-work"
+    # git is baked into the image (the container is unprivileged and cannot
+    # apk-add at start-up). Because the container uid matches the workspace
+    # owner, git's ownership check passes without any safe.directory override.
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+    volumes:
+      # READ/WRITE mount of the project source
+      - /home/herman/projects/Secure Dev:/workspace:rw
+      # READ-ONLY overlay of the repository metadata. Nested destination, so it
+      # is mounted after the parent and wins for everything under /workspace/.git.
+      - /home/herman/projects/Secure Dev/.git:/workspace/.git:ro
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: false  # Container filesystem is writable except where mounted ro
+    pids_limit: 256
+    mem_limit: 1g
