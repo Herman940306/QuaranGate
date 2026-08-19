@@ -93,10 +93,72 @@ async function collect(
   };
 }
 
+/** Every ASCII control character: C0 (U+0000..U+001F) plus DEL (U+007F). */
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/;
+
+/**
+ * The outcome of parsing `readlink -f` / `realpath` output.
+ *
+ * `unresolved` is the ordinary "this path does not resolve" signal (the command
+ * produced no output at all) — the caller may fall back to an ancestor. Every
+ * other failure is `fatal`: the output was ambiguous, so no path can be derived
+ * from it and the operation must stop.
+ */
+export type CanonicalPathParse =
+  | { ok: true; path: string }
+  | { ok: false; unresolved: true }
+  | { ok: false; unresolved: false; reason: string };
+
+const unresolved = { ok: false, unresolved: true } as const;
+const malformed = (reason: string) => ({ ok: false, unresolved: false, reason }) as const;
+
+/**
+ * Parse the single canonical-path record emitted by `readlink -f`/`realpath`.
+ *
+ * The command emits exactly ONE record terminated by a single LF. Parsing must
+ * therefore strip exactly that framing byte and nothing else — a filename may
+ * legitimately end in U+0020, U+00A0, U+2028, U+FEFF or any other character
+ * JavaScript's `trim()` considers whitespace, and `trim()` would silently
+ * rewrite the path to a DIFFERENT existing file ("victim " -> "victim"). The
+ * former `stdout.trim().split('\n')[0]` also turned a lone " " into "", which
+ * canonicalized to the workspace root itself.
+ *
+ * Hence: no trim(), no whitespace normalization, no "first line" selection.
+ * Anything that is not exactly one LF-terminated, absolute, control-free record
+ * fails closed.
+ */
+export function parseCanonicalPathOutput(r: Pick<ExecResult, 'stdout' | 'truncated' | 'timedOut'>): CanonicalPathParse {
+  // A clipped record is a valid-looking prefix of a real path — never parse it.
+  if (r.timedOut) return malformed('canonicalization timed out');
+  if (r.truncated) return malformed('canonicalization output was truncated');
+
+  // Both readlink and realpath failed: the path does not resolve. Not ambiguous.
+  if (r.stdout === '') return unresolved;
+
+  // Exactly one record terminator, removed exactly once.
+  if (!r.stdout.endsWith('\n')) return malformed('canonicalization output is missing its record terminator');
+  const record = r.stdout.slice(0, -1);
+
+  // Any surviving control character means the framing was ambiguous: a second
+  // record (`/a\n/b\n`), a CR (`/a\r\n`), or a control character in the resolved
+  // path itself. There is no safe interpretation, so refuse rather than pick one.
+  const control = CONTROL_CHARS.exec(record);
+  if (control) {
+    const hex = (control[0].codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0');
+    return malformed(`canonicalization output contains control character U+${hex}`);
+  }
+
+  if (!record.startsWith('/')) return malformed('canonicalization output is not an absolute path');
+  return { ok: true, path: record };
+}
+
 /**
  * Canonicalize an in-container path via the target's own readlink/realpath.
  * The path is passed as a positional argument ($1) — never interpolated into
  * the shell string.
+ *
+ * Returns null only for the unambiguous "does not resolve" case; ambiguous or
+ * malformed output throws so the caller cannot proceed on a guessed path.
  */
 async function canonicalizePath(containerId: string, absPath: string): Promise<string | null> {
   const r = await collect(
@@ -104,9 +166,10 @@ async function canonicalizePath(containerId: string, absPath: string): Promise<s
     ['/bin/sh', '-c', 'readlink -f -- "$1" 2>/dev/null || realpath -- "$1" 2>/dev/null', 'sh', absPath],
     { timeoutMs: 10_000, maxOutputBytes: 8192 },
   );
-  const line = r.stdout.trim().split('\n')[0];
-  if (!line || !line.startsWith('/')) return null;
-  return line;
+  const parsed = parseCanonicalPathOutput(r);
+  if (parsed.ok) return parsed.path;
+  if (parsed.unresolved) return null;
+  throw new BridgeError('PATH_VIOLATION', parsed.reason, 403);
 }
 
 export interface ConfinedTarget {
