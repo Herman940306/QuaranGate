@@ -7,7 +7,7 @@
 import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { asBridgeError, BridgeError } from '../shared/errors.js';
-import { loadClients, principalById, type Principal } from './config.js';
+import { clientsLoadState, loadClients, principalById, type Principal } from './config.js';
 import { authenticateKey } from './auth/apikeys.js';
 import { mountOAuth, oauthResourceForPublicUrl, tokenToPrincipalId } from './auth/oauth.js';
 import { withPrincipal } from './context.js';
@@ -24,13 +24,38 @@ if (!process.env.INTERNAL_TOKEN || process.env.INTERNAL_TOKEN === '<SET_SECURELY
   console.error('FATAL: INTERNAL_TOKEN is not set');
   process.exit(1);
 }
-loadClients();
+// A missing/unreadable/malformed/invalid clients config must NOT crash the
+// process (it stays alive and diagnosable) and must NOT look healthy: the
+// failure is recorded in the config load state and surfaces via /readyz.
+try {
+  loadClients();
+} catch {
+  // Category + safe message only; the raw error can echo file content.
+}
+{
+  const st = clientsLoadState();
+  if (st.status !== 'loaded') {
+    console.error(JSON.stringify({
+      level: 'error',
+      msg: 'clients config not loaded — gateway is NOT READY (all client authentication will fail)',
+      status: st.status,
+      reason: st.status === 'failed' ? st.reason : 'unknown',
+      detail: st.status === 'failed' ? st.message : undefined,
+    }));
+  }
+}
 
 const app = express();
 app.disable('x-powered-by');
 
+// Liveness only: the process is running. Never depends on config or executor.
 app.get('/healthz', (_req, res) => { res.json({ ok: true }); });
+// Readiness: fail closed unless the clients config loaded AND the executor is
+// reachable. `principalCount: 0` is a valid loaded config and stays ready.
+// The body carries no reason: /readyz is unauthenticated (and may be exposed
+// through remote ingress), so it must not disclose internal state.
 app.get('/readyz', (_req, res) => {
+  if (clientsLoadState().status !== 'loaded') { res.status(503).json({ ok: false }); return; }
   executor.readyz().then((ok) => res.status(ok ? 200 : 503).json({ ok }));
 });
 

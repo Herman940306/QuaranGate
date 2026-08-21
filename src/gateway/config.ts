@@ -53,15 +53,75 @@ interface ClientsFile {
   clients: Principal[];
 }
 
+/** Why a clients-config load failed. Category only — never file content. */
+export type ClientsLoadFailureReason = 'not_found' | 'read_error' | 'parse_error' | 'schema_invalid';
+
+/**
+ * Explicit, queryable outcome of the last clients-config load.
+ *
+ * `loaded` with `principalCount: 0` is a VALID configuration and must stay
+ * distinguishable from `failed`: a missing/unreadable/malformed/invalid file is
+ * a failure, not an empty allowlist. `message` is a safe diagnostic and never
+ * carries file contents, key hashes, tokens, or other credential material.
+ */
+export type ClientsLoadState =
+  | { status: 'not_loaded' }
+  | { status: 'loaded'; principalCount: number }
+  | { status: 'failed'; reason: ClientsLoadFailureReason; message: string };
+
 let principals: Principal[] = [];
+let loadState: ClientsLoadState = { status: 'not_loaded' };
+
+/** Current clients-config load state. Fail closed: only `loaded` means usable. */
+export function clientsLoadState(): ClientsLoadState {
+  return loadState;
+}
+
+/** Record a load failure and drop every principal (fail closed). */
+function failLoad(reason: ClientsLoadFailureReason, message: string): Error {
+  principals = [];
+  loadState = { status: 'failed', reason, message };
+  return new Error(message);
+}
+
+/** Non-content parse diagnostics from the YAML error, if it exposes them. */
+function yamlErrorDetail(e: unknown): string {
+  const err = e as { code?: unknown; linePos?: Array<{ line?: number }> };
+  const code = typeof err?.code === 'string' ? err.code : 'UNKNOWN';
+  const line = typeof err?.linePos?.[0]?.line === 'number' ? err.linePos[0].line : undefined;
+  return line === undefined ? `code=${code}` : `code=${code}, line=${line}`;
+}
 
 export function loadClients(path = process.env.CLIENTS_CONFIG ?? '/config/clients.yaml'): void {
   if (!fs.existsSync(path)) {
-    principals = [];
+    // Previously a silent empty allowlist, which made a lost /config mount look
+    // like a valid zero-client config. It is now an explicit load failure.
+    failLoad('not_found', 'clients config file not found');
     return;
   }
-  const parsed = YAML.parse(fs.readFileSync(path, 'utf8')) as ClientsFile | null;
-  principals = (parsed?.clients ?? []).map((p) => ({
+  let text: string;
+  try {
+    text = fs.readFileSync(path, 'utf8');
+  } catch {
+    throw failLoad('read_error', 'clients config file could not be read');
+  }
+
+  let parsed: ClientsFile | null;
+  try {
+    parsed = YAML.parse(text) as ClientsFile | null;
+  } catch (e) {
+    throw failLoad('parse_error', `clients config is not valid YAML (${yamlErrorDetail(e)})`);
+  }
+
+  if (parsed !== null && (typeof parsed !== 'object' || Array.isArray(parsed))) {
+    throw failLoad('schema_invalid', 'clients config root must be a mapping');
+  }
+  const rawClients = parsed?.clients ?? [];
+  if (!Array.isArray(rawClients)) {
+    throw failLoad('schema_invalid', 'clients config "clients" must be a list');
+  }
+
+  const loaded: Principal[] = rawClients.map((p) => ({
     ...p,
     enabled: p.enabled !== false,
     scopes: (p.scopes ?? []).filter((s): s is Scope => ALL_SCOPES.includes(s as Scope)),
@@ -72,11 +132,13 @@ export function loadClients(path = process.env.CLIENTS_CONFIG ?? '/config/client
     agentProfiles: p.agentProfiles ?? [],
   }));
   const seen = new Set<string>();
-  for (const p of principals) {
-    if (!p.id || !p.keyHash) throw new Error(`client missing id or keyHash`);
-    if (seen.has(p.id)) throw new Error(`duplicate client id: ${p.id}`);
+  for (const p of loaded) {
+    if (!p.id || !p.keyHash) throw failLoad('schema_invalid', `client missing id or keyHash`);
+    if (seen.has(p.id)) throw failLoad('schema_invalid', `duplicate client id: ${p.id}`);
     seen.add(p.id);
   }
+  principals = loaded;
+  loadState = { status: 'loaded', principalCount: loaded.length };
 }
 
 export function allPrincipals(): Principal[] {

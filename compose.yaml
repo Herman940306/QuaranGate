@@ -16,7 +16,10 @@ services:
     <<: *hardening
     build:
       context: .
-    image: mcp-ide-bridge:latest
+    # One shared build artifact, independently taggable per service. Production
+    # must pin an immutable service-specific tag (agentcontrol:gateway-<sha>);
+    # the :latest default is a dev convenience and is never authoritative.
+    image: ${GATEWAY_IMAGE:-mcp-ide-bridge:latest}
     command: ["node", "dist/gateway/index.js"]
     environment:
       BRIDGE_PORT: "8787"
@@ -39,7 +42,10 @@ services:
     depends_on:
       - executor
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # Readiness, not liveness: an empty /config mount (clients.yaml missing)
+      # must report UNHEALTHY instead of falsely healthy. The process is not
+      # killed or restarted by this check changing state; it stays diagnosable.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -48,7 +54,9 @@ services:
 
   executor:
     <<: *hardening
-    image: mcp-ide-bridge:latest
+    # Same shared build artifact as the gateway, tagged independently
+    # (agentcontrol:executor-<sha> in production).
+    image: ${EXECUTOR_IMAGE:-mcp-ide-bridge:latest}
     build:
       context: .
     command: ["node", "dist/executor/index.js"]

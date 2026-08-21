@@ -32,13 +32,49 @@ docker compose -f test-target/compose.yaml up -d --build
 docker compose -f test-target/compose.yaml down -v
 ```
 
+## Image provenance
+
+Production gateway and executor image references must be immutable and service-specific:
+`agentcontrol:gateway-<sha>` and `agentcontrol:executor-<sha>`. Both services build from the same
+Dockerfile/context and are tagged independently; `compose.yaml` selects them via `GATEWAY_IMAGE` and
+`EXECUTOR_IMAGE`. `mcp-ide-bridge:latest` is the unset default and a dev convenience only — it is
+never authoritative for production provenance.
+
+```bash
+GATEWAY_IMAGE=agentcontrol:gateway-<sha> EXECUTOR_IMAGE=agentcontrol:executor-<sha> docker compose up -d
+```
+
+Every production build candidate must carry the commit it was built from, applied at build time
+(never baked into source):
+
+```text
+org.opencontainers.image.revision=<exact commit SHA>
+org.opencontainers.image.source=https://github.com/Herman940306/AgentControl
+```
+
+The OAuth data volume (`mcp-bridge-data`) has a lifecycle separate from the image lifecycle.
+Replacing the gateway is forward recovery only: build a new image from a committed revision and
+start it against the existing persistent OAuth volume and host config. Never use `docker commit` of
+a running container as a rollback image, and never bake live credentials, tokens, or config into any
+candidate or rollback image.
+
 ## Health / readiness
 
 ```bash
-curl -s http://127.0.0.1:8787/healthz     # gateway liveness
-curl -s http://127.0.0.1:8787/readyz      # gateway + executor + docker reachable
+curl -s http://127.0.0.1:8787/healthz     # gateway LIVENESS only: process is up
+curl -s http://127.0.0.1:8787/readyz      # gateway READINESS: clients config loaded AND executor reachable
 docker compose ps
 ```
+
+`/healthz` never depends on config or executor state. `/readyz` fails closed with `503` unless the
+clients config loaded *and* the executor answers. A valid config with zero clients counts as loaded.
+
+The Docker healthcheck for the gateway probes `/readyz` (the executor's own healthcheck still probes
+`/healthz`). A missing, unreadable, malformed, or structurally invalid `config/clients.yaml` — for
+example an empty `/config` bind mount after a reboot — therefore shows the gateway as **unhealthy**
+instead of falsely healthy. The gateway process stays alive and diagnosable; it does not exit or
+crash-loop. The reason category is logged at startup (`clients config not loaded`), never returned in
+the `/readyz` body.
 
 ## Logs (structured JSON audit, redacted)
 
