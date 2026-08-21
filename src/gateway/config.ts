@@ -38,7 +38,7 @@ export interface Principal {
   enabled: boolean;
   rateLimit?: number; // requests per minute
   /**
-   * Agent Control Plane grants (Phase A1 contract; no agent tool is live yet).
+   * Agent Control Plane grants, enforced on every registered agent tool call.
    * Missing/empty = DENY. "*" = every entry in the TRUSTED CONFIGURED agent
    * registry, never arbitrary host resources. Target permission does NOT
    * imply project permission, and agent scopes alone grant nothing without

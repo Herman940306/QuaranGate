@@ -1,8 +1,8 @@
 /**
- * A2 integration — live stack, six activated Agent Control Plane tools.
+ * Agent Control Plane integration — live stack, all nine agent tools activated.
  *
  * Requires KEYS_ENV with KEY_itest_agent_owner / KEY_itest_agent_other
- * (dedicated A2 test principals; no browser principal has agent scopes).
+ * (dedicated agent test principals; no browser principal has agent scopes).
  * Runs against the deterministic fake engine only — no real agent/provider.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -11,8 +11,11 @@ import { connect, callTool, loadKeys } from './helpers.js';
 
 const keys = loadKeys();
 
-const AGENT_TOOLS = ['agents_list', 'agent_projects', 'agent_dispatch', 'agent_status', 'agent_result', 'agent_cancel'];
-const CONTRACT_ONLY = ['agent_diff', 'agent_apply', 'agent_discard'];
+const AGENT_TOOLS = [
+  'agents_list', 'agent_projects', 'agent_dispatch', 'agent_status', 'agent_result',
+  'agent_cancel', 'agent_diff', 'agent_apply', 'agent_discard',
+];
+const REVIEW_LIFECYCLE_TOOLS = ['agent_diff', 'agent_apply', 'agent_discard'];
 
 async function waitForStatus(client: Client, jobId: string, want: (s: string) => boolean, ms = 15_000): Promise<any> {
   const start = Date.now();
@@ -24,7 +27,7 @@ async function waitForStatus(client: Client, jobId: string, want: (s: string) =>
   }
 }
 
-describe('Agent Control Plane — A2 live integration', () => {
+describe('Agent Control Plane — live integration', () => {
   let owner: Client;
   let other: Client;
 
@@ -39,9 +42,9 @@ describe('Agent Control Plane — A2 live integration', () => {
   });
 
   describe('tool surface', () => {
-    it('exposes exactly 20 operational tools, all with object outputSchema', async () => {
+    it('exposes exactly 23 operational tools, all with object outputSchema', async () => {
       const { tools } = await owner.listTools();
-      expect(tools).toHaveLength(20);
+      expect(tools).toHaveLength(23);
       for (const t of tools) {
         expect(t.outputSchema, `${t.name} missing outputSchema`).toBeTruthy();
         expect(t.outputSchema?.type, `${t.name} outputSchema type`).toBe('object');
@@ -50,13 +53,24 @@ describe('Agent Control Plane — A2 live integration', () => {
       for (const t of AGENT_TOOLS) expect(names, `missing ${t}`).toContain(t);
     });
 
-    it('agent_diff / agent_apply / agent_discard remain unregistered', async () => {
+    it('agent_diff / agent_apply / agent_discard are registered and enforce job existence', async () => {
       const { tools } = await owner.listTools();
       const names = tools.map((t) => t.name);
-      for (const t of CONTRACT_ONLY) expect(names, `${t} must not be live`).not.toContain(t);
-      for (const t of CONTRACT_ONLY) {
-        const res = await callTool(owner, t, { jobId: `job_${'a'.repeat(32)}` }).catch((e) => ({ isError: true, text: String(e), json: undefined }));
-        expect(res.isError, `${t} call must fail`).toBe(true);
+      for (const t of REVIEW_LIFECYCLE_TOOLS) expect(names, `${t} must be registered`).toContain(t);
+      for (const t of REVIEW_LIFECYCLE_TOOLS) {
+        const res = await callTool(owner, t, { jobId: `job_${'a'.repeat(32)}` });
+        expect(res.isError, `${t} call on an unknown job must fail`).toBe(true);
+        const code = res.json?.error ?? res.text;
+        // agent_diff needs agents:read and agent_discard needs agents:dispatch —
+        // both are exercised by this owner elsewhere in this suite, so the scope
+        // gate is passed and the executor's job lookup is what refuses.
+        // agent_apply needs the high-privilege agents:apply scope, which this
+        // test principal is not required to hold; it must still fail closed.
+        if (t === 'agent_apply') {
+          expect(['UNKNOWN_JOB', 'FORBIDDEN_SCOPE'], `${t} must fail closed`).toContain(code);
+        } else {
+          expect(code, `${t} must report UNKNOWN_JOB`).toBe('UNKNOWN_JOB');
+        }
       }
     });
 

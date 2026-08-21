@@ -42,7 +42,9 @@ clients:
     targets: ["demo"]
 
   # ---------------------------------------------------------------------------
-  # Agent Control Plane grants (Phase A1 contract — no agent tool is live yet).
+  # Agent Control Plane grants. All nine agent tools are live (agents_list,
+  # agent_projects, agent_dispatch, agent_status, agent_result, agent_cancel,
+  # agent_diff, agent_apply, agent_discard), so these grants are enforced.
   #
   # Agent access is DENY BY DEFAULT: clients without the agents:* scopes AND
   # the matching projects/agentBackends/agentProfiles grants have ZERO agent

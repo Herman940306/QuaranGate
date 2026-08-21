@@ -8,9 +8,11 @@
  * caller-controlled Docker options: images, mounts, commands, host paths and
  * limits all come from trusted inputs (agentConfig / resource policy).
  *
- * A3 proves the sandbox foundation with a deterministic internal probe; it does
- * NOT run a real AI backend and is NOT wired into live agent_dispatch. A4 will
- * invoke this from trusted code with a real Kiro adapter.
+ * A3 proved the sandbox foundation with a deterministic internal probe.
+ * KiroBackend (executor/agents/kiroBackend.ts) now invokes this from trusted
+ * code as the real agent_dispatch execution path when the runner/proxy/Kiro
+ * credential infrastructure is configured (src/executor/index.ts); dispatch
+ * otherwise falls back to the fake backend.
  */
 import { BridgeError } from '../../shared/errors.js';
 import type { AgentResourcePolicy, AgentNetworkPolicy } from '../../shared/agents.js';

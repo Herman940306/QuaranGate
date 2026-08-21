@@ -1,9 +1,12 @@
 # EXAMPLE ONLY — NOT LIVE CONFIGURATION.
 #
-# Trusted Agent Control Plane registry (Phase A1 contract).
-# Copy to config/agents.yaml (gitignored) ONLY when a later phase (A2+)
-# activates agent execution. Nothing reads config/agents.yaml in A1, and the
-# bridge never requires it to start.
+# Trusted Agent Control Plane registry.
+# Copy to config/agents.yaml (gitignored) to enable agent execution. The
+# executor loads it at startup from AGENTS_CONFIG (default /config/agents.yaml)
+# and validates it strictly. The file is OPTIONAL: when it is absent the
+# executor logs "agent control plane not configured (optional)", the agent
+# routes fail closed with AGENTS_UNAVAILABLE, and the rest of the bridge runs
+# exactly as before.
 #
 # SECURITY: everything in this file is TRUSTED, executor-owned configuration.
 # hostPath, backends, profiles and resource policies are never accepted from
@@ -28,7 +31,7 @@ projects:
     gitRequired: true
     backends: [kiro]
     profiles: [audit, plan, implement, review]
-    guardedPaths:                        # refused/harder-gated at future apply
+    guardedPaths:                        # refused/harder-gated by agent_apply
       - .env
       - config/clients.yaml
       - config/bridge.yaml
@@ -43,7 +46,7 @@ projects:
     guardedPaths: [.env]
 
 # Profiles are ENFORCEMENT POLICY, not prompt templates. The container/OS
-# layer enforcing these begins in A3; this is the specification it consumes.
+# layer consumes this specification and enforces it at the runner boundary.
 profiles:
   - id: audit
     workspaceAccess: read-only

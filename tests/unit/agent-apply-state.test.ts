@@ -7,8 +7,9 @@
  *
  * These tests exercise ONLY the durable persistence primitives added in this
  * batch (v3 schema: agent_project_apply_state, agent_apply_attempts, and the
- * new AgentJobStore methods). No applier exists yet; agent_apply/agent_diff/
- * agent_discard are not registered. See jobStore.ts for the exact semantics.
+ * new AgentJobStore methods), not the applier built on top of them
+ * (applyEngine.ts) or the registered agent_apply/agent_diff/agent_discard
+ * tools. See jobStore.ts for the exact semantics.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';

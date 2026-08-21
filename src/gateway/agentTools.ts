@@ -106,7 +106,7 @@ function statusOutput(job: AgentJobWire): Record<string, unknown> {
 export function registerAgentTools(server: McpServer): void {
   server.registerTool('agents_list', {
     title: 'List agent backends',
-    description: 'List agent backends this client may use. In phase A2 execution is performed by a deterministic local fake engine; no real agent runs.',
+    description: 'List agent backends this client may use, with each backend\'s configured availability and the profiles this client may request. Availability comes from the executor\'s trusted configuration. `kiro` is the implemented real backend and executes only where the runner infrastructure and credentials are configured; any other configured backend id executes against a deterministic local fake engine.',
     inputSchema: AGENT_TOOL_SCHEMAS.agents_list.input,
     outputSchema: AGENT_TOOL_SCHEMAS.agents_list.output,
     annotations: READ,
@@ -139,7 +139,7 @@ export function registerAgentTools(server: McpServer): void {
 
   server.registerTool('agent_dispatch', {
     title: 'Dispatch an agent job',
-    description: 'Create a governed asynchronous agent job and return its jobId immediately. Phase A2: executed by a deterministic local fake backend in a durable job engine — no real agent, no file changes.',
+    description: 'Create a governed asynchronous agent job and return its jobId immediately; the job is durable and runs in the background (poll agent_status). A configured real backend (`kiro`) may execute it; any other backend runs a deterministic local fake engine. Read-only profiles (audit, plan, review) never write, and the implement profile writes only to an isolated sandbox copy — no profile mutates the registered project. Completed work becomes reviewable evidence (agent_diff); writing it to the real project requires the separate guarded agent_apply call.',
     inputSchema: AGENT_TOOL_SCHEMAS.agent_dispatch.input,
     outputSchema: AGENT_TOOL_SCHEMAS.agent_dispatch.output,
     annotations: WRITE,

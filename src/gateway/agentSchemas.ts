@@ -1,10 +1,10 @@
 /**
- * MCP Agent Control Plane tool contract schemas (Phase A1 — DEFINITIONS ONLY).
+ * MCP Agent Control Plane tool contract schemas.
  *
- * Strict Zod input/output contracts for the nine planned agent tools.
- * NONE of these are registered with buildServer() in A1: the live MCP
- * surface remains exactly the existing 14 tools. A2 performs the first
- * registration against a deterministic fake backend.
+ * Strict Zod input/output contracts for the nine agent tools. All nine are
+ * registered with buildServer() via registerAgentTools() (see
+ * src/gateway/agentTools.ts): the live MCP surface is the 14 IDE tools plus
+ * these 9 agent tools (23 total).
  *
  * Security properties of every public input object:
  * - `.strict()`: unknown properties are rejected, so callers can never
@@ -181,7 +181,7 @@ export const agentCancelInput = z.object({ jobId }).strict();
 export const agentCancelOutput = z.object({ jobId, status: jobStatus }).strict();
 
 /**
- * Apply takes NO patch text: the future operation applies stored, verified
+ * Apply takes NO patch text: the operation applies stored, verified
  * job evidence only. A caller-injected patch is not expressible.
  */
 export const agentApplyInput = z.object({ jobId }).strict();

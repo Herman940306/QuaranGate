@@ -1,10 +1,10 @@
 /**
- * Trusted Agent Control Plane configuration (Phase A1 — parser/validator only).
+ * Trusted Agent Control Plane configuration (parser/validator).
  *
  * This is EXECUTOR-OWNED trusted configuration: it is where logical project
  * ids resolve to real host paths. It is never populated from MCP input, and
- * hostPath is never accepted through any public schema. In A1 nothing loads
- * this at startup — A2 wires it into the executor. See
+ * hostPath is never accepted through any public schema. Loaded at executor
+ * startup when present (src/executor/index.ts). See
  * config/agents.example.yaml and docs/AGENT_CONTROL_PLANE.md.
  */
 import fs from 'node:fs';
@@ -49,7 +49,7 @@ const projectSchema = z.object({
   gitRequired: z.boolean(),
   backends: z.array(backendId).nonempty(),
   profiles: z.array(profileId).nonempty(),
-  /** Paths refused (or gated harder) by future apply policy. */
+  /** Paths refused by apply policy: a match rejects the whole changeset. */
   guardedPaths: z.array(z.string().min(1).max(512)).max(256).default([]),
 }).strict();
 
@@ -157,8 +157,9 @@ export function parseAgentConfigYaml(text: string): AgentControlPlaneConfig {
 }
 
 /**
- * Load + validate a trusted agent config file. NOT called at executor
- * startup in A1; agents.yaml is optional and absent by design.
+ * Load + validate a trusted agent config file. Called at executor startup
+ * when the file is present; agents.yaml remains optional and absent by
+ * design (see src/executor/index.ts).
  */
 export function loadAgentConfig(path: string): AgentControlPlaneConfig {
   if (!fs.existsSync(path)) throw malformed(`file not found: ${path}`);

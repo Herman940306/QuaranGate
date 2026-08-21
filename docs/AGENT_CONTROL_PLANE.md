@@ -6,7 +6,13 @@
 
 ---
 
-## 0. Phase A2 — durable job engine (what is now live)
+## 0. Phase A2 — durable job engine (historical A2 record)
+
+This section records the orchestration layer **as delivered in A2**. It remains accurate for the
+job engine, persistence, recovery, and concurrency semantics, all of which are still live. The
+execution path described here — the deterministic fake backend — was superseded by the real Kiro
+ACP backend in A4/A5; the fake backend now serves only non-`kiro` backends. See §11 for current
+phase status.
 
 The asynchronous orchestration layer is implemented and deployed:
 
@@ -308,10 +314,12 @@ state.
 
 - Gateway: public boundary, auth/authz/rate-limit/audit, **no docker.sock**.
 - Executor: private, no published ports, Docker authority.
-- Agent runners (future): no docker.sock, no privileged mode, no arbitrary host filesystem, no
-  caller-controlled Docker options.
+- Agent runners (implemented in A3-A5): no docker.sock, no privileged mode, no arbitrary host
+  filesystem, no caller-controlled Docker options.
 - Public callers: logical IDs only — never host paths, runner images, volume sources, Docker
   networks, or privilege/capability flags.
-- Existing 14 MCP tools unchanged and compatible; agent tool count live in A1: **0**.
+- The original 14 MCP tools remain unchanged and compatible; all nine agent tools are live, for a
+  current operational surface of **23**. (For historical reference: the live agent tool count was
+  **0** in A1 and **6** in A2.)
 - Secrets (API keys, `KIRO_API_KEY`, GitHub tokens, OAuth state) never appear in config examples,
   MCP results, or logs; only `agents.example.yaml` ships — never a live `agents.yaml`.

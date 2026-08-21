@@ -1,11 +1,11 @@
 /**
  * Pure Agent Control Plane authorization helpers (Phase A1).
  *
- * These functions implement the intended future authorization matrix for the
- * nine planned agent tools. They are deliberately pure: they take the
- * principal and simple job-shaped records as inputs and return decisions.
- * No job store exists yet, no agent tool is registered, and nothing calls
- * these at runtime — A2 wires them into live tools.
+ * These functions implement the authorization matrix for the nine agent tools.
+ * They are deliberately pure: they take the principal and simple job-shaped
+ * records as inputs and return decisions. Every registered agent tool routes
+ * through `authorizeAgentTool` before acting (see `agentTools.ts`); job facts
+ * come from the trusted stored job record, never from caller input.
  *
  * Deny-by-default everywhere:
  * - a missing agent scope denies;
@@ -167,7 +167,7 @@ export function authorizeAgentTool(req: AgentAuthzRequest): AgentAuthzDecision {
     return allow;
   }
 
-  // agents_list / agent_projects: scope alone; results are still filtered to
-  // the principal's own grants by the (future) handler.
+  // agents_list / agent_projects: scope alone; the tool handlers then filter
+  // results down to the principal's own grants.
   return allow;
 }

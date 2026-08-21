@@ -201,8 +201,9 @@ A public unauthenticated MCP initialize request must return HTTP `401` with OAut
 that check was verified before connecting either browser client. The executor had `Ports: {}` and the
 gateway had no `/var/run/docker.sock` throughout Claude and ChatGPT external validation. ChatGPT
 action definitions may need an explicit **Refresh** after server-side tool metadata changes; the
-verified 14-tool surface now advertises `outputSchema` and returns `structuredContent` plus legacy JSON
-text.
+14 tools verified at that milestone advertise `outputSchema` and return `structuredContent` plus
+legacy JSON text. The current surface is 23 tools (the original 14 plus nine Agent Control Plane
+tools), so a Refresh is required after upgrading a client that was connected before A6.
 
 For a different ingress provider or hostname, preserve the same invariants: TLS on, exact
 `BRIDGE_PUBLIC_URL`, loopback-only gateway bind, executor private, and no raw Docker socket in the

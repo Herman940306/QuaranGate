@@ -1,5 +1,12 @@
 # Client compatibility (verified against current official docs)
 
+> This document records compatibility verification as of 2026-07-27/2026-07-28.
+> It is a point-in-time verification record, not the authoritative current
+> feature/status register. Tool counts and phase status cited below (e.g. "14
+> tools") reflect what was live at the time each verification ran. See
+> README.md, MCP_IDE_BRIDGE_MASTER_PRD.md, and docs/AGENT_CONTROL_PLANE.md for
+> current tool counts and phase status.
+
 All facts checked **2026-07-27**. Materially-architectural facts carry a source URL.
 
 ## Model Context Protocol

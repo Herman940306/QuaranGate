@@ -3,9 +3,10 @@
 **Document ID:** MIB-MASTER-PRD  
 **Version:** 1.0  
 **Date:** 2026-07-28  
-**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0 through A6 complete (PASS); A7 next gate\
+**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0 through A6 complete (PASS); post-A6 gateway readiness + image-provenance remediation complete (PASS); A7 next gate\
+**Product identity:** AgentControl (`Herman940306/AgentControl`). Internal package, Compose project, network and volume identifiers retain the earlier `mcp-ide-bridge` name for compatibility; no rename migration is in scope.\
 **Repository:** `/home/herman/projects/mcp-ide-bridge`\
-**Current verified baseline:** `0d88688` — `chore: add python tooling to review targets` (verified pre-closeout repository baseline)
+**Current verified baseline:** `67146a4` — `fix: harden gateway readiness and image provenance` (typecheck PASS, unit 1420/1420 PASS)
 
 ---
 
@@ -322,7 +323,13 @@ Verified public endpoints:
 
 ## 3.4 Current MCP tool surface
 
-The bridge currently exposes 14 MCP tools:
+> **Status note.** §3 records the verified state of the bridge *before* Agent Dispatch began. It is
+> retained as the pre-A0 baseline. The current operational surface is **23 tools**: the 14 below
+> plus the nine Agent Control Plane tools activated across A2–A6 (`agents_list`, `agent_projects`,
+> `agent_dispatch`, `agent_status`, `agent_result`, `agent_cancel`, `agent_diff`, `agent_apply`,
+> `agent_discard`). See §38 for the phase tracker.
+
+The pre-Agent-Dispatch bridge exposed 14 MCP tools:
 
 ```text
 targets_list
@@ -349,7 +356,8 @@ The tool family supports target discovery, workspace-confined filesystem operati
 
 ## 3.5 Structured MCP output
 
-All 14 tools advertise output schemas.
+All 14 tools above advertise output schemas. The nine Agent Control Plane tools added later carry
+strict Zod input/output contracts of their own (`src/gateway/agentSchemas.ts`).
 
 Successful operations return:
 
@@ -391,6 +399,22 @@ ABSENT_GOOD
 This baseline is a regression gate for future work.
 
 A future implementation phase may add tests, so the absolute test count may increase. Existing tests must not silently disappear.
+
+### Current validation baseline (post-A6, commit `67146a4`)
+
+```text
+TypeScript typecheck:
+PASS
+
+Unit:
+1420 / 1420 PASS  (35 test files)
+
+Live integration:
+Not re-run at this commit — requires an authorized Docker stack
+```
+
+The pre-Agent-Dispatch counts above (20 unit / 40 integration) remain the historical record for
+that milestone. `docs/TEST_RESULTS.md` holds the full evidence trail.
 
 ## 3.7 OAuth/security hardening already completed
 
@@ -2937,7 +2961,10 @@ Use this table as the project checkpoint.
 | A4 | Kiro ACP read-only | COMPLETE — PASS | `8a0d145b15925a310442d7227fd131fa8b2b3705` — `feat: add read-only Kiro ACP backend`; `docs/audits/PHASE_A4_KIRO_ACP_READ_ONLY.md`. Real Kiro CLI 2.5.0 ACP backend; Docker Engine API launch + runner-internal driver; per-job read-only agent; backend-only egress; provider acceptance job `job_17d4f0186616651450bf6a12c050055d` (model `claude-sonnet-4`, session `855c613a-772c-48f1-be02-fdc158955c8c`). |
 | A5 | Kiro implementation | COMPLETE — PASS | `846ce502ca69eb915a8cbb8286aa6008a38818fa` — `feat: add sandboxed Kiro implementation profile`; `docs/audits/PHASE_A5_KIRO_SANDBOX_IMPLEMENTATION.md`. Full implement-profile Kiro ACP backend with sandboxed workspace write; TypeScript/Node execution with build validation; backend-managed credential injection; provider acceptance job `job_45f03a0f32ccecd3a0f3e3c23a24ff02` (model `claude-sonnet-4`, sandbox mutation verified). Documentation closeout `819ae215556bb8d403efac5bcb502231b72c7575`. |
 | A6 | Review / apply / discard | COMPLETE — PASS | `0121b31d56bdab85663d8a8bfb36a3e41dc6a575` — `feat: add retained-resource lifecycle`; `docs/audits/PHASE_A6_RESOURCE_LIFECYCLE.md` + B1-B6 series. Guarded agent_diff/agent_apply/agent_discard activated; retained-resource lifecycle (Lane A published-evidence expiry + Lane B incomplete-evidence classification); durable schema-v5 retention metadata; fail-closed eligibility proofs; startup lifecycle ordering; full regression validation (1398/1398 unit, 126/126 P1, 188/188 lifecycle PASS). Post-implementation remediation `91fb583ff26cfb7a59c1a8ba71be706e252cdd55`. |
-| A7 | GitHub Copilot backend | NOT STARTED | — |
+| Post-A6 | Review-target Python tooling | COMPLETE | `0d88688` — `chore: add python tooling to review targets`; `python3` baked into the review-target images at build time (no runtime `apk`). |
+| Post-A6 | A6 documentation closeout | COMPLETE | `f37ff70` — `docs: close phase A6` |
+| Post-A6 | Gateway readiness + image provenance remediation | COMPLETE — PASS | `67146a4` — `fix: harden gateway readiness and image provenance`. Liveness/readiness split enforced (`/healthz` liveness only; `/readyz` fails closed unless clients config loaded **and** executor reachable); gateway Docker healthcheck repointed to `/readyz` so an empty `/config` mount reports unhealthy instead of falsely healthy; gateway process stays alive and diagnosable rather than crash-looping; `/readyz` body discloses no internal state. Service-specific immutable image references (`GATEWAY_IMAGE`/`EXECUTOR_IMAGE`, `agentcontrol:gateway-<sha>` / `agentcontrol:executor-<sha>`) with `mcp-ide-bridge:latest` demoted to a non-authoritative dev default; build-time OCI revision/source labels required for production candidates. Validation: typecheck PASS, unit 1420/1420 PASS. |
+| A7 | GitHub Copilot backend | NOT STARTED — NEXT GATE | — |
 | A8 | Session continuity | NOT STARTED | — |
 | A9 | Production hardening + E2E | NOT STARTED | — |
 

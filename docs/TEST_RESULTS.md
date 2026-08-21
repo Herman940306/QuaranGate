@@ -1,10 +1,35 @@
 # Test results
 
+This document records **point-in-time verification evidence**. Each section states when it was
+executed and what the baseline was at that moment. Older milestone counts are retained as
+historical truth and are *not* the current baseline — read §"Current verified baseline" first.
+
+## Current verified baseline
+
+Executed at commit `67146a4` (`fix: harden gateway readiness and image provenance`).
+
+| Suite | Result |
+|---|---|
+| Unit (`npm test`) | **1420 / 1420 passed**, 35 test files |
+| TypeScript typecheck (`npm run typecheck`) | PASS |
+| Integration, live stack (`npm run test:integration`) | Not re-run at this commit — requires an authorized Docker stack |
+
+The unit suite needs no Docker. The integration suites (`tests/integration/`) require the live
+stack plus generated client keys, and the A4/A5/A6 Docker suites additionally require the runner
+images and provider credentials; they are run only under explicit runtime authorization.
+
+Historical milestone counts recorded below (20/20 unit, 37/37 and 40/40 integration, 14-tool
+surface, 1398/1398 unit at A6 closeout) were correct when recorded and are preserved as evidence.
+
+---
+
+## Historical milestone — initial bridge verification (2026-07-27)
+
 Executed 2026-07-27 on WSL2 Ubuntu 24.04 (`Wolf`), Docker 29.6.2, Compose v5.3.1, Node 24.15.0,
 `@modelcontextprotocol/sdk` 1.30.0, MCP Inspector CLI (latest). Protocol version negotiated:
-**2025-11-25**.
+**2025-11-25**. The MCP surface was 14 tools at this milestone; it is 23 today.
 
-## Summary
+## Summary (2026-07-27 milestone)
 
 | Suite | Result |
 |---|---|
@@ -13,7 +38,7 @@ Executed 2026-07-27 on WSL2 Ubuntu 24.04 (`Wolf`), Docker 29.6.2, Compose v5.3.1
 | MCP Inspector CLI protocol validation | tools/list (14 tools) + tools/call verified |
 | Adversarial security checks | 12 / 12 as expected |
 
-## Unit tests (`tests/unit`, 20)
+## Unit tests (`tests/unit`, 20 at the 2026-07-27 milestone)
 
 - `pathcheck` (7): relative-path acceptance; `..` traversal rejected; absolute/drive-letter
   rejected; null-byte/backslash rejected; normalized traversal rejected; `joinWorkspace`;

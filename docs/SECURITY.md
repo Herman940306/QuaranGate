@@ -71,9 +71,14 @@ A6-specific security properties (unit- and integration-tested):
   guarded-path validation (project-configurable forbidden/protected paths), one-time apply, and
   fail-closed patch validation. Apply uses a dedicated short-lived applier container, never reusing
   the unrestricted agent runner.
-- **Governed discard.** `agent_discard` enforces agents:dispatch scope, job ownership, disposition
-  rules (no double-disposition, no active/UNCERTAIN apply attempt interference), leaves live source
-  unchanged, and removes sandbox according to retained-resource lifecycle policy.
+- **Governed discard.** `agent_discard` enforces agents:dispatch scope, job ownership, and disposition
+  rules (no double-disposition, no active/UNCERTAIN apply attempt interference), and leaves live source
+  unchanged. Discard is a durable *logical* disposition change only: one atomic COMPLETED → DISCARDED
+  database transaction that also stamps `disposition_at` and `retain_until`. It performs no Docker I/O,
+  no artifact read, and no project filesystem access — the runner container and sandbox workspace volume
+  were already torn down during backend cleanup before the job reached COMPLETED, so there is no live
+  sandbox for discard to remove. Retained evidence is not deleted at discard time; `retain_until` only
+  starts the expiry clock owned by the retained-resource lifecycle below.
 - **Retained-resource lifecycle.** Automatic evidence expiry for APPLIED/DISCARDED jobs with published
   artifacts (Lane A: durable retention snapshot, fail-closed eligibility proofs, atomic
   AVAILABLE → EXPIRED transition); incomplete-evidence classification/reporting for failed/orphaned

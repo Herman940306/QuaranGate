@@ -6,8 +6,10 @@ Generate a dedicated key per client first:
 npm run gen-key -- vscode        # or claude-browser / chatgpt-browser / kiro
 ```
 
-Copy the printed `keyHash:` into that client's entry in `config/clients.yaml`, then reload
-(`docker compose restart gateway` or `curl -X POST` the executor `/reload` — see OPERATIONS).
+Copy the printed `keyHash:` into that client's entry in `config/clients.yaml`, then restart the
+gateway so it re-reads the file (`docker compose restart gateway`). The gateway loads
+`clients.yaml` at startup and has no hot-reload endpoint; the executor's `/reload` reloads target
+configuration only and does **not** pick up client credential changes — see OPERATIONS.
 Keep the printed key secret; it is shown once.
 
 The endpoint is `http(s)://<host>/mcp`. Locally that is `http://127.0.0.1:8787/mcp`.
