@@ -43,16 +43,74 @@ family — e.g. `agentcontrol:gateway-candidate-f37ff70` — and the `mcp-ide-br
 preserved as historical/rollback evidence and are not part of this convention; see
 `MCP_IDE_BRIDGE_MASTER_PRD.md` §47 for the full identity migration contract.)
 
-Build with provenance, then deploy the exact immutable tags:
+Build with provenance, then deploy the exact immutable tags.
+
+**Deployment configuration lives in the deployment directory's `.env` — never in
+one-off inline or exported shell variables.** A value that exists only in the
+shell that happened to run `docker compose up` does not survive a fresh shell, a
+restart, or a move to another checkout: Compose silently falls back to the
+`:-` defaults in `compose.yaml`, so the stack comes back up as
+`quarangate:latest` with `GIT_REVISION=unknown` and — because every `AGENT_*`
+default is empty — with the real Kiro backend **disabled** (fake-only). That
+regression is silent; nothing fails loudly. Pin it in `.env` instead.
+
+### 1. Build the immutable images
 
 ```bash
 SHA=$(git rev-parse HEAD)
 docker build --build-arg GIT_REVISION="$SHA" -t "quarangate:gateway-$SHA" .
 docker build --build-arg GIT_REVISION="$SHA" -t "quarangate:executor-$SHA" .
+```
 
-GATEWAY_IMAGE=quarangate:gateway-$SHA EXECUTOR_IMAGE=quarangate:executor-$SHA \
-  AGENT_KIRO_KEY_FILE=$(node scripts/resolve-kiro-key-file.mjs) \
-  docker compose up -d
+### 2. Pin the deployment in `.env`
+
+`.env` is gitignored and untracked; it holds non-secret configuration only. The
+Kiro API key itself stays in a single host file and reaches the executor solely
+through the Compose `kiro_api_key` secret — `.env` names the FILE, never the
+value (see "Secrets" below).
+
+```dotenv
+GIT_REVISION=<full reviewed commit sha>
+GATEWAY_IMAGE=quarangate:gateway-<full reviewed commit sha>
+EXECUTOR_IMAGE=quarangate:executor-<full reviewed commit sha>
+
+AGENT_RUNNER_IMAGE=mcp-ide-bridge-kiro-runner:a4
+AGENT_PROXY_IMAGE=quarangate:executor-<full reviewed commit sha>
+AGENT_KIRO_KEY_PATH=/run/secrets/kiro-api-key
+AGENT_KIRO_KEY_FILE=/home/herman/.config/quarangate/kiro-api-key
+AGENT_KIRO_DRY_RUN=false
+```
+
+`AGENT_KIRO_DRY_RUN` is parsed as `/^(1|true|yes)$/i` (`src/executor/index.ts`),
+so `false` is the explicit canonical non-dry-run value. State it rather than
+leaving it empty. If the key file has not yet moved to the QuaranGate path,
+resolve it new-path-first with `node scripts/resolve-kiro-key-file.mjs` and
+write the result into `.env`.
+
+### 3. Verify the resolved configuration from a FRESH shell
+
+The point of this step is to prove nothing depends on the current shell, so run
+it in a shell that has exported none of these variables:
+
+```bash
+docker compose config | grep -E 'image:|GIT_REVISION|AGENT_'
+```
+
+Every value must be the intended one — no empty `AGENT_*`, no
+`quarangate:latest`, no `GIT_REVISION: unknown`.
+
+> **`docker compose config` prints `INTERNAL_TOKEN` in cleartext** (once per
+> service) because it is passed as a plain environment variable. Always filter
+> its output as above rather than paging the whole document, and never paste
+> unfiltered `docker compose config` output into a log, ticket, or review.
+> The Kiro API key is *not* exposed this way: it is a Compose **secret**, so
+> only its host FILE PATH appears — verify it with
+> `docker compose config | grep -A1 'kiro_api_key'`.
+
+### 4. Deploy
+
+```bash
+docker compose up -d
 ```
 
 Every production build candidate must carry the commit it was built from, applied at build time

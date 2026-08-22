@@ -97,6 +97,17 @@ function captureContainerName(jobId: string): string {
   return `${ns()}-before-${jobId}`;
 }
 
+/**
+ * Mount point of the evidence volume inside the short-lived helper containers.
+ *
+ * The helper runs with `ReadonlyRootfs: true`; this mount is the ONLY writable
+ * location in it. Every evidence archive MUST therefore be extracted with this
+ * as the putArchive target, and its tar entries MUST be named RELATIVE to it
+ * (`files/...`, `manifest.json`) — never `/`-targeted with an `evidence/`
+ * prefix, which Docker rejects against a read-only rootfs.
+ */
+const EVIDENCE_PATH = '/evidence';
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -467,9 +478,9 @@ async function writeEvidenceToVolume(opts: {
     p.on('error', reject);
   });
 
-  // Add directory entries
-  p.entry({ name: 'evidence/', type: 'directory', mode: 0o755 }, '');
-  p.entry({ name: 'evidence/files/', type: 'directory', mode: 0o755 }, '');
+  // Add directory entries. Names are relative to the putArchive target
+  // (EVIDENCE_PATH), so the evidence volume root itself is not re-created.
+  p.entry({ name: 'files/', type: 'directory', mode: 0o755 }, '');
 
   // Add file entries with their exact bytes
   for (const entry of opts.entries) {
@@ -480,14 +491,14 @@ async function writeEvidenceToVolume(opts: {
     // Ensure parent directories exist in the tar
     const parts = entry.relPath.split('/');
     if (parts.length > 1) {
-      let dirPath = 'evidence/files';
+      let dirPath = 'files';
       for (let i = 0; i < parts.length - 1; i++) {
         dirPath += '/' + parts[i];
         p.entry({ name: dirPath + '/', type: 'directory', mode: 0o755 }, '');
       }
     }
 
-    p.entry({ name: `evidence/files/${entry.relPath}`, type: 'file', mode: entry.mode & 0o666, size: buf.length }, buf);
+    p.entry({ name: `files/${entry.relPath}`, type: 'file', mode: entry.mode & 0o666, size: buf.length }, buf);
   }
 
   // Add manifest
@@ -505,7 +516,7 @@ async function writeEvidenceToVolume(opts: {
     })),
   };
   const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2), 'utf8');
-  p.entry({ name: 'evidence/manifest.json', type: 'file', mode: 0o444, size: manifestBuf.length }, manifestBuf);
+  p.entry({ name: 'manifest.json', type: 'file', mode: 0o444, size: manifestBuf.length }, manifestBuf);
 
   p.finalize();
   const tarBuf = await archivePromise;
@@ -529,7 +540,7 @@ async function writeEvidenceToVolume(opts: {
         Mounts: [{
           Type: 'volume',
           Source: opts.evidenceVol,
-          Target: '/evidence',
+          Target: EVIDENCE_PATH,
           ReadOnly: false,
         }],
         Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=1m' },
@@ -540,9 +551,11 @@ async function writeEvidenceToVolume(opts: {
     await startContainer(containerId);
     await waitContainer(containerId, { timeoutMs: 10_000 });
 
-    // Use putArchive to write the tar to the evidence volume root
+    // Extract into the evidence volume mount. Targeting '/' would make Docker
+    // write through the helper's read-only rootfs and fail with
+    // "container rootfs is marked read-only".
     const { putArchive } = await import('../docker.js');
-    await putArchive(containerId, '/', tarBuf);
+    await putArchive(containerId, EVIDENCE_PATH, tarBuf);
   } finally {
     if (containerId) await removeContainer(containerId, true).catch(() => {});
     await removeContainer(name, true).catch(() => {});
