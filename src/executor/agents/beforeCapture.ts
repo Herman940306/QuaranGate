@@ -73,8 +73,15 @@ import {
 } from '../docker.js';
 import {
   SANDBOX_LABEL_NS, LABEL_MANAGED, LABEL_RESOURCE, LABEL_JOB,
-  RUNNER_USER, WORKSPACE_PATH,
+  RUNNER_USER, WORKSPACE_PATH, evidenceVolumeName,
 } from './sandboxSpec.js';
+
+/**
+ * The evidence volume name is owned by sandboxSpec so the creator (here) and
+ * the lifecycle owner (evidenceCollector) can never diverge. Re-exported to
+ * preserve this module's existing public surface.
+ */
+export { evidenceVolumeName } from './sandboxSpec.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -85,11 +92,6 @@ export const MAX_BEFORE_FILES = 10_000;
 
 /** SANDBOX_LABEL_NS with dots replaced — used for container/volume names. */
 function ns(): string { return SANDBOX_LABEL_NS.replace(/\./g, '-'); }
-
-/** Evidence volume name for a job (distinguishable from ephemeral A3 resources). */
-export function evidenceVolumeName(jobId: string): string {
-  return `${ns()}-evidence-${jobId}`;
-}
 
 function captureContainerName(jobId: string): string {
   return `${ns()}-before-${jobId}`;

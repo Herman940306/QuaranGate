@@ -21,9 +21,10 @@ import {
   createContainer, startContainer, inspectContainerFull, waitContainer,
   getContainerLogs, stopContainer, killContainer, removeContainer,
   listContainersByFilter,
+  type ContainerSummary, type VolumeSummary,
 } from '../docker.js';
 import {
-  MANAGED_FILTER, LABEL_JOB, LABEL_RESOURCE, isBridgeManaged,
+  managedLabelFilters, isBridgeManaged, ownershipLabelValue,
   ownershipLabels, workspaceVolumeName, runnerContainerName, stagerContainerName,
   toRunnerLimits, resolveNetworkMode, buildStagerCreateBody, buildRunnerCreateBody,
   type DockerCreateBody,
@@ -248,23 +249,51 @@ export class RunnerSandbox {
     const removedContainers: string[] = [];
     const removedVolumes: string[] = [];
 
-    const containers = await listContainersByFilter(MANAGED_FILTER, true).catch(() => []);
-    for (const c of containers) {
+    // N1D: sweep every accepted ownership namespace. A single Docker label
+    // filter ANDs its entries, so legacy-labelled orphans need their own query;
+    // results are de-duplicated because a resource may carry two namespaces.
+    const containersById = new Map<string, ContainerSummary>();
+    for (const filter of managedLabelFilters()) {
+      for (const c of await listContainersByFilter(filter, true).catch(() => [])) {
+        containersById.set(c.Id, c);
+      }
+    }
+    for (const c of containersById.values()) {
       if (!isBridgeManaged(c.Labels)) continue; // defense in depth: verify the label locally
       await stopContainer(c.Id, 2).catch(() => {});
       await removeContainer(c.Id, true).catch(() => {});
       removedContainers.push(c.Id);
-      log('sandbox orphan container reconciled', { containerId: c.Id, job: c.Labels[LABEL_JOB], resource: c.Labels[LABEL_RESOURCE] });
+      log('sandbox orphan container reconciled', {
+        containerId: c.Id,
+        job: ownershipLabelValue(c.Labels, 'job'),
+        resource: ownershipLabelValue(c.Labels, 'resource'),
+      });
     }
 
-    const volumes = await listVolumesByFilter(MANAGED_FILTER).catch(() => []);
-    for (const v of volumes) {
+    const volumesByName = new Map<string, VolumeSummary>();
+    for (const filter of managedLabelFilters()) {
+      for (const v of await listVolumesByFilter(filter).catch(() => [])) {
+        volumesByName.set(v.Name, v);
+      }
+    }
+    for (const v of volumesByName.values()) {
       if (!isBridgeManaged(v.Labels)) continue;
-      // A6-B2: evidence volumes are retained (not ephemeral) — never reconcile them.
-      if (v.Labels?.[LABEL_RESOURCE] === 'evidence') continue;
+      // A6-B2: evidence volumes are retained (not ephemeral) — never reconcile
+      // them. This read MUST be namespace-aware: a legacy evidence volume is
+      // labelled io.mcp-ide-bridge.resource=evidence, and reading only the
+      // current namespace would see `undefined`, fail this guard, and destroy
+      // retained pre-cutover evidence.
+      const resource = ownershipLabelValue(v.Labels, 'resource');
+      if (resource === 'evidence') continue;
+      // Fail-safe: an unreadable/contradictory resource label is not proof that
+      // this is an ephemeral A3 resource. Retain rather than delete.
+      if (resource === null) {
+        log('sandbox orphan volume retained (resource label not provable)', { volume: v.Name });
+        continue;
+      }
       await removeVolume(v.Name, true).catch(() => {});
       removedVolumes.push(v.Name);
-      log('sandbox orphan volume reconciled', { volume: v.Name, job: v.Labels?.[LABEL_JOB] });
+      log('sandbox orphan volume reconciled', { volume: v.Name, job: ownershipLabelValue(v.Labels, 'job') });
     }
     return { removedContainers, removedVolumes };
   }

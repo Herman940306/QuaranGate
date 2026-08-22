@@ -34,6 +34,9 @@ import { BridgeError } from '../../shared/errors.js';
 import { AGENT_RETENTION_CLASSES } from '../../shared/agents.js';
 import {
   LABEL_MANAGED, LABEL_RESOURCE, LABEL_JOB,
+  evidenceVolumeName, hasAcceptedEvidenceVolumePrefix,
+  isAcceptedEvidenceVolumeName, acceptedEvidenceVolumeNames,
+  managedLabelFilters, ownershipLabelValue,
 } from './sandboxSpec.js';
 import {
   listVolumesByFilter, removeVolume,
@@ -51,15 +54,32 @@ export { LABEL_MANAGED, LABEL_RESOURCE, LABEL_JOB } from './sandboxSpec.js';
 // Deterministic evidence volume naming
 // ---------------------------------------------------------------------------
 
-const EVIDENCE_VOLUME_PREFIX = 'io-mcp-ide-bridge-evidence-';
+/**
+ * Deterministic per-job evidence volume naming lives in sandboxSpec.ts — the
+ * single source of truth shared with beforeCapture.ts, which physically creates
+ * the volume. N1D: new volumes use `io-quarangate-evidence-`; the legacy
+ * `io-mcp-ide-bridge-evidence-` prefix stays fully recognised on read so
+ * pre-cutover evidence remains discoverable, classifiable and expirable (§47.5).
+ */
+export {
+  evidenceVolumeName, EVIDENCE_VOLUME_PREFIX,
+  LEGACY_EVIDENCE_VOLUME_PREFIXES, ACCEPTED_EVIDENCE_VOLUME_PREFIXES,
+} from './sandboxSpec.js';
 
 /**
- * Deterministic per-job evidence volume name. Mirrors the naming convention
- * used by runnerAssets.ts (which creates the volume at job time). This must
- * never be caller-influenced.
+ * De-duplicate volumes returned by several per-namespace filters. A resource
+ * carrying two accepted namespaces appears once per matching filter.
  */
-export function evidenceVolumeName(jobId: string): string {
-  return `${EVIDENCE_VOLUME_PREFIX}${jobId}`;
+async function listVolumesAcrossNamespaces(
+  extra: ReadonlyArray<readonly ['managed' | 'resource' | 'job' | 'attempt', string]> = [],
+): Promise<VolumeSummary[]> {
+  const byName = new Map<string, VolumeSummary>();
+  for (const filter of managedLabelFilters(extra)) {
+    for (const v of await listVolumesByFilter(filter)) {
+      if (!byName.has(v.Name)) byName.set(v.Name, v);
+    }
+  }
+  return [...byName.values()];
 }
 
 // ---------------------------------------------------------------------------
@@ -148,9 +168,15 @@ function probeOwnershipLabels(
   jobId: string,
 ): string | null {
   if (!labels) return 'volume has no labels';
-  if (labels[LABEL_MANAGED] !== 'true') return `${LABEL_MANAGED} != "true" (got ${String(labels[LABEL_MANAGED])})`;
-  if (labels[LABEL_RESOURCE] !== 'evidence') return `${LABEL_RESOURCE} != "evidence" (got ${String(labels[LABEL_RESOURCE])})`;
-  if (labels[LABEL_JOB] !== jobId) return `${LABEL_JOB} != "${jobId}" (got ${String(labels[LABEL_JOB])})`;
+  // N1D: read across every accepted namespace. ownershipLabelValue returns null
+  // when two accepted namespaces contradict each other, so a mixed-label volume
+  // fails the proof and is RETAINED rather than deleted on a guess.
+  const managed = ownershipLabelValue(labels, 'managed');
+  if (managed !== 'true') return `ownership "managed" != "true" (got ${String(managed)})`;
+  const resource = ownershipLabelValue(labels, 'resource');
+  if (resource !== 'evidence') return `ownership "resource" != "evidence" (got ${String(resource)})`;
+  const job = ownershipLabelValue(labels, 'job');
+  if (job !== jobId) return `ownership "job" != "${jobId}" (got ${String(job)})`;
   return null;
 }
 
@@ -193,9 +219,10 @@ function isValidRetentionClass(rc: string | null): boolean {
  * Complete the physical deletion of an already-authorized (artifact_state=EXPIRED)
  * evidence volume. Performs full identity correlation before any delete:
  *
- *   1. artifact_volume from DB == evidenceVolumeName(jobId) (deterministic)
+ *   1. artifact_volume from DB is a deterministic name for jobId under the
+ *      current OR a legacy-accepted evidence prefix (§47.5)
  *   2. Docker volume name matches artifact_volume
- *   3. managed label == "true"
+ *   3. managed label == "true"   (any accepted namespace, non-contradictory)
  *   4. resource label == "evidence"
  *   5. job label == jobId
  *
@@ -208,10 +235,12 @@ async function deleteCompletionProof(
   jobId: string,
   artifactVolume: string,
 ): Promise<'deleted' | 'already-absent' | string> {
-  // 1. Deterministic name agreement.
-  const expected = evidenceVolumeName(jobId);
-  if (artifactVolume !== expected) {
-    return `artifact_volume "${artifactVolume}" does not match expected deterministic name "${expected}"`;
+  // 1. Deterministic name agreement. A pre-cutover job legitimately recorded a
+  //    legacy-prefixed name; refusing it here would strand that evidence as
+  //    permanently undeletable, so every accepted prefix is a valid match. The
+  //    candidate set is still derived solely from jobId — never from the DB value.
+  if (!isAcceptedEvidenceVolumeName(artifactVolume, jobId)) {
+    return `artifact_volume "${artifactVolume}" does not match any expected deterministic name (${acceptedEvidenceVolumeNames(jobId).join(', ')})`;
   }
 
   // 2–5. Fetch the actual Docker volume and verify labels.
@@ -366,11 +395,12 @@ export async function collectExpiredEvidence(
       continue;
     }
 
-    // Deterministic name agreement before attempting expiry.
-    const expected = evidenceVolumeName(jobId);
-    if (artifactVolume !== expected) {
+    // Deterministic name agreement before attempting expiry. Legacy-prefixed
+    // names from pre-cutover jobs are accepted so their retention still expires
+    // on schedule rather than silently retaining forever (§47.5).
+    if (!isAcceptedEvidenceVolumeName(artifactVolume, jobId)) {
       result.retainedCount++;
-      const reason = `artifact_volume "${artifactVolume}" != expected "${expected}"`;
+      const reason = `artifact_volume "${artifactVolume}" != any expected (${acceptedEvidenceVolumeNames(jobId).join(', ')})`;
       logWarn('evidence lifecycle: Lane A retain (volume name mismatch)', { jobId, reason });
       if (result.retainedSamples.length < SAMPLE_BOUND) {
         result.retainedSamples.push({ jobId, reason });
@@ -474,8 +504,9 @@ export async function collectExpiredEvidence(
   for (const { jobId, artifactVolume, status } of allAvailable) {
     if (eligibleJobIds.has(jobId)) continue; // already checked above
 
-    const expected = evidenceVolumeName(jobId);
-    if (artifactVolume !== expected) continue; // non-standard volume — skip anomaly check
+    // Non-standard volume — skip anomaly check. Legacy-prefixed names are
+    // standard for pre-cutover jobs and stay in scope for anomaly detection.
+    if (!isAcceptedEvidenceVolumeName(artifactVolume, jobId)) continue;
 
     // Check if the expected volume is actually missing from Docker.
     let volPresent = true;
@@ -539,9 +570,9 @@ function addToCategory(
  * Discovery path A: Docker volumes with exact bridge ownership labels
  *   (managed=true, resource=evidence, valid job label).
  *
- * Discovery path B: Docker volumes matching the evidence name prefix
- *   io-mcp-ide-bridge-evidence- that do NOT satisfy exact ownership labels.
- *   → AMBIGUOUS_LABELS, always.
+ * Discovery path B: Docker volumes matching ANY accepted evidence name prefix
+ *   (io-quarangate-evidence- or the legacy io-mcp-ide-bridge-evidence-) that do
+ *   NOT satisfy exact ownership labels. → AMBIGUOUS_LABELS, always.
  *
  * Classification (for path-A volumes not already handled by Lane A):
  *   LEGITIMATE_FAILURE_EVIDENCE  — terminal failure/CANCELLED, valid ownership
@@ -570,12 +601,10 @@ export async function classifyIncompleteEvidence(
   // ---- Discovery path A: exact ownership labels ----
   let exactOwned: VolumeSummary[] = [];
   try {
-    exactOwned = await listVolumesByFilter({
-      label: [
-        `${LABEL_MANAGED}=true`,
-        `${LABEL_RESOURCE}=evidence`,
-      ],
-    });
+    // N1D: one query per accepted ownership namespace, de-duplicated. A single
+    // Docker label filter ANDs its entries and so cannot express "any of N
+    // namespaces"; without this loop legacy evidence would vanish from Lane B.
+    exactOwned = await listVolumesAcrossNamespaces([['resource', 'evidence']]);
   } catch (e) {
     throw new BridgeError(
       'DOCKER_UNAVAILABLE',
@@ -592,7 +621,9 @@ export async function classifyIncompleteEvidence(
     classifiedVolumeNames.add(vol.Name);
 
     const labels = vol.Labels ?? {};
-    const jobId = labels[LABEL_JOB] ?? null;
+    // Namespace-aware, fail-safe: contradictory job labels across namespaces
+    // resolve to null and fall into AMBIGUOUS_LABELS below (retain + report).
+    const jobId = ownershipLabelValue(labels, 'job');
 
     // Missing/malformed job label → AMBIGUOUS_LABELS.
     if (!jobId || typeof jobId !== 'string' || jobId.trim() === '') {
@@ -720,14 +751,15 @@ export async function classifyIncompleteEvidence(
   try {
     // Docker volume list doesn't support prefix filtering natively; list all
     // and filter client-side by name prefix. Bounded by the single API call.
-    const managed = await listVolumesByFilter({ label: [`${LABEL_MANAGED}=true`] });
+    const managed = await listVolumesAcrossNamespaces();
     // Also check volumes that match the evidence prefix but may lack the
     // managed label — use a name filter via Docker's filter API if available,
     // or fall back to listing all (Docker list is always bounded in practice).
     // We list all volumes and filter by prefix to catch truly malformed ones.
+    // N1D: every accepted prefix, so legacy malformed evidence is still reported.
     const allVols = await listVolumesByFilter({});
     allPrefixVols = allVols.filter(
-      (v) => v.Name.startsWith(EVIDENCE_VOLUME_PREFIX) && !classifiedVolumeNames.has(v.Name),
+      (v) => hasAcceptedEvidenceVolumePrefix(v.Name) && !classifiedVolumeNames.has(v.Name),
     );
     // Subtract any that came up in the managed list already classified above.
     void managed; // already iterated above

@@ -8,6 +8,14 @@ COPY src ./src
 RUN npm run build && npm prune --omit=dev
 
 FROM node:24-alpine AS runtime
+# G4 build-time provenance. Supplied per build and never baked into source, so
+# every production image records the exact commit it was built from:
+#   docker build --build-arg GIT_REVISION="$(git rev-parse HEAD)" ...
+ARG GIT_REVISION=unknown
+ARG SOURCE_URL=https://github.com/Herman940306/QuaranGate
+LABEL org.opencontainers.image.title="QuaranGate" \
+      org.opencontainers.image.revision="${GIT_REVISION}" \
+      org.opencontainers.image.source="${SOURCE_URL}"
 WORKDIR /app
 ENV NODE_ENV=production
 # tini for correct signal handling / zombie reaping

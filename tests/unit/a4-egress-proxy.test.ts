@@ -122,7 +122,7 @@ describe('egress proxy — live CONNECT allow/deny', () => {
 describe('egress proxy — network naming + lifecycle', () => {
   it('produces valid Docker network names', () => {
     const name = jobNetworkName('job_' + '0'.repeat(32));
-    expect(name).toMatch(/^io-mcp-ide-bridge-net-job_/);
+    expect(name).toMatch(/^io-quarangate-net-job_/);
     expect(name).not.toContain('.');
   });
 

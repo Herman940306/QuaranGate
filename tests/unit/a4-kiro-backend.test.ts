@@ -171,8 +171,8 @@ describe('buildRunnerCreateBody — hardened Docker Engine API body (no CLI)', (
   });
 
   it('carries ownership labels + isolates HOME/KIRO_HOME/XDG', () => {
-    expect(body.Labels['io.mcp-ide-bridge.managed']).toBe('true');
-    expect(body.Labels['io.mcp-ide-bridge.resource']).toBe('runner');
+    expect(body.Labels['io.quarangate.managed']).toBe('true');
+    expect(body.Labels['io.quarangate.resource']).toBe('runner');
     expect(env).toContain('HOME=/home/runner');
     expect(env).toContain('KIRO_HOME=/home/runner/.kiro');
     expect(env).toContain('XDG_STATE_HOME=/home/runner/.local/state');
@@ -398,9 +398,9 @@ describe('R4: buildCleanupHelperSpec — production cleanup Docker spec', () => 
 
   it('uses correct Labels with job ID', () => {
     const spec = buildCleanupHelperSpec('.b3-temp', evidenceVol, helperImage, jobId);
-    expect(spec.Labels['io.mcp-ide-bridge.managed']).toBe('true');
-    expect(spec.Labels['io.mcp-ide-bridge.resource']).toBe('evidence-rm');
-    expect(spec.Labels['io.mcp-ide-bridge.job']).toBe(jobId);
+    expect(spec.Labels['io.quarangate.managed']).toBe('true');
+    expect(spec.Labels['io.quarangate.resource']).toBe('evidence-rm');
+    expect(spec.Labels['io.quarangate.job']).toBe(jobId);
   });
 
   it('AutoRemove=false (explicit cleanup)', () => {

@@ -74,7 +74,7 @@ describe('credential manager — secret volume naming', () => {
   it('produces valid Docker volume names from job IDs', () => {
     const jobId = 'job_' + '0'.repeat(32);
     const name = secretVolumeName(jobId);
-    expect(name).toMatch(/^io-mcp-ide-bridge-secret-job_/);
+    expect(name).toMatch(/^io-quarangate-secret-job_/);
     expect(name).not.toContain('.');
     expect(name.length).toBeLessThan(128);
   });

@@ -1,10 +1,16 @@
 # QuaranGate — standalone deployment. Owns only its own networks/services.
 # Does NOT touch existing project stacks.
-# Compose project name below (`mcp-ide-bridge`) is a legacy runtime identifier
-# retained for compatibility; see MCP_IDE_BRIDGE_MASTER_PRD.md §47 for the
-# migration contract.
+#
+# N1D runtime identity cutover (MCP_IDE_BRIDGE_MASTER_PRD.md §47.11): the Compose
+# project, networks, gateway data volume, image defaults and host secret path now
+# carry the QuaranGate identity. Two physical identifiers are deliberately
+# retained for compatibility, each under an approved decision:
+#   - volume `mcp-bridge-jobs` — §47.13 DECISION-2 (durable job/evidence store;
+#     retained under its existing physical name, mounted via a neutral key)
+#   - target Compose projects (`mcp-ide-bridge-testtarget`, `mcp-ide-bridge-review`)
+#     — unchanged here; target `id` values are the client-facing contract (§47.7)
 
-name: mcp-ide-bridge
+name: quarangate
 
 x-hardening: &hardening
   security_opt:
@@ -19,10 +25,12 @@ services:
     <<: *hardening
     build:
       context: .
+      args:
+        GIT_REVISION: "${GIT_REVISION:-unknown}"
     # One shared build artifact, independently taggable per service. Production
     # must pin an immutable service-specific tag (quarangate:gateway-<sha>);
     # the :latest default is a dev convenience and is never authoritative.
-    image: ${GATEWAY_IMAGE:-mcp-ide-bridge:latest}
+    image: ${GATEWAY_IMAGE:-quarangate:latest}
     command: ["node", "dist/gateway/index.js"]
     environment:
       BRIDGE_PORT: "8787"
@@ -59,9 +67,11 @@ services:
     <<: *hardening
     # Same shared build artifact as the gateway, tagged independently
     # (quarangate:executor-<sha> in production).
-    image: ${EXECUTOR_IMAGE:-mcp-ide-bridge:latest}
+    image: ${EXECUTOR_IMAGE:-quarangate:latest}
     build:
       context: .
+      args:
+        GIT_REVISION: "${GIT_REVISION:-unknown}"
     command: ["node", "dist/executor/index.js"]
     environment:
       EXECUTOR_PORT: "8990"
@@ -118,14 +128,23 @@ services:
 
 networks:
   edge:
-    name: mcp-bridge-edge
+    name: quarangate-edge
   internal:
-    name: mcp-bridge-internal
+    name: quarangate-internal
     internal: true
 
 volumes:
+  # Gateway OAuth state — hashed tokens only, documented as safe to drop
+  # (docs/OPERATIONS.md). §47.13 DECISION-1 (Option A): recreated under the
+  # QuaranGate identity at cutover; clients re-authorize once. The legacy
+  # `mcp-bridge-data` volume is NOT deleted by this change — it is left in place
+  # as the rollback anchor until acceptance passes.
   bridge-data:
-    name: mcp-bridge-data
+    name: quarangate-data
+  # Durable agent job engine + evidence metadata (schema-versioned SQLite,
+  # retained-resource lifecycle, quarantine state). §47.13 DECISION-2 (Option B):
+  # the PHYSICAL volume name is retained exactly. Renaming or copying it for
+  # branding would risk the one store in this stack that cannot be rebuilt.
   bridge-jobs:
     name: mcp-bridge-jobs
 
@@ -133,5 +152,11 @@ secrets:
   # Dedicated Kiro API key host file (0600, herman-owned). Read by the docker
   # daemon at deploy time and mounted read-only into the EXECUTOR only. Never
   # committed to Git; only the file path is referenced here.
+  #
+  # N1D (§47.8 / DECISION-4): the default is now the QuaranGate path. Compose
+  # cannot express "new path, else legacy path", so the new-first/legacy-fallback
+  # resolution lives in scripts/resolve-kiro-key-file.mjs, which prints the path
+  # to export as AGENT_KIRO_KEY_FILE. An explicitly set AGENT_KIRO_KEY_FILE always
+  # wins. The legacy path stays supported until the compatibility window closes.
   kiro_api_key:
-    file: ${AGENT_KIRO_KEY_FILE:-/home/herman/.config/mcp-ide-bridge/kiro-api-key}
+    file: ${AGENT_KIRO_KEY_FILE:-/home/herman/.config/quarangate/kiro-api-key}

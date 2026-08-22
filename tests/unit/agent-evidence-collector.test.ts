@@ -19,6 +19,7 @@ import {
   classifyIncompleteEvidence,
   LABEL_MANAGED, LABEL_RESOURCE, LABEL_JOB,
 } from '../../src/executor/agents/evidenceCollector.js';
+import { isAcceptedEvidenceVolumeName } from '../../src/executor/agents/sandboxSpec.js';
 import type { VolumeSummary } from '../../src/executor/docker.js';
 
 // ---------------------------------------------------------------------------
@@ -131,8 +132,113 @@ describe('evidenceVolumeName', () => {
   it('produces a deterministic name with the expected prefix', () => {
     const jid = makeJobId(1);
     const name = evidenceVolumeName(jid);
-    expect(name).toBe(`io-mcp-ide-bridge-evidence-${jid}`);
-    expect(name.startsWith('io-mcp-ide-bridge-evidence-')).toBe(true);
+    expect(name).toBe(`io-quarangate-evidence-${jid}`);
+    expect(name.startsWith('io-quarangate-evidence-')).toBe(true);
+  });
+
+  // N1D: the assertion above changed because new WRITES moved prefix. The
+  // legacy prefix must remain a valid deterministic name on READ, or every
+  // pre-cutover job fails its identity proof and its evidence is stranded.
+  it('N1D: still accepts the legacy prefix as a valid name for the same job', () => {
+    const jid = makeJobId(1);
+    expect(isAcceptedEvidenceVolumeName(`io-mcp-ide-bridge-evidence-${jid}`, jid)).toBe(true);
+    expect(isAcceptedEvidenceVolumeName(`io-quarangate-evidence-${jid}`, jid)).toBe(true);
+    // Still job-scoped: another job's name is never accepted.
+    expect(isAcceptedEvidenceVolumeName(`io-mcp-ide-bridge-evidence-${makeJobId(2)}`, jid)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N1D legacy-evidence compatibility, exercised through the REAL collector
+// ---------------------------------------------------------------------------
+
+describe('N1D: pre-cutover evidence remains fully serviceable', () => {
+  function insertExpiredWithVolume(jid: string, volumeName: string): void {
+    store.insert({
+      jobId: jid, principalId: 'o', backend: 'kiro', project: 'p',
+      profile: 'audit', resourcePolicy: 'economy', promptHash: 'a'.repeat(64),
+      prompt: 't', sessionPolicy: 'new', writer: false,
+      retentionClass: 'ephemeral', retentionDurationMs: 86_400_000,
+    });
+    const raw = new DatabaseSync(dbPath);
+    raw.prepare(`UPDATE agent_jobs SET artifact_state='EXPIRED', artifact_volume=?, status='APPLIED'
+      WHERE job_id=?`).run(volumeName, jid);
+    raw.close();
+  }
+
+  it('expires a legacy-named, legacy-labelled evidence volume', async () => {
+    const jid = makeJobId(41);
+    const legacyName = `io-mcp-ide-bridge-evidence-${jid}`;
+    insertExpiredWithVolume(jid, legacyName);
+
+    mockListVolumesByFilter.mockResolvedValue([{
+      Name: legacyName,
+      Labels: {
+        'io.mcp-ide-bridge.managed': 'true',
+        'io.mcp-ide-bridge.resource': 'evidence',
+        'io.mcp-ide-bridge.job': jid,
+      },
+    }]);
+    const result = await reconcileExpiredEvidence(store);
+
+    expect(result.deleteSuccessCount).toBe(1);
+    expect(result.retainedCount).toBe(0);
+    // The DB-recorded legacy name is deleted — never a re-derived new-prefix one.
+    expect(mockRemoveVolume).toHaveBeenCalledWith(legacyName, true);
+  });
+
+  it('expires a new-prefix volume too (both families coexist)', async () => {
+    const jid = makeJobId(42);
+    insertExpiredWithVolume(jid, evidenceVolumeName(jid));
+
+    mockListVolumesByFilter.mockResolvedValue([makeVolume(jid)]);
+    const result = await reconcileExpiredEvidence(store);
+
+    expect(result.deleteSuccessCount).toBe(1);
+    expect(mockRemoveVolume).toHaveBeenCalledWith(evidenceVolumeName(jid), true);
+  });
+
+  it('still refuses a legacy volume whose job label points elsewhere', async () => {
+    const jid = makeJobId(43);
+    const legacyName = `io-mcp-ide-bridge-evidence-${jid}`;
+    insertExpiredWithVolume(jid, legacyName);
+
+    mockListVolumesByFilter.mockResolvedValue([{
+      Name: legacyName,
+      Labels: {
+        'io.mcp-ide-bridge.managed': 'true',
+        'io.mcp-ide-bridge.resource': 'evidence',
+        'io.mcp-ide-bridge.job': makeJobId(999),
+      },
+    }]);
+    const result = await reconcileExpiredEvidence(store);
+
+    expect(result.retainedCount).toBe(1);
+    expect(result.deleteSuccessCount).toBe(0);
+    expect(mockRemoveVolume).not.toHaveBeenCalled();
+  });
+
+  it('is FAIL-SAFE when a volume carries contradictory namespaces', async () => {
+    const jid = makeJobId(44);
+    const legacyName = `io-mcp-ide-bridge-evidence-${jid}`;
+    insertExpiredWithVolume(jid, legacyName);
+
+    // Both namespaces present but disagreeing on job identity → unproven.
+    mockListVolumesByFilter.mockResolvedValue([{
+      Name: legacyName,
+      Labels: {
+        'io.mcp-ide-bridge.managed': 'true',
+        'io.mcp-ide-bridge.resource': 'evidence',
+        'io.mcp-ide-bridge.job': jid,
+        'io.quarangate.managed': 'true',
+        'io.quarangate.resource': 'evidence',
+        'io.quarangate.job': makeJobId(998),
+      },
+    }]);
+    const result = await reconcileExpiredEvidence(store);
+
+    expect(result.retainedCount).toBe(1);
+    expect(mockRemoveVolume).not.toHaveBeenCalled();
   });
 });
 

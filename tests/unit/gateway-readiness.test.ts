@@ -451,16 +451,18 @@ describe('compose.yaml healthcheck + image provenance', () => {
   });
 
   it('J: gateway and executor images use independent env-var references', () => {
-    expect(compose.services.gateway?.image).toBe('${GATEWAY_IMAGE:-mcp-ide-bridge:latest}');
-    expect(compose.services.executor?.image).toBe('${EXECUTOR_IMAGE:-mcp-ide-bridge:latest}');
+    expect(compose.services.gateway?.image).toBe('${GATEWAY_IMAGE:-quarangate:latest}');
+    expect(compose.services.executor?.image).toBe('${EXECUTOR_IMAGE:-quarangate:latest}');
     expect(compose.services.gateway?.image).not.toBe(compose.services.executor?.image);
   });
 
-  it('K: the defaults equal the previous hardcoded tag, so unset env changes nothing', () => {
+  it('K: both defaults are the QuaranGate dev tag, never authoritative for production', () => {
+    // N1D moved the dev default from mcp-ide-bridge:latest to quarangate:latest.
+    // Production still MUST override with an immutable quarangate:<svc>-<sha> tag.
     for (const svc of ['gateway', 'executor'] as const) {
       const image = compose.services[svc]?.image ?? '';
       const match = /^\$\{[A-Z_]+:-(?<def>[^}]+)\}$/.exec(image);
-      expect(match?.groups?.def, svc).toBe('mcp-ide-bridge:latest');
+      expect(match?.groups?.def, svc).toBe('quarangate:latest');
     }
   });
 

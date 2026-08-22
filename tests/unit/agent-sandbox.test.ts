@@ -14,6 +14,7 @@ import {
   RUNNER_USER, WORKSPACE_PATH, SOURCE_PATH,
   ownershipLabels, isBridgeManaged, workspaceVolumeName, runnerContainerName, stagerContainerName,
   toRunnerLimits, resolveNetworkMode, buildStagerCreateBody, buildRunnerCreateBody,
+  managedLabelFilters, ownershipLabelValue,
 } from '../../src/executor/agents/sandboxSpec.js';
 
 const JOB = `job_${'a'.repeat(32)}`;
@@ -47,9 +48,40 @@ describe('ownership labels', () => {
     expect(() => runnerContainerName('job_bad')).toThrow();
   });
   it('derives deterministic, distinct resource names', () => {
-    expect(workspaceVolumeName(JOB)).toBe(`io-mcp-ide-bridge-ws-${JOB}`);
-    expect(runnerContainerName(JOB)).toBe(`io-mcp-ide-bridge-runner-${JOB}`);
-    expect(stagerContainerName(JOB)).toBe(`io-mcp-ide-bridge-stager-${JOB}`);
+    expect(workspaceVolumeName(JOB)).toBe(`io-quarangate-ws-${JOB}`);
+    expect(runnerContainerName(JOB)).toBe(`io-quarangate-runner-${JOB}`);
+    expect(stagerContainerName(JOB)).toBe(`io-quarangate-stager-${JOB}`);
+  });
+
+  // N1D compatibility. The write-side assertions above moved namespace; the
+  // READ side must not, or pre-cutover resources become invisible (orphaned) or
+  // misclassified (deleted without eligibility proof).
+  it('N1D: still recognises resources labelled in each legacy namespace', () => {
+    expect(isBridgeManaged({ 'io.mcp-ide-bridge.managed': 'true' })).toBe(true);
+    expect(isBridgeManaged({ 'io.mcp-bridge.managed': 'true' })).toBe(true);
+    expect(isBridgeManaged({ 'io.mcp-ide-bridge.managed': 'false' })).toBe(false);
+  });
+
+  it('N1D: reads legacy resource/job labels so cleanup can still classify them', () => {
+    const legacy = {
+      'io.mcp-ide-bridge.managed': 'true',
+      'io.mcp-ide-bridge.resource': 'workspace',
+      'io.mcp-ide-bridge.job': JOB,
+    };
+    expect(ownershipLabelValue(legacy, 'resource')).toBe('workspace');
+    expect(ownershipLabelValue(legacy, 'job')).toBe(JOB);
+  });
+
+  it('N1D: dual-read uses separate per-namespace filters, never one ANDed filter', () => {
+    // Docker ANDs the entries of a `label` filter array, so a single filter
+    // naming both namespaces would require a resource to carry BOTH and would
+    // match nothing at all.
+    const filters = managedLabelFilters();
+    expect(filters.length).toBeGreaterThan(1);
+    for (const f of filters) expect(f.label).toHaveLength(1);
+    expect(filters).toContainEqual({ label: ['io.quarangate.managed=true'] });
+    expect(filters).toContainEqual({ label: ['io.mcp-ide-bridge.managed=true'] });
+    expect(filters).toContainEqual({ label: ['io.mcp-bridge.managed=true'] });
   });
 });
 

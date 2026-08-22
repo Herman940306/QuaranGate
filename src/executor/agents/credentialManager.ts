@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import { BridgeError } from '../../shared/errors.js';
 import { removeVolume, listVolumesByFilter, listContainersByFilter, removeContainer } from '../docker.js';
-import { SANDBOX_LABEL_NS, LABEL_MANAGED, LABEL_JOB, LABEL_RESOURCE } from './sandboxSpec.js';
+import { SANDBOX_LABEL_NS, LABEL_MANAGED, LABEL_JOB, LABEL_RESOURCE, managedLabelFilters } from './sandboxSpec.js';
 import { buildTar, populateVolume } from './runnerAssets.js';
 import { RUNNER_UID, RUNNER_GID } from './sandboxSpec.js';
 
@@ -116,19 +116,25 @@ export class CredentialManager {
   /** Startup recovery: remove orphaned secret volumes + populate helpers. */
   async reconcileOrphans(): Promise<string[]> {
     const removed: string[] = [];
-    const volumes = await listVolumesByFilter(
-      { label: [`${LABEL_MANAGED}=true`, `${LABEL_RESOURCE}=secret`] },
-    ).catch(() => []);
-    for (const v of volumes) {
-      await removeVolume(v.Name, true).catch(() => {});
-      removed.push(v.Name);
+    // N1D: secret volumes are job-scoped and always orphans at startup. Sweep
+    // every accepted ownership namespace so a pre-cutover crash cannot leave a
+    // legacy-labelled credential volume behind. De-duplicated by name.
+    const filters = managedLabelFilters([['resource', 'secret']]);
+    const volumeNames = new Set<string>();
+    for (const filter of filters) {
+      for (const v of await listVolumesByFilter(filter).catch(() => [])) volumeNames.add(v.Name);
+    }
+    for (const name of volumeNames) {
+      await removeVolume(name, true).catch(() => {});
+      removed.push(name);
     }
     // Any leftover populate-helper containers carry the same secret label.
-    const containers = await listContainersByFilter(
-      { label: [`${LABEL_MANAGED}=true`, `${LABEL_RESOURCE}=secret`] }, true,
-    ).catch(() => []);
-    for (const c of containers) {
-      await removeContainer(c.Id, true).catch(() => {});
+    const containerIds = new Set<string>();
+    for (const filter of filters) {
+      for (const c of await listContainersByFilter(filter, true).catch(() => [])) containerIds.add(c.Id);
+    }
+    for (const id of containerIds) {
+      await removeContainer(id, true).catch(() => {});
     }
     return removed;
   }

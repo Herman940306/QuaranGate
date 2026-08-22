@@ -1067,7 +1067,7 @@ describe('A6-B5 apply engine', () => {
   describe('applier resource identity (sandboxSpec)', () => {
     it('applierContainerName requires a valid attempt id and produces a stable, namespaced name', () => {
       const id = 'att_' + '9'.repeat(32);
-      expect(applierContainerName(id)).toBe(`io-mcp-ide-bridge-applier-${id}`);
+      expect(applierContainerName(id)).toBe(`io-quarangate-applier-${id}`);
       expect(() => applierContainerName('not-an-attempt-id')).toThrow(BridgeError);
       expect(AGENT_APPLY_ATTEMPT_ID_PATTERN.test(id)).toBe(true);
     });

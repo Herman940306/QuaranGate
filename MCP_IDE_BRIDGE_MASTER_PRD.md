@@ -3336,7 +3336,7 @@ Source of truth for each identifier is a single named constant/config value unle
 | GitHub remote | `github.com/Herman940306/QuaranGate` (git remote; also `org.opencontainers.image.source` example in `docs/OPERATIONS.md`) — renamed from `github.com/Herman940306/AgentControl` (GitHub preserves an automatic redirect from the old name) | `git remote`, doc example | — (achieved) | **COMPLETE.** Historical value: `github.com/Herman940306/AgentControl`. See §47.10. |
 | Credential prefix family | `mcpb_`, `mcpb_at_`, `mcpb_rt_`, `mcpb_ac_` (`src/gateway/auth/apikeys.ts`, `oauth.ts`, `index.ts`, `src/shared/redact.ts`) | source constants | **unchanged, permanently** | **PRESERVE_COMPATIBILITY.** Security/credential-classification infrastructure; the `mcp` letters here are opaque namespace, not branding. Explicitly frozen by steering decision — never rename. |
 
-## 47.4 Label compatibility design (design only — not implemented)
+## 47.4 Label compatibility design — **IMPLEMENTED (N1D)**
 
 Preferred model on future cutover:
 
@@ -3376,13 +3376,31 @@ WRITE (after cutover):
   cost the internal ownership labels do not have. Recommend treating it as its own longer-lived
   compatibility window, independent of the sandbox/job label unification.
 
-No behavioral change is made in N1C. This is the design record for N1D.
+**Status: IMPLEMENTED.** N1D applies exactly this model. `SANDBOX_LABEL_NS` is now `io.quarangate`;
+`gitHelper.ts` no longer declares a second namespace and imports the shared constants, closing the
+inconsistency permanently. Dual-read is `managedLabelFilters()` — one Docker query per accepted
+namespace, unioned and de-duplicated, because Docker ANDs the entries of a single `label` filter and a
+combined filter would therefore match nothing. `ownershipLabelValue()` reads across namespaces and
+returns `null` when they contradict, so ambiguous resources are retained rather than deleted.
+`mcp.bridge.*` target discovery is deliberately NOT migrated (see the last bullet above). Covered by
+`tests/unit/n1d-label-compat.test.ts`.
 
-## 47.5 Evidence namespace compatibility design (design only)
+## 47.5 Evidence namespace compatibility design — **IMPLEMENTED (N1D)**
 
-Current: `EVIDENCE_VOLUME_PREFIX = 'io-mcp-ide-bridge-evidence-'` (`evidenceCollector.ts:54`).
+**Status: IMPLEMENTED.** `EVIDENCE_VOLUME_PREFIX` is now `io-quarangate-evidence-` and lives in
+`sandboxSpec.ts` as the single source of truth. This closes a divergence that existed at design time:
+the writer (`beforeCapture.ts`) derived the prefix from `SANDBOX_LABEL_NS` while the reader
+(`evidenceCollector.ts`) hardcoded the literal, so changing the namespace alone would NOT have
+migrated evidence discovery. Discovery is the union of `io-quarangate-evidence-*` and the legacy
+`io-mcp-ide-bridge-evidence-*`, de-duplicated by volume name.
 
-Design constraints for the future QuaranGate-created evidence namespace (`io-quarangate-evidence-`):
+Identity proofs (`deleteCompletionProof`, Lane A name agreement, the integrity-anomaly scan) accept
+either family for a given job id via `isAcceptedEvidenceVolumeName()`. Without that, every
+pre-cutover job's recorded `artifact_volume` would fail the deterministic-name check and its evidence
+would be retained forever — a silent retention regression. The candidate set is still derived solely
+from the job id, never from the stored value. Covered by `tests/unit/n1d-label-compat.test.ts`.
+
+Design constraints for the QuaranGate-created evidence namespace (`io-quarangate-evidence-`), all met:
 
 - Old evidence volumes remain **discoverable** by reconciliation/cleanup code recognizing both
   prefixes for the duration of the compatibility window.

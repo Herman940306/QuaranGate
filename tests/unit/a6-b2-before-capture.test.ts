@@ -256,9 +256,9 @@ describe('captureBeforeEvidence — integration (Docker stubbed)', () => {
     expect(dockerStub.createVolume).toHaveBeenCalledWith(
       evidenceVolumeName(jobId),
       expect.objectContaining({
-        'io.mcp-ide-bridge.resource': 'evidence',
-        'io.mcp-ide-bridge.managed': 'true',
-        'io.mcp-ide-bridge.job': jobId,
+        'io.quarangate.resource': 'evidence',
+        'io.quarangate.managed': 'true',
+        'io.quarangate.job': jobId,
       }),
     );
   });

@@ -35,14 +35,27 @@ import {
   createContainer, startContainer, stopContainer,
   removeContainer, execCreate, execStartStream, execInspect,
 } from '../docker.js';
+/**
+ * N1D (§47.4): this module previously declared a SECOND, inconsistent ownership
+ * namespace (`io.mcp-bridge.*`) for the same conceptual cleanup authority as
+ * sandboxSpec.ts. It is now unified onto the single QuaranGate namespace, so a
+ * leftover git-helper container is recognised by the same reconciliation sweep
+ * as every other bridge-owned resource. `io.mcp-bridge.*` stays READ-accepted
+ * for pre-cutover resources; nothing writes it any more.
+ */
+import { LABEL_MANAGED, LABEL_RESOURCE, LABEL_JOB } from './sandboxSpec.js';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const LABEL_MANAGED = 'io.mcp-bridge.managed';
-const LABEL_RESOURCE = 'io.mcp-bridge.resource';
-const LABEL_JOB = 'io.mcp-bridge.job';
+/**
+ * Helper-container name prefix. Deliberately left on its legacy value: §47.3
+ * defines no canonical QuaranGate replacement for this particular ephemeral
+ * name, and the migration contract says to retain a compatibility-bound
+ * physical identifier rather than invent one. Ownership is proven by labels,
+ * never by name, so this does not affect cleanup authority.
+ */
 const NS = 'mcp-bridge';
 
 /** Git object ID pattern: 40 hex chars (SHA-1). */

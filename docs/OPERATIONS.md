@@ -21,8 +21,8 @@ npm run validate-config           # sanity-check config before starting
 docker compose build
 docker compose up -d
 docker compose restart gateway
-docker compose down                       # stop (keeps the bridge-data volume)
-docker compose down -v                    # stop + remove the bridge-data volume
+docker compose down                       # stop (keeps the quarangate-data volume)
+docker compose down -v                    # stop + remove the quarangate-data volume
 ```
 
 Disposable demo target:
@@ -37,30 +37,78 @@ docker compose -f test-target/compose.yaml down -v
 Production gateway and executor image references must be immutable and service-specific:
 `quarangate:gateway-<sha>` and `quarangate:executor-<sha>`. Both services build from the same
 Dockerfile/context and are tagged independently; `compose.yaml` selects them via `GATEWAY_IMAGE` and
-`EXECUTOR_IMAGE`. `mcp-ide-bridge:latest` is the unset default and a dev convenience only — it is
-never authoritative for production provenance. (No image has ever been built under the
-`quarangate:*` convention. A separate `agentcontrol:*`-prefixed candidate image family exists
-locally — e.g. `agentcontrol:gateway-candidate-f37ff70` — but no image matches the literal
-`agentcontrol:gateway-<sha>`/`agentcontrol:executor-<sha>` production-tag convention this section
-describes; see `MCP_IDE_BRIDGE_MASTER_PRD.md` §47 for the full identity migration contract.)
+`EXECUTOR_IMAGE`. `quarangate:latest` is the unset default and a dev convenience only — it is
+never authoritative for production provenance. (The pre-existing `agentcontrol:*` candidate image
+family — e.g. `agentcontrol:gateway-candidate-f37ff70` — and the `mcp-ide-bridge:*` family are
+preserved as historical/rollback evidence and are not part of this convention; see
+`MCP_IDE_BRIDGE_MASTER_PRD.md` §47 for the full identity migration contract.)
+
+Build with provenance, then deploy the exact immutable tags:
 
 ```bash
-GATEWAY_IMAGE=quarangate:gateway-<sha> EXECUTOR_IMAGE=quarangate:executor-<sha> docker compose up -d
+SHA=$(git rev-parse HEAD)
+docker build --build-arg GIT_REVISION="$SHA" -t "quarangate:gateway-$SHA" .
+docker build --build-arg GIT_REVISION="$SHA" -t "quarangate:executor-$SHA" .
+
+GATEWAY_IMAGE=quarangate:gateway-$SHA EXECUTOR_IMAGE=quarangate:executor-$SHA \
+  AGENT_KIRO_KEY_FILE=$(node scripts/resolve-kiro-key-file.mjs) \
+  docker compose up -d
 ```
 
 Every production build candidate must carry the commit it was built from, applied at build time
-(never baked into source):
+(never baked into source) via the `GIT_REVISION` build arg:
 
 ```text
 org.opencontainers.image.revision=<exact commit SHA>
 org.opencontainers.image.source=https://github.com/Herman940306/QuaranGate
 ```
 
-The OAuth data volume (`mcp-bridge-data`) has a lifecycle separate from the image lifecycle.
+Verify provenance on the built image before deploying:
+
+```bash
+docker image inspect quarangate:gateway-$SHA \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+```
+
+The OAuth data volume (`quarangate-data`) has a lifecycle separate from the image lifecycle.
 Replacing the gateway is forward recovery only: build a new image from a committed revision and
 start it against the existing persistent OAuth volume and host config. Never use `docker commit` of
 a running container as a rollback image, and never bake live credentials, tokens, or config into any
 candidate or rollback image.
+
+## Runtime identity compatibility (N1D)
+
+The runtime carries the QuaranGate identity. Discovery and cleanup remain **dual-read** so
+pre-cutover resources stay visible; only new writes use the QuaranGate namespace.
+
+| Concern | Written now | Also read (legacy, never written) |
+|---|---|---|
+| Ownership labels | `io.quarangate.*` | `io.mcp-ide-bridge.*`, `io.mcp-bridge.*` |
+| Evidence volumes | `io-quarangate-evidence-*` | `io-mcp-ide-bridge-evidence-*` |
+| Target opt-in discovery | *(not written by the bridge)* | `mcp.bridge.*` |
+
+Notes that matter operationally:
+
+- Docker ANDs the entries of a single `label` filter, so dual-read is implemented as **one query per
+  namespace, unioned and de-duplicated** (`managedLabelFilters()` in `src/executor/agents/sandboxSpec.ts`).
+  A resource carrying two namespaces is processed exactly once.
+- Ambiguity fails safe. If two accepted namespaces disagree on `managed`/`resource`/`job`, the value
+  reads as unproven and the resource is **retained**, never deleted.
+- Historical evidence is never renamed or migrated. It ages out under its existing retention policy.
+- `mcp.bridge.*` target discovery is **deliberately not migrated**: those labels are authored by
+  operator Compose files, including ones outside this repo. Changing them here would empty
+  `targets_list`. This is its own, longer compatibility window (§47.4).
+
+Identifiers deliberately retained under approved decisions:
+
+- `mcp-bridge-jobs` — durable job/evidence store, physical name retained (§47.13 DECISION-2).
+- Target Compose projects (`mcp-ide-bridge-testtarget`, `mcp-ide-bridge-review`) — unchanged; the
+  client-facing contract is the target `id`, not the project (§47.7).
+
+Host secret path (§47.8, DECISION-4): `/home/herman/.config/quarangate/kiro-api-key`, with the legacy
+`/home/herman/.config/mcp-ide-bridge/kiro-api-key` still supported as a fallback. Resolve it with
+`node scripts/resolve-kiro-key-file.mjs` (explicit env → new path → legacy path). Migrate by **moving**
+the file, never copying — two live copies of one credential have no source of truth.
 
 ## Health / readiness
 
@@ -117,7 +165,7 @@ Fresh gateway images create `/data` as `node:node` with mode `0700`; OAuth state
 with mode `0600`. This preserves a non-root gateway while allowing the OAuth façade to persist
 registrations and hashed token state.
 
-An existing `mcp-bridge-data` volume created by an older image may still be `root:root` and therefore
+An existing data volume created by an older image (`quarangate-data`, or the legacy `mcp-bridge-data`) may still be `root:root` and therefore
 unwritable by the gateway. Diagnose without reading file contents:
 
 ```bash
@@ -130,7 +178,7 @@ stop only the gateway and repair the volume root:
 ```bash
 docker compose stop gateway
 docker run --rm --user 0:0 \
-  --mount type=volume,source=mcp-bridge-data,target=/data \
+  --mount type=volume,source=quarangate-data,target=/data \
   alpine:3.20 sh -eu -c 'chown 1000:1000 /data; chmod 0700 /data'
 docker compose up -d --no-deps --force-recreate gateway
 ```
@@ -215,5 +263,6 @@ public-facing gateway. Public-ingress changes still require explicit operator ap
 
 ## Backups / state
 
-The only persistent state is the `mcp-bridge-data` volume (hashed OAuth tokens). It is safe to drop;
+The only disposable persistent state is the `quarangate-data` volume (hashed OAuth tokens). It is safe
+to drop; the durable agent job/evidence store `mcp-bridge-jobs` is NOT (§47.13 DECISION-2).
 clients simply re-authorize. Config lives in `config/*.yaml` (gitignored) and `.env`.

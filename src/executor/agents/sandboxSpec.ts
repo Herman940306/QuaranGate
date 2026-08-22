@@ -22,7 +22,40 @@ import {
 // Ownership labels — the single authority for cleanup/reconciliation.
 // ---------------------------------------------------------------------------
 
-export const SANDBOX_LABEL_NS = 'io.mcp-ide-bridge';
+/**
+ * N1D: the QuaranGate ownership namespace. This is the ONLY namespace written
+ * by this runtime. See MCP_IDE_BRIDGE_MASTER_PRD.md §47.4 for the migration
+ * contract.
+ */
+export const SANDBOX_LABEL_NS = 'io.quarangate';
+
+/**
+ * N1D dual-read compatibility: pre-cutover resources carry one of these legacy
+ * ownership namespaces. They are READ (recognised as bridge-managed, swept by
+ * reconciliation, classified by the evidence lifecycle) but NEVER written.
+ *
+ *   io.mcp-ide-bridge — legacy sandbox/job ownership (SANDBOX_LABEL_NS pre-N1D)
+ *   io.mcp-bridge     — legacy control/home + git-helper ownership (gitHelper.ts),
+ *                       unified onto SANDBOX_LABEL_NS by N1D
+ *
+ * Deliberately NOT included: `mcp.bridge.*` (target opt-in discovery). That is a
+ * functionally distinct, operator-authored namespace read by src/executor/targets.ts
+ * and is out of the ownership/cleanup authority modelled here (§47.4).
+ */
+export const LEGACY_SANDBOX_LABEL_NAMESPACES: readonly string[] = Object.freeze([
+  'io.mcp-ide-bridge',
+  'io.mcp-bridge',
+]);
+
+/** Every namespace accepted on READ. New namespace first (preferred on tie). */
+export const ACCEPTED_SANDBOX_LABEL_NAMESPACES: readonly string[] = Object.freeze([
+  SANDBOX_LABEL_NS,
+  ...LEGACY_SANDBOX_LABEL_NAMESPACES,
+]);
+
+/** Label suffixes that make up an ownership record. */
+export type OwnershipLabelSuffix = 'managed' | 'resource' | 'job' | 'attempt';
+
 export const LABEL_MANAGED = `${SANDBOX_LABEL_NS}.managed`;
 export const LABEL_RESOURCE = `${SANDBOX_LABEL_NS}.resource`;
 export const LABEL_JOB = `${SANDBOX_LABEL_NS}.job`;
@@ -31,17 +64,67 @@ export const LABEL_ATTEMPT = `${SANDBOX_LABEL_NS}.attempt`;
 
 export type SandboxResourceKind = 'runner' | 'stager' | 'workspace' | 'evidence' | 'applier';
 
-/** The Docker `filters` selector that matches ALL bridge-owned A3 resources. */
+/**
+ * The Docker `filters` selector matching bridge-owned A3 resources in the
+ * CURRENT namespace only.
+ *
+ * Docker ANDs every entry of a `label` filter array, so a single filter can
+ * never express "any of N namespaces". Callers that must see legacy resources
+ * MUST iterate {@link managedLabelFilters} instead of using this constant.
+ */
 export const MANAGED_FILTER: Record<string, string[]> = { label: [`${LABEL_MANAGED}=true`] };
+
+/**
+ * One Docker filter per accepted namespace — the dual-read replacement for
+ * {@link MANAGED_FILTER}. Each returned filter selects `<ns>.managed=true` plus
+ * any additional suffix/value constraints, expressed in that same namespace.
+ *
+ * Results from these filters MUST be de-duplicated by the caller (a resource
+ * carrying two namespaces appears in two responses).
+ */
+export function managedLabelFilters(
+  extra: ReadonlyArray<readonly [OwnershipLabelSuffix, string]> = [],
+): Array<Record<string, string[]>> {
+  return ACCEPTED_SANDBOX_LABEL_NAMESPACES.map((ns) => ({
+    label: [`${ns}.managed=true`, ...extra.map(([suffix, value]) => `${ns}.${suffix}=${value}`)],
+  }));
+}
 
 export function ownershipLabels(kind: SandboxResourceKind, jobId: string): Record<string, string> {
   assertJobId(jobId);
   return { [LABEL_MANAGED]: 'true', [LABEL_RESOURCE]: kind, [LABEL_JOB]: jobId };
 }
 
-/** Authority for destructive cleanup: exact managed label must be present. */
+/**
+ * Read one ownership label across every accepted namespace.
+ *
+ * Fail-safe on ambiguity: if two accepted namespaces are present on the same
+ * resource and disagree on the value, `null` is returned rather than an
+ * arbitrary winner. Every caller treats `null` as "identity not proven", which
+ * denies destructive action instead of guessing.
+ */
+export function ownershipLabelValue(
+  labels: Record<string, string> | null | undefined,
+  suffix: OwnershipLabelSuffix,
+): string | null {
+  if (!labels) return null;
+  const seen = new Set<string>();
+  for (const ns of ACCEPTED_SANDBOX_LABEL_NAMESPACES) {
+    const v = labels[`${ns}.${suffix}`];
+    if (typeof v === 'string') seen.add(v);
+  }
+  if (seen.size !== 1) return null; // absent (0) or contradictory (>1)
+  return [...seen][0]!;
+}
+
+/**
+ * Authority for destructive cleanup: the managed label must be present and
+ * `"true"` in at least one accepted namespace, and no accepted namespace may
+ * contradict it. A resource labelled managed=true in one namespace and
+ * managed=false in another is NOT managed (fail-safe: never deleted).
+ */
 export function isBridgeManaged(labels: Record<string, string> | null | undefined): boolean {
-  return labels?.[LABEL_MANAGED] === 'true';
+  return ownershipLabelValue(labels, 'managed') === 'true';
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +155,62 @@ export function runnerContainerName(jobId: string): string {
 export function stagerContainerName(jobId: string): string {
   assertJobId(jobId);
   return `${SANDBOX_LABEL_NS.replace(/\./g, '-')}-stager-${jobId}`;
+}
+
+// ---------------------------------------------------------------------------
+// Evidence volume naming — N1D dual-recognition (§47.5).
+// ---------------------------------------------------------------------------
+
+/**
+ * Prefix for evidence volumes CREATED by this runtime. Single source of truth
+ * for both the creator (beforeCapture.ts) and the lifecycle owner
+ * (evidenceCollector.ts) — they must never diverge, or retained evidence
+ * becomes undeletable.
+ */
+export const EVIDENCE_VOLUME_PREFIX = `${SANDBOX_LABEL_NS.replace(/\./g, '-')}-evidence-`;
+
+/**
+ * Evidence prefixes written by pre-N1D runtimes. Recognised on READ so that
+ * historical evidence remains discoverable, classifiable, and — once its
+ * retention has genuinely elapsed — still deletable. Historical evidence is
+ * never renamed or destructively migrated (§47.5).
+ */
+export const LEGACY_EVIDENCE_VOLUME_PREFIXES: readonly string[] = Object.freeze([
+  'io-mcp-ide-bridge-evidence-',
+]);
+
+/** Every evidence prefix accepted on READ. New prefix first. */
+export const ACCEPTED_EVIDENCE_VOLUME_PREFIXES: readonly string[] = Object.freeze([
+  EVIDENCE_VOLUME_PREFIX,
+  ...LEGACY_EVIDENCE_VOLUME_PREFIXES,
+]);
+
+/** Deterministic evidence volume name for a NEW job. Never caller-influenced. */
+export function evidenceVolumeName(jobId: string): string {
+  return `${EVIDENCE_VOLUME_PREFIX}${jobId}`;
+}
+
+/**
+ * Every deterministic evidence volume name a job may legitimately carry: the
+ * current one plus each legacy equivalent. Used by identity proofs so a
+ * pre-cutover job's recorded `artifact_volume` still correlates.
+ */
+export function acceptedEvidenceVolumeNames(jobId: string): string[] {
+  return ACCEPTED_EVIDENCE_VOLUME_PREFIXES.map((p) => `${p}${jobId}`);
+}
+
+/**
+ * Deterministic-name agreement check for an evidence volume recorded in the
+ * job store. Exact match against a fixed, job-derived candidate set — the
+ * caller's value is never used to build the name, only compared to it.
+ */
+export function isAcceptedEvidenceVolumeName(name: string, jobId: string): boolean {
+  return acceptedEvidenceVolumeNames(jobId).includes(name);
+}
+
+/** True when a Docker volume name carries any accepted evidence prefix. */
+export function hasAcceptedEvidenceVolumePrefix(name: string): boolean {
+  return ACCEPTED_EVIDENCE_VOLUME_PREFIXES.some((p) => name.startsWith(p));
 }
 
 // ---------------------------------------------------------------------------

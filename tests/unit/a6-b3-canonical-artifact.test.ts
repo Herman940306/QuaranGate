@@ -2209,9 +2209,9 @@ describe('R3: Git Helper Security Boundary', () => {
     const spec = buildGitHelperSpec(opts);
     expect(spec.HostConfig.AutoRemove).toBe(false);
     // Labels allow scoped cleanup
-    expect(spec.Labels['io.mcp-bridge.managed']).toBe('true');
-    expect(spec.Labels['io.mcp-bridge.resource']).toBe('git-helper');
-    expect(spec.Labels['io.mcp-bridge.job']).toBe('job_abc123');
+    expect(spec.Labels['io.quarangate.managed']).toBe('true');
+    expect(spec.Labels['io.quarangate.resource']).toBe('git-helper');
+    expect(spec.Labels['io.quarangate.job']).toBe('job_abc123');
   });
 
   it('R3-12. helper lifecycle attempts cleanup on failure (spec)', () => {
