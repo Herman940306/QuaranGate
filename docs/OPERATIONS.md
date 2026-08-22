@@ -53,7 +53,7 @@ Every production build candidate must carry the commit it was built from, applie
 
 ```text
 org.opencontainers.image.revision=<exact commit SHA>
-org.opencontainers.image.source=https://github.com/Herman940306/AgentControl
+org.opencontainers.image.source=https://github.com/Herman940306/QuaranGate
 ```
 
 The OAuth data volume (`mcp-bridge-data`) has a lifecycle separate from the image lifecycle.

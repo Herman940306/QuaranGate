@@ -4,8 +4,8 @@
 **Version:** 1.0  
 **Date:** 2026-07-28  
 **Status:** Master baseline — current bridge verified; Agent Dispatch phases A0 through A6 complete (PASS); post-A6 gateway readiness + image-provenance remediation complete (PASS); A7 next gate\
-**Product identity:** QuaranGate (canonical, current — supersedes the earlier AgentControl identity). Package name and MCP server self-identification are `quarangate`. Internal runtime identifiers — Compose project, GitHub repository, Docker networks/volumes/labels — intentionally retain their earlier `mcp-ide-bridge` / `mcp-bridge` / `AgentControl` names pending a controlled compatibility migration; see §47 for the full migration contract.\
-**Repository:** `/home/herman/projects/mcp-ide-bridge` (worktree path unchanged; GitHub remote still `Herman940306/AgentControl` pending rename — see §47)\
+**Product identity:** QuaranGate (canonical, current — supersedes the earlier AgentControl identity). Package name and MCP server self-identification are `quarangate`. The GitHub repository rename is complete (`Herman940306/QuaranGate` — see §47.10). Other internal runtime identifiers — Compose project, Docker networks/volumes/labels — intentionally retain their earlier `mcp-ide-bridge` / `mcp-bridge` names pending a controlled compatibility migration; see §47 for the full migration contract.\
+**Repository:** `/home/herman/projects/mcp-ide-bridge` (worktree path unchanged; GitHub remote is `Herman940306/QuaranGate` — rename complete, see §47.10)\
 **Current verified baseline:** `67146a4` — `fix: harden gateway readiness and image provenance` (typecheck PASS, unit 1420/1420 PASS)
 
 ---
@@ -3269,6 +3269,7 @@ CURRENT CANONICAL IDENTITY (now):
   Future Docker label namespace: io.quarangate.*
   Future Compose project:        quarangate
   Future image family:           quarangate:gateway-<sha>, quarangate:executor-<sha>
+  GitHub remote:                 Herman940306/QuaranGate (rename complete — see §47.10)
 
 LEGACY / HISTORICAL IDENTIFIERS (intentionally still live):
   AgentControl        — superseded product name; historically accurate where dated
@@ -3278,7 +3279,9 @@ LEGACY / HISTORICAL IDENTIFIERS (intentionally still live):
   mcp-bridge / mcp-bridge-*  — live Docker network/volume/container name prefix
   io.mcp-bridge.*      — live Docker label namespace (git-managed control/home volumes)
   mcp.bridge.*          — live Docker label namespace (target opt-in discovery)
-  Herman940306/AgentControl — current GitHub remote (unrenamed)
+  Herman940306/AgentControl — former GitHub remote name; repository has been renamed to
+                          Herman940306/QuaranGate (GitHub preserves an automatic redirect
+                          from the old name; historical/redirect reference only)
 ```
 
 QuaranGate supersedes AgentControl as the current product identity. AgentControl remains valid
@@ -3300,7 +3303,10 @@ messages, frozen audit records in `docs/audits/`, `PLAN.md`).
 
 ## 47.3 Runtime identity migration register
 
-All entries below are **MIGRATION_REQUIRED** (design only; N1C does not mutate any of them).
+All entries below are **MIGRATION_REQUIRED** (design only; N1C does not mutate any of them), with
+one exception: the GitHub remote row is now **COMPLETE** (see §47.10) — it was executed as an
+explicitly authorized manual step ahead of the remaining Compose/Docker runtime identity items,
+per §47.13 DECISION-3's approved ordering. All other rows remain undone.
 Source of truth for each identifier is a single named constant/config value unless noted.
 
 | Category | Current value(s) | Source | Future value | Notes |
@@ -3327,7 +3333,7 @@ Source of truth for each identifier is a single named constant/config value unle
 | Target IDs | `demo` (`config/bridge.example.yaml`) | example config | unchanged | Already a generic logical id, not product-branded. **FALSE_POSITIVE** for renaming — see §47.7. |
 | Target composeProject values | `mcp-ide-bridge-testtarget`, `mcp-ide-bridge-review` | `config/bridge.example.yaml`, target compose files | follows Compose project rename | Client-facing `id` (`demo`) is stable regardless of this. |
 | Host secret path | `/home/herman/.config/mcp-ide-bridge/kiro-api-key` (`compose.yaml` secret default `${AGENT_KIRO_KEY_FILE:-...}`) | `compose.yaml` | `/home/herman/.config/quarangate/kiro-api-key` (proposed) | See §47.8. In-container mount path `/run/secrets/kiro-api-key` (`RUNNER_SECRET_PATH`, `credentialManager.ts`) is **not** product-branded — no change needed there. |
-| GitHub remote | `github.com/Herman940306/AgentControl` (git remote; also `org.opencontainers.image.source` example in `docs/OPERATIONS.md`) | `git remote`, doc example | `github.com/Herman940306/QuaranGate` | Not renamed in N1C. See §47.10. |
+| GitHub remote | `github.com/Herman940306/QuaranGate` (git remote; also `org.opencontainers.image.source` example in `docs/OPERATIONS.md`) — renamed from `github.com/Herman940306/AgentControl` (GitHub preserves an automatic redirect from the old name) | `git remote`, doc example | — (achieved) | **COMPLETE.** Historical value: `github.com/Herman940306/AgentControl`. See §47.10. |
 | Credential prefix family | `mcpb_`, `mcpb_at_`, `mcpb_rt_`, `mcpb_ac_` (`src/gateway/auth/apikeys.ts`, `oauth.ts`, `index.ts`, `src/shared/redact.ts`) | source constants | **unchanged, permanently** | **PRESERVE_COMPATIBILITY.** Security/credential-classification infrastructure; the `mcp` letters here are opaque namespace, not branding. Explicitly frozen by steering decision — never rename. |
 
 ## 47.4 Label compatibility design (design only — not implemented)
@@ -3479,14 +3485,21 @@ introduced.
 
 ## 47.10 GitHub repository rename
 
-Current remote: `https://github.com/Herman940306/AgentControl.git`. Future:
-`Herman940306/QuaranGate`. N1C runs before the rename; no origin change and no repository rename
-occur in N1C or are authorized by this document. `docs/OPERATIONS.md`'s
-`org.opencontainers.image.source` build-label example continues to reference the current, accurate
-URL rather than a URL that would be false if used today. The rename itself, and updating that
-example plus the git remote, are §47.11 "Repository identity" steps (7-9), approved to occur before
-any runtime mutation per §47.13 DECISION-3, and require Herman's explicit action (GitHub UI/API
-rename is not reversible by this tooling and is out of scope for any automated step here).
+**Status: COMPLETE.** Current canonical remote: `https://github.com/Herman940306/QuaranGate.git`.
+The repository was renamed from `Herman940306/AgentControl` to `Herman940306/QuaranGate`, executed
+as §47.11 "Repository identity" steps (7-9) per the ordering approved in §47.13 DECISION-3 (before
+any runtime mutation); local `origin` has been updated accordingly and verified (`git remote -v`
+reports the canonical URL). The legacy URL (`https://github.com/Herman940306/AgentControl.git`) is
+preserved by GitHub only as an automatic redirect/compatibility reference — it is not the canonical
+URL and must not be treated as such in documentation or tooling. `docs/OPERATIONS.md`'s
+`org.opencontainers.image.source` build-label example has been updated to the canonical
+`Herman940306/QuaranGate` URL to match.
+
+At the time DECISION-3 was originally approved (2026-08-22), the remote was still
+`Herman940306/AgentControl`; that historical state is preserved, annotated as historical, in
+§47.13 DECISION-3's "Current state" note. This rename does not itself constitute N1D: the
+Compose/Docker runtime identity cutover described elsewhere in §47 remains separate, design-only,
+and not started.
 
 ## 47.11 N1D cutover plan (design only — not executed)
 
@@ -3517,12 +3530,16 @@ origin update/verification → N1D compatibility implementation → controlled r
 
 ### Repository identity (DECISION-3 Option C — completes before any runtime mutation)
 
-7. Push all N1C-committed changes to `origin` — repository identity must be finalized and in sync
-   with the remote before the GitHub rename, so the rename acts on the canonical committed state.
-8. GitHub repository rename `Herman940306/AgentControl` → `Herman940306/QuaranGate` (Herman-performed,
-   not automatable from this worktree).
-9. Update local `git remote set-url origin` to the renamed URL; verify `git remote -v` and a
-   `git fetch` succeed against the renamed origin before proceeding.
+**Steps 7-9: COMPLETE** (see §47.10).
+
+7. **COMPLETE.** Push all N1C-committed changes to `origin` — repository identity must be finalized
+   and in sync with the remote before the GitHub rename, so the rename acts on the canonical
+   committed state.
+8. **COMPLETE.** GitHub repository rename `Herman940306/AgentControl` → `Herman940306/QuaranGate`
+   (Herman-performed, not automatable from this worktree).
+9. **COMPLETE.** Update local `git remote set-url origin` to the renamed URL; verify `git remote -v`
+   and a `git fetch` succeed against the renamed origin before proceeding. Verified: `git remote -v`
+   reports `https://github.com/Herman940306/QuaranGate.git`.
 
 ### N1D compatibility implementation (deployed and verified before runtime cutover)
 
@@ -3662,8 +3679,12 @@ from the original decision analysis are preserved below alongside each approved 
   mutate this volume before N1D cutover.
 
 **DECISION-3 — Compose/runtime cutover timing relative to repository identity**
-- Current state: `name: mcp-ide-bridge` in `compose.yaml`; determines default container/network
-  names for anything not explicitly named. GitHub remote remains `Herman940306/AgentControl`.
+- Current state (as of DECISION-3 approval, 2026-08-22): `name: mcp-ide-bridge` in `compose.yaml`;
+  determines default container/network names for anything not explicitly named. At DECISION-3
+  approval time, the GitHub remote was still `Herman940306/AgentControl`. That repository rename
+  has since completed; the canonical repository is now `Herman940306/QuaranGate` (see §47.10). The
+  Compose/Docker runtime identity portion of this "current state" remains unexecuted (N1D, not
+  started).
 - Option A: cut over Compose/runtime at the same time as the GitHub repository rename (single
   coordinated event).
 - Option B: cut over Compose/runtime independently, *ahead of* the GitHub rename, once N1D tooling
@@ -3684,15 +3705,15 @@ from the original decision analysis are preserved below alongside each approved 
   should be settled before any live runtime is touched. Required ordering, superseding both
   original options and reflected in §47.11:
   ```text
-  1. N1C accepted
-  2. QuaranGate repository commit
-  3. push
-  4. GitHub AgentControl -> QuaranGate rename
-  5. origin update / repository verification
-  6. N1D compatibility implementation (label dual-read, evidence dual-recognition)
-  7. N1D controlled runtime cutover
-  8. post-cutover acceptance
-  9. G4 definitive QuaranGate build/deployment
+  1. N1C accepted                                                    — COMPLETE
+  2. QuaranGate repository commit                                    — COMPLETE
+  3. push                                                             — COMPLETE
+  4. GitHub AgentControl -> QuaranGate rename                        — COMPLETE
+  5. origin update / repository verification                         — COMPLETE
+  6. N1D compatibility implementation (label dual-read, evidence dual-recognition)  — NOT STARTED
+  7. N1D controlled runtime cutover                                  — NOT STARTED
+  8. post-cutover acceptance                                         — NOT STARTED
+  9. G4 definitive QuaranGate build/deployment                       — NOT STARTED
   ```
   Risk A (original, single coordinated event) and Risk B (original, compose-before-GitHub) are
   superseded by this ordering; the residual risk under Option C is that repository identity and
