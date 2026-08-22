@@ -24,14 +24,14 @@ Use `config/vscode.mcp.example.json` as a template. Put it at `.vscode/mcp.json`
 ```json
 {
   "servers": {
-    "mcp-ide-bridge": {
+    "quarangate": {
       "type": "http",
       "url": "http://127.0.0.1:8787/mcp",
       "headers": { "Authorization": "Bearer ${input:bridge_key}" }
     }
   },
   "inputs": [
-    { "id": "bridge_key", "type": "promptString", "description": "mcp-ide-bridge API key", "password": true }
+    { "id": "bridge_key", "type": "promptString", "description": "quarangate API key", "password": true }
   ]
 }
 ```
@@ -48,7 +48,7 @@ Use `config/kiro.mcp.example.json`. Put it at `~/.kiro/settings/mcp.json` (user)
 ```json
 {
   "mcpServers": {
-    "mcp-ide-bridge": {
+    "quarangate": {
       "url": "http://127.0.0.1:8787/mcp",
       "headers": { "Authorization": "Bearer ${BRIDGE_KEY}" },
       "disabled": false,

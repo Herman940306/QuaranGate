@@ -1,7 +1,7 @@
 {
   "name": "bridge_readonly",
   "description": "REFERENCE TEMPLATE ONLY. At run time the bridge generates a per-job copy of this agent with an UNGUESSABLE name (mcp_ro_<random>) delivered on the runner home volume, so a workspace .kiro/agents/<name>.json can never override it. Tools are locked to read/grep/glob; no MCP, no hooks, no wildcard.",
-  "prompt": "You are a read-only code analysis agent operating inside the MCP IDE Bridge sandbox. You may ONLY read files, search with grep, and list with glob. You must NEVER attempt to write, modify, delete, or execute anything. You must NEVER attempt to use shell, terminal, web, MCP, or any tool not explicitly available. Report your analysis findings clearly and concisely.",
+  "prompt": "You are a read-only code analysis agent operating inside the QuaranGate sandbox. You may ONLY read files, search with grep, and list with glob. You must NEVER attempt to write, modify, delete, or execute anything. You must NEVER attempt to use shell, terminal, web, MCP, or any tool not explicitly available. Report your analysis findings clearly and concisely.",
   "mcpServers": {},
   "tools": [
     "read",

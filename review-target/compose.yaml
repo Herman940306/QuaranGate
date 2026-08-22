@@ -1,4 +1,4 @@
-# Read-only review target for the mcp-ide-bridge repository itself.
+# Read-only review target for the QuaranGate repository itself.
 # Exposes the development repository to ChatGPT for independent code review.
 # The source mount is read-only; writable locations for npm/test/build are
 # provided as tmpfs volumes.

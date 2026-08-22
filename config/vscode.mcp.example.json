@@ -1,6 +1,6 @@
 {
   "servers": {
-    "mcp-ide-bridge": {
+    "quarangate": {
       "type": "http",
       "url": "http://127.0.0.1:8787/mcp",
       "headers": {
@@ -12,7 +12,7 @@
     {
       "id": "bridge_key",
       "type": "promptString",
-      "description": "mcp-ide-bridge API key (mcpb_vscode_...)",
+      "description": "quarangate API key (mcpb_vscode_...)",
       "password": true
     }
   ]

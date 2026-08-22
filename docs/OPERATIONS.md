@@ -35,13 +35,17 @@ docker compose -f test-target/compose.yaml down -v
 ## Image provenance
 
 Production gateway and executor image references must be immutable and service-specific:
-`agentcontrol:gateway-<sha>` and `agentcontrol:executor-<sha>`. Both services build from the same
+`quarangate:gateway-<sha>` and `quarangate:executor-<sha>`. Both services build from the same
 Dockerfile/context and are tagged independently; `compose.yaml` selects them via `GATEWAY_IMAGE` and
 `EXECUTOR_IMAGE`. `mcp-ide-bridge:latest` is the unset default and a dev convenience only — it is
-never authoritative for production provenance.
+never authoritative for production provenance. (No image has ever been built under the
+`quarangate:*` convention. A separate `agentcontrol:*`-prefixed candidate image family exists
+locally — e.g. `agentcontrol:gateway-candidate-f37ff70` — but no image matches the literal
+`agentcontrol:gateway-<sha>`/`agentcontrol:executor-<sha>` production-tag convention this section
+describes; see `MCP_IDE_BRIDGE_MASTER_PRD.md` §47 for the full identity migration contract.)
 
 ```bash
-GATEWAY_IMAGE=agentcontrol:gateway-<sha> EXECUTOR_IMAGE=agentcontrol:executor-<sha> docker compose up -d
+GATEWAY_IMAGE=quarangate:gateway-<sha> EXECUTOR_IMAGE=quarangate:executor-<sha> docker compose up -d
 ```
 
 Every production build candidate must carry the commit it was built from, applied at build time

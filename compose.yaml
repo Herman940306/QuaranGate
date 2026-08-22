@@ -1,5 +1,8 @@
-# mcp-ide-bridge — standalone deployment. Owns only its own networks/services.
+# QuaranGate — standalone deployment. Owns only its own networks/services.
 # Does NOT touch existing project stacks.
+# Compose project name below (`mcp-ide-bridge`) is a legacy runtime identifier
+# retained for compatibility; see MCP_IDE_BRIDGE_MASTER_PRD.md §47 for the
+# migration contract.
 
 name: mcp-ide-bridge
 
@@ -17,7 +20,7 @@ services:
     build:
       context: .
     # One shared build artifact, independently taggable per service. Production
-    # must pin an immutable service-specific tag (agentcontrol:gateway-<sha>);
+    # must pin an immutable service-specific tag (quarangate:gateway-<sha>);
     # the :latest default is a dev convenience and is never authoritative.
     image: ${GATEWAY_IMAGE:-mcp-ide-bridge:latest}
     command: ["node", "dist/gateway/index.js"]
@@ -55,7 +58,7 @@ services:
   executor:
     <<: *hardening
     # Same shared build artifact as the gateway, tagged independently
-    # (agentcontrol:executor-<sha> in production).
+    # (quarangate:executor-<sha> in production).
     image: ${EXECUTOR_IMAGE:-mcp-ide-bridge:latest}
     build:
       context: .

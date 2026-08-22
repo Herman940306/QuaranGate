@@ -1,4 +1,6 @@
-# AgentControl
+# QuaranGate
+
+**Governed execution for AI coding agents.**
 
 A governed execution control plane that lets AI clients do real work on approved
 developer environments — without handing them the host, the Docker socket, or the
@@ -11,9 +13,9 @@ right to change anything unreviewed.
 
 ---
 
-## What AgentControl is
+## What QuaranGate is
 
-AgentControl is a self-hosted, remote **MCP (Model Context Protocol) server** that gives
+QuaranGate is a self-hosted, remote **MCP (Model Context Protocol) server** that gives
 authenticated AI clients — Claude, ChatGPT, VS Code, Kiro — two distinct kinds of
 capability, both mediated by a deterministic authorization layer.
 
@@ -31,10 +33,14 @@ operation.
 The whole system is built around one boundary: **the component that talks to the internet
 is not the component that holds privilege.**
 
-> **On naming.** *AgentControl* is the current project identity. Several internal
-> identifiers — the npm package, the Compose project, Docker networks and volumes
-> (`mcp-ide-bridge`, `mcp-bridge-*`) — retain the earlier `mcp-ide-bridge` name for
-> compatibility and historical continuity. Renaming them is not in scope.
+> **On naming.** *QuaranGate* is the current project identity; it supersedes the earlier
+> *AgentControl* name. The npm package and the MCP server's own self-identification are
+> `quarangate`. Several internal **runtime** identifiers — the Compose project name,
+> Docker networks and volumes (`mcp-ide-bridge`, `mcp-bridge-*`), and Docker label
+> namespaces (`io.mcp-ide-bridge.*`, `io.mcp-bridge.*`) — intentionally retain their
+> earlier names for compatibility, evidence discoverability, and rollback safety. A
+> controlled compatibility migration for these is designed but not yet executed; see
+> `MCP_IDE_BRIDGE_MASTER_PRD.md` §47 for the full migration contract.
 
 ## Why it exists
 
@@ -42,7 +48,7 @@ Connecting a capable AI client to a real development machine usually means one o
 options: give it nothing useful, or give it a shell. The second option quietly grants the
 model — and anything that can prompt-inject it — the authority of the account running it.
 
-AgentControl inserts a control layer that makes authority explicit and enumerable:
+QuaranGate inserts a control layer that makes authority explicit and enumerable:
 
 - Callers address **logical identifiers** (`demo`, `example-project`), never host paths,
   container images, mounts, or Docker options. Those are trusted, executor-owned config.
@@ -369,7 +375,7 @@ public network without reading [`docs/SECURITY.md`](docs/SECURITY.md) first.**
 
 ## License and contributing
 
-AgentControl is licensed under the MIT License. See [`LICENSE`](LICENSE) for the full text.
+QuaranGate is licensed under the MIT License. See [`LICENSE`](LICENSE) for the full text.
 
 `package.json` is marked `private` to prevent accidental npm publication; that flag is a
 publishing safeguard and does not restrict the MIT grant over this source.

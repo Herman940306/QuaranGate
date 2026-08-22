@@ -1,18 +1,18 @@
-# MCP IDE Bridge — Master Product Requirements Document (PRD)
+# QuaranGate — Master Product Requirements Document (PRD)
 
 **Document ID:** MIB-MASTER-PRD  
 **Version:** 1.0  
 **Date:** 2026-07-28  
 **Status:** Master baseline — current bridge verified; Agent Dispatch phases A0 through A6 complete (PASS); post-A6 gateway readiness + image-provenance remediation complete (PASS); A7 next gate\
-**Product identity:** AgentControl (`Herman940306/AgentControl`). Internal package, Compose project, network and volume identifiers retain the earlier `mcp-ide-bridge` name for compatibility; no rename migration is in scope.\
-**Repository:** `/home/herman/projects/mcp-ide-bridge`\
+**Product identity:** QuaranGate (canonical, current — supersedes the earlier AgentControl identity). Package name and MCP server self-identification are `quarangate`. Internal runtime identifiers — Compose project, GitHub repository, Docker networks/volumes/labels — intentionally retain their earlier `mcp-ide-bridge` / `mcp-bridge` / `AgentControl` names pending a controlled compatibility migration; see §47 for the full migration contract.\
+**Repository:** `/home/herman/projects/mcp-ide-bridge` (worktree path unchanged; GitHub remote still `Herman940306/AgentControl` pending rename — see §47)\
 **Current verified baseline:** `67146a4` — `fix: harden gateway readiness and image provenance` (typecheck PASS, unit 1420/1420 PASS)
 
 ---
 
 ## 0. Purpose of this document
 
-This document is the master product requirements document for the MCP IDE Bridge.
+This document is the master product requirements document for QuaranGate.
 
 It has two jobs:
 
@@ -25,7 +25,7 @@ This document is intended to become the canonical planning reference for the pro
 
 # 1. Executive summary
 
-The MCP IDE Bridge already provides a working, security-conscious remote MCP control plane.
+QuaranGate already provides a working, security-conscious remote MCP control plane.
 
 Today, an approved browser-based MCP client can authenticate to the bridge over public HTTPS, discover authorized Docker targets, read files, inspect Git state, execute bounded shell commands, modify files when permitted, and receive typed MCP results. The bridge preserves a strong privilege split:
 
@@ -69,7 +69,7 @@ User + ChatGPT
      |
      | discuss / approve bounded engineering task
      v
-MCP IDE Bridge
+QuaranGate
      |
      | agent_dispatch
      v
@@ -3250,4 +3250,523 @@ What exactly comes next?
 
 ---
 
-# END — MCP IDE BRIDGE MASTER PRD v1.0
+# 47. QuaranGate identity migration contract (N1C design; N1D execution pending)
+
+This section is the durable record of the repository-identity reconciliation task (**N1C**) and
+the design (not execution) of the controlled runtime-identity cutover (**N1D**). It supersedes any
+earlier statement in this document that AgentControl/`mcp-ide-bridge` is the current or permanent
+product identity, or that no rename is in scope.
+
+## 47.1 Current vs legacy identity
+
+```text
+CURRENT CANONICAL IDENTITY (now):
+  Product name:     QuaranGate
+  Machine/package:  quarangate
+  Tagline:           Governed execution for AI coding agents.
+  npm package name:  quarangate
+  MCP serverInfo.name: quarangate
+  Future Docker label namespace: io.quarangate.*
+  Future Compose project:        quarangate
+  Future image family:           quarangate:gateway-<sha>, quarangate:executor-<sha>
+
+LEGACY / HISTORICAL IDENTIFIERS (intentionally still live):
+  AgentControl        — superseded product name; historically accurate where dated
+  mcp-ide-bridge       — npm package name pre-N1B; still the live Compose project,
+                          image default, GitHub repo directory name, and Docker label
+                          namespace (io.mcp-ide-bridge.*)
+  mcp-bridge / mcp-bridge-*  — live Docker network/volume/container name prefix
+  io.mcp-bridge.*      — live Docker label namespace (git-managed control/home volumes)
+  mcp.bridge.*          — live Docker label namespace (target opt-in discovery)
+  Herman940306/AgentControl — current GitHub remote (unrenamed)
+```
+
+QuaranGate supersedes AgentControl as the current product identity. AgentControl remains valid
+only where it accurately describes a historical point in time (dated phase entries, commit
+messages, frozen audit records in `docs/audits/`, `PLAN.md`).
+
+## 47.2 Compatibility policy (frozen, N1C steering decision)
+
+1. Current product identity → QuaranGate (display text, package metadata, MCP self-identification).
+2. Historical evidence → preserved verbatim where historically true.
+3. Persistent/runtime identifiers → not renamed blindly; classified below, migration designed but
+   not executed.
+4. Security/credential identifiers (`mcpb_`, `mcpb_at_`, `mcpb_rt_`, `mcpb_ac_`) → never renamed
+   for branding.
+5. Generic identifiers (`AGENT_*`, `BRIDGE_*` env vars, `demo` target id) → not churned.
+6. Persistent label migration strategy → **dual-read / new-write** on future cutover (§47.4).
+7. Zero old strings is explicitly **not** the objective. The objective is zero *unexplained*
+   current old-identity references and zero broken compatibility.
+
+## 47.3 Runtime identity migration register
+
+All entries below are **MIGRATION_REQUIRED** (design only; N1C does not mutate any of them).
+Source of truth for each identifier is a single named constant/config value unless noted.
+
+| Category | Current value(s) | Source | Future value | Notes |
+|---|---|---|---|---|
+| Compose project (root stack) | `mcp-ide-bridge` | `compose.yaml` `name:` | `quarangate` | Determines default container/network/volume names for anything not explicitly named. |
+| Compose project (review target) | `mcp-ide-bridge-review` | `review-target/compose.yaml` | `quarangate-review` (proposed) | |
+| Compose project (test target) | `mcp-ide-bridge-testtarget` | `test-target/compose.yaml` | `quarangate-testtarget` (proposed) | Also referenced by `config/bridge.example.yaml` target `demo`. |
+| Compose project (assistant-environment targets) | `assistant-environment-review`, `assistant-environment-work` | respective `compose.yaml` | unchanged | Already vendor-neutral; not bridge-branded; **GENERIC_PROTOCOL_OR_SUBSYSTEM_TERM**, no migration needed. |
+| Containers (root, compose-generated) | `mcp-ide-bridge-gateway-1`, `mcp-ide-bridge-executor-1` | derived from Compose project | `quarangate-gateway-1`, `quarangate-executor-1` | Follows Compose project rename automatically. |
+| Container (review target) | `mcp-bridge-review` | `review-target/compose.yaml` `container_name` | `quarangate-review` (proposed) | |
+| Containers (test target) | `mcp-bridge-testtarget-dev`, `mcp-bridge-testtarget-decoy` | `test-target/compose.yaml` `container_name` | `quarangate-testtarget-dev`/`-decoy` (proposed) | |
+| Networks | `mcp-bridge-edge`, `mcp-bridge-internal` | `compose.yaml` `networks.*.name` | `quarangate-edge`, `quarangate-internal` (proposed) | |
+| Volumes (gateway/executor) | `mcp-bridge-data`, `mcp-bridge-jobs` | `compose.yaml` `volumes.*.name` | `quarangate-data`, `quarangate-jobs` (proposed) | Holds hashed OAuth state and the durable agent job DB — see §47.6. |
+| Volumes (review target) | `mcp-bridge-review-node-modules`, `mcp-bridge-review-dist` | `review-target/compose.yaml` | `quarangate-review-*` (proposed) | Ephemeral build scratch — low risk either way. |
+| Images (dev default) | `mcp-ide-bridge:latest` | `compose.yaml` `${GATEWAY_IMAGE:-...}` / `${EXECUTOR_IMAGE:-...}` | `quarangate:latest` (dev default) | Never authoritative for production per existing `docs/OPERATIONS.md` policy. |
+| Images (review/test targets) | `mcp-bridge-review:latest`, `mcp-bridge-testtarget:latest` | respective `compose.yaml` | `quarangate-review:latest`, `quarangate-testtarget:latest` (proposed) | |
+| Images (Kiro sandbox runner) | `mcp-ide-bridge-kiro-runner:a4` (production tag, `.env.example` `AGENT_RUNNER_IMAGE` default; also `:a4-test`/`:a4-prodtest`/`:a5-test`/`:a5-prodtest`/`:test` fixture tags across `tests/integration/a4-*.ts`, `tests/integration/a5-*.ts`, `tests/unit/a4-kiro-backend.test.ts`) | `.env.example`, test fixtures | `quarangate-kiro-runner:a4` (proposed) | The real (non-test) Kiro ACP runner image, resolved via `AGENT_RUNNER_IMAGE`/`AGENT_HELPER_IMAGE` in `src/executor/index.ts`. Renaming requires rebuilding/retagging the runner image and updating `.env` in lockstep — never partially, since `AGENT_RUNNER_IMAGE` selects a specific real-vs-test image and a mismatch would silently run the wrong runner. |
+| Images (production tag convention) | `agentcontrol:gateway-<sha>` / `agentcontrol:executor-<sha>` (historical convention; the literal SHA-only tag was never built, but a related `agentcontrol:gateway-candidate-<sha>` family exists locally, e.g. `agentcontrol:gateway-candidate-f37ff70`) | was: `docs/OPERATIONS.md`, `compose.yaml` comments | `quarangate:gateway-<sha>` / `quarangate:executor-<sha>` | **Already updated in this N1C pass** (§47.14) — documentation-only correction of the *current* production-tag convention text; the pre-existing `agentcontrol:*` candidate image family is preserved as historical evidence and is not renamed, retagged, or deleted by this correction. |
+| Docker label namespace (sandbox/job ownership — primary) | `io.mcp-ide-bridge.*` (`SANDBOX_LABEL_NS`, `src/executor/agents/sandboxSpec.ts:25`) | source constant | `io.quarangate.*` | Authority for A3 sandbox resource cleanup/reconciliation (`isBridgeManaged`, `MANAGED_FILTER`). Drives `LABEL_MANAGED`/`LABEL_RESOURCE`/`LABEL_JOB`/`LABEL_ATTEMPT` and the derived volume/container name prefix `io-mcp-ide-bridge-*`. |
+| Docker label namespace (control/home volumes — inconsistent legacy pair) | `io.mcp-bridge.*` (`src/executor/agents/gitHelper.ts:43-45`) | source constants | `io.quarangate.*` | **Known inconsistency**: uses a *different* namespace than `SANDBOX_LABEL_NS` for the same conceptual ownership/cleanup authority (kinds `home`/`control` in `kiroBackend.ts`). Must be unified under one namespace at cutover — see §47.4. |
+| Docker label namespace (target opt-in discovery) | `mcp.bridge.*` (`enabled`/`workspace`/`name`) — `src/executor/targets.ts:12-14` | source constants | `io.quarangate.discover.*` (proposed) or fold into `io.quarangate.*` | A **third**, functionally distinct namespace (target discovery, not job/resource ownership) not explicitly anticipated by the N1C task brief but discovered during the register build. Written by operator-authored target Compose files (`review-target`, `test-target`, `assistant-environment-*`); read by `src/executor/targets.ts`. |
+| Evidence volume prefix | `io-mcp-ide-bridge-evidence-` (`EVIDENCE_VOLUME_PREFIX`, `src/executor/agents/evidenceCollector.ts:54`) | source constant | `io-quarangate-evidence-` | See §47.5. |
+| Sandbox resource name prefix | `io-mcp-ide-bridge-{ws,runner,stager}-<jobId>` (derived from `SANDBOX_LABEL_NS.replace('.','-')`, `sandboxSpec.ts`) | source constant | `io-quarangate-{ws,runner,stager}-<jobId>` | Single source of truth — changing `SANDBOX_LABEL_NS` changes all derived names atomically. Low migration risk (ephemeral, job-scoped, torn down on job completion). |
+| Target IDs | `demo` (`config/bridge.example.yaml`) | example config | unchanged | Already a generic logical id, not product-branded. **FALSE_POSITIVE** for renaming — see §47.7. |
+| Target composeProject values | `mcp-ide-bridge-testtarget`, `mcp-ide-bridge-review` | `config/bridge.example.yaml`, target compose files | follows Compose project rename | Client-facing `id` (`demo`) is stable regardless of this. |
+| Host secret path | `/home/herman/.config/mcp-ide-bridge/kiro-api-key` (`compose.yaml` secret default `${AGENT_KIRO_KEY_FILE:-...}`) | `compose.yaml` | `/home/herman/.config/quarangate/kiro-api-key` (proposed) | See §47.8. In-container mount path `/run/secrets/kiro-api-key` (`RUNNER_SECRET_PATH`, `credentialManager.ts`) is **not** product-branded — no change needed there. |
+| GitHub remote | `github.com/Herman940306/AgentControl` (git remote; also `org.opencontainers.image.source` example in `docs/OPERATIONS.md`) | `git remote`, doc example | `github.com/Herman940306/QuaranGate` | Not renamed in N1C. See §47.10. |
+| Credential prefix family | `mcpb_`, `mcpb_at_`, `mcpb_rt_`, `mcpb_ac_` (`src/gateway/auth/apikeys.ts`, `oauth.ts`, `index.ts`, `src/shared/redact.ts`) | source constants | **unchanged, permanently** | **PRESERVE_COMPATIBILITY.** Security/credential-classification infrastructure; the `mcp` letters here are opaque namespace, not branding. Explicitly frozen by steering decision — never rename. |
+
+## 47.4 Label compatibility design (design only — not implemented)
+
+Preferred model on future cutover:
+
+```text
+READ (target/resource discovery, reconciliation, cleanup):
+  io.quarangate.*        (new, written after cutover)
+  io.mcp-ide-bridge.*     (legacy — sandbox/job ownership)
+  io.mcp-bridge.*         (legacy — control/home volume ownership)
+  mcp.bridge.*            (legacy — target opt-in discovery; distinct purpose, see below)
+
+WRITE (after cutover):
+  io.quarangate.* only
+```
+
+- **Writer locations to change at cutover:** `src/executor/agents/sandboxSpec.ts` (`SANDBOX_LABEL_NS`
+  constant — single change point for the primary namespace), `src/executor/agents/gitHelper.ts`
+  (`LABEL_MANAGED`/`LABEL_RESOURCE`/`LABEL_JOB` constants — must be unified onto the same namespace
+  as `sandboxSpec.ts` rather than migrated to a *second* new namespace, closing the existing
+  inconsistency permanently), `src/executor/targets.ts` (discovery labels — separate decision,
+  since these are operator-authored in target Compose files, not bridge-written).
+- **Reader/reconciliation locations:** `isBridgeManaged()` (`sandboxSpec.ts`), any Docker `filters`
+  query using `MANAGED_FILTER`, `src/executor/agents/evidenceCollector.ts` reconciliation sweeps.
+  These must accept **any** of the legacy namespaces OR the new one during the compatibility window.
+- **Evidence collector locations:** `evidenceCollector.ts` label-based filtering for
+  cleanup/orphan-detection must recognize both legacy prefixes and the new prefix so historical
+  evidence remains classifiable.
+- **Cleanup/lifecycle locations:** retained-resource lifecycle (Lane A/B, `docs/AGENT_CONTROL_PLANE.md`
+  §12) must not silently stop recognizing legacy-labeled resources as bridge-managed — that would
+  either orphan them (never cleaned up) or misclassify them (cleaned up without eligibility proof).
+- **Tests requiring compatibility coverage:** unit tests for `isBridgeManaged()` /
+  `MANAGED_FILTER` construction must add cases for legacy-namespace-labeled resources continuing to
+  be recognized; integration tests covering resource cleanup must verify both label families are
+  swept correctly during the compatibility window.
+- The opt-in discovery family `mcp.bridge.*` is a **separate decision** from the two ownership
+  namespaces above — it is operator-authored (lives in target Compose files the operator controls,
+  including files outside this repo for real projects), so changing it has an external-compatibility
+  cost the internal ownership labels do not have. Recommend treating it as its own longer-lived
+  compatibility window, independent of the sandbox/job label unification.
+
+No behavioral change is made in N1C. This is the design record for N1D.
+
+## 47.5 Evidence namespace compatibility design (design only)
+
+Current: `EVIDENCE_VOLUME_PREFIX = 'io-mcp-ide-bridge-evidence-'` (`evidenceCollector.ts:54`).
+
+Design constraints for the future QuaranGate-created evidence namespace (`io-quarangate-evidence-`):
+
+- Old evidence volumes remain **discoverable** by reconciliation/cleanup code recognizing both
+  prefixes for the duration of the compatibility window.
+- **UNCERTAIN**/quarantine semantics (`docs/AGENT_CONTROL_PLANE.md` project quarantine state) must
+  not be affected by which prefix an evidence volume carries — quarantine keys off job/project
+  metadata in the SQLite store, not the Docker volume name, so this is expected to be safe, but must
+  be explicitly verified before cutover.
+- Retained-resource lifecycle (Lane A expiry, Lane B incomplete-evidence classification) must treat
+  both prefixes identically for eligibility proofs; do not special-case one prefix as "old, delete
+  faster."
+- No destructive migration of historical evidence objects. New evidence is created under the new
+  prefix after cutover; old evidence is left in place and ages out under its existing retention
+  policy, unchanged.
+- Rollback: if N1D cutover must be reversed, evidence created under the new prefix during the
+  cutover window must remain discoverable by pre-cutover code paths, or cutover must be scheduled
+  during a window with no in-flight agent jobs (see §47.11 rollback conditions).
+
+## 47.6 Persistent volume decision register
+
+| Volume | Current name | Contains | Risk of rename | Recommendation |
+|---|---|---|---|---|
+| Gateway data | `mcp-bridge-data` | Hashed OAuth token state only (`docs/OPERATIONS.md`: "safe to drop; clients simply re-authorize") | Low — documented as disposable | **APPROVED — Option A** (§47.13, DECISION-1): replace/recreate under the QuaranGate identity at N1D cutover |
+| Executor jobs | `mcp-bridge-jobs` | Durable SQLite job engine + evidence metadata (`AGENT_JOB_SCHEMA_VERSION`, retained-resource lifecycle state) | High — durable, schema-versioned, referenced by retained-resource lifecycle and quarantine logic | **APPROVED — Option B** (§47.13, DECISION-2): retain the physical legacy volume name; Compose may reference it via a neutral logical key |
+| Review-target scratch | `mcp-bridge-review-node-modules`, `mcp-bridge-review-dist` | Rebuildable build/test cache | None — fully disposable | Rename freely at cutover; no decision needed |
+
+Rename-vs-retain is now recorded in §47.13 as an approved, governing constraint for N1D execution
+for both stakeful volumes. Neither volume is mutated by N1C.
+
+## 47.7 Target ID compatibility design
+
+Target IDs (`config/bridge.yaml` `targets[].id`, e.g. `demo`) are already generic, logical, and
+disconnected from the product name — they were designed for exactly this kind of rebrand
+(`README.md`: "Callers address logical identifiers... never host paths, container images..."). No
+target ID currently embeds `AgentControl`/`mcp-ide-bridge`/`mcp-bridge` branding.
+
+What *does* embed the legacy name is the **Compose project** a target resolves through
+(`composeProject: mcp-ide-bridge-testtarget`), which is a `config/bridge.yaml` implementation detail,
+not a value any external client, saved MCP config, or ChatGPT/Claude connector authorization
+references. Renaming the Compose project (§47.3) therefore only requires updating
+`config/bridge.yaml`/`config/bridge.example.yaml` and the corresponding target `compose.yaml` files
+in lockstep — it does not break external client configuration, prompts, or saved authorizations,
+because those only ever reference the target `id`.
+
+**Recommendation:** no alias/dual-registration strategy is needed for target IDs themselves; a
+coordinated hard cutover of the `composeProject` values (recreate the named target stacks, update
+`config/bridge.yaml`, verify `targets_list`/`target_inspect` resolve correctly) is sufficient and
+safe. This is **not** classified `N1D_USER_DECISION_REQUIRED` — it has no meaningful architectural
+alternative worth choosing between.
+
+## 47.8 Host secret path migration design
+
+Current: `/home/herman/.config/mcp-ide-bridge/kiro-api-key` (`compose.yaml` secret file default,
+`${AGENT_KIRO_KEY_FILE:-...}`). Delivered read-only into the executor only, `0400`, never the
+gateway; the in-container mount path `/run/secrets/kiro-api-key` is unrelated and unbranded.
+
+Design for future migration (not implemented in N1C):
+
+- **Precedence during the compatibility window:** if `AGENT_KIRO_KEY_FILE` is explicitly set in
+  `.env`, it always wins (this is already true today — no change needed for that case). If unset,
+  the default should check the new path first
+  (`/home/herman/.config/quarangate/kiro-api-key`) and fall back to the legacy path
+  (`/home/herman/.config/mcp-ide-bridge/kiro-api-key`) only if the new path does not exist, to avoid
+  silently picking up a stale key after a manual copy.
+- **Avoid duplicate uncontrolled copies:** the migration step should be a `mv`, not a `cp`, once the
+  operator confirms the new path is correct — otherwise two live copies of the same credential exist
+  with no single source of truth.
+- **Sunset criteria:** the legacy-path fallback should be removed only after (a) `.env` is confirmed
+  to reference the new path explicitly or the file has been moved, and (b) the executor has
+  successfully started at least once against the new path.
+- **No wider permissions:** the migrated file must be created/moved preserving `0600` (or stricter)
+  host permissions and the existing herman-owned ownership; the Compose secret mount already forces
+  `0400`/`uid:gid 1000:1000` inside the container regardless of host permissions.
+- Timing is **APPROVED — Option B** (§47.13, DECISION-4): migrate as a separate, controlled N1D
+  substep, not bundled with the Compose/runtime cutover. The mechanism above (new-first /
+  legacy-fallback, `mv` not `cp`, ownership/permission preservation, verify-before-fallback-removal)
+  is the approved migration behavior. Who physically performs the `mv` remains unauthorized for this
+  tooling without separate explicit authorization.
+
+## 47.9 Environment variable review
+
+Searched all `AGENT_*`/`BRIDGE_*` identifiers in `src/**`, `compose.yaml`, and `.env.example`.
+Full list found: `AGENT_APPLY_ATTEMPT_ACTIVE_STATES`, `AGENT_APPLY_ATTEMPT_ID_PATTERN`,
+`AGENT_APPLY_ATTEMPT_STATES`, `AGENT_APPLY_ATTEMPT_TRANSITIONS`,
+`AGENT_APPLY_ATTEMPT_ZERO_MUTATION_TERMINALS`, `AGENT_BACKEND_IDS`, `AGENT_CONTROL_PLANE`,
+`AGENT_FAILURE_CODES`, `AGENT_HELPER_IMAGE`, `AGENT_JOB_ACTIVE_STATUSES`, `AGENT_JOB_DISPOSITIONS`,
+`AGENT_JOB_ID_PATTERN`, `AGENT_JOB_SCHEMA_VERSION`, `AGENT_JOB_STATUSES`, `AGENT_JOB_TRANSITIONS`,
+`AGENT_KIRO_DRY_RUN`, `AGENT_KIRO_KEY_FILE`, `AGENT_KIRO_KEY_PATH`, `AGENT_MODEL_CLASSES`,
+`AGENT_NETWORK_POLICIES`, `AGENT_PROFILE_IDS`, `AGENT_PROJECT_APPLY_STATES`,
+`AGENT_PROJECT_ID_PATTERN`, `AGENT_PROXY_IMAGE`, `AGENT_RETENTION_CLASSES`,
+`AGENT_RETENTION_DURATION_MS`, `AGENT_RUNNER_IMAGE`, `AGENT_TOOL_NAMES`,
+`AGENT_TOOL_REQUIRED_SCOPE`, `AGENT_TOOL_SCHEMAS`, `AGENT_WRITER_POLICY_V1`; `BRIDGE_CONFIG`,
+`BRIDGE_PORT`, `BRIDGE_PUBLIC_URL`, `BRIDGE_URL`.
+
+Every one of these is a generic domain-concept name (agent job lifecycle, bridge networking) — none
+embeds `AgentControl`, `mcp-ide-bridge`, or `mcp-bridge` branding, and none is a literal env var name
+a user sets that says "AgentControl" or similar.
+
+**`ENV_RENAME_REQUIRED: NO`.** Per frozen policy, these are kept as-is; no `QUARANGATE_*` aliases are
+introduced.
+
+## 47.10 GitHub repository rename
+
+Current remote: `https://github.com/Herman940306/AgentControl.git`. Future:
+`Herman940306/QuaranGate`. N1C runs before the rename; no origin change and no repository rename
+occur in N1C or are authorized by this document. `docs/OPERATIONS.md`'s
+`org.opencontainers.image.source` build-label example continues to reference the current, accurate
+URL rather than a URL that would be false if used today. The rename itself, and updating that
+example plus the git remote, are §47.11 "Repository identity" steps (7-9), approved to occur before
+any runtime mutation per §47.13 DECISION-3, and require Herman's explicit action (GitHub UI/API
+rename is not reversible by this tooling and is out of scope for any automated step here).
+
+## 47.11 N1D cutover plan (design only — not executed)
+
+Step ordering below implements §47.13 DECISION-3 (Option C, APPROVED): repository/GitHub identity
+migration completes first; the controlled runtime identity cutover is a separate, later operation.
+High-level phases: N1C accepted → repository identity commit → push → GitHub repository rename →
+origin update/verification → N1D compatibility implementation → controlled runtime identity cutover
+→ post-cutover acceptance → G4 definitive QuaranGate build/deployment.
+
+### Pre-cutover
+
+1. Confirm Git worktree clean and all N1C candidate changes committed (this document's own hygiene
+   gate, §24 equivalent for N1C).
+2. Snapshot: `docker compose ps`, `docker network ls`, `docker volume ls`, `docker image ls`
+   filtered to bridge-owned resources, recorded verbatim as the rollback baseline.
+3. Back up `mcp-bridge-data` and `mcp-bridge-jobs` volumes (`docker run --rm -v mcp-bridge-data:/from
+   -v <backup-path>:/to alpine tar czf /to/mcp-bridge-data.tgz -C /from .`, same pattern for
+   `mcp-bridge-jobs`) — a safety net regardless of the approved §47.13 DECISION-1 (Option A,
+   recreate empty) and DECISION-2 (Option B, retain in place) outcomes.
+4. Record OAuth/job/evidence state checksums (row counts, latest job id, latest `retain_until`) as an
+   independent recovery cross-check beyond the raw volume backup.
+5. Inventory every configured target/client (`config/bridge.yaml`, `config/clients.yaml`) and every
+   external MCP client configuration in use (Claude connector, ChatGPT connector, VS Code
+   `.vscode/mcp.json`, Kiro `~/.kiro/settings/mcp.json`) so post-cutover acceptance has a concrete
+   checklist.
+6. Confirm the rollback anchor: current commit SHA, current running image digests for gateway and
+   executor.
+
+### Repository identity (DECISION-3 Option C — completes before any runtime mutation)
+
+7. Push all N1C-committed changes to `origin` — repository identity must be finalized and in sync
+   with the remote before the GitHub rename, so the rename acts on the canonical committed state.
+8. GitHub repository rename `Herman940306/AgentControl` → `Herman940306/QuaranGate` (Herman-performed,
+   not automatable from this worktree).
+9. Update local `git remote set-url origin` to the renamed URL; verify `git remote -v` and a
+   `git fetch` succeed against the renamed origin before proceeding.
+
+### N1D compatibility implementation (deployed and verified before runtime cutover)
+
+10. Enable label dual-read (§47.4): deploy the code change that writes `io.quarangate.*` and reads
+    all of `io.quarangate.*` / `io.mcp-ide-bridge.*` / `io.mcp-bridge.*`. This must be live and
+    verified (unit/integration coverage passing) before step 13 begins recreating any container
+    under the new identity — reads must be compatibility-aware *before* writes change, never after.
+11. Evidence namespace: deploy the `EVIDENCE_VOLUME_PREFIX` dual-recognition change (§47.5) alongside
+    the label change in the same release.
+
+### Controlled runtime identity cutover
+
+12. Build and tag images under the new convention: `quarangate:gateway-<sha>`,
+    `quarangate:executor-<sha>` (§47.3); do not delete the prior `mcp-ide-bridge:latest`-tagged
+    images, nor the pre-existing `agentcontrol:*` candidate family, until post-cutover acceptance
+    passes (§47.13 DECISION-5).
+13. Compose project transition: rename `name:` in `compose.yaml`/target compose files to
+    `quarangate*` and recreate.
+14. Container recreation under the new project name (`docker compose up -d --force-recreate`).
+15. Network transition: recreate `edge`/`internal` networks under new names; Compose recreates
+    networks automatically on `up` after a `name:` change — verify no other stack references the old
+    network names before removing them.
+16. Persistent-volume treatment per §47.13 DECISION-1 (Option A: recreate `mcp-bridge-data` as
+    `quarangate-data`, empty — clients re-authorize once) and DECISION-2 (Option B: retain
+    `mcp-bridge-jobs` under its existing physical name, mounted explicitly by the new Compose project
+    under a neutral logical key).
+17. Target-ID transition: update `composeProject` values in `config/bridge.yaml` to match step 13;
+    target `id` values (e.g. `demo`) do not change (§47.7).
+18. Secret-path transition per §47.13 DECISION-4 (Option B: separate controlled substep, not bundled
+    with this cutover): once separately authorized, move (not copy) the host secret file per §47.8,
+    update `AGENT_KIRO_KEY_FILE` in `.env`, and retain the legacy-path fallback until a later
+    compatibility closeout.
+19. Gitignored runtime config reconciliation: update any stale local comments in
+    `config/agents.yaml`/`config/clients.yaml` identified as `NONBLOCKING_LOCAL_RUNTIME_FOLLOWUP`
+    (§47.15) — these files were absent in the N1C worktree and must be checked in the live deployment
+    worktree at this step.
+
+### Post-cutover acceptance
+
+20. Auth acceptance: existing API keys and OAuth tokens continue to authenticate (they are
+    per-principal, not tied to any renamed identifier).
+21. `targets_list`, `target_inspect` resolve all configured targets under their new
+    `composeProject` values.
+22. IDE RO/RW operations (`fs_*`, `terminal_exec`, `git_*`, `process_list`) succeed against a
+    representative target.
+23. `agents_list`, `agent_projects` return the expected trusted registry.
+24. Agent project/backend/profile discovery matches pre-cutover configuration.
+25. `agent_dispatch`/`agent_status`/`agent_result` round-trip on a disposable test job.
+26. `agent_diff`/`agent_apply`/`agent_discard` exercised on a disposable test job, including a
+    verification that `agent_apply` guarded-path and base-state checks still function.
+27. Old evidence (pre-cutover jobs) remains visible via `agent_result`/`agent_diff` for jobs created
+    before cutover.
+28. New evidence (post-cutover jobs) is created under the new prefix and is equally visible.
+29. Retained-resource lifecycle correctly ages out both old- and new-prefixed evidence per policy.
+30. Restart proof: `docker compose restart` (or full recreate) preserves all of the above.
+31. Provenance/readiness: `/healthz`, `/readyz`, and OCI image labels reflect the new build.
+32. Real ChatGPT browser acceptance: reconnect the existing custom connector (or reauthorize if the
+    public URL changed) and re-verify `targets_list`, read/write/delete round-trip.
+33. Real Claude browser acceptance: same as above for the Claude custom connector.
+
+### G4 — definitive build/deployment
+
+34. Only after all of steps 20-33 pass: G4 definitive QuaranGate build/deployment from the final
+    committed state. §47.13 DECISION-5's obsolete-image-tag removal gates on this same acceptance
+    list (QuaranGate runtime accepted, restart proof, ChatGPT acceptance, Claude acceptance,
+    readiness/provenance proof, rollback no longer required). G4 execution and scope are not
+    authorized by this document.
+
+### Rollback
+
+Trigger rollback if, at any point in cutover or post-cutover acceptance:
+
+```text
+gateway or executor fails to start against renamed volumes/networks
+label dual-read fails to recognize legacy-labeled resources (orphan risk)
+evidence for a pre-cutover job becomes unreadable
+agent_apply guarded-path or base-state verification regresses
+any existing client (Claude/ChatGPT/VS Code/Kiro) fails to authenticate or fails a smoke test
+job-store schema migration fails or the SQLite DB fails integrity check
+```
+
+Rollback restores: the pre-cutover image tags (still present per step 12), the pre-cutover Compose
+project name/network/volume names (not deleted until acceptance passes), and — only if data
+corruption is suspected — the volume backups taken in pre-cutover step 3. A rollback that only
+reverts naming (no data corruption) requires no volume restore, only recreating containers against
+the original names; DECISION-1/DECISION-2 are approved as Option A (recreate) and Option B (retain)
+respectively, so DECISION-2's volume is never removed and DECISION-1's volume rollback is simply
+re-pointing at the still-present legacy `mcp-bridge-data` volume (not deleted until acceptance
+passes).
+
+## 47.12 (reserved — see §47.6 for the volume decision register; kept together with related content
+above rather than duplicated here)
+
+## 47.13 User decisions — APPROVED (governing constraints for N1D)
+
+Herman reviewed and approved DECISION-1 through DECISION-5 below during N1C R1 decision recording
+(2026-08-22). These are **FINAL** for N1D planning and execution unless Herman later explicitly
+reopens them. None are implemented by N1C — approval records the governing policy; implementation
+remains a separate, explicitly authorized N1D action. Alternatives considered, reasoning, and risks
+from the original decision analysis are preserved below alongside each approved outcome.
+
+**DECISION-1 — `mcp-bridge-data` (gateway OAuth volume): rename or retain?**
+- Current state: named `mcp-bridge-data`; documented as safe to drop (hashed OAuth state only).
+- Option A: rename to `quarangate-data` at cutover (recreate empty; all clients re-authorize once).
+- Option B: retain the legacy name indefinitely; only rename the Compose project around it.
+- Original recommendation: **Option A.** Data is explicitly disposable and re-authorization is a
+  one-time, low-friction event (paste API key on `/oauth/authorize`).
+- Why: lowest long-term naming debt, no data-loss risk since the content is safe to lose by design.
+- Risk A: brief re-auth friction for every connected browser client after cutover.
+- Risk B: the legacy name persists forever, undermining the rename's own purpose for this volume.
+- **APPROVED: Option A.** Replace/recreate `mcp-bridge-data` under the QuaranGate runtime identity
+  at N1D cutover. Herman's stated reasoning: documented low-stakes/disposable data; no benefit in
+  retaining obsolete physical branding; do not copy unnecessary state merely to preserve the old
+  name. Do not perform this volume change before N1D cutover.
+
+**DECISION-2 — `mcp-bridge-jobs` (durable agent job/evidence store): rename or retain?**
+- Current state: named `mcp-bridge-jobs`; contains the schema-versioned SQLite job engine, retained
+  evidence metadata, and quarantine state referenced by the retained-resource lifecycle.
+- Option A: rename to `quarangate-jobs`, migrate data via `docker run` volume-to-volume copy,
+  verified against a pre-cutover backup before the old volume is removed.
+- Option B: retain the legacy volume name indefinitely; only rename the Compose project around it.
+- Option C: create a new empty `quarangate-jobs` volume and treat all pre-cutover jobs as frozen
+  historical evidence accessible only via a documented legacy-volume-mount procedure.
+- Original recommendation: **Option B.** This volume is high-value, schema-versioned, and
+  referenced by quarantine/retention logic; a byte-for-byte copy carries needless risk for a purely
+  cosmetic gain, and retaining the name has no functional cost (it is never client-visible).
+- Why: rollback complexity and backup/copy risk outweigh cosmetic benefit for a durable data store.
+- Risk A (rename+copy): copy failure or partial copy corrupts the live job store.
+- Risk B (retain): the legacy name is permanent for this volume specifically.
+- Risk C (fork): operational complexity of two job stores; historical evidence becomes harder to
+  reach through normal tool calls.
+- **APPROVED: Option B.** Retain the existing physical `mcp-bridge-jobs` volume name. Herman's
+  stated reasoning: durable schema-versioned job state; copy/rename introduces avoidable data and
+  rollback risk; the physical Docker volume name is an internal compatibility artifact, not the
+  canonical product identity. A future Compose project may use a neutral logical key while
+  explicitly mounting the physical volume named `mcp-bridge-jobs`. Do not copy, rename, fork, or
+  mutate this volume before N1D cutover.
+
+**DECISION-3 — Compose/runtime cutover timing relative to repository identity**
+- Current state: `name: mcp-ide-bridge` in `compose.yaml`; determines default container/network
+  names for anything not explicitly named. GitHub remote remains `Herman940306/AgentControl`.
+- Option A: cut over Compose/runtime at the same time as the GitHub repository rename (single
+  coordinated event).
+- Option B: cut over Compose/runtime independently, *ahead of* the GitHub rename, once N1D tooling
+  changes (label dual-read, evidence prefix dual-recognition) are deployed and verified.
+- Original recommendation: **Option B**, gated on the label/evidence compatibility deploy landing
+  first — decouples the (reversible, low-risk) container/network rename from the (harder to
+  reverse) GitHub rename.
+- Why (original): smaller independently-verifiable steps reduce blast radius per change.
+- Risk A: a single large cutover event is harder to isolate if something fails.
+- Risk B (as originally framed — compose first): two separate "cutover" events instead of one, more
+  operator overhead.
+- **APPROVED: Option C (repository identity first, decoupled from and preceding runtime cutover).**
+  This is a third option, distinct from both A and B above: repository/GitHub identity migration
+  completes **first**; live Compose/runtime identity cutover occurs **afterward** as a separate,
+  controlled operation — the reverse ordering from the originally recommended Option B, which put
+  Compose/runtime ahead of the GitHub rename. Herman's stated reasoning: do not bundle the GitHub
+  rename and Docker runtime mutation into one uncontrolled step; canonical repository identity
+  should be settled before any live runtime is touched. Required ordering, superseding both
+  original options and reflected in §47.11:
+  ```text
+  1. N1C accepted
+  2. QuaranGate repository commit
+  3. push
+  4. GitHub AgentControl -> QuaranGate rename
+  5. origin update / repository verification
+  6. N1D compatibility implementation (label dual-read, evidence dual-recognition)
+  7. N1D controlled runtime cutover
+  8. post-cutover acceptance
+  9. G4 definitive QuaranGate build/deployment
+  ```
+  Risk A (original, single coordinated event) and Risk B (original, compose-before-GitHub) are
+  superseded by this ordering; the residual risk under Option C is that repository identity and
+  live runtime identity are visibly out of sync for the duration between step 5 and step 7 — judged
+  acceptable since it is the harder-to-reverse action (GitHub rename) that is resolved first, not
+  left pending behind a runtime change.
+
+**DECISION-4 — Host secret path (`~/.config/mcp-ide-bridge/kiro-api-key`): when to move?**
+- Design in §47.8 (fallback precedence, `mv` not `cp`, sunset criteria). The mechanism is
+  recommended; the timing was not decided.
+- Option A: move at the same time as DECISION-3 (Compose project cutover).
+- Option B: move independently, any time before N1D fully closes out.
+- Original recommendation: **Option A** — bundling reduces the number of distinct "touch the live
+  secret" events.
+- Risk A: coupling means a secret-path issue could block/complicate the Compose cutover.
+- Risk B: an extra, separately-tracked maintenance window.
+- **APPROVED: Option B.** Migrate as a separate, controlled N1D substep — not bundled with the
+  Compose/runtime cutover. Preferred compatibility behavior: new path
+  (`~/.config/quarangate/kiro-api-key`) checked first, legacy path
+  (`~/.config/mcp-ide-bridge/kiro-api-key`) as fallback. Migration requirements: first deploy the
+  read code/config capable of new-first / legacy-fallback; verify legacy fallback still works;
+  migrate with `mv`, not `cp`; preserve owner; preserve restrictive permissions; avoid duplicate
+  uncontrolled secret copies; verify successful read from the new path; retain legacy fallback
+  temporarily; remove the fallback only in a later compatibility closeout. Who physically performs
+  the `mv` is not decided by this approval — this tooling remains unauthorized to move it without
+  separate explicit authorization. Do not move, copy, read secret content, or change permissions
+  before that authorization.
+
+**DECISION-5 — Obsolete image tags: delete after validation, or retain?**
+- Current state: N1D will produce new `quarangate:gateway-<sha>`/`executor-<sha>` images alongside
+  existing `mcp-ide-bridge:latest`-tagged images (and the pre-existing `agentcontrol:*` candidate
+  family — see §47.3, §47.14's image-history correction).
+- Option A: delete the old dev-default tag once post-cutover acceptance (§47.11 acceptance steps)
+  fully passes.
+- Option B: retain both indefinitely as a manual rollback convenience.
+- Original recommendation: **Option B** for one full operational cycle after cutover (e.g., until
+  the next planned rebuild), then delete — balances rollback convenience against indefinite
+  disk/registry growth.
+- Risk A: faster cleanup, less rollback convenience if a delayed issue surfaces.
+- Risk B: stale images accumulate if "one cycle" is never revisited.
+- **APPROVED: Option B, with explicit completion criteria (supersedes the original "one operational
+  cycle" framing with concrete gates).** Retain previous known-good legacy images for one validated
+  rollback cycle. Remove obsolete image tags/images only after **all** of the following succeed:
+  - QuaranGate runtime cutover succeeds
+  - restart/recreation succeeds
+  - real ChatGPT MCP acceptance succeeds
+  - real Claude MCP acceptance succeeds
+  - provenance/readiness checks succeed
+  - rollback is no longer required for the validation cycle
+
+  Do not delete, tag, or build images before N1D cutover.
+
+## 47.14 What N1C actually changed (source-behavior boundary)
+
+N1C changed only current-facing identity/documentation: `README.md`, this document's header and
+this §47, `docs/CLIENT_SETUP.md` (two JSON example server-name strings, to match the N1B-updated
+`config/*.example.json` files they mirror), `docs/OPERATIONS.md` (the `agentcontrol:` → `quarangate:`
+production image-tag *convention* text, to stay consistent with the equivalent comment N1B already
+updated in `compose.yaml`; the literal SHA-only convention text was never built under either name,
+though a related `agentcontrol:gateway-candidate-<sha>` image family exists as separate historical
+evidence — see §47.3), and `compose.yaml`'s top-of-file comment (text only; the `name:` field itself
+is untouched). No label read/write
+behavior, no volume/network/image naming, no target resolution, no secret path, no Docker
+orchestration, no auth, and no schema changed. Everything in §47.3–§47.13 is a design record for a
+future, separately authorized N1D change.
+
+## 47.15 Gitignored local runtime config follow-up
+
+`config/agents.yaml` and `config/clients.yaml` do not exist in this N1C worktree (gitignored, and
+absent — only their committed `.example` counterparts are present). The task brief noted "known
+stale local comments were previously observed" in these files; that could not be verified from this
+worktree. Classified **NONBLOCKING_LOCAL_RUNTIME_FOLLOWUP** — check these files for stale
+identity comments in the live deployment worktree at N1D cutover step 19 (§47.11).
+
+---
+
+# END — QUARANGATE MASTER PRD v1.0

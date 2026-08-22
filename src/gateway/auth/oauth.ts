@@ -327,9 +327,9 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
     let redirectHost = 'registered client';
     try { redirectHost = new URL(redirect_uri).host; } catch { /* already validated */ }
     secureHtml(res, redirect_uri);
-    res.type('html').send(`<!doctype html><html><head><meta charset=utf-8><title>Authorize MCP IDE Bridge</title>
+    res.type('html').send(`<!doctype html><html><head><meta charset=utf-8><title>Authorize QuaranGate</title>
 <style>body{font-family:system-ui;max-width:460px;margin:6rem auto;padding:1rem}input{width:100%;padding:.6rem;margin:.4rem 0;box-sizing:border-box}button{padding:.6rem 1rem}</style></head>
-<body><h2>MCP IDE Bridge</h2><p>Authorize connection to <strong>${escapeHtml(redirectHost)}</strong>.</p><p>Paste the API key for the intended bridge client principal.</p>
+<body><h2>QuaranGate</h2><p>Authorize connection to <strong>${escapeHtml(redirectHost)}</strong>.</p><p>Paste the API key for the intended bridge client principal.</p>
 <form method="POST" action="/oauth/authorize">
 <input type="password" name="apikey" placeholder="mcpb_..." autocomplete="off" required>
 <input type="hidden" name="response_type" value="code">

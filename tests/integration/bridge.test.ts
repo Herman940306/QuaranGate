@@ -6,7 +6,7 @@ import { BASE, connect, callTool, loadKeys, rawInitialize } from './helpers.js';
 const keys = loadKeys();
 const T = 'demo';
 
-describe('MCP IDE Bridge — integration (live stack)', () => {
+describe('QuaranGate — integration (live stack)', () => {
   let vscode: Client;
   let readonly: Client;
 
@@ -118,7 +118,7 @@ describe('MCP IDE Bridge — integration (live stack)', () => {
       expect(csp).toContain("form-action 'self'");
       expect(csp).toContain(new URL(redirectUri).origin);
       expect(csp).not.toContain('https://attacker.example');
-      expect(await page.text()).toContain('Authorize MCP IDE Bridge');
+      expect(await page.text()).toContain('Authorize QuaranGate');
 
       const approve = await fetch(`${BASE}/oauth/authorize`, {
         method: 'POST',

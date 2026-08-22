@@ -221,7 +221,7 @@ export function bridgeAgentConfig(name: string, opts: { write?: boolean } = {}):
     return {
       name,
       description: 'Bridge-controlled sandbox implementation agent (writes ONLY inside the disposable job workspace).',
-      prompt: 'You are an implementation agent operating inside the MCP IDE Bridge disposable '
+      prompt: 'You are an implementation agent operating inside the QuaranGate disposable '
         + 'job sandbox. You may read files, search with grep, list with glob, and CREATE or '
         + 'MODIFY files ONLY within your workspace. You must NEVER use shell, terminal, web, '
         + 'MCP, AWS, subagents, delegation, or any tool not explicitly available. Do not '
@@ -245,7 +245,7 @@ export function bridgeAgentConfig(name: string, opts: { write?: boolean } = {}):
   return {
     name,
     description: 'Bridge-controlled read-only analysis agent.',
-    prompt: 'You are a read-only code analysis agent inside the MCP IDE Bridge sandbox. '
+    prompt: 'You are a read-only code analysis agent inside the QuaranGate sandbox. '
       + 'You may ONLY read files, search with grep, and list with glob. You must NEVER '
       + 'attempt to write, modify, delete, or execute anything, and NEVER use shell, '
       + 'terminal, web, MCP, or any tool not explicitly available.',

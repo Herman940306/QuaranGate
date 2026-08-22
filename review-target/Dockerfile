@@ -1,4 +1,4 @@
-# Read-only review target for the mcp-ide-bridge repository.
+# Read-only review target for the QuaranGate repository.
 #
 # Derived from node:24-alpine to preserve the Node/npm toolchain already
 # present in that image (used for npm ci, type-check, test runs against

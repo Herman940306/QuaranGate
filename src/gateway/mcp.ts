@@ -105,7 +105,7 @@ const EXEC_RESULT_SCHEMA = {
 
 export function buildServer(): McpServer {
   const server = new McpServer(
-    { name: 'mcp-ide-bridge', version: '0.1.0' },
+    { name: 'quarangate', version: '0.1.0' },
     { capabilities: { tools: {} }, instructions: 'Two governed surfaces. IDE tools (files, terminal, git, processes) act on a single explicitly authorized Docker target, named by a `target` id from targets_list. Agent Control Plane tools take no `target`: they dispatch and manage durable agent jobs against configured projects, backends and profiles under separate authorization. Agent work becomes reviewable evidence; applying it to a real project is a distinct guarded call (agent_apply).' },
   );
 
