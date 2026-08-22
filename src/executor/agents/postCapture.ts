@@ -42,7 +42,7 @@ import { Readable } from 'node:stream';
 import { extract as tarExtract } from 'tar-stream';
 import { BridgeError } from '../../shared/errors.js';
 import {
-  validateTarEntryPath, assertNoEscape,
+  canonicalizeWorkspaceEntryPath, stripWorkspaceArchiveRoot, assertNoEscape,
 } from './beforeCapture.js';
 import type { SnapshotEntry } from './canonicalJson.js';
 
@@ -194,13 +194,17 @@ export async function parsePostTarStream(
       const rawPath: string = header.name ?? '';
       let relPath: string;
       try {
-        relPath = validateTarEntryPath(rawPath);
+        // Identical canonicalization to BEFORE (beforeCapture.parseTarStream):
+        // the same real project file MUST produce the same relPath on both
+        // sides, or change detection and apply resolve different paths.
+        relPath = canonicalizeWorkspaceEntryPath(rawPath);
       } catch (e) {
         stream.resume();
         fail(e);
         return;
       }
 
+      // Empty/self entries, and the '/workspace' archive root itself — skip
       if (relPath === '') {
         stream.resume();
         next();
@@ -406,10 +410,16 @@ export async function parsePostTarStream(
       case 'hardlink': {
         // Attempt to resolve hardlink to canonical file content
         const target = raw.linkTarget ?? '';
-        // Normalize the target path the same way tar entry paths are normalized
+        // Normalize the target path the same way tar entry paths are normalized,
+        // INCLUDING the archive-root strip: hashByPath is keyed by canonical
+        // relPath, and Docker names hardlink targets with the same
+        // 'workspace/' prefix it puts on entry names. Kept lenient (no throw)
+        // so a malformed link degrades to 'unsupported' exactly as before; the
+        // '..' guard below is unchanged.
         let normalizedTarget = target;
         if (normalizedTarget.startsWith('/')) normalizedTarget = normalizedTarget.slice(1);
         else if (normalizedTarget.startsWith('./')) normalizedTarget = normalizedTarget.slice(2);
+        normalizedTarget = stripWorkspaceArchiveRoot(normalizedTarget);
 
         const resolvedHash = hashByPath.get(normalizedTarget);
         if (resolvedHash !== undefined &&

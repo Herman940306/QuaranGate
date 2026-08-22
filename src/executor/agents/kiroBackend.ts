@@ -77,6 +77,14 @@ const RUNNER_CONTROL_FILE = `${RUNNER_CONTROL_PATH}/control.json`;
 /** Runner-internal ACP driver entrypoint (delivered on the control volume). */
 const RUNNER_DRIVER_ENTRY = `${RUNNER_CONTROL_PATH}/executor/agents/runnerMain.js`;
 
+/**
+ * Where the B2/B3 evidence volume is mounted READ-WRITE inside every evidence
+ * helper container. Those helpers keep `ReadonlyRootfs: true`, so this mount is
+ * their ONLY writable location: it is both the Mount Target and the putArchive
+ * target, so the two can never diverge.
+ */
+const EVIDENCE_PATH = '/evidence';
+
 /** Assistant-text bound carried into the runner result (kept small). */
 const MAX_ASSISTANT_BYTES = 16 * 1024;
 
@@ -464,6 +472,55 @@ export function buildCleanupHelperSpec(
       PidsLimit: 4,
     },
   };
+}
+
+/** A single tar entry in an evidence-write archive. Names are target-relative. */
+export interface EvidenceArchiveEntry {
+  name: string;
+  type: 'file' | 'directory';
+  mode: number;
+  content?: Buffer;
+}
+
+/** A putArchive target and the tar entries to extract into it. */
+export interface EvidenceWriteArchive {
+  /**
+   * putArchive target. MUST be the writable evidence mount, never '/': the
+   * evidence helper runs with ReadonlyRootfs=true, so extracting at '/' is
+   * rejected by the daemon with "container rootfs is marked read-only".
+   */
+  target: string;
+  /**
+   * tar entries, named RELATIVE to `target`. Never prefixed with the mount
+   * path — that would extract to <target>/evidence/... (duplicated nesting).
+   */
+  entries: EvidenceArchiveEntry[];
+}
+
+/**
+ * Plan the archive that writes one file onto the evidence volume.
+ * Production EvidenceVolumeIO.writeFile() MUST use this exact function.
+ * Exported for unit testing.
+ *
+ * @param path - Volume-relative destination path (per the EvidenceVolumeIO
+ *   contract), e.g. `.b3-temp/blobs/ab/<sha256>` or `artifact-manifest.json`
+ * @param content - Exact bytes to store
+ */
+export function buildEvidenceWriteArchive(path: string, content: Buffer): EvidenceWriteArchive {
+  const entries: EvidenceArchiveEntry[] = [];
+
+  // Parent directories, named relative to the target. The evidence volume root
+  // itself is never re-created (the loop starts at the first path segment).
+  const parts = path.split('/');
+  let dir = '';
+  for (let i = 0; i < parts.length - 1; i++) {
+    dir += parts[i] + '/';
+    entries.push({ name: dir, type: 'directory', mode: 0o755 });
+  }
+
+  entries.push({ name: path, type: 'file', mode: 0o644, content });
+
+  return { target: EVIDENCE_PATH, entries };
 }
 
 // ---------------------------------------------------------------------------
@@ -1134,7 +1191,7 @@ export class KiroBackend {
             CapDrop: ['ALL'],
             SecurityOpt: ['no-new-privileges'],
             NetworkMode: 'none',
-            Mounts: [{ Type: 'volume', Source: evidenceVol, Target: '/evidence', ReadOnly: false }],
+            Mounts: [{ Type: 'volume', Source: evidenceVol, Target: EVIDENCE_PATH, ReadOnly: false }],
             Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=1m' },
             Memory: 64 * 1024 * 1024,
             PidsLimit: 8,
@@ -1152,7 +1209,7 @@ export class KiroBackend {
     return {
       async readFile(path: string): Promise<Buffer> {
         return withHelper(async (cid) => {
-          const { body } = await getArchive(cid, `/evidence/${path}`);
+          const { body } = await getArchive(cid, `${EVIDENCE_PATH}/${path}`);
           return extractSingleFile(body);
         });
       },
@@ -1161,7 +1218,7 @@ export class KiroBackend {
         // Other errors (Docker/transport/archive) → THROW unchanged.
         try {
           return await withHelper(async (cid) => {
-            const { body } = await getArchive(cid, `/evidence/${path}`);
+            const { body } = await getArchive(cid, `${EVIDENCE_PATH}/${path}`);
             // Drain the response body to release resources
             const ex = (await import('tar-stream')).extract();
             await new Promise<void>((resolve, reject) => {
@@ -1192,17 +1249,20 @@ export class KiroBackend {
             p.on('end', () => res(Buffer.concat(chunks)));
             p.on('error', rej);
           });
-          // Create parent dirs in tar
-          const parts = path.split('/');
-          let dir = '/evidence';
-          for (let i = 0; i < parts.length - 1; i++) {
-            dir += '/' + parts[i];
-            p.entry({ name: dir + '/', type: 'directory', mode: 0o755 }, '');
+          // Entries are named relative to the writable evidence mount, and the
+          // archive is extracted THERE — the helper's rootfs is read-only.
+          const plan = buildEvidenceWriteArchive(path, content);
+          for (const e of plan.entries) {
+            if (e.type === 'directory') {
+              p.entry({ name: e.name, type: 'directory', mode: e.mode }, '');
+            } else {
+              const buf = e.content!;
+              p.entry({ name: e.name, type: 'file', mode: e.mode, size: buf.length }, buf);
+            }
           }
-          p.entry({ name: `/evidence/${path}`, type: 'file', mode: 0o644, size: content.length }, content);
           p.finalize();
           const tar = await archiveP;
-          await putArchive(cid, '/', tar);
+          await putArchive(cid, plan.target, tar);
         });
       },
       async remove(path: string): Promise<void> {

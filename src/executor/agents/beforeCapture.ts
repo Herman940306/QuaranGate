@@ -173,6 +173,91 @@ export function validateTarEntryPath(raw: string): string {
 }
 
 /**
+ * The single archive-root component that `getArchive(containerId, WORKSPACE_PATH)`
+ * prefixes onto every entry it returns. The Docker daemon names archive entries
+ * after the BASENAME of the requested path, so reading `/workspace` yields
+ * `workspace/`, `workspace/README.md`, `workspace/src/index.ts`.
+ *
+ * Derived from WORKSPACE_PATH so the mount and the expected archive root can
+ * never diverge. Empty only if WORKSPACE_PATH has no basename, in which case
+ * nothing is ever stripped (no entry component can equal '').
+ */
+export const WORKSPACE_ARCHIVE_ROOT: string =
+  WORKSPACE_PATH.split('/').filter((seg) => seg !== '').pop() ?? '';
+
+/**
+ * Remove EXACTLY ONE leading `WORKSPACE_ARCHIVE_ROOT` component from an
+ * already-normalized archive path.
+ *
+ * Deliberately NOT a generic "strip the first path component": only the exact
+ * archive-root component for WORKSPACE_PATH is removed, so a path that is not
+ * under the expected archive root keeps every component it arrived with.
+ *
+ *   workspace/foo      -> foo          (root stripped, once)
+ *   workspace/         -> ''           (the archive root entry itself)
+ *   workspace          -> ''           (the archive root entry itself)
+ *   workspace/workspace/foo -> workspace/foo   (exactly one component)
+ *   other/foo          -> other/foo    (NOT under the archive root)
+ *   foo                -> foo          (already root-relative)
+ *
+ * Pure and non-throwing: path SAFETY is the caller's responsibility, before and
+ * after. Returning '' means "archive root, not a project file".
+ */
+export function stripWorkspaceArchiveRoot(normalized: string): string {
+  if (WORKSPACE_ARCHIVE_ROOT === '') return normalized;
+  const slash = normalized.indexOf('/');
+  const first = slash === -1 ? normalized : normalized.slice(0, slash);
+  if (first !== WORKSPACE_ARCHIVE_ROOT) return normalized;
+  return slash === -1 ? '' : normalized.slice(slash + 1);
+}
+
+/**
+ * Canonicalize a raw Docker archive entry name into a project-relative path.
+ *
+ * This is THE capture-boundary path function: BEFORE (parseTarStream) and POST
+ * (parsePostTarStream) both call it, so the same real project file always
+ * yields the same canonical relPath on both sides, in the evidence, in the
+ * diff, and in the path that apply resolves under PROJECT_PATH.
+ *
+ * Three ordered steps, none of which may be skipped:
+ *   1. full archive-entry validation (NUL, backslash, '..', leading '/' | './')
+ *   2. removal of exactly one expected archive-root component
+ *   3. re-validation of the resulting canonical project-relative path
+ *
+ * Step 3 means normalization can never widen what step 1 admits: whatever
+ * survives the strip is subjected to the identical safety checks again.
+ * Returns '' for the archive root entry itself and for empty/self entries;
+ * callers skip those.
+ */
+export function canonicalizeWorkspaceEntryPath(raw: string): string {
+  const validated = validateTarEntryPath(raw);
+  if (validated === '') return '';
+
+  const stripped = stripWorkspaceArchiveRoot(validated);
+  if (stripped === '') return '';
+
+  const canonical = stripped === validated ? validated : validateTarEntryPath(stripped);
+  if (canonical === '') return '';
+
+  // Final canonical-shape assertion. validateTarEntryPath removes ONE leading
+  // '/' or './', so a doubled-slash entry name such as '//workspace/README.md'
+  // survives it as the ABSOLUTE path '/workspace/README.md'. Regular files were
+  // already caught downstream by assertNoEscape, but dir and symlink entries
+  // never reach that check, and an absolute path recorded in the evidence would
+  // flow into the snapshot and the change set. No daemon emits this shape, so
+  // failing closed here costs nothing and closes the gap for every entry kind.
+  if (canonical.startsWith('/')) {
+    throw new BridgeError(
+      'BEFORE_CAPTURE_UNSAFE_PATH',
+      `tar entry path is not project-relative: ${JSON.stringify(raw)}`,
+      500,
+    );
+  }
+
+  return canonical;
+}
+
+/**
  * Verify that resolving `relPath` under `filesRoot` does not escape `filesRoot`.
  * Defense-in-depth on top of validateTarEntryPath.
  */
@@ -259,14 +344,14 @@ async function parseTarStream(
       const rawPath: string = header.name ?? '';
       let relPath: string;
       try {
-        relPath = validateTarEntryPath(rawPath);
+        relPath = canonicalizeWorkspaceEntryPath(rawPath);
       } catch (e) {
         stream.resume();
         fail(e);
         return;
       }
 
-      // Root/self entries — skip
+      // Root/self entries, and the '/workspace' archive root itself — skip
       if (relPath === '') {
         stream.resume();
         next();
