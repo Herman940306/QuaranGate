@@ -1,9 +1,10 @@
-# Read-only review target for the QuaranGate repository itself.
-# Exposes the development repository to ChatGPT for independent code review.
-# The source mount is read-only; writable locations for npm/test/build are
-# provided as tmpfs volumes.
+# Read-only review target for the QuaranGate repository.
+# This target is intended for independent source inspection/review only.
+# It is NOT a build or write workspace.
+# The source repository is mounted read-only; no writes to /workspace are
+# permitted. /tmp and existing tmpfs entries remain available for transient
+# scratch space inside the container.
 name: mcp-ide-bridge-review
-
 services:
   review:
     build:
@@ -11,19 +12,23 @@ services:
     image: mcp-bridge-review:latest
     container_name: mcp-bridge-review
     working_dir: /workspace
+    user: "${REVIEW_UID:-1000}:${REVIEW_GID:-1000}"
     # Opt-in discovery labels
     labels:
       mcp.bridge.enabled: "true"
       mcp.bridge.workspace: "/workspace"
       mcp.bridge.name: "mcp-ide-bridge-review"
-    # git and python3 are baked into the image at build time — no runtime apk.
+    # git and python3 are baked into the image at build time - no runtime apk.
     command: ["sh", "-c", "while true; do sleep 3600; done"]
     volumes:
-      # READ-ONLY mount of the source repository
-      - /home/herman/projects/mcp-ide-bridge:/workspace:ro
-      # Writable locations for tooling that needs temp/cache space
-      - review-node-modules:/workspace/node_modules
-      - review-dist:/workspace/dist
+      # READ-ONLY bind of the source repository.
+      # Set REVIEW_REPO_PATH to point at an immutable audit checkout, e.g.:
+      #   REVIEW_REPO_PATH=/path/to/immutable-audit-checkout
+      # Defaults to the repository root (parent of review-target/).
+      - type: bind
+        source: ${REVIEW_REPO_PATH:-..}
+        target: /workspace
+        read_only: true
     tmpfs:
       - /tmp
       - /root/.npm
@@ -32,12 +37,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    read_only: false  # Container filesystem is read-only except tmpfs/volumes
+    # Container root filesystem is not locked to read-only at this layer;
+    # the repository bind above enforces read-only access to /workspace.
+    read_only: false
     pids_limit: 256
     mem_limit: 2g
-
-volumes:
-  review-node-modules:
-    name: mcp-bridge-review-node-modules
-  review-dist:
-    name: mcp-bridge-review-dist
