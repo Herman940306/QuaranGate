@@ -16,10 +16,10 @@ right to change anything unreviewed.
 ## What QuaranGate is
 
 QuaranGate is a self-hosted, remote **MCP (Model Context Protocol) server** that gives
-authenticated AI clients — Claude, ChatGPT, VS Code, Kiro — two distinct kinds of
-capability, both mediated by a deterministic authorization layer.
+authenticated AI clients — including Claude, ChatGPT, Codex, VS Code, and Kiro — governed
+capabilities mediated by a deterministic authorization layer.
 
-The first is **direct IDE automation**: workspace-confined filesystem operations, bounded
+The first is **direct authorized-workspace operations**: workspace-confined filesystem operations, bounded
 terminal execution, and read-only Git and process inspection, scoped to explicitly
 authorized Docker target containers.
 
@@ -29,6 +29,12 @@ agent runs inside an ephemeral, network-restricted sandbox against a *copy* of t
 Its output becomes reviewable evidence — never an automatic write to your source tree.
 Applying that work to the real project is a separate, explicitly authorized, one-time
 operation.
+
+The approved North Star adds a separate **IDE Session Control Plane**: when explicitly authorized,
+a client may communicate through QuaranGate with the active interactive AI agent in an exact,
+enrolled IDE instance, workspace, and session. Kiro, VS Code, and Cursor are primary required
+targets; Visual Studio and Antigravity are secondary feasibility targets. This capability is
+designed in [`docs/IDE_SESSION_CONTROL.md`](docs/IDE_SESSION_CONTROL.md) but is **not implemented**.
 
 The whole system is built around one boundary: **the component that talks to the internet
 is not the component that holds privilege.**
@@ -56,6 +62,8 @@ QuaranGate inserts a control layer that makes authority explicit and enumerable:
   and separate agent project/backend/profile grants. Absent grants mean deny.
 - **Target permission never implies agent permission.** A client with full filesystem
   access to a container has zero ability to dispatch an agent.
+- **Agent Dispatch and IDE Session authority are independent.** Neither implies the other, and
+  discovery never grants ambient access to open IDEs or sessions.
 - Agent output is **generated into a sandbox, reviewed, then applied** — three separate
   authorizations, not one.
 
@@ -83,15 +91,23 @@ QuaranGate inserts a control layer that makes authority explicit and enumerable:
 | GitHub Copilot backend | **Roadmap (A7)** | `copilot` exists as a contract enum id only; disabled in config, no implementation |
 | Session continuity / resume | **Roadmap (A8)** | `sessionPolicy: "resume"` is representable but explicitly rejected at dispatch |
 | Production hardening + full E2E | **Roadmap (A9)** | Not started |
+| Governed Ollama local backend | **Owner-approved immediate milestone** | Separate Kiro lane; not implemented or redesigned here |
+| IDE Session Control | **Approved North Star (I0-I6)** | Design only; no adapter or runtime implementation |
 
-**Explicitly not supported.** Host shell execution. Browser or GUI automation. Caller-supplied
+**Explicitly not supported.** Host shell execution. Browser or GUI automation as the primary
+authority/production transport. Caller-supplied
 host paths, runner images, mounts, network modes, or privilege flags — all rejected by strict
 schemas. Cross-principal administrative override of job ownership. Clearing a project
 `QUARANTINED` state through any MCP tool.
 
+A future narrow, authenticated companion IDE extension/local adapter is an acceptable machine-facing
+transport under the I0 contract; mouse, keyboard, focus, clipboard, and pixel scraping remain
+fallback-only and cannot establish authority.
+
 ## Architecture
 
-Two containers, two privilege levels, joined by a non-routable internal Docker network.
+The current implemented architecture uses two containers, two privilege levels, and a non-routable
+internal Docker network. The future IDE Session Control Plane is not shown in this runtime diagram.
 
 ```mermaid
 flowchart LR
@@ -330,13 +346,16 @@ Current implementation gate: **A0–A6 complete. A7 is the next gate.**
 | A5 | Kiro sandbox implementation profile | ✅ Complete |
 | A6 | Review / apply / discard + retained-resource lifecycle | ✅ Complete |
 | — | Gateway readiness + image-provenance remediation | ✅ Complete |
-| A7 | GitHub Copilot backend | ⏭️ Next |
-| A8 | Session continuity | 📋 Planned |
-| A9 | Production hardening + end-to-end validation | 📋 Planned |
+| A7 | GitHub Copilot backend | ⏭️ Next formal A-gate; not started |
+| A8 | Session continuity | 📋 Not started |
+| A9 | Production hardening + end-to-end validation | 📋 Not started |
 
-The product north star described in the Master PRD is **not** complete: it targets multiple
-interchangeable agent backends with session continuity and a finished hardening pass. Today
-exactly one real backend (Kiro) is implemented behind a backend-neutral contract.
+The next formal A-gate remains A7, while a governed Ollama local backend is the owner-approved
+immediate milestone in a separate Kiro lane. The additive IDE Session Control program is I0-I6:
+I0-I3 are required for the updated North Star, Visual Studio I4 and Antigravity I5 are secondary
+feasibility targets, and I6 concurrency/recovery/hardening is required before production acceptance.
+None of I0-I6 is implemented or claimed complete. Today exactly one real Agent Control Plane backend
+(Kiro) is implemented behind a backend-neutral contract.
 
 **Verified baseline at the current commit:** TypeScript typecheck PASS; 1420 / 1420 unit tests
 passing across 35 files. Integration tests require a live Docker stack and are run separately —
@@ -350,6 +369,7 @@ see [`docs/TEST_RESULTS.md`](docs/TEST_RESULTS.md) for the full record.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, flows, tool contracts, target model |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, mitigations, explicit residual risks |
 | [docs/AGENT_CONTROL_PLANE.md](docs/AGENT_CONTROL_PLANE.md) | Agent contracts, scopes, state machines, trusted config |
+| [docs/IDE_SESSION_CONTROL.md](docs/IDE_SESSION_CONTROL.md) | I0 architecture, authority, common adapter contract, threat model, and adapter research gates |
 | [docs/TARGETS.md](docs/TARGETS.md) | Discovery, opt-in labels, manual targets, permissions |
 | [docs/CLIENT_SETUP.md](docs/CLIENT_SETUP.md) | Per-client setup for Claude, ChatGPT, VS Code, Kiro |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Build, run, health, credentials, image provenance, ingress |

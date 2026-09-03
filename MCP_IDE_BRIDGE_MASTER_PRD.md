@@ -3,10 +3,11 @@
 **Document ID:** MIB-MASTER-PRD  
 **Version:** 1.0  
 **Date:** 2026-07-28  
-**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0 through A6 complete (PASS); post-A6 gateway readiness + image-provenance remediation complete (PASS); A7 next gate\
+**Status:** Master baseline — current bridge verified; Agent Dispatch phases A0 through A6 complete (PASS); post-A6 gateway readiness + image-provenance remediation complete (PASS); A7 next formal A-gate; IDE Session Control North-Star expansion owner-approved; I0 design candidate documented, not implemented or accepted complete\
 **Product identity:** QuaranGate (canonical, current — supersedes the earlier AgentControl identity). Package name and MCP server self-identification are `quarangate`. The GitHub repository rename is complete (`Herman940306/QuaranGate` — see §47.10). Other internal runtime identifiers — Compose project, Docker networks/volumes/labels — intentionally retain their earlier `mcp-ide-bridge` / `mcp-bridge` names pending a controlled compatibility migration; see §47 for the full migration contract.\
 **Repository:** `/home/herman/projects/mcp-ide-bridge` (worktree path unchanged; GitHub remote is `Herman940306/QuaranGate` — rename complete, see §47.10)\
-**Current verified baseline:** `67146a4` — `fix: harden gateway readiness and image provenance` (typecheck PASS, unit 1420/1420 PASS)
+**Current canonical Git baseline:** `a5cb6debbeb7a525303ee17e8a601468398d7ac6` — `fix: repair read-only review target runtime`\
+**Historical/latest specific gateway-hardening validation evidence:** `67146a4` — `fix: harden gateway readiness and image provenance` (typecheck PASS, unit 1420/1420 PASS)
 
 ---
 
@@ -17,7 +18,7 @@ This document is the master product requirements document for QuaranGate.
 It has two jobs:
 
 1. Preserve the **verified current state** of the bridge so future work never loses the security, architecture, interoperability, and testing baseline already achieved.
-2. Define the **north-star architecture and phased implementation plan** that turns the bridge from a secure MCP-to-Docker execution gateway into a governed multi-agent engineering control plane where ChatGPT can directly dispatch bounded implementation work to local Kiro and GitHub Copilot agents, receive their results, independently audit them, and only apply reviewed changes through explicit approval gates.
+2. Define the **north-star architecture and phased implementation plan** that turns the bridge from a secure MCP-to-Docker execution gateway into a governed engineering control plane. Approved clients can dispatch bounded implementation work to isolated local agents and, under separate explicit authority, communicate with the active AI agent in an authorized IDE session. Isolated work remains independently reviewable and may be applied only through explicit approval gates.
 
 This document is intended to become the canonical planning reference for the project. It should be updated at every completed implementation gate, but historical verified facts must not be silently rewritten.
 
@@ -62,7 +63,7 @@ Claude browser and ChatGPT browser have both been externally verified against th
 
 The next program is not to weaken this model. It is to extend it.
 
-The north star is:
+The implemented Agent Control Plane remains one half of the expanded north star:
 
 ```text
 User + ChatGPT
@@ -114,6 +115,25 @@ The target experience is:
 > ChatGPT: applies the reviewed change through the bridge.
 
 This preserves the existing human-approval workflow while removing manual copy/paste orchestration.
+
+The owner-approved expansion adds a complementary, separately authorized path:
+
+```text
+Approved client
+     |
+     v
+QuaranGate authorization
+     |
+     v
+Enrolled IDE/session adapter
+     |
+     v
+Exact active IDE + workspace/worktree + interactive agent session
+```
+
+This IDE Session Control Plane targets Kiro, VS Code, and Cursor as required integrations. Visual
+Studio and Antigravity are secondary feasibility targets. It does not inherit Agent Dispatch
+authority, does not replace the isolated sandbox workflow, and is not implemented at this baseline.
 
 ---
 
@@ -167,7 +187,7 @@ apply
 
 `COMPLETED` and `APPLIED` are separate states.
 
-## 2.3 No GUI automation as the control plane
+## 2.3 Machine-facing IDE control, not fragile GUI authority
 
 The project will not depend on:
 
@@ -177,11 +197,18 @@ The project will not depend on:
 - scraping generated responses from pixels;
 - relying on IDE window focus.
 
-Kiro must be controlled through a machine-facing protocol or supported CLI.
+Kiro must be controlled through a supported machine-facing protocol, supported CLI where appropriate
+to the isolated worker plane, or a narrow authenticated companion extension/local adapter.
 
-GitHub Copilot must be controlled through a supported programmatic interface.
+GitHub Copilot and other IDE agents must be controlled through supported programmatic interfaces or
+narrow authenticated companion extensions/local adapters.
 
-The IDE remains a user-facing view of the same workspace, not the automation transport.
+For the isolated Agent Control Plane, the IDE remains a user-facing view rather than the automation
+transport. For IDE Session Control, an enrolled companion extension or local adapter may be the
+production transport when it exposes a narrow, authenticated, versioned machine-facing interface
+bound to an exact IDE instance, workspace/worktree, and active interactive session. Accessibility or
+UI automation is fallback-only and cannot establish authority or be selected through silent
+downgrade.
 
 ## 2.4 Existing privilege separation must survive
 
@@ -400,7 +427,7 @@ This baseline is a regression gate for future work.
 
 A future implementation phase may add tests, so the absolute test count may increase. Existing tests must not silently disappear.
 
-### Current validation baseline (post-A6, commit `67146a4`)
+### Historical/latest specific gateway-hardening validation evidence (post-A6, commit `67146a4`)
 
 ```text
 TypeScript typecheck:
@@ -588,7 +615,26 @@ bounded sandbox
 
 ## 5.1 Goal
 
-Turn ChatGPT into the orchestration and review layer for local implementation agents while preserving human approval and local security.
+Make QuaranGate the governed control plane through which approved browser and desktop AI clients—
+including ChatGPT, Claude, Codex, and future compatible MCP clients—can operate explicitly authorized
+workspaces, dispatch isolated governed workers, and, under separate explicit authority, communicate
+with the active AI agent in an authorized IDE session while preserving human approval and local
+security.
+
+The visible interactive IDE and the isolated Agent Control Plane are complementary execution modes:
+
+```text
+PLANE A — ISOLATED AGENT CONTROL PLANE
+client -> QuaranGate -> governed backend -> isolated sandbox
+       -> evidence -> independent review -> explicit apply
+
+PLANE B — IDE SESSION CONTROL PLANE
+client -> QuaranGate authorization -> IDE/session adapter
+       -> active IDE/workspace/session -> interactive IDE agent
+```
+
+Plane B does not replace or weaken Plane A. Because the live IDE is not a sandbox, any interaction
+that cannot technically exclude mutation must be treated as live-writer-capable.
 
 The ideal workflow:
 
@@ -605,7 +651,8 @@ The ideal workflow:
 10. User decides whether to apply.
 11. ChatGPT calls agent_apply only after explicit approval.
 12. Real project changes.
-13. Open Kiro/VS Code naturally sees the filesystem changes.
+13. Open Kiro/VS Code naturally sees the applied filesystem changes; this is distinct from the
+    separately authorized IDE Session Control Plane.
 14. ChatGPT validates the real workspace and advances the project gate.
 ```
 
@@ -663,6 +710,27 @@ paste into ChatGPT
 The approval loop remains.
 
 The clipboard loop disappears.
+
+## 5.4 IDE Session Control priorities
+
+Primary required targets for the updated North Star:
+
+```text
+I1  Kiro
+I2  VS Code
+I3  Cursor
+```
+
+Secondary feasibility targets, which do not block North-Star completion when no safe/stable
+integration surface exists:
+
+```text
+I4  Visual Studio
+I5  Antigravity
+```
+
+The common I0 contract, authority and threat model are defined in
+`docs/IDE_SESSION_CONTROL.md`. No IDE Session Control implementation is present at this checkpoint.
 
 ---
 
@@ -1238,6 +1306,21 @@ job ownership/control relationship
 
 A principal authorized to dispatch Kiro against project A must not automatically gain Copilot access or project B access.
 
+IDE Session Control adds a separate deny-by-default authority relationship:
+
+```text
+principal
+  -> enrolled IDE instance
+  -> logical project + exact workspace/worktree
+  -> current interactive session
+  -> allowed capability/action
+```
+
+Agent Dispatch authority must not imply IDE Session authority. IDE Session authority must not imply
+Agent Dispatch, target, filesystem, or terminal authority. Discovery identifies enrolled instances
+and sessions; it never authorizes them. No principal receives ambient access to every IDE or session
+on the host.
+
 ---
 
 # 12. Backend abstraction
@@ -1552,6 +1635,12 @@ duration
 
 Sensitive prompt/result bodies should not be blindly logged.
 
+IDE-session audit must additionally bind the action to the IDE type/version, enrolled instance,
+logical project, non-secret workspace/worktree identity, interactive session reference, adapter
+identity/version, connection generation, capability snapshot, controller/writer lease where
+applicable, ordered operation events, and disconnect/cancel/recovery outcome. Prompt, response,
+terminal, editor, and filesystem bodies remain bounded and redacted rather than blindly logged.
+
 ---
 
 # 17. Concurrency model
@@ -1574,6 +1663,21 @@ maximum one writer per project
 ```
 
 Never allow two independent write agents to mutate the same sandbox or live project concurrently unless a future design explicitly implements safe branch/worktree isolation.
+
+The broader North-Star rule across both execution planes is:
+
+```text
+many readers
+many isolated workers
+one controlled live writer per project/worktree
+```
+
+The current Agent Control Plane may retain its stricter implemented writer-job serialization. An
+isolated sandbox worker is not a live writer until apply. Plane A apply, direct live-workspace
+mutation, and mutation-capable IDE interaction must share project/worktree live-writer arbitration.
+Multiple clients may observe an authorized IDE session when policy permits, but prompt delivery is
+serialized per session and controller ownership is explicit. Prompts cannot be classified read-only
+by instruction alone; technical enforcement is required.
 
 ---
 
@@ -1960,6 +2064,22 @@ Defense:
 
 Diff policy, forbidden paths, review gate, apply policy.
 
+## 24.11 IDE Session Control threats
+
+The live IDE plane adds distinct design risks: wrong-workspace routing; stale or spoofed sessions;
+malicious/compromised adapters; prompt injection acting through interactive-agent authority;
+concurrent clients, IDEs, workspaces, or writers; cancellation and reconnect races; fabricated or
+misattributed responses; secret, terminal, editor, or filesystem context exposure; and source
+mutation outside the intended authority.
+
+Required defenses are the complete principal/instance/workspace/session/action binding; explicit
+adapter enrollment and authenticated channels; connection generations and freshness; negotiated
+capabilities; bounded context/results; ordered correlated events; conservative cancellation
+reconciliation; independent Plane A/Plane B grants; and shared live-writer arbitration. Agent prose,
+window focus, display names, mouse/keyboard injection, and prompt instructions are not security
+boundaries. The complete I0 threat model and stop conditions are in
+`docs/IDE_SESSION_CONTROL.md`.
+
 ---
 
 # 25. Implementation program overview
@@ -1984,6 +2104,24 @@ A9  Production hardening + E2E      NOT STARTED
 ```
 
 No later phase should be marked complete from partial evidence.
+
+The owner-approved IDE Session Control program is additive and does not renumber or rewrite A0-A9:
+
+```text
+I0  Common IDE-session contract + threat/security model       NOT COMPLETE
+I1  Kiro active-session adapter                               NOT STARTED — REQUIRED
+I2  VS Code active-session adapter                            NOT STARTED — REQUIRED
+I3  Cursor active-session adapter                             NOT STARTED — REQUIRED
+I4  Visual Studio feasibility + adapter if safe/practical     NOT STARTED — SECONDARY
+I5  Antigravity feasibility + adapter if safe/practical       NOT STARTED — SECONDARY
+I6  Multi-client/session concurrency, recovery, hardening     NOT STARTED — REQUIRED PRE-PRODUCTION
+```
+
+I0-I3 are required for the updated North Star. I4-I5 are feasibility/best-effort and do not block
+North-Star completion if no safe, stable integration exists. I6 must complete before production
+acceptance, either as its own gate or explicitly folded into A9 with equivalent evidence. The
+documentation baseline for I0 is `docs/IDE_SESSION_CONTROL.md`; it is not an implementation or a
+completion claim.
 
 ---
 
@@ -2967,6 +3105,13 @@ Use this table as the project checkpoint.
 | A7 | GitHub Copilot backend | NOT STARTED — NEXT GATE | — |
 | A8 | Session continuity | NOT STARTED | — |
 | A9 | Production hardening + E2E | NOT STARTED | — |
+| I0 | Common IDE-session contract + threat/security model | DESIGN DOCUMENTED — NOT IMPLEMENTED OR COMPLETE | `docs/IDE_SESSION_CONTROL.md` |
+| I1 | Kiro active-session adapter | NOT STARTED — REQUIRED | — |
+| I2 | VS Code active-session adapter | NOT STARTED — REQUIRED | — |
+| I3 | Cursor active-session adapter | NOT STARTED — REQUIRED | — |
+| I4 | Visual Studio feasibility + adapter if safe/practical | NOT STARTED — SECONDARY | — |
+| I5 | Antigravity feasibility + adapter if safe/practical | NOT STARTED — SECONDARY | — |
+| I6 | Multi-client/session concurrency, recovery, hardening | NOT STARTED — REQUIRED PRE-PRODUCTION | — |
 
 ---
 
@@ -3037,6 +3182,14 @@ The current product direction records these decisions.
 - Least privilege is preferred over `--yolo` / `--allow-all` / `--trust-all-tools`.
 - Existing bridge features remain supported.
 - `fs_delete` remains accurately destructive.
+- The isolated Agent Control Plane and active IDE Session Control Plane are complementary and have
+  independent authority.
+- Kiro, VS Code, and Cursor are required IDE Session Control targets; Visual Studio and Antigravity
+  are secondary feasibility targets.
+- A narrow authenticated companion extension/local adapter is a legitimate production transport;
+  GUI automation remains fallback-only and cannot establish authority.
+- Many readers and isolated workers may coexist, but only one controlled live writer may act on a
+  project/worktree.
 
 ## To be decided through gated implementation
 
@@ -3049,13 +3202,19 @@ The current product direction records these decisions.
 - exact Copilot transport if SDK vs ACP evaluation materially changes the recommendation;
 - initial network policy per backend;
 - final resource limits;
-- final session-retention rules.
+- final session-retention rules;
+- exact supported active-session transport and version policy for each IDE;
+- IDE adapter placement, enrollment, authentication, distribution, revocation, and update trust;
+- human controller handoff/visibility and cross-plane live-writer arbitration details;
+- whether any IDE-session interaction can be technically enforced as read-only; and
+- whether I6 is its own gate or an evidence-bearing subset of A9.
 
 ---
 
-# 42. Future extensions after A9
+# 42. Additional extensions and IDE integration notes
 
-Not part of the required A0–A9 implementation, but compatible with the north star.
+Except for the separately tracked I0-I6 IDE Session Control program in §25/§38, these items are not
+part of required A0-A9 implementation and remain compatible future extensions.
 
 ## 42.1 Multi-agent review
 
@@ -3081,9 +3240,9 @@ migration planner
 release reviewer
 ```
 
-## 42.3 IDE status extension
+## 42.3 IDE companion extension and session adapter
 
-A future Kiro/VS Code extension could show:
+An IDE companion extension may show Agent Control Plane status:
 
 ```text
 Job dispatched by ChatGPT
@@ -3093,7 +3252,11 @@ Awaiting review
 Applied
 ```
 
-without using the IDE GUI as the automation transport.
+It may also serve as the IDE Session Control transport when it exposes only a narrow, authenticated,
+versioned machine-facing interface bound to an enrolled IDE instance, authorized workspace/worktree,
+and active interactive session. This does not authorize generic IDE commands, host access, or GUI
+injection. Kiro, VS Code, and Cursor are required targets; Visual Studio and Antigravity remain
+feasibility targets. See `docs/IDE_SESSION_CONTROL.md`.
 
 ## 42.4 Reversible file removal
 
@@ -3158,12 +3321,12 @@ The desired end state is:
 
 ---
 
-# 44. Immediate next action
+# 44. Immediate milestones and next formal A-gate
 
 A0, A1, A2, A3, A4, A5, and A6 are complete (PASS — see the completion records in §26/§27/§28
 and the full audit document series in `docs/audits/`).
 
-The next implementation gate is:
+The next formal A-gate remains:
 
 ```text
 A7 — GITHUB COPILOT BACKEND
@@ -3179,6 +3342,10 @@ privilege (no `--allow-all` / `--yolo` defaults), support the same profile enfor
 implement, review), and integrate with the existing agent job engine, sandbox lifecycle, and
 retained-resource management. Exit gate: ChatGPT can choose between `backend: kiro` or
 `backend: copilot` without changing orchestration logic.
+
+Separately, the owner-approved immediate backend milestone is a **governed Ollama local backend**.
+That work is owned by a parallel Kiro lane. The IDE Session Control documentation/design lane must
+not implement or redesign Ollama, and the milestone does not renumber A0-A9 or mark A7 started.
 
 ---
 
