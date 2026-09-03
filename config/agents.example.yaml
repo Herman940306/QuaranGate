@@ -25,6 +25,16 @@ backends:
     profiles: [audit, review]
     defaultResourcePolicy: economy
 
+  # O1 Ollama read-only backend. Disabled by default (safe deployable state).
+  # Enable only after setting OLLAMA_HOST, OLLAMA_MODEL_QUALIFIER, and
+  # AGENT_HELPER_IMAGE in .env (or compose.ollama.yaml). NO default model,
+  # NO :latest. Supported profiles: audit, plan, review only.
+  # MODEL_SELECTION=PENDING_QUALIFICATION — do not enable until qualified.
+  - id: ollama
+    enabled: false                       # safe default; enable after qualification
+    profiles: [audit, plan, review]      # implement/writer is hard-refused
+    defaultResourcePolicy: economy
+
 projects:
   - id: example-project
     hostPath: /srv/projects/example-project   # neutral example path
@@ -37,6 +47,7 @@ projects:
       - config/bridge.yaml
       - "**/*.pem"
       - "**/id_rsa*"
+    sensitiveReadGlobs: []               # no additional Ollama read restrictions
 
   - id: example-docs
     hostPath: /srv/projects/example-docs
@@ -44,6 +55,25 @@ projects:
     backends: [kiro, copilot]
     profiles: [audit, plan]              # read-only lanes only
     guardedPaths: [.env]
+    sensitiveReadGlobs: []
+
+  # Example project allowing Ollama O1 read-only analysis
+  - id: example-ollama-project
+    hostPath: /srv/projects/example-ollama-project
+    gitRequired: true
+    backends: [kiro, ollama]
+    profiles: [audit, plan, review]      # implement not allowed (no ollama writer)
+    guardedPaths:
+      - .env
+      - "**/*.pem"
+      - "**/id_rsa*"
+    # Additional read restrictions for Ollama O1 (trusted config only, not
+    # caller-controlled). Uses the same applyPolicy glob grammar as guardedPaths.
+    sensitiveReadGlobs:
+      - "config/clients.yaml"
+      - "config/bridge.yaml"
+      - "**/*.key"
+      - "**/secrets/**"
 
 # Profiles are ENFORCEMENT POLICY, not prompt templates. The container/OS
 # layer consumes this specification and enforces it at the runner boundary.

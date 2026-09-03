@@ -1,0 +1,59 @@
+# QuaranGate Ollama O1 — Optional Runtime Override
+#
+# Adds Ollama service + inference network for governed read-only agent backend.
+# Deploy with: docker compose -f compose.yaml -f compose.ollama.yaml up -d
+#
+# O1 IS READ-ONLY: audit/plan/review profiles only. Writer/implement profiles
+# are hard-refused by the backend before inference. No artifact production,
+# no host mutation, no model selection defaults.
+
+services:
+  # Attach executor to inference network (executor → Ollama communication only)
+  executor:
+    networks:
+      - internal
+      - inference
+    environment:
+      # O1 Ollama backend configuration (TRUSTED, never caller-selectable)
+      OLLAMA_HOST: "http://ollama:11434"
+      OLLAMA_MODEL_QUALIFIER: "${OLLAMA_MODEL_QUALIFIER:?set OLLAMA_MODEL_QUALIFIER in .env (no :latest default)}"
+      # Generic helper image for read operations (must be explicit when Ollama enabled)
+      AGENT_HELPER_IMAGE: "${AGENT_HELPER_IMAGE:?set qualified AGENT_HELPER_IMAGE}"
+
+  # Ollama inference service (internal network only, no host ports)
+  ollama:
+    image: "${OLLAMA_IMAGE:?set OLLAMA_IMAGE in .env (digest or exact version, never :latest)}"
+    pull_policy: never  # Fail closed if image not pre-pulled
+    container_name: quarangate-ollama
+    restart: unless-stopped
+    networks:
+      - inference
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    # NO published ports — internal network only
+    # Resource limits: operator-configured via Docker daemon (no Compose defaults)
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Security hardening
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Note: Ollama may need specific capabilities for GPU access if enabled
+    # (not configured in O1; GPU selection is deferred to post-qualification)
+
+networks:
+  # Inference network: executor ↔ Ollama only, internal (no external routing)
+  inference:
+    name: quarangate-inference
+    internal: true
+
+volumes:
+  # Ollama model storage (persistent across restarts)
+  ollama-models:
+    name: quarangate-ollama-models

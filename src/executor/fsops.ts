@@ -42,10 +42,12 @@ async function readTarSingleFile(stream: Readable, maxBytes: number): Promise<Bu
   });
 }
 
-export async function readFile(t: ConfinedTarget, rel: string): Promise<Buffer> {
+export async function readFile(t: ConfinedTarget, rel: string, maxBytes = EXECUTOR_DEFAULTS.maxFileBytes): Promise<Buffer> {
   const abs = await confinePath(t, rel, { mustExist: true });
   const { body } = await getArchive(t.containerId, abs);
-  return readTarSingleFile(body, EXECUTOR_DEFAULTS.maxFileBytes);
+  // Clamp trusted maxBytes to never exceed global maximum
+  const clampedMax = Math.min(maxBytes, EXECUTOR_DEFAULTS.maxFileBytes);
+  return readTarSingleFile(body, clampedMax);
 }
 
 /** The uid/gid a tar entry must carry so extraction lands correct ownership. */
@@ -189,21 +191,47 @@ export async function statPath(t: ConfinedTarget, rel: string): Promise<FileStat
   };
 }
 
-export async function listDir(t: ConfinedTarget, rel: string, maxDepth = 1): Promise<string[]> {
+export async function listDir(t: ConfinedTarget, rel: string, maxDepth = 1, maxEntries?: number): Promise<string[]> {
   const abs = await confinePath(t, rel, { mustExist: true });
   const depth = Math.min(Math.max(1, maxDepth), 5);
-  const r = await runArgv(
-    t,
-    ['find', abs, '-maxdepth', String(depth), '-mindepth', '1', '-printf', '%y %p\n'],
-    { principal: 'executor', timeoutMs: 15_000, maxOutputBytes: 128 * 1024 },
-  );
-  if (r.exitCode !== 0 && !r.stdout) {
-    // Fallback for find without -printf (busybox): plain listing
-    const r2 = await runArgv(t, ['ls', '-1ap', abs], { principal: 'executor', timeoutMs: 10_000 });
-    return r2.stdout.split('\n').filter(Boolean).map((n) => path.posix.join(rel || '.', n));
+
+  // Build argv with optional bounded enumeration via head
+  let argv: string[];
+  let useHeadBound = false;
+
+  if (maxEntries !== undefined && maxEntries > 0) {
+    // Bounded enumeration: pipe find through head to stop at maxEntries lines
+    // Use sh -c to compose the pipeline with argv-only (no variable interpolation)
+    useHeadBound = true;
+    argv = [
+      '/bin/sh', '-c',
+      `find "$1" -maxdepth "$2" -mindepth 1 -printf '%y %p\\n' 2>/dev/null | head -n "$3"`,
+      'sh', abs, String(depth), String(maxEntries)
+    ];
+  } else {
+    // Unbounded (existing behavior)
+    argv = ['find', abs, '-maxdepth', String(depth), '-mindepth', '1', '-printf', '%y %p\n'];
   }
+
+  const r = await runArgv(t, argv, { principal: 'executor', timeoutMs: 15_000, maxOutputBytes: 128 * 1024 });
+
+  if (r.exitCode !== 0 && !r.stdout) {
+    // Bounded enumeration failure must fail closed (no unbounded ls fallback)
+    if (useHeadBound) {
+      throw new BridgeError(
+        'COMMAND_FAILED',
+        `bounded listDir failed: find -printf not supported and bounded enumeration is required`,
+        422,
+      );
+    }
+    // Fallback for find without -printf (busybox): plain listing (unbounded legacy path only)
+    const r2 = await runArgv(t, ['ls', '-1ap', abs], { principal: 'executor', timeoutMs: 10_000 });
+    const entries = r2.stdout.split('\n').filter(Boolean).map((n) => path.posix.join(rel || '.', n));
+    return entries;
+  }
+
   const root = t.workspace.replace(/\/+$/, '');
-  return r.stdout
+  const entries = r.stdout
     .split('\n')
     .filter(Boolean)
     .map((l) => {
@@ -211,6 +239,8 @@ export async function listDir(t: ConfinedTarget, rel: string, maxDepth = 1): Pro
       const relOut = p.startsWith(root) ? p.slice(root.length).replace(/^\//, '') : p;
       return (l[0] === 'd' ? relOut + '/' : relOut);
     });
+
+  return entries;
 }
 
 export async function search(t: ConfinedTarget, rel: string, query: string, maxResults = 200): Promise<string[]> {

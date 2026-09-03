@@ -40,7 +40,7 @@ describe('agent control plane config', () => {
 
   it('accepts the shipped example file (config/agents.example.yaml)', () => {
     const cfg = parseAgentConfigYaml(readFileSync(join(repoRoot, 'config', 'agents.example.yaml'), 'utf8'));
-    expect(cfg.backends.map((b) => b.id).sort()).toEqual(['copilot', 'kiro']);
+    expect(cfg.backends.map((b) => b.id).sort()).toEqual(['copilot', 'kiro', 'ollama']);
     expect(cfg.profiles).toHaveLength(4);
     expect(cfg.resourcePolicies.map((r) => r.id).sort()).toEqual(['deep', 'economy', 'standard']);
     // The example must never contain a real Herman host path.

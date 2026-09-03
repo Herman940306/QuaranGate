@@ -12,7 +12,7 @@ import { BridgeError } from './errors.js';
 // Identifiers
 // ---------------------------------------------------------------------------
 
-export const AGENT_BACKEND_IDS = ['kiro', 'copilot'] as const;
+export const AGENT_BACKEND_IDS = ['kiro', 'copilot', 'ollama'] as const;
 export type AgentBackendId = (typeof AGENT_BACKEND_IDS)[number];
 
 export const AGENT_PROFILE_IDS = ['audit', 'plan', 'implement', 'review'] as const;

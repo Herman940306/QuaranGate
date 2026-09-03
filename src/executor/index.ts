@@ -19,6 +19,8 @@ import { registerAgentRoutes } from './agents/routes.js';
 import { RunnerSandbox } from './agents/sandboxRunner.js';
 import { CredentialManager } from './agents/credentialManager.js';
 import { createKiroBackendFactory } from './agents/kiroFactory.js';
+import { createOllamaBackendFactory } from './agents/ollamaFactory.js';
+import { Ollama } from 'ollama';
 import { createDockerApplierIO } from './agents/applyEngine.js';
 import { runStartupEvidenceLifecycle } from './agents/evidenceCollector.js';
 import type { AgentJobRow } from './agents/jobStore.js';
@@ -51,6 +53,13 @@ const KIRO_KEY_PATH = process.env.AGENT_KIRO_KEY_PATH ?? '';
 // backend stops after ACP session/new (no session/prompt, no model turn) — used
 // by the live deployment gate / as a health probe. Never caller-selectable.
 const KIRO_DRY_RUN = /^(1|true|yes)$/i.test(process.env.AGENT_KIRO_DRY_RUN ?? '');
+
+// O1: Ollama read-only backend (TRUSTED configuration, never caller-selectable).
+// When OLLAMA_HOST / OLLAMA_MODEL_QUALIFIER are both set, the real Ollama backend
+// is wired for `backend: ollama`. AGENT_HELPER_IMAGE is also required (generic
+// helper for read operations). No default model, no :latest, fail closed.
+const OLLAMA_HOST = process.env.OLLAMA_HOST ?? '';
+const OLLAMA_MODEL_QUALIFIER = process.env.OLLAMA_MODEL_QUALIFIER ?? '';
 
 // Mutable handles assigned inside the startup sequence; used by shutdown().
 let agentEngine: AgentJobEngine | null = null;
@@ -214,6 +223,30 @@ let server: ReturnType<typeof app.listen>;
   // Steps 1-3: synchronous ACP setup (if agents.yaml exists).
   if (fs.existsSync(AGENTS_CONFIG)) {
     const agentConfig = loadAgentConfig(AGENTS_CONFIG);
+
+    // O1: Fail-closed startup validation (§7) — if Ollama backend is enabled,
+    // require all environment variables; if disabled, permit them to be absent.
+    const ollamaBackend = agentConfig.backends.find((b) => b.id === 'ollama');
+    if (ollamaBackend?.enabled) {
+      if (!OLLAMA_HOST) {
+        console.error('FATAL: Ollama backend enabled but OLLAMA_HOST is not set');
+        process.exit(1);
+      }
+      if (!OLLAMA_MODEL_QUALIFIER) {
+        console.error('FATAL: Ollama backend enabled but OLLAMA_MODEL_QUALIFIER is not set');
+        process.exit(1);
+      }
+      if (!HELPER_IMAGE) {
+        console.error('FATAL: Ollama backend enabled but AGENT_HELPER_IMAGE is not set');
+        process.exit(1);
+      }
+      // Reject :latest tags (§8)
+      if (OLLAMA_MODEL_QUALIFIER.includes(':latest') || HELPER_IMAGE.includes(':latest')) {
+        console.error('FATAL: :latest tags not allowed for OLLAMA_MODEL_QUALIFIER or AGENT_HELPER_IMAGE');
+        process.exit(1);
+      }
+    }
+
     // Step 1: construct + migrate DB.
     agentStore = new AgentJobStore(JOBS_DB);
     const sandbox = new RunnerSandbox({ image: RUNNER_IMAGE });
@@ -221,13 +254,34 @@ let server: ReturnType<typeof app.listen>;
     // A4: wire the real Kiro backend when the trusted runner infrastructure is
     // configured. The factory selects KiroBackend ONLY for backend=kiro and
     // falls back to the fake backend otherwise.
+    // O1: wire the real Ollama backend when OLLAMA_HOST and OLLAMA_MODEL_QUALIFIER
+    // are configured. The factory chain selects OllamaBackend for backend=ollama,
+    // KiroBackend for backend=kiro, and falls back to fake backend otherwise.
     let backendFactory:
       | ((job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null)
       | undefined;
     let kiroEnabled = false;
+    let ollamaEnabled = false;
+
+    // Build composed factory chain (Ollama → Kiro → null)
+    const factories: Array<(job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null> = [];
+
+    if (OLLAMA_HOST && OLLAMA_MODEL_QUALIFIER && HELPER_IMAGE) {
+      const ollamaFactory = createOllamaBackendFactory({
+        ollamaHost: OLLAMA_HOST,
+        modelQualifier: OLLAMA_MODEL_QUALIFIER,
+        helperImage: HELPER_IMAGE,
+        stagerImage: HELPER_IMAGE,
+        projects: agentConfig.projects,
+        OllamaClass: Ollama,
+      });
+      factories.push(ollamaFactory);
+      ollamaEnabled = true;
+    }
+
     if (RUNNER_IMAGE && PROXY_IMAGE && KIRO_KEY_PATH) {
       const credentialManager = new CredentialManager({ credentialPath: KIRO_KEY_PATH, helperImage: HELPER_IMAGE });
-      backendFactory = createKiroBackendFactory(agentConfig.projects, {
+      const kiroFactory = createKiroBackendFactory(agentConfig.projects, {
         runnerImage: RUNNER_IMAGE,
         helperImage: HELPER_IMAGE,
         proxyImage: PROXY_IMAGE,
@@ -236,7 +290,39 @@ let server: ReturnType<typeof app.listen>;
         sandbox,
         dryRun: KIRO_DRY_RUN,
       });
+      factories.push(kiroFactory);
       kiroEnabled = true;
+    }
+
+    // Compose factories: try each in order, return first non-null result.
+    // CRITICAL (R1.7): Explicit backend=ollama when ollamaEnabled but factory
+    // returns null must FAIL CLOSED (not silently fall back to fake backend).
+    if (factories.length > 0) {
+      backendFactory = (job, policy) => {
+        // Explicit backend=ollama when Ollama is enabled requires Ollama factory success
+        if (job.backend === 'ollama' && ollamaEnabled) {
+          const ollamaFactory = factories[0];
+          if (!ollamaFactory) {
+            throw new BridgeError('PRECONDITION_FAILED', 'Ollama factory not configured', 500);
+          }
+          const ollamaBackend = ollamaFactory(job, policy);
+          if (ollamaBackend === null) {
+            throw new BridgeError(
+              'PRECONDITION_FAILED',
+              `backend=ollama explicitly requested but Ollama factory returned null (backend disabled or job.backend mismatch)`,
+              500,
+            );
+          }
+          return ollamaBackend;
+        }
+
+        // For other backends, try factories in order
+        for (const factory of factories) {
+          const backend = factory(job, policy);
+          if (backend !== null) return backend;
+        }
+        return null; // All factories returned null → fake backend
+      };
     }
 
     const evidenceReaderFactory: EvidenceReaderFactory | undefined = HELPER_IMAGE
@@ -261,6 +347,7 @@ let server: ReturnType<typeof app.listen>;
       projects: agentConfig.projects.length, backends: agentConfig.backends.length,
       schemaVersion: agentStore.schemaVersion, recoveredJobs: recovered.length,
       kiroBackend: kiroEnabled ? (KIRO_DRY_RUN ? 'enabled(dry-run)' : 'enabled') : 'fake-only',
+      ollamaBackend: ollamaEnabled ? 'enabled' : 'fake-only',
       applierConfigured: !!applierIO,
       abortedApplyAttempts: applyRecovery.abortedNoMutation.length,
       uncertainApplyAttempts: applyRecovery.uncertain.length,

@@ -62,7 +62,7 @@ export const LABEL_JOB = `${SANDBOX_LABEL_NS}.job`;
 /** A6-B5: additive label — the apply attempt owning an 'applier' container. */
 export const LABEL_ATTEMPT = `${SANDBOX_LABEL_NS}.attempt`;
 
-export type SandboxResourceKind = 'runner' | 'stager' | 'workspace' | 'evidence' | 'applier';
+export type SandboxResourceKind = 'runner' | 'stager' | 'workspace' | 'evidence' | 'applier' | 'ollama-read-helper';
 
 /**
  * The Docker `filters` selector matching bridge-owned A3 resources in the
@@ -939,3 +939,89 @@ export const APPLY_MUTATION_SCRIPT = [
   '}catch(e){emit({opIndex:opIndex,ok:false,error:e&&e.message?e.message:String(e)});process.exit(1);}',
   'process.exit(0);',
 ].join('');
+
+// ---------------------------------------------------------------------------
+// O1 — Ollama read-helper (per-job, read-only workspace access).
+//
+// A trusted, hardened helper container that exposes the staged committed-HEAD
+// workspace snapshot READ-ONLY to Ollama tool calls. The model never reads
+// directly from the mutable host worktree.
+//
+// Security posture (mirrors buildManifestCreateBody — same trust level):
+//   - workspace volume mounted READ-ONLY (model cannot mutate staged snapshot)
+//   - NetworkMode: none / NetworkDisabled: true (no network access)
+//   - ReadonlyRootfs: true (from hardenedHostConfig)
+//   - CapDrop: ALL (from hardenedHostConfig)
+//   - no-new-privileges (from hardenedHostConfig)
+//   - Non-root user (RUNNER_USER = 1000:1000)
+//   - No host binds, no docker.sock, no devices
+//   - Bounded memory/PIDs/tmpfs from trusted RunnerLimits
+//   - Managed resource label: kind = 'ollama-read-helper'
+//
+// Lifetime: idle `sleep` keepalive, duration derived from maxRuntimeMs plus
+// a fixed bounded cleanup grace (60 s). The model/caller cannot control the
+// keepalive command or duration.
+// ---------------------------------------------------------------------------
+
+/** O1 fixed cleanup grace added to maxRuntimeMs for helper keepalive (ms). */
+const OLLAMA_HELPER_GRACE_MS = 60_000;
+
+/**
+ * Deterministic name for the Ollama read-helper container scoped to one job.
+ * Never caller-influenced.
+ */
+export function ollamaReadHelperContainerName(jobId: string): string {
+  assertJobId(jobId);
+  return `${SANDBOX_LABEL_NS.replace(/\./g, '-')}-ollama-helper-${jobId}`;
+}
+
+/**
+ * Build a hardened Ollama read-helper container create body.
+ *
+ * The helper mounts the staged workspace volume READ-ONLY and runs an idle
+ * keepalive. All real workspace reads happen via `docker exec` from the
+ * executor. The container has no network, no capabilities, no host binds,
+ * and a read-only root filesystem.
+ */
+export function buildOllamaReadHelperCreateBody(opts: {
+  image: string;
+  jobId: string;
+  workspaceVolumeName: string;
+  limits: RunnerLimits;
+}): DockerCreateBody {
+  assertJobId(opts.jobId);
+  const l = opts.limits;
+  // Derive keepalive duration from trusted maxRuntimeMs (bounded, not caller-set)
+  const keepaliveSeconds = Math.ceil((l.maxRuntimeMs + OLLAMA_HELPER_GRACE_MS) / 1000);
+  return {
+    Image: opts.image,
+    User: RUNNER_USER,
+    WorkingDir: WORKSPACE_PATH,
+    // Idle keepalive — real work happens via docker exec (no model control)
+    Cmd: ['sleep', String(keepaliveSeconds)],
+    Env: ['HOME=/tmp'],
+    Labels: ownershipLabels('ollama-read-helper', opts.jobId),
+    NetworkDisabled: true,
+    HostConfig: hardenedHostConfig({
+      // Read-only workspace volume — model can never mutate the staged snapshot
+      Binds: [],
+      Mounts: [
+        {
+          Type: 'volume',
+          Source: opts.workspaceVolumeName,
+          Target: WORKSPACE_PATH,
+          ReadOnly: true,
+        },
+      ],
+      NetworkMode: 'none',
+      Memory: l.memoryBytes,
+      MemorySwap: l.memorySwapBytes,
+      NanoCpus: l.nanoCpus,
+      PidsLimit: l.pidsLimit,
+      Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=16m' },
+      // No devices, no docker.sock, no host binds
+      Devices: [],
+      GroupAdd: [],
+    }),
+  };
+}

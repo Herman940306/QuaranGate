@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import YAML from 'yaml';
 import { z } from 'zod';
 import { BridgeError } from '../shared/errors.js';
+import { validateGuardPattern } from './agents/applyPolicy.js';
 import {
   AGENT_BACKEND_IDS,
   AGENT_PROFILE_IDS,
@@ -51,6 +52,8 @@ const projectSchema = z.object({
   profiles: z.array(profileId).nonempty(),
   /** Paths refused by apply policy: a match rejects the whole changeset. */
   guardedPaths: z.array(z.string().min(1).max(512)).max(256).default([]),
+  /** Paths refused for read by Ollama O1: glob patterns using applyPolicy grammar. */
+  sensitiveReadGlobs: z.array(z.string().min(1).max(512)).max(256).default([]),
 }).strict();
 
 const profileSchema = z.object({
@@ -134,6 +137,14 @@ export function validateAgentConfig(raw: unknown): AgentControlPlaneConfig {
   for (const p of cfg.projects) {
     for (const bk of p.backends) if (!backends.has(bk)) throw malformed(`project ${p.id}: unknown backend ${bk}`);
     for (const pr of p.profiles) if (!profiles.has(pr)) throw malformed(`project ${p.id}: unknown profile ${pr}`);
+    // Validate sensitiveReadGlobs using the same grammar as guardedPaths (applyPolicy.ts)
+    for (const pattern of p.sensitiveReadGlobs) {
+      try {
+        validateGuardPattern(pattern);
+      } catch (e) {
+        throw malformed(`project ${p.id}: invalid sensitiveReadGlob pattern "${pattern}": ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
   for (const p of cfg.profiles) {
     if (!policies.has(p.defaultResourcePolicy)) throw malformed(`profile ${p.id}: unknown resource policy ${p.defaultResourcePolicy}`);
