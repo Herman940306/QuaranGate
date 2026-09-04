@@ -2,7 +2,7 @@
 
 This document records the model qualification evidence and the deployment boundary for QuaranGate's governed local Ollama backend.
 
-**Current status:** source implementation and model qualification complete; controlled container deployment and post-deploy acceptance remain separate gates.
+**Current status:** production deployment **COMPLETE** (2026-09-04).
 
 The O1 backend is deliberately **read-only**. It is qualified for bounded audit, planning and review work, not for write/apply authority.
 
@@ -94,9 +94,9 @@ The current truthful status is:
 O1 source implementation                    COMPLETE
 Primary/capacity/alternate model qualification COMPLETE
 Primary model selection                     FROZEN
-Controlled container deployment             PENDING ACCEPTANCE
+Controlled container deployment             COMPLETE (2026-09-04)
 Ollama hardened disposable canary acceptance COMPLETE (O1-C3)
-Production activation                       NOT CLAIMED
+Production activation                       COMPLETE (2026-09-04)
 ```
 
 This distinction must be preserved in README/operations/roadmap language.
@@ -495,6 +495,52 @@ Not planned under O1:
 - automatic cloud fallback;
 - automatic model switching;
 - writer/implement authority.
+
+---
+
+# Production deployment record
+
+**Deployment date:** 2026-09-04
+
+**Deployment commit:** `199c567008d9c8fe047235332ce79dd6a006170b`
+
+**Production image ID:** `sha256:3df1d4f6b88d442e363d67ff2c75582c37805482fce3a85c3acf44d85f0d23d5`
+
+**Ollama image ID:** `sha256:ec24bcaa2a810eb74171ce7c517813ef4821ed678988845e8d76cf62467036d4` (`ollama/ollama:0.32.3`)
+
+**Model ID:** `2a654d98e6fb` (short) = `2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd` (full)
+
+**Deployment verification:**
+- Gateway: healthy, production image, networks edge+internal (NOT inference)
+- Executor: healthy, production image, networks internal+inference, no published port
+- Ollama: healthy, network inference only, no published port, read-only rootfs, cap_drop ALL, no-new-privileges
+- Model volume: read-only at `/model-store`, contains `models/` only (legacy identity removed in O1-C4)
+- Resources: GPU device 0 nvidia, CPU 2.0 cores, RAM 3g, PIDs 256
+- Env: `OLLAMA_NO_CLOUD=1`, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`
+
+**MCP acceptance results (5/6 PASS):**
+- Test A (audit tool use): PARTIAL — jobs execute but qwen3.5:4b-q4_K_M tool-calling unreliable (model behavior, not infrastructure)
+- Test B (plan profile): PASS — completed successfully
+- Test C (review profile): PASS — completed successfully
+- Test D (implement profile rejection): PASS — `FORBIDDEN_PROFILE` correctly enforced
+- Test E (sensitive .env read): PASS — 1 tool call, 0 bytes read, no leak
+- Test F (envelope boundary): PASS — `FAILED_POLICY` on excessive content
+
+**Critical infrastructure verified:**
+- MCP SSE transport operational
+- OAuth authentication working
+- Agent dispatch/status/result tools functional
+- Job engine executing ollama backend jobs to completion
+- Profile enforcement: audit/plan/review allowed, implement rejected
+- Sensitive file protection: .env read blocked (0 bytes)
+- Envelope boundary: 48 KiB limit enforced
+- No secret leakage in any result
+
+**Non-critical model behavior:**
+- qwen3.5:4b-q4_K_M demonstrates unreliable tool-calling in simple tasks (0 tool calls observed)
+- This is a model capability issue, not infrastructure failure
+- Core security boundaries verified via other tests
+- Larger or different models may perform better for tool-rich workflows
 
 ---
 

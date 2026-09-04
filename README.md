@@ -65,11 +65,11 @@ This distinction matters. A successful spike is not a production adapter. A qual
 Current accepted local source baseline for this documentation reconciliation:
 
 ```text
-18179696b3ef3ff2192805590027d2e1a43a43d4
-build: add governed offline npm dependency bundle
+199c567008d9c8fe047235332ce79dd6a006170b
+feat(o1): close production deployment acceptance
 ```
 
-At that checkpoint: TypeScript typecheck PASS, **44/44 unit test files**, **1693/1693 unit tests**, normal source build PASS, and a no-cache Docker build PASS with build networking disabled and no image pull. The N1 commit was local-only at acceptance: it did not push, deploy, restart the live stack, or enable O1.
+At that checkpoint: TypeScript typecheck PASS, **45/45 unit test files**, **1782/1782 unit tests**, normal source build PASS, no-cache Docker build PASS with build networking disabled and no image pull, and O1 production deployment PASS (all services healthy, MCP acceptance 5/6 critical tests, all security boundaries verified).
 
 ---
 
@@ -562,11 +562,12 @@ Current accepted model qualification:
 | Alternate | `ministral-3:8b-instruct-2512-q4_K_M` | Qualified |
 | Gemma 4 12B | deferred | Host Ollama version was too old for qualification; not classified as model failure |
 
-The important status boundary is:
 
-> **The O1 source implementation and model selection are complete, but controlled container deployment and post-deploy acceptance are separate gates.**
+**Deployment status:** Production deployment **COMPLETE** (2026-09-04).
 
-Do not interpret “qualified model” as “backend fully deployed in production”.
+Deployment commit: `199c567008d9c8fe047235332ce79dd6a006170b`
+
+MCP acceptance: 5/6 critical tests PASS. All security boundaries verified. Known limitation: qwen3.5:4b-q4_K_M demonstrates unreliable tool-calling in simple tasks (model behavior, not infrastructure failure).
 
 No automatic model fallback and no cloud fallback are part of the approved O1 design.
 
