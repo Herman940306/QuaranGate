@@ -2150,3 +2150,179 @@ describe('O1 R2 workspace staging', () => {
     expect(createContainerSpy).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// §24.R2 — O1 RESOURCE LIFECYCLE (final remediation)
+// ---------------------------------------------------------------------------
+
+describe('O1 R2 resource lifecycle', () => {
+  interface LifecycleState {
+    helperContainerId: string | null;
+    workspaceVolumeName: string | null;
+    target: unknown | null;
+    baseCommit: string | null;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function makeBackend(
+    sandbox: import('../../src/executor/agents/sandboxRunner.js').RunnerSandbox,
+    finalAnswer = 'bounded final model answer',
+  ) {
+    const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
+    const chat = vi.fn().mockImplementation(async () => (async function* () {
+      yield {
+        message: { role: 'assistant', content: finalAnswer, tool_calls: [] },
+        done: true,
+      };
+    })());
+    const MockOllamaClass = vi.fn().mockReturnValue({ chat }) as unknown as typeof import('ollama').Ollama;
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'test:v1', helperImage: 'helper:v1', sandbox, sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+    return { backend, chat };
+  }
+
+  function lifecycleState(backend: object): LifecycleState {
+    return backend as unknown as LifecycleState;
+  }
+
+  it('stage failure creates no helper', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+    const sandbox = new RunnerSandbox({ image: 'stager:v1' });
+    vi.spyOn(sandbox, 'stageWorkspace').mockRejectedValue(
+      new BridgeError('PRECONDITION_FAILED', 'staging failed', 412),
+    );
+    const createSpy = vi.spyOn(dockerModule, 'createContainer');
+    const removeSpy = vi.spyOn(dockerModule, 'removeContainer');
+    const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace');
+    const { backend } = await makeBackend(sandbox);
+
+    await expect(backend.prepare(new AbortController().signal)).rejects.toThrow(/staging failed/);
+
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(removeSpy).not.toHaveBeenCalled();
+    expect(disposeSpy).not.toHaveBeenCalled();
+    expect(lifecycleState(backend).target).toBeNull();
+  });
+
+  it('helper create failure disposes the staged workspace and removes any name-addressable helper', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+    const sandbox = new RunnerSandbox({ image: 'stager:v1' });
+    vi.spyOn(sandbox, 'stageWorkspace').mockResolvedValue({
+      volumeName: 'staged-create-failure',
+      baseCommit: '1111111111111111111111111111111111111111',
+    });
+    const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'createContainer').mockRejectedValue(new Error('helper create failed'));
+    const startSpy = vi.spyOn(dockerModule, 'startContainer');
+    const removeSpy = vi.spyOn(dockerModule, 'removeContainer').mockResolvedValue(undefined);
+    const { backend } = await makeBackend(sandbox);
+
+    await expect(backend.prepare(new AbortController().signal)).rejects.toThrow(/helper create failed/);
+
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(removeSpy).toHaveBeenCalledExactlyOnceWith(ollamaReadHelperContainerName(JOB), true);
+    expect(disposeSpy).toHaveBeenCalledExactlyOnceWith('staged-create-failure');
+    expect(lifecycleState(backend)).toMatchObject({
+      helperContainerId: null,
+      workspaceVolumeName: null,
+      target: null,
+    });
+  });
+
+  it('helper start failure removes the helper and disposes the staged workspace', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+    const sandbox = new RunnerSandbox({ image: 'stager:v1' });
+    vi.spyOn(sandbox, 'stageWorkspace').mockResolvedValue({
+      volumeName: 'staged-start-failure',
+      baseCommit: '2222222222222222222222222222222222222222',
+    });
+    const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper-start-failure');
+    vi.spyOn(dockerModule, 'startContainer').mockRejectedValue(new Error('helper start failed'));
+    const stopSpy = vi.spyOn(dockerModule, 'stopContainer').mockResolvedValue(undefined);
+    const removeSpy = vi.spyOn(dockerModule, 'removeContainer').mockResolvedValue(undefined);
+    const { backend } = await makeBackend(sandbox);
+
+    await expect(backend.prepare(new AbortController().signal)).rejects.toThrow(/helper start failed/);
+
+    expect(stopSpy).toHaveBeenCalledExactlyOnceWith('helper-start-failure', 2);
+    expect(removeSpy).toHaveBeenCalledWith('helper-start-failure', true);
+    expect(removeSpy).toHaveBeenCalledWith(ollamaReadHelperContainerName(JOB), true);
+    expect(disposeSpy).toHaveBeenCalledExactlyOnceWith('staged-start-failure');
+    expect(lifecycleState(backend).target).toBeNull();
+  });
+
+  it('cancellation after staging disposes the workspace without creating a helper', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+    const sandbox = new RunnerSandbox({ image: 'stager:v1' });
+    const controller = new AbortController();
+    vi.spyOn(sandbox, 'stageWorkspace').mockImplementation(async () => {
+      controller.abort(new Error('cancelled after staging'));
+      return {
+        volumeName: 'staged-cancelled',
+        baseCommit: '3333333333333333333333333333333333333333',
+      };
+    });
+    const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace').mockResolvedValue(undefined);
+    const createSpy = vi.spyOn(dockerModule, 'createContainer');
+    const { backend } = await makeBackend(sandbox);
+
+    await expect(backend.prepare(controller.signal)).rejects.toThrow(/cancelled after staging/);
+
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(disposeSpy).toHaveBeenCalledExactlyOnceWith('staged-cancelled');
+    expect(lifecycleState(backend).target).toBeNull();
+  });
+
+  it('successful validate preserves bounded result provenance and cleanup is idempotent', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+    const sandbox = new RunnerSandbox({ image: 'stager:v1' });
+    const baseCommit = '4444444444444444444444444444444444444444';
+    const oversizedAnswer = 'z'.repeat(20_000);
+    vi.spyOn(sandbox, 'stageWorkspace').mockResolvedValue({
+      volumeName: 'staged-success',
+      baseCommit,
+    });
+    const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper-success');
+    vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
+    const stopSpy = vi.spyOn(dockerModule, 'stopContainer').mockResolvedValue(undefined);
+    const removeSpy = vi.spyOn(dockerModule, 'removeContainer').mockResolvedValue(undefined);
+    const { backend } = await makeBackend(sandbox, oversizedAnswer);
+
+    await backend.prepare(new AbortController().signal);
+    await backend.run(new AbortController().signal);
+    const result = await backend.validate(new AbortController().signal);
+
+    expect(result).toMatchObject({
+      summary: 'z'.repeat(16_384),
+      exitCode: 0,
+      baseCommit,
+    });
+    expect(stopSpy).toHaveBeenCalledExactlyOnceWith('helper-success', 2);
+    expect(removeSpy).toHaveBeenCalledTimes(2);
+    expect(disposeSpy).toHaveBeenCalledExactlyOnceWith('staged-success');
+    expect(lifecycleState(backend)).toMatchObject({
+      helperContainerId: null,
+      workspaceVolumeName: null,
+      target: null,
+      baseCommit,
+    });
+    await expect(backend.run(new AbortController().signal)).rejects.toThrow(/target not prepared/);
+
+    await expect(backend.cleanup()).resolves.toBeUndefined();
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(2);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+  });
+});

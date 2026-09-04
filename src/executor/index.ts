@@ -42,13 +42,13 @@ loadTargetConfig();
 const AGENTS_CONFIG = process.env.AGENTS_CONFIG ?? '/config/agents.yaml';
 const JOBS_DB = process.env.JOBS_DB ?? '/jobs/agents.db';
 // A3/A4 runner infrastructure is TRUSTED configuration (never caller-selectable).
-// When AGENT_RUNNER_IMAGE / AGENT_PROXY_IMAGE / AGENT_KIRO_KEY_PATH are all set,
-// the real read-only Kiro backend is wired for `backend: kiro`. Otherwise the
-// deterministic fake backend remains the operational backend (unchanged A2/A3
-// behavior). None of these are ever caller-selectable.
+// AGENT_RUNNER_IMAGE is Kiro-specific. When it, AGENT_PROXY_IMAGE, and
+// AGENT_KIRO_KEY_PATH are all set, the real read-only Kiro backend is wired for
+// `backend: kiro`. Otherwise the deterministic fake backend remains the
+// operational backend (unchanged A2/A3 behavior). None of these are ever
+// caller-selectable.
 const RUNNER_IMAGE = process.env.AGENT_RUNNER_IMAGE ?? '';
 const PROXY_IMAGE = process.env.AGENT_PROXY_IMAGE ?? '';
-const EXPLICIT_HELPER_IMAGE = process.env.AGENT_HELPER_IMAGE ?? '';
 const KIRO_KEY_PATH = process.env.AGENT_KIRO_KEY_PATH ?? '';
 // Trusted zero-inference verification switch. When set truthy the real Kiro
 // backend stops after ACP session/new (no session/prompt, no model turn) — used
@@ -57,9 +57,12 @@ const KIRO_DRY_RUN = /^(1|true|yes)$/i.test(process.env.AGENT_KIRO_DRY_RUN ?? ''
 
 // O1: Ollama read-only backend (TRUSTED configuration, never caller-selectable).
 // When the trusted config enables `backend: ollama`, its explicit environment
-// is validated before the real backend is wired. AGENT_HELPER_IMAGE is required
-// independently of the Kiro runner/helper relationship. No defaults, no
-// :latest, fail closed.
+// is validated before the real backend is wired. AGENT_HELPER_IMAGE is the O1
+// read-helper image; AGENT_STAGER_IMAGE is the O1 staging image. Neither falls
+// back to AGENT_RUNNER_IMAGE or to the other O1 image. No defaults, no :latest,
+// fail closed.
+const EXPLICIT_HELPER_IMAGE = process.env.AGENT_HELPER_IMAGE ?? '';
+const EXPLICIT_STAGER_IMAGE = process.env.AGENT_STAGER_IMAGE ?? '';
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? '';
 const OLLAMA_MODEL_QUALIFIER = process.env.OLLAMA_MODEL_QUALIFIER ?? '';
 
@@ -230,6 +233,7 @@ let server: ReturnType<typeof app.listen>;
     const startupPolicy = resolveExecutorStartupPolicy(ollamaBackend?.enabled === true, {
       agentRunnerImage: RUNNER_IMAGE,
       agentHelperImage: EXPLICIT_HELPER_IMAGE,
+      agentStagerImage: EXPLICIT_STAGER_IMAGE,
       ollamaHost: OLLAMA_HOST,
       ollamaModelQualifier: OLLAMA_MODEL_QUALIFIER,
     });

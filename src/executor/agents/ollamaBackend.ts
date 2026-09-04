@@ -256,6 +256,8 @@ function log(msg: string, fields: Record<string, unknown>): void {
 export class OllamaBackend implements AgentBackendAdapter {
   private readonly ollama: Ollama;
   private helperContainerId: string | null = null;
+  /** True once helper creation may have allocated a name-addressable resource. */
+  private helperCleanupRequired = false;
   private workspaceVolumeName: string | null = null;
   private target: ConfinedTarget | null = null;
   private baseCommit: string | null = null;
@@ -319,6 +321,9 @@ export class OllamaBackend implements AgentBackendAdapter {
         limits,
       });
 
+      // Set before the Docker call: creation can fail after Docker has reserved
+      // the name but before it returns an id, so cleanup must cover that case.
+      this.helperCleanupRequired = true;
       this.helperContainerId = await createContainer(helperName, body as unknown as Record<string, unknown>);
       await startContainer(this.helperContainerId);
       this.checkAbort(signal);
@@ -512,25 +517,37 @@ export class OllamaBackend implements AgentBackendAdapter {
   }
 
   async cleanup(): Promise<void> {
-    // R2: Always remove BOTH the read-helper container AND the staged workspace volume
-    if (this.helperContainerId) {
+    // Claim and clear owned state before awaiting best-effort disposal. This
+    // makes cleanup idempotent (including overlapping calls) and prevents any
+    // later operation from using a target whose resources are being removed.
+    const helperContainerId = this.helperContainerId;
+    const helperCleanupRequired = this.helperCleanupRequired;
+    const workspaceVolumeName = this.workspaceVolumeName;
+    this.helperContainerId = null;
+    this.helperCleanupRequired = false;
+    this.workspaceVolumeName = null;
+    this.target = null;
+
+    // R2: Always remove BOTH the read-helper container AND the staged workspace volume.
+    if (helperContainerId) {
       log('ollama backend: cleaning up read-helper', { jobId: this.job.jobId });
-      try { await stopContainer(this.helperContainerId, 2); } catch { /* best-effort */ }
-      try { await removeContainer(this.helperContainerId, true); } catch { /* best-effort */ }
-      this.helperContainerId = null;
+      try { await stopContainer(helperContainerId, 2); } catch { /* best-effort */ }
+      try { await removeContainer(helperContainerId, true); } catch { /* best-effort */ }
     }
-    // Also attempt by name (defense in depth)
-    const helperName = ollamaReadHelperContainerName(this.job.jobId);
-    try { await removeContainer(helperName, true); } catch { /* best-effort */ }
+    // Also attempt by name once (defense in depth, including an ambiguous
+    // create failure where Docker did not return a container id).
+    if (helperCleanupRequired) {
+      const helperName = ollamaReadHelperContainerName(this.job.jobId);
+      try { await removeContainer(helperName, true); } catch { /* best-effort */ }
+    }
 
     // R2: Dispose the staged workspace volume
-    if (this.workspaceVolumeName) {
+    if (workspaceVolumeName) {
       log('ollama backend: cleaning up staged workspace', {
         jobId: this.job.jobId,
-        volumeName: this.workspaceVolumeName,
+        volumeName: workspaceVolumeName,
       });
-      try { await this.opts.sandbox.disposeWorkspace(this.workspaceVolumeName); } catch { /* best-effort */ }
-      this.workspaceVolumeName = null;
+      try { await this.opts.sandbox.disposeWorkspace(workspaceVolumeName); } catch { /* best-effort */ }
     }
   }
 

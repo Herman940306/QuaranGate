@@ -28,12 +28,13 @@ import { join } from 'node:path';
 const h = vi.hoisted(() => {
   const order: string[] = [];
   const fail: { stage: string | null } = { stage: null };
+  const startupPolicyCalls: Array<[boolean, Record<string, unknown>]> = [];
   /** Record a stage, and throw from it when this test asked that stage to fail. */
   const stage = (name: string): void => {
     order.push(name);
     if (fail.stage === name) throw new Error(`simulated global failure in ${name}`);
   };
-  return { order, fail, stage };
+  return { order, fail, startupPolicyCalls, stage };
 });
 
 // ---------------------------------------------------------------------------
@@ -76,6 +77,20 @@ vi.mock('../../src/executor/agentConfig.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/executor/agentConfig.js')>()),
   loadAgentConfig: () => ({ projects: [], backends: [], profiles: [], resourcePolicies: [] }),
 }));
+
+vi.mock('../../src/executor/startupPolicy.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/executor/startupPolicy.js')>();
+  return {
+    ...actual,
+    resolveExecutorStartupPolicy: (
+      ollamaEnabled: boolean,
+      env: Parameters<typeof actual.resolveExecutorStartupPolicy>[1],
+    ) => {
+      h.startupPolicyCalls.push([ollamaEnabled, { ...env }]);
+      return actual.resolveExecutorStartupPolicy(ollamaEnabled, env);
+    },
+  };
+});
 
 vi.mock('../../src/executor/agents/jobStore.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/executor/agents/jobStore.js')>();
@@ -167,6 +182,7 @@ async function runStartup(): Promise<void> {
 beforeEach(() => {
   h.order.length = 0;
   h.fail.stage = null;
+  h.startupPolicyCalls.length = 0;
   exitCodes = [];
 
   const dir = mkdtempSync(join(tmpdir(), 'mcpb-startup-'));
@@ -182,6 +198,7 @@ beforeEach(() => {
   delete process.env.AGENT_PROXY_IMAGE;
   delete process.env.AGENT_KIRO_KEY_PATH;
   delete process.env.AGENT_HELPER_IMAGE;
+  delete process.env.AGENT_STAGER_IMAGE;
 
   exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     exitCodes.push(Number(code ?? 0));
@@ -229,6 +246,32 @@ describe('executor startup ordering — success path', () => {
     await runStartup();
     expect(h.order.indexOf('recoverActive')).toBeLessThan(h.order.indexOf('sandbox.reconcileOrphans'));
     expect(h.order.indexOf('recoverApplyAttempts')).toBeLessThan(h.order.indexOf('sandbox.reconcileOrphans'));
+  });
+
+  it('passes the trusted AGENT_STAGER_IMAGE through the real production startup boundary', async () => {
+    process.env.AGENT_STAGER_IMAGE = 'qualified-o1-stager:v1';
+
+    await runStartup();
+
+    expect(h.startupPolicyCalls).toHaveLength(1);
+    expect(h.startupPolicyCalls[0]?.[1]).toMatchObject({
+      agentStagerImage: 'qualified-o1-stager:v1',
+    });
+  });
+
+  it('does not source the O1 stager image from runner or helper environment values', async () => {
+    process.env.AGENT_RUNNER_IMAGE = 'kiro-runner:v1';
+    process.env.AGENT_HELPER_IMAGE = 'o1-read-helper:v1';
+    delete process.env.AGENT_STAGER_IMAGE;
+
+    await runStartup();
+
+    expect(h.startupPolicyCalls).toHaveLength(1);
+    expect(h.startupPolicyCalls[0]?.[1]).toMatchObject({
+      agentRunnerImage: 'kiro-runner:v1',
+      agentHelperImage: 'o1-read-helper:v1',
+      agentStagerImage: '',
+    });
   });
 });
 
