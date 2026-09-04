@@ -18,13 +18,17 @@ import type { AgentProjectConfig } from '../agentConfig.js';
 import { OllamaBackend } from './ollamaBackend.js';
 import { RunnerSandbox } from './sandboxRunner.js';
 
+/**
+ * Dependencies for the Ollama backend factory.
+ * The sandbox is now injected directly rather than created from a runner image.
+ */
 export interface OllamaFactoryDeps {
   ollamaHost: string;
   modelQualifier: string;
   /** Generic helper image for read-only workspace access. */
   helperImage: string;
-  /** Stager/runner image for workspace staging (RunnerSandbox). */
-  runnerImage: string;
+  /** Injected sandbox instance for workspace staging. */
+  sandbox: RunnerSandbox;
   projects: AgentProjectConfig[];
   /** Injectable Ollama class for testing. */
   OllamaClass: typeof import('ollama').Ollama;
@@ -39,8 +43,6 @@ export function createOllamaBackendFactory(
   deps: OllamaFactoryDeps,
 ): (job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null {
   const projectById = new Map(deps.projects.map((p) => [p.id, p]));
-  // R2: Create a single shared RunnerSandbox instance for staging
-  const sandbox = new RunnerSandbox({ image: deps.runnerImage });
 
   return (job, policy) => {
     if (job.backend !== 'ollama') return null; // Not Ollama → use existing resolution
@@ -66,7 +68,7 @@ export function createOllamaBackendFactory(
         ollamaHost: deps.ollamaHost,
         modelQualifier: deps.modelQualifier,
         helperImage: deps.helperImage,
-        sandbox,
+        sandbox: deps.sandbox,
         sensitiveReadGlobs: project.sensitiveReadGlobs,
         OllamaClass: deps.OllamaClass,
       },

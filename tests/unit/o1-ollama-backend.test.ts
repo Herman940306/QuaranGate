@@ -236,6 +236,7 @@ describe('O1 startup matrix', () => {
       ollamaHost: 'http://ollama:11434',
       ollamaModelQualifier: 'llama3.2:latest',
       agentHelperImage: 'helper:v1',
+      agentStagerImage: 'stager:v1', // R2: required for Ollama
     })).toThrow(/:latest/);
   });
 
@@ -244,6 +245,7 @@ describe('O1 startup matrix', () => {
       ollamaHost: 'http://ollama:11434',
       ollamaModelQualifier: 'model:v1',
       agentHelperImage: 'helper:latest',
+      agentStagerImage: 'stager:v1', // R2: required for Ollama
     })).toThrow(/:latest/);
   });
 
@@ -253,11 +255,13 @@ describe('O1 startup matrix', () => {
       ollamaHost: 'http://ollama:11434',
       ollamaModelQualifier: 'model:1.0.0',
       agentHelperImage: 'helper:v1.2.3',
+      agentStagerImage: 'stager:v1.0.0', // R2: required for Ollama
     }).ollama).toEqual({
       enabled: true,
       host: 'http://ollama:11434',
       modelQualifier: 'model:1.0.0',
       helperImage: 'helper:v1.2.3',
+      stagerImage: 'stager:v1.0.0', // R2: included in policy
     });
   });
 

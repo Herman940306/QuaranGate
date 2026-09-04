@@ -19,6 +19,7 @@ services:
       OLLAMA_MODEL_QUALIFIER: "${OLLAMA_MODEL_QUALIFIER:?set OLLAMA_MODEL_QUALIFIER in .env (no :latest default)}"
       # Generic helper image for read operations (must be explicit when Ollama enabled)
       AGENT_HELPER_IMAGE: "${AGENT_HELPER_IMAGE:?set qualified AGENT_HELPER_IMAGE}"
+      AGENT_STAGER_IMAGE: "${AGENT_STAGER_IMAGE:?set qualified AGENT_STAGER_IMAGE}"
 
   # Ollama inference service (internal network only, no host ports)
   ollama:

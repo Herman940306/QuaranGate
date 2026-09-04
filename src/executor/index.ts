@@ -239,6 +239,14 @@ let server: ReturnType<typeof app.listen>;
     agentStore = new AgentJobStore(JOBS_DB);
     const sandbox = new RunnerSandbox({ image: startupPolicy.runnerImage });
 
+    // O1 R2 architectural change: Create dedicated sandbox for O1 staging operations.
+    // O1 uses its own sandbox from AGENT_STAGER_IMAGE, independent of the Kiro runner.
+    // This sandbox is used exclusively for O1-specific staging (parsing job config,
+    // preparing prompt artifacts) and is NOT shared with Kiro's execution sandbox.
+    const ollamaSandbox = startupPolicy.ollama.enabled
+      ? new RunnerSandbox({ image: startupPolicy.ollama.stagerImage })
+      : null;
+
     // A4: wire the real Kiro backend when the trusted runner infrastructure is
     // configured. The factory selects KiroBackend ONLY for backend=kiro and
     // falls back to the fake backend otherwise.
@@ -256,11 +264,14 @@ let server: ReturnType<typeof app.listen>;
     const factories: Array<(job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null> = [];
 
     if (startupPolicy.ollama.enabled) {
+      if (!ollamaSandbox) {
+        throw new BridgeError('PRECONDITION_FAILED', 'ollamaSandbox not initialized when ollama.enabled=true', 500);
+      }
       const ollamaFactory = createOllamaBackendFactory({
         ollamaHost: startupPolicy.ollama.host,
         modelQualifier: startupPolicy.ollama.modelQualifier,
         helperImage: startupPolicy.ollama.helperImage,
-        runnerImage: startupPolicy.runnerImage,
+        sandbox: ollamaSandbox,
         projects: agentConfig.projects,
         OllamaClass: Ollama,
       });

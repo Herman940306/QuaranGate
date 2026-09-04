@@ -282,56 +282,64 @@ export class OllamaBackend implements AgentBackendAdapter {
   }
 
   async prepare(signal: AbortSignal): Promise<void> {
-    log('ollama backend: staging workspace', { jobId: this.job.jobId });
-    this.checkAbort(signal);
+    try {
+      log('ollama backend: staging workspace', { jobId: this.job.jobId });
+      this.checkAbort(signal);
 
-    // R2: Stage committed-HEAD snapshot via RunnerSandbox (trusted, proven).
-    // O1 read-only jobs explicitly opt out of clean-worktree requirement —
-    // staging archives ONLY committed HEAD bytes via `git archive HEAD`,
-    // never untracked/ignored/modified working-tree content.
-    const staged = await this.opts.sandbox.stageWorkspace({
-      jobId: this.job.jobId,
-      hostPath: this.job.hostPath,
-      gitRequired: true,
-      rejectTrackedSymlinks: false, // O1 is read-only, no A5 write restrictions
-      requireCleanWorktree: false,  // R2: allow staging from dirty host for O1
-    });
-    this.workspaceVolumeName = staged.volumeName;
-    this.baseCommit = staged.baseCommit;
+      // R2: Stage committed-HEAD snapshot via RunnerSandbox (trusted, proven).
+      // O1 read-only jobs explicitly opt out of clean-worktree requirement —
+      // staging archives ONLY committed HEAD bytes via `git archive HEAD`,
+      // never untracked/ignored/modified working-tree content.
+      const staged = await this.opts.sandbox.stageWorkspace({
+        jobId: this.job.jobId,
+        hostPath: this.job.hostPath,
+        gitRequired: true,
+        rejectTrackedSymlinks: false, // O1 is read-only, no A5 write restrictions
+        requireCleanWorktree: false,  // R2: allow staging from dirty host for O1
+      });
+      this.workspaceVolumeName = staged.volumeName;
+      this.baseCommit = staged.baseCommit;
 
-    log('ollama backend: workspace staged', {
-      jobId: this.job.jobId,
-      volumeName: this.workspaceVolumeName,
-      baseCommit: this.baseCommit,
-    });
+      log('ollama backend: workspace staged', {
+        jobId: this.job.jobId,
+        volumeName: this.workspaceVolumeName,
+        baseCommit: this.baseCommit,
+      });
 
-    // Create the read-helper container (long-lived, RO workspace mount)
-    log('ollama backend: creating read-helper container', { jobId: this.job.jobId });
-    this.checkAbort(signal);
+      // Create the read-helper container (long-lived, RO workspace mount)
+      log('ollama backend: creating read-helper container', { jobId: this.job.jobId });
+      this.checkAbort(signal);
 
-    const limits = toRunnerLimits(this.job.policy);
-    const helperName = ollamaReadHelperContainerName(this.job.jobId);
-    const body = buildOllamaReadHelperCreateBody({
-      image: this.opts.helperImage,
-      jobId: this.job.jobId,
-      workspaceVolumeName: this.workspaceVolumeName,
-      limits,
-    });
+      const limits = toRunnerLimits(this.job.policy);
+      const helperName = ollamaReadHelperContainerName(this.job.jobId);
+      const body = buildOllamaReadHelperCreateBody({
+        image: this.opts.helperImage,
+        jobId: this.job.jobId,
+        workspaceVolumeName: this.workspaceVolumeName,
+        limits,
+      });
 
-    this.helperContainerId = await createContainer(helperName, body as unknown as Record<string, unknown>);
-    await startContainer(this.helperContainerId);
-    this.checkAbort(signal);
+      this.helperContainerId = await createContainer(helperName, body as unknown as Record<string, unknown>);
+      await startContainer(this.helperContainerId);
+      this.checkAbort(signal);
 
-    // Construct ConfinedTarget from the helper container + WORKSPACE_PATH
-    this.target = {
-      containerId: this.helperContainerId,
-      workspace: WORKSPACE_PATH,
-    };
+      // Construct ConfinedTarget from the helper container + WORKSPACE_PATH
+      this.target = {
+        containerId: this.helperContainerId,
+        workspace: WORKSPACE_PATH,
+      };
 
-    log('ollama backend: read-helper ready', {
-      jobId: this.job.jobId,
-      helperContainerId: this.helperContainerId,
-    });
+      log('ollama backend: read-helper ready', {
+        jobId: this.job.jobId,
+        helperContainerId: this.helperContainerId,
+      });
+    } catch (e) {
+      // R2: Fail-closed cleanup — if staging succeeded but helper creation/start
+      // fails, dispose the staged volume. If helper was created but start failed,
+      // remove both helper and staged volume. Idempotent cleanup handles all cases.
+      await this.cleanup();
+      throw e;
+    }
   }
 
   async run(signal: AbortSignal): Promise<void> {
@@ -465,17 +473,24 @@ export class OllamaBackend implements AgentBackendAdapter {
     baseCommit?: string | null;
     changedFiles?: string[];
   }> {
-    this.checkAbort(signal);
-    // No artifact production (§21 — O1 is read-only, never produces B3 artifact)
-    return {
-      // Keep the provider response inside the existing public agent_result
-      // summary contract. Tool transcripts and execution telemetry stay local.
-      summary: this.finalAnswer.slice(0, MAX_RESULT_SUMMARY_CHARS),
-      exitCode: 0,
-      baseCommit: this.baseCommit,
-      // No changedFiles (read-only, no mutations)
-      // No artifactResult (never produced by Ollama O1)
-    };
+    try {
+      this.checkAbort(signal);
+      // No artifact production (§21 — O1 is read-only, never produces B3 artifact)
+      return {
+        // Keep the provider response inside the existing public agent_result
+        // summary contract. Tool transcripts and execution telemetry stay local.
+        summary: this.finalAnswer.slice(0, MAX_RESULT_SUMMARY_CHARS),
+        exitCode: 0,
+        baseCommit: this.baseCommit,
+        // No changedFiles (read-only, no mutations)
+        // No artifactResult (never produced by Ollama O1)
+      };
+    } finally {
+      // R2: Mirror the proven Kiro pattern — cleanup in finally block to ensure
+      // helper container and staged workspace volume are always disposed, even if
+      // validation or result construction throws.
+      await this.cleanup();
+    }
   }
 
   isAgentFailure(e: unknown): boolean {

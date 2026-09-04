@@ -8,6 +8,7 @@
 export interface ExecutorStartupEnvironment {
   agentRunnerImage?: string;
   agentHelperImage?: string;
+  agentStagerImage?: string;
   ollamaHost?: string;
   ollamaModelQualifier?: string;
 }
@@ -17,6 +18,7 @@ export interface EnabledOllamaStartupPolicy {
   host: string;
   modelQualifier: string;
   helperImage: string;
+  stagerImage: string;
 }
 
 export type OllamaStartupPolicy =
@@ -36,6 +38,7 @@ export function resolveExecutorStartupPolicy(
 ): ExecutorStartupPolicy {
   const runnerImage = env.agentRunnerImage ?? '';
   const explicitHelperImage = env.agentHelperImage ?? '';
+  const stagerImage = env.agentStagerImage ?? '';
   const policy: ExecutorStartupPolicy = {
     runnerImage,
     kiroHelperImage: explicitHelperImage || runnerImage,
@@ -56,8 +59,11 @@ export function resolveExecutorStartupPolicy(
   if (!explicitHelperImage) {
     throw new Error('Ollama backend enabled but AGENT_HELPER_IMAGE is not set');
   }
-  if (modelQualifier.includes(':latest') || explicitHelperImage.includes(':latest')) {
-    throw new Error(':latest tags not allowed for OLLAMA_MODEL_QUALIFIER or AGENT_HELPER_IMAGE');
+  if (!stagerImage) {
+    throw new Error('Ollama backend enabled but AGENT_STAGER_IMAGE is not set');
+  }
+  if (modelQualifier.includes(':latest') || explicitHelperImage.includes(':latest') || stagerImage.includes(':latest')) {
+    throw new Error(':latest tags not allowed for OLLAMA_MODEL_QUALIFIER, AGENT_HELPER_IMAGE, or AGENT_STAGER_IMAGE');
   }
 
   return {
@@ -67,6 +73,7 @@ export function resolveExecutorStartupPolicy(
       host,
       modelQualifier,
       helperImage: explicitHelperImage,
+      stagerImage,
     },
   };
 }
