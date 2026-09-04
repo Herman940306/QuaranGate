@@ -24,11 +24,26 @@ including ChatGPT, Claude, Codex, and future compatible MCP clients, can:
 
 1. inspect and operate on explicitly authorized project workspaces;
 2. dispatch isolated, governed implementation or review workers; and
-3. when separately and explicitly authorized, communicate with the active AI agent in Herman's
-   currently open IDE session.
+3. when separately and explicitly authorized, provide a governed interactive IDE chat plane bound to
+   an exact enrolled IDE instance and workspace, through supported IDE integration such as a
+   QuaranGate-owned Chat Participant or a qualified provider session interface.
 
-The visible interactive IDE and the isolated Agent Control Plane are separate, complementary
-execution modes.
+The two integration classes for item 3 are:
+
+- **Architecture A — provider session interface:** attach to an active session exposed by a
+  supported vendor-provided interface, only where such an interface exists and has been verified.
+- **Architecture B — QuaranGate-owned Chat Participant:** a first-class QuaranGate-owned IDE Chat
+  Participant using supported public IDE APIs; does not require attachment to a pre-existing
+  vendor-private chat session; does not require the same vendor as the CLI/agent plane; does not
+  require same-session concurrent attachment.
+
+S1 (`docs/IDE_CHAT_VSCODE_S1.md`) has proven Architecture B feasible in VS Code. Architecture A has
+not been proven for any target. The two classes are not mutually exclusive: a given adapter
+implementation may use one or both where supported and verified. Neither silently replaces nor falls
+back to the other.
+
+The visible interactive IDE chat plane and the isolated Agent Control Plane are separate,
+complementary execution modes. The IDE chat plane and the CLI/agent plane are independent.
 
 ### 1.2 Non-goals
 
@@ -330,11 +345,25 @@ such as "do not edit" is not enforcement; otherwise the interaction consumes the
 
 ## 10. Transport hierarchy
 
-Production selection order is:
+Two integration classes exist; a given adapter may use one or both where supported and verified:
+
+**Architecture A — provider session interface:** attach to an active session exposed by a supported
+vendor-provided interface. Valid only where a supported interface exists, has been officially
+documented, and has been proven through a live feasibility gate. Architecture A has not been proven
+for any target at this document baseline.
+
+**Architecture B — QuaranGate-owned Chat Participant:** a first-class QuaranGate-owned Chat
+Participant using supported public IDE APIs (e.g. VS Code chat contribution points). Does not
+require attachment to a pre-existing vendor-private chat session. Does not require the same vendor
+as the CLI/agent plane. Does not require same-session concurrent attachment. S1 has proven
+Architecture B feasible in VS Code (see `docs/IDE_CHAT_VSCODE_S1.md`).
+
+Within each class, the production transport selection order is:
 
 1. a supported machine-facing IDE/agent API or protocol;
 2. a QuaranGate companion extension and/or local adapter exposing a narrow authenticated
-   machine-facing interface; and
+   machine-facing interface (Architecture B companion extensions are a legitimate production
+   transport under this entry); and
 3. accessibility or UI automation only as an explicitly approved fallback.
 
 A companion extension is legitimate when its API is narrow, versioned, authenticated,
@@ -353,29 +382,54 @@ No API named in this section is presumed to exist. Fresh official vendor documen
 version compatibility research, a minimal live proof, and security review are mandatory before each
 implementation phase.
 
-### 11.1 I1 — Kiro active-session adapter (required)
+### 11.1 I1 — Kiro adapter (required)
 
-I1 must prove whether a supported API/protocol or companion extension can access the **currently
-interactive Kiro IDE agent session**, not merely launch a separate Kiro CLI/ACP session. Existing A4
-and A5 ACP evidence applies to isolated runners and is not proof of this capability.
+Two integration classes must be evaluated for I1:
 
-Research and acceptance evidence must cover: supported interface and version policy; extension API;
-active chat/session discovery; prompt delivery; ordered response/event retrieval; cancellation and
-terminal proof; workspace/worktree identity; session stability across reconnect; adapter
-authentication/enrollment; least privilege; user-visible ownership; and the boundary between Kiro
-account/tools and QuaranGate authority. If no safe supported interface exists, stop I1 and return a
-feasibility block rather than substituting GUI injection.
+- **Architecture A:** whether a supported API/protocol can access the **currently interactive Kiro
+  IDE agent session** — not merely launch a separate Kiro CLI/ACP session. Existing A4 and A5 ACP
+  evidence applies to isolated runners and is not proof of this capability. Architecture A for Kiro
+  has not been proven.
+- **Architecture B:** whether a QuaranGate-owned companion Chat Participant or equivalent can be
+  loaded in the Kiro extension host using supported public Kiro APIs, in the same pattern proven
+  feasible for VS Code in S1 (`docs/IDE_CHAT_VSCODE_S1.md`). S1 does NOT prove Kiro supports the
+  VS Code Chat Participant contribution point or the same API surface; a fresh equivalent live
+  qualification on the exact installed Kiro build is required.
 
-### 11.2 I2 — VS Code active-session adapter (required)
+Do NOT claim direct Kiro built-in chat attachment exists. Do NOT infer VS Code S1 automatically
+proves Kiro integration. Kiro S2 has not started and no Kiro upgrade is authorized.
 
-I2 must establish which interactive AI agent(s) are in scope and prove a supported VS Code or
-agent-provider interface. The presence of VS Code extension APIs or the separate planned A7 GitHub
-Copilot worker does not prove access to an active interactive agent chat.
+Research and acceptance evidence must cover for whichever architecture class is attempted:
+supported interface and version policy; extension/participant API; active chat/session discovery
+(Architecture A) or participant contribution and registration (Architecture B); prompt delivery;
+ordered response/event retrieval; cancellation and terminal proof; workspace/worktree identity;
+session stability across reconnect; adapter authentication/enrollment; least privilege;
+user-visible ownership; and the boundary between Kiro account/tools and QuaranGate authority. If no
+safe supported interface exists for either class, stop I1 and return a feasibility block rather than
+substituting GUI injection.
 
-Evidence must cover the same interface, extension, active-session, prompt, event, cancellation,
-workspace, session, authentication, ownership, and security-boundary requirements as I1, including
-multi-root workspaces, remote/WSL/container windows, extension-host restarts, and whether context or
-mutation restrictions are technically enforceable.
+### 11.2 I2 — VS Code adapter (required)
+
+Two integration classes must be evaluated for I2:
+
+- **Architecture A:** establish which interactive AI agent(s) are in scope and prove a supported VS
+  Code or agent-provider interface for attaching to an active session. The presence of VS Code
+  extension APIs or the separate planned A7 GitHub Copilot worker does not prove access to an active
+  interactive agent chat. Architecture A for VS Code has not been proven.
+- **Architecture B:** a QuaranGate-owned Chat Participant using supported public VS Code APIs. S1
+  (`docs/IDE_CHAT_VSCODE_S1.md`) has proven Architecture B feasible: participant registration, Remote
+  WSL placement, public Chat Participant API, machine Unix-domain IPC, live human streaming, and
+  live human cancellation all passed. A supported local Ollama provider satisfied the VS Code
+  model-selection precondition; Ollama is not a permanent production architecture requirement.
+
+S1 is a spike; PRODUCTION_READY=NO and AIRGAP_CERTIFIED=NO. Same-session concurrent attachment
+remains a non-goal. Architecture A has not been proven and must not be claimed.
+
+Evidence for full I2 must additionally cover (beyond what S1 proved): production authentication and
+enrollment; trusted adapter distribution and update policy; connection generations; multi-root
+workspaces; remote/WSL/container windows; extension-host restarts; whether context or mutation
+restrictions are technically enforceable; persistent audit; controller/writer lease integration; and
+IDE-host egress qualification.
 
 ### 11.3 I3 — Cursor active-session adapter (required)
 
@@ -485,8 +539,8 @@ The I-series is additive and does not renumber, reopen, or rewrite A0-A9.
 | Phase | Scope | Requirement | Status at this document |
 |---|---|---|---|
 | I0 | Common IDE-session contract plus threat/security model | Required | Design baseline documented; **not implemented or accepted complete** |
-| I1 | Kiro active-session adapter | Required for updated North Star | Not started |
-| I2 | VS Code active-session adapter | Required for updated North Star | Not started |
+| I1 | Kiro adapter (Architecture A: active-session; Architecture B: Chat Participant) | Required for updated North Star | Not started; Kiro S2 unauthorized; VS Code S1 does NOT prove Kiro integration |
+| I2 | VS Code adapter (Architecture A: active-session; Architecture B: Chat Participant) | Required for updated North Star | Architecture B feasibility proven by S1 (`docs/IDE_CHAT_VSCODE_S1.md`); PRODUCTION_READY=NO; full production adapter not started |
 | I3 | Cursor active-session adapter | Required for updated North Star | Not started |
 | I4 | Visual Studio feasibility and adapter only if safe/practical | Secondary, best effort | Not started; feasibility unknown |
 | I5 | Antigravity feasibility and adapter only if safe/practical | Secondary, best effort | Not started; feasibility unknown |

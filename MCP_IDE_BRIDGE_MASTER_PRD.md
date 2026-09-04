@@ -617,11 +617,19 @@ bounded sandbox
 
 Make QuaranGate the governed control plane through which approved browser and desktop AI clients—
 including ChatGPT, Claude, Codex, and future compatible MCP clients—can operate explicitly authorized
-workspaces, dispatch isolated governed workers, and, under separate explicit authority, communicate
-with the active AI agent in an authorized IDE session while preserving human approval and local
-security.
+workspaces, dispatch isolated governed workers, and, under separate explicit authority, provide a
+governed interactive IDE chat plane bound to an exact enrolled IDE instance and workspace, through
+supported IDE integration such as a QuaranGate-owned Chat Participant or a qualified provider session
+interface, while preserving human approval and local security.
 
-The visible interactive IDE and the isolated Agent Control Plane are complementary execution modes:
+The two integration classes for the IDE chat plane are Architecture A (provider session interface,
+where a supported vendor interface exists and has been verified) and Architecture B (QuaranGate-owned
+Chat Participant using supported public IDE APIs). The two classes are independent and complementary;
+neither silently replaces or falls back to the other. S1 (`docs/IDE_CHAT_VSCODE_S1.md`) has proven
+Architecture B feasible in VS Code; Architecture A has not been proven for any target.
+
+The visible interactive IDE chat plane and the isolated Agent Control Plane are complementary
+execution modes:
 
 ```text
 PLANE A — ISOLATED AGENT CONTROL PLANE
@@ -729,8 +737,18 @@ I4  Visual Studio
 I5  Antigravity
 ```
 
+Two integration classes apply to each target (see `docs/IDE_SESSION_CONTROL.md` §10–§11):
+
+- **Architecture A — provider session interface:** attach to an active session through a supported
+  vendor-provided interface. Has not been proven for any target.
+- **Architecture B — QuaranGate-owned Chat Participant:** a first-class QuaranGate-owned IDE Chat
+  Participant using supported public IDE APIs. S1 (`docs/IDE_CHAT_VSCODE_S1.md`) has proven
+  Architecture B feasible in VS Code (PRODUCTION_READY=NO; full production adapter not started).
+  VS Code S1 does NOT prove Kiro or Cursor integration.
+
 The common I0 contract, authority and threat model are defined in
-`docs/IDE_SESSION_CONTROL.md`. No IDE Session Control implementation is present at this checkpoint.
+`docs/IDE_SESSION_CONTROL.md`. No IDE Session Control production implementation is present at this
+checkpoint.
 
 ---
 
@@ -2109,8 +2127,10 @@ The owner-approved IDE Session Control program is additive and does not renumber
 
 ```text
 I0  Common IDE-session contract + threat/security model       NOT COMPLETE
-I1  Kiro active-session adapter                               NOT STARTED — REQUIRED
-I2  VS Code active-session adapter                            NOT STARTED — REQUIRED
+I1  Kiro adapter (Architecture A + B)                         NOT STARTED — REQUIRED; Kiro S2 unauthorized
+I2  VS Code adapter (Architecture A + B)                      Architecture B feasibility proven by S1
+                                                              (docs/IDE_CHAT_VSCODE_S1.md);
+                                                              PRODUCTION_READY=NO; full adapter NOT STARTED — REQUIRED
 I3  Cursor active-session adapter                             NOT STARTED — REQUIRED
 I4  Visual Studio feasibility + adapter if safe/practical     NOT STARTED — SECONDARY
 I5  Antigravity feasibility + adapter if safe/practical       NOT STARTED — SECONDARY
@@ -3106,8 +3126,8 @@ Use this table as the project checkpoint.
 | A8 | Session continuity | NOT STARTED | — |
 | A9 | Production hardening + E2E | NOT STARTED | — |
 | I0 | Common IDE-session contract + threat/security model | DESIGN DOCUMENTED — NOT IMPLEMENTED OR COMPLETE | `docs/IDE_SESSION_CONTROL.md` |
-| I1 | Kiro active-session adapter | NOT STARTED — REQUIRED | — |
-| I2 | VS Code active-session adapter | NOT STARTED — REQUIRED | — |
+| I1 | Kiro adapter (Architecture A: active-session; Architecture B: Chat Participant) | NOT STARTED — REQUIRED; Kiro S2 unauthorized; VS Code S1 does NOT prove Kiro integration | — |
+| I2 | VS Code adapter (Architecture A: active-session; Architecture B: Chat Participant) | Architecture B feasibility proven — `docs/IDE_CHAT_VSCODE_S1.md` (`S1_ARCHITECTURE_FEASIBILITY=PASS`); PRODUCTION_READY=NO; full production adapter NOT STARTED — REQUIRED | `docs/IDE_CHAT_VSCODE_S1.md` |
 | I3 | Cursor active-session adapter | NOT STARTED — REQUIRED | — |
 | I4 | Visual Studio feasibility + adapter if safe/practical | NOT STARTED — SECONDARY | — |
 | I5 | Antigravity feasibility + adapter if safe/practical | NOT STARTED — SECONDARY | — |
@@ -3346,6 +3366,13 @@ retained-resource management. Exit gate: ChatGPT can choose between `backend: ki
 Separately, the owner-approved immediate backend milestone is a **governed Ollama local backend**.
 That work is owned by a parallel Kiro lane. The IDE Session Control documentation/design lane must
 not implement or redesign Ollama, and the milestone does not renumber A0-A9 or mark A7 started.
+
+The VS Code Architecture B (QuaranGate-owned Chat Participant) IDE chat integration has been proven
+feasible by S1 (`docs/IDE_CHAT_VSCODE_S1.md`; `S1_ARCHITECTURE_FEASIBILITY=PASS`). S1 is a
+design/feasibility spike: PRODUCTION_READY=NO and AIRGAP_CERTIFIED=NO. A supported local Ollama
+provider resolved the VS Code model-selection precondition for S1; Ollama is not a permanent
+production architecture requirement. Kiro S2 has not started, no Kiro upgrade is authorized, and
+VS Code S1 does not prove Kiro integration.
 
 ---
 

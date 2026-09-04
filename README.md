@@ -31,10 +31,14 @@ Applying that work to the real project is a separate, explicitly authorized, one
 operation.
 
 The approved North Star adds a separate **IDE Session Control Plane**: when explicitly authorized,
-a client may communicate through QuaranGate with the active interactive AI agent in an exact,
-enrolled IDE instance, workspace, and session. Kiro, VS Code, and Cursor are primary required
-targets; Visual Studio and Antigravity are secondary feasibility targets. This capability is
-designed in [`docs/IDE_SESSION_CONTROL.md`](docs/IDE_SESSION_CONTROL.md) but is **not implemented**.
+a client may communicate through QuaranGate with the IDE chat plane in an exact, enrolled IDE
+instance and workspace, through supported IDE integration such as a QuaranGate-owned Chat
+Participant or a qualified provider session interface. This plane is independent of the CLI/agent
+plane and does not require attachment to a pre-existing vendor-private chat session. Kiro, VS Code,
+and Cursor are primary required targets; Visual Studio and Antigravity are secondary feasibility
+targets. The VS Code Chat Participant architecture was proven feasible in S1
+(`docs/IDE_CHAT_VSCODE_S1.md`); no production adapter is implemented. This capability is designed
+in [`docs/IDE_SESSION_CONTROL.md`](docs/IDE_SESSION_CONTROL.md) but is **not implemented**.
 
 The whole system is built around one boundary: **the component that talks to the internet
 is not the component that holds privilege.**
