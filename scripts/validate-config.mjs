@@ -13,7 +13,7 @@ const validScopes = new Set([
   'targets:read','files:read','files:write','files:delete','terminal:exec','git:read','process:read',
   'agents:read','agents:dispatch','agents:cancel','agents:apply',
 ]);
-const agentBackendIds = new Set(['kiro','copilot']);
+const agentBackendIds = new Set(['kiro','copilot','ollama']);
 const agentProfileIds = new Set(['audit','plan','implement','review']);
 const resourcePolicyIds = new Set(['economy','standard','deep']);
 const projectIdRe = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -72,6 +72,23 @@ function checkKeys(kind, obj, allowed, ctx) {
   for (const k of Object.keys(obj)) if (!allowed.has(k)) fail(`${ctx}: unknown ${kind} key ${k}`);
 }
 
+function checkBoundedStringList(obj, field, ctx) {
+  const value = obj[field];
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    fail(`${ctx}: ${field} must be a list`);
+    return;
+  }
+  if (value.length > 256) fail(`${ctx}: ${field} must have at most 256 entries`);
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      fail(`${ctx}: ${field} entries must be strings`);
+    } else if (item.length < 1 || item.length > 512) {
+      fail(`${ctx}: ${field} entries must be 1..512 characters`);
+    }
+  }
+}
+
 function checkAgents(path) {
   console.log('agents:', path);
   if (!fs.existsSync(path)) return fail('file missing');
@@ -89,13 +106,15 @@ function checkAgents(path) {
     if (!resourcePolicyIds.has(b.defaultResourcePolicy)) fail(`backend ${b.id}: unknown resource policy ${b.defaultResourcePolicy}`);
   }
   for (const p of doc.projects ?? []) {
-    checkKeys('project', p, new Set(['id','hostPath','gitRequired','backends','profiles','guardedPaths']), `project ${p.id}`);
+    checkKeys('project', p, new Set(['id','hostPath','gitRequired','backends','profiles','guardedPaths','sensitiveReadGlobs']), `project ${p.id}`);
     if (!p.id || !projectIdRe.test(p.id)) fail(`invalid project id ${JSON.stringify(p.id)}`);
     if (seen.project.has(p.id)) fail(`duplicate project id ${p.id}`); else seen.project.add(p.id);
     if (!p.hostPath || !p.hostPath.startsWith('/') || p.hostPath.split('/').includes('..')) fail(`project ${p.id}: hostPath must be absolute without ..`);
     if (typeof p.gitRequired !== 'boolean') fail(`project ${p.id}: gitRequired must be boolean`);
     for (const b of p.backends ?? []) if (!agentBackendIds.has(b)) fail(`project ${p.id}: unknown backend ${b}`);
     for (const pr of p.profiles ?? []) if (!agentProfileIds.has(pr)) fail(`project ${p.id}: unknown profile ${pr}`);
+    checkBoundedStringList(p, 'guardedPaths', `project ${p.id}`);
+    checkBoundedStringList(p, 'sensitiveReadGlobs', `project ${p.id}`);
   }
   for (const p of doc.profiles ?? []) {
     checkKeys('profile', p, new Set(['id','workspaceAccess','shellPolicy','gitPolicy','networkPolicy','defaultResourcePolicy']), `profile ${p.id}`);
@@ -124,4 +143,4 @@ checkBridge(process.env.BRIDGE_CONFIG ?? 'config/bridge.yaml');
 const agentsPath = process.env.AGENTS_CONFIG ?? 'config/agents.yaml';
 if (process.env.AGENTS_CONFIG || fs.existsSync(agentsPath)) checkAgents(agentsPath);
 else console.log('agents: config/agents.yaml not present (optional — Agent Dispatch inactive)');
-process.exit(errors ? 1 : 0);
+process.exitCode = errors ? 1 : 0;
