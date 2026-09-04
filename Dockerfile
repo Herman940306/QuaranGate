@@ -18,8 +18,11 @@ LABEL org.opencontainers.image.title="QuaranGate" \
       org.opencontainers.image.source="${SOURCE_URL}"
 WORKDIR /app
 ENV NODE_ENV=production
-# tini for correct signal handling / zombie reaping
-RUN apk add --no-cache tini \
+# tini for correct signal handling / zombie reaping (vendored for offline builds)
+COPY third_party/tini/0.19.0/tini /sbin/tini
+RUN echo "1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc  /sbin/tini" \
+      | sha256sum -c - \
+    && chmod 0755 /sbin/tini \
     && mkdir -p /data /jobs \
     && chown node:node /data /jobs \
     && chmod 0700 /data /jobs
