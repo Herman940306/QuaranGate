@@ -1,171 +1,634 @@
-# Security model & threat model
+# Security
 
-## Privilege boundary — the core claim
+QuaranGate is designed around **governed authority**, not trust in an AI model's intent.
 
-Access to `/var/run/docker.sock` is root-equivalent on the host. The **public-facing gateway never
-has it.** The socket lives only in the **executor**, which:
+A prompt can ask an agent to behave safely. QuaranGate's security model assumes that prompt instructions alone are not enough. Access decisions are enforced through authenticated principals, explicit grants, path confinement, isolated containers, bounded execution, stored evidence and separate promotion authority.
 
-- is on an `internal: true` Docker network with **no published ports** (verified unreachable from
-  host and LAN),
-- is authenticated by a shared `INTERNAL_TOKEN`,
-- runs **non-root** with the docker group added only for socket access,
-- exposes a **narrow API** that can only operate on configured/discovered targets within their
-  canonical workspace — it has no verb to make arbitrary Docker calls, create containers, mount host
-  paths, or execute on the host.
+> [!WARNING]
+> The private executor holds `/var/run/docker.sock`. Docker socket access is effectively host-level authority. The architecture reduces where that authority is exposed; it does not make Docker authority low risk.
 
-Therefore a compromised gateway, a stolen client key, or a malicious MCP client is bounded to: the
-tools, scopes, and target workspaces that the mapped principal is authorized for. It cannot reach
-the host, unrelated containers, or the raw Docker API.
+---
 
-## Client identity
+## Contents
 
-One principal per client (`config/clients.yaml`), each with an independent API key (only the
-sha256 hash is stored), independent scopes, an explicit target allowlist, an enable flag, and an
-optional rate limit. Keys are generated (`npm run gen-key`), revoked/disabled (`npm run revoke-key`),
-and rotated (regenerate + replace hash) independently. Browser clients that require OAuth get an
-OAuth 2.1 bearer that maps to the **same** principal (see below).
+- [Security objectives](#security-objectives)
+- [Trust zones](#trust-zones)
+- [Credential hashing and client identity](#credential-hashing-and-client-identity)
+- [OAuth 2.1 browser authorization](#oauth-21-browser-authorization)
+- [Authorization model](#authorization-model)
+- [Gateway and executor separation](#gateway-and-executor-separation)
+- [Target and workspace confinement](#target-and-workspace-confinement)
+- [Agent sandbox isolation](#agent-sandbox-isolation)
+- [Evidence, diff and promotion authority](#evidence-diff-and-promotion-authority)
+- [Apply safety, rollback and quarantine](#apply-safety-rollback-and-quarantine)
+- [Secrets and provider credentials](#secrets-and-provider-credentials)
+- [Network and data-leakage boundaries](#network-and-data-leakage-boundaries)
+- [Audit and retention](#audit-and-retention)
+- [Threat model](#threat-model)
+- [Residual risks](#residual-risks)
+- [Security rules that must not regress](#security-rules-that-must-not-regress)
 
-## OAuth façade
+---
 
-The smallest standards-compatible surface to satisfy Claude/ChatGPT browser OAuth requirements:
-Protected-Resource + Authorization-Server metadata, JSON Dynamic Client Registration (public
-clients), `/authorize` (the user pastes their bridge API key = the login), and `/token` (auth code +
-**PKCE S256** → opaque bearer, 1 h; rotating refresh token, 30 d). Registered redirect URIs are
-validated exactly, authorization and token requests are bound to the MCP resource (RFC 8707),
-authorization codes are single-use, and refresh tokens rotate on use. OAuth state is stored hashed
-on the bridge data volume. The volume root is private to the non-root gateway (`0700`, `node:node`)
-and OAuth state files are created `0600`. The bearer maps to the same per-client principal as the
-static key, so authorization is identical regardless of auth method. Browser auth is never anonymous.
-The authorization page uses a restrictive CSP; `form-action` permits only `self` plus the origin of
-the already-validated registered redirect URI. This is required for real browser OAuth redirects
-without opening form submission to arbitrary origins.
+# Security objectives
 
-## Client-side action safety
+QuaranGate aims to preserve these properties:
 
-MCP annotations remain truthful even when a browser client applies a stricter policy. In live ChatGPT
-verification on 2026-07-28, `fs_delete` was discovered as WRITE / DESTRUCTIVE but ChatGPT blocked the
-invocation before any MCP request reached the gateway. The bridge must not weaken or disguise the
-destructive annotation, nor use `terminal_exec` as a bypass for a client-side safety decision. Server
-authorization and integration tests continue to verify the underlying `files:delete` capability for
-clients that are permitted to invoke it.
+1. **A remote client cannot invent new authority.** It can only request capabilities already granted to its principal.
+2. **The network-facing component does not hold Docker authority.**
+3. **A caller cannot select arbitrary host paths, Docker mounts, runner images, network modes or privilege flags.**
+4. **Direct target operations remain confined to the configured workspace.**
+5. **Write-capable coding agents work in isolated sandboxes by default.**
+6. **Completing an agent job does not authorize application to live source.**
+7. **The artifact reviewed is the artifact QuaranGate attempts to apply.**
+8. **Ambiguous recovery fails closed rather than being reported as success.**
+9. **Credentials and raw sensitive bodies are not deliberately placed into source control, MCP results or audit records.**
+10. **Historical evidence remains attributable and is not rewritten to make past state look current.**
 
-## Agent Control Plane (Phase A6 — implementation complete)
+These are engineering controls. They are not claims that QuaranGate removes every host or Docker risk.
 
-All nine of the Agent Control Plane tools are now operational (`agents_list`, `agent_projects`, `agent_dispatch`, `agent_status`, `agent_result`, `agent_cancel`, `agent_diff`, `agent_apply`, `agent_discard`), executed by a real **Kiro ACP backend** through isolated sandboxed runners with bounded resource limits and fail-closed security controls.
+---
 
-A6-specific security properties (unit- and integration-tested):
+# Trust zones
 
-- **Authorization before work.** `agent_dispatch` runs the full grant matrix (scope + project +
-  backend + profile) in the gateway *before* any executor call, and the executor independently
-  re-validates project/backend/profile/resource-policy against trusted `config/agents.yaml`
-  (defense in depth). An unauthenticated or unauthorized request never persists a job.
-- **Job ownership** is enforced for status/result/cancel/diff/apply/discard in both the gateway
-  (pure A1 matrix) and the executor (by `principalId` on the persisted row). No cross-principal
-  override exists.
-- **Sandboxed execution.** Real Kiro ACP backend executes inside ephemeral runners (non-root,
-  non-privileged, CapDrop=ALL, no-new-privileges, read-only rootfs, NetworkMode=backend-only, no
-  host binds, no docker.sock) with exact-integer resource limits (CPU/memory/PIDs/runtime/output).
-  Workspace is a Docker-managed volume snapshot, never a raw host bind to the real project.
-- **Guarded apply policy.** `agent_apply` enforces agents:apply scope, job ownership, project grant,
-  COMPLETED status prerequisite, unapplied disposition, base-state verification (stale HEAD refusal),
-  guarded-path validation (project-configurable forbidden/protected paths), one-time apply, and
-  fail-closed patch validation. Apply uses a dedicated short-lived applier container, never reusing
-  the unrestricted agent runner.
-- **Governed discard.** `agent_discard` enforces agents:dispatch scope, job ownership, and disposition
-  rules (no double-disposition, no active/UNCERTAIN apply attempt interference), and leaves live source
-  unchanged. Discard is a durable *logical* disposition change only: one atomic COMPLETED → DISCARDED
-  database transaction that also stamps `disposition_at` and `retain_until`. It performs no Docker I/O,
-  no artifact read, and no project filesystem access — the runner container and sandbox workspace volume
-  were already torn down during backend cleanup before the job reached COMPLETED, so there is no live
-  sandbox for discard to remove. Retained evidence is not deleted at discard time; `retain_until` only
-  starts the expiry clock owned by the retained-resource lifecycle below.
-- **Retained-resource lifecycle.** Automatic evidence expiry for APPLIED/DISCARDED jobs with published
-  artifacts (Lane A: durable retention snapshot, fail-closed eligibility proofs, atomic
-  AVAILABLE → EXPIRED transition); incomplete-evidence classification/reporting for failed/orphaned
-  evidence (Lane B: IDENTIFY + CLASSIFY + REPORT + RETAIN, no automatic deletion); startup-only
-  collection (awaited synchronous execution before service availability, no concurrent agent operations
-  during collection); metadata retention (job rows, apply attempts, apply journal, project quarantine
-  state retained indefinitely, only physical evidence bytes expire).
-- **No caller-controlled execution.** Caller supplies logical project/backend/profile IDs only —
-  never host paths, runner images, Docker options, or execution configuration.
-- **Prompt confidentiality.** The bounded raw prompt lives only in the executor SQLite store; it is
-  never audited, never logged, never returned by status, and not returned by result. Only
-  `promptHash` is logged/audited. Provider credentials are injected at runner startup, never stored
-  in job metadata.
-- **Storage isolation.** The job DB is on an executor-owned volume (`mcp-bridge-jobs`, `0700`,
-  `node`), a separate trust domain from the gateway OAuth `/data` volume; it is never mounted into
-  the gateway or any target. Restart fails active jobs closed to `FAILED_INFRASTRUCTURE` (never
-  silently resurrected) and cannot double-admit writers.
-- **Boundary unchanged.** Gateway still holds no docker.sock and binds loopback only; the executor
-  is still unpublished; agent runners receive no docker.sock, no arbitrary host binds, no privileged
-  mode.
+The current system deliberately separates privilege.
 
-Scopes in the closed model: `agents:read`, `agents:dispatch`, `agents:cancel`, `agents:apply`.
-Security properties fixed by the A1 contract (unit-tested):
+```mermaid
+flowchart LR
+    C["MCP client"]
 
-- **Deny by default.** Agent access requires both an `agents:*` scope and explicit
-  `projects`/`agentBackends`/`agentProfiles` grants on the principal; absent fields mean deny.
-  Existing clients keep working with zero agent privileges.
-- **Target permission never implies agent/project permission.**
-- **Public schemas are strict**: caller-supplied `hostPath`, `runnerImage`, `mounts`,
-  `privileged`, `networkMode`, `dockerSocket` and any unknown property are rejected; prompts are
-  size-bounded; callers address logical project ids only. Trusted host paths live exclusively in
-  executor-owned configuration (`config/agents.yaml`, example-only in A1).
-- **Job ownership is exact** — no cross-principal admin override in v1; `agent_apply` additionally
-  requires the project grant, and takes no caller patch text.
-- **`COMPLETED` ≠ `APPLIED`**: applying sandbox work to a real project is a separate, one-time,
-  explicitly authorized transition; final dispositions and failures are immutable.
-- Runner egress policy values are `deny`/`backend-only` only; Tailscale
-  (`serve`/`funnel`/ACLs) is host infrastructure permanently outside the agent capability plane.
+    subgraph NET["Network-facing zone"]
+        G["Gateway<br/>auth · authz · schemas · audit<br/><b>NO Docker socket</b>"]
+    end
 
-See `docs/AGENT_CONTROL_PLANE.md` for the complete specification.
+    subgraph PRIV["Private privileged zone"]
+        E["Executor<br/>trusted config · Docker authority<br/><b>no published ports</b>"]
+        DB[("Job/evidence metadata<br/>executor-owned SQLite")]
+    end
 
-## Threat model
+    subgraph JOB["Ephemeral worker zone"]
+        R["Agent runner<br/>sandbox only<br/>no Docker socket"]
+    end
 
-| # | Threat | Impact | Mitigation | Residual risk |
-|---|---|---|---|---|
-| 1 | Stolen client credential | Actions as that principal | Per-client keys, scopes, target allowlist, rate limit, audit; revoke/rotate | Bounded to that principal's targets until revoked |
-| 2 | Compromised MCP client | Same as stolen key | Same as #1; destructive-action annotations prompt in clients | Same |
-| 3 | Prompt injection in repo content | Client tricked into calling tools | Bridge authorizes by principal/scope/target regardless of prompt; no tool can widen its own scope | Client-side; bridge stays confined |
-| 4 | Malicious source file | — | Files are data; reads/writes confined; no path escape | Low |
-| 5 | Malformed MCP input | Crash/DoS | Zod schemas, typed errors, body size limits, fail closed | Low |
-| 6 | Command injection (paths) | Escape workspace | Non-terminal ops use argv `docker exec`; paths passed as positional args; tar for content | Low |
-| 7 | Path traversal | Read/write outside workspace | `pathcheck` rejects `..`/absolute in gateway+executor | Low |
-| 8 | Symlink / nested-symlink escape | Read/write outside workspace | In-target canonicalization of path/ancestor must stay under canonical workspace | Narrow TOCTOU window (below) |
-| 9 | Target-selection confusion | Act on wrong/forbidden target | Every call carries an explicit target; per-request principal via ALS; no shared mutable target | Low |
-| 10 | Concurrent client interference | Cross-client leakage | Stateless server per request; ALS-bound principal; per-principal concurrency | Low |
-| 11 | Unrestricted Docker socket compromise | Host takeover | Socket only in private executor; no ingress; narrow API | Executor RCE / daemon 0-day (below) |
-| 12 | Compromised executor | Full Docker control | No ingress, internal net, token auth, non-root, read-only fs, cap_drop ALL | High **if** achieved — primary residual risk |
-| 13 | Access to unrelated container | Data exfil | Only configured/labeled targets resolvable; decoy denied even with internal token (verified) | Low |
-| 14 | Host filesystem exposure | Host data exfil | No host mounts in gateway; executor mounts only the socket; verified no `/home`, `/mnt/c` | Low |
-| 15 | Secret leakage in logs | Credential exposure | Redaction patterns; no key/token/body logging; verified logs clean | Command args may still contain secrets (redacted best-effort) |
-| 16 | Excessive terminal output | Memory DoS | 256 KiB output cap, truncation flag | Low |
-| 17 | Hanging processes | Resource exhaustion | Timeout + best-effort process-group kill | Orphaned in-target processes possible (below) |
-| 18 | Resource exhaustion | DoS | Concurrency limits, mem/pids limits, rate limits, body caps | Low |
-| 19 | Auth replay / brute force | Credential guessing | 256-bit keys, constant-time-ish compare, rate limit, PKCE for OAuth | No lockout counter (rate limit only) |
-| 20 | Remote public ingress attack | Internet exposure | Loopback-only by default; ingress requires explicit user action (STOP condition) | Entirely dependent on how the operator exposes it |
+    subgraph RES["Approved resources"]
+        T["Authorized target"]
+        P["Registered live project"]
+    end
 
-## Residual risks (explicit)
+    C -->|"API key or OAuth bearer"| G
+    G -->|"private authenticated executor API"| E
+    E --> DB
+    E --> T
+    E --> R
+    R -.->|"sandbox snapshot"| P
+```
 
-- **Executor holds the Docker socket.** An RCE in the executor, or a Docker daemon/kernel 0-day,
-  would be high impact. Mitigated by no ingress, internal-only network, argv-only API, non-root,
-  read-only rootfs, `cap_drop: ALL`, `no-new-privileges`. This is inherent to the feature and cannot
-  be fully eliminated.
-- **Authorized principal power.** A valid key (or its OAuth token) can do anything its scopes allow
-  inside its target workspaces — including `terminal_exec`. This is the intended capability.
-- **Symlink TOCTOU.** Canonicalization happens immediately before the operation, but a sufficiently
-  fast in-target attacker who already controls the workspace could in principle swap a symlink
-  between check and use. Narrowed, not eliminated. An attacker with write access to the workspace
-  already has that workspace.
-- **Timeout kill is best-effort.** Docker has no exec-kill API; the executor kills the exec's
-  process group, but a detached/backgrounded child may survive until the container stops.
-- **Command-argument secrets.** Redaction is pattern-based; unusual secret formats in a
-  `terminal_exec` command could still reach logs. Tune patterns in `src/shared/redact.ts`.
+### Why this split exists
 
-## Container hardening (as deployed)
+The gateway is the component that may accept external MCP traffic. The executor is the component that needs Docker control. Giving both responsibilities to one process would make compromise of the public boundary much more dangerous.
 
-Both services: `no-new-privileges`, `cap_drop: ALL`, `read_only` rootfs + tmpfs `/tmp`, mem/pids
-limits, healthchecks, clean SIGTERM shutdown via tini. No `--privileged`, no host network, no broad
-host mounts. Networks and volume are bridge-owned (`mcp-bridge-*`). The gateway remains non-root
-(`uid=1000(node)`) and its persistent `/data` directory is owned by that user with mode `0700`;
-OAuth state files are mode `0600`.
+A compromised gateway does **not** automatically gain raw Docker or arbitrary host authority. It remains mediated by the executor's narrow API, trusted target/project configuration and independent validation.
+
+That statement is intentionally narrower than saying “a compromised gateway cannot affect the host”. A gateway compromise that can successfully exercise an authorized executor operation can still cause whatever effects that authorized operation permits. The purpose of the boundary is to **constrain** the available authority, not to pretend the privileged executor does not exist.
+
+---
+
+# Credential hashing and client identity
+
+## Static API keys
+
+Each client is represented by a separate principal in `config/clients.yaml`.
+
+A generated client key is intended to be shown to the operator/client once. QuaranGate stores only its **SHA-256 hash** (`keyHash`) in normal configuration.
+
+```text
+raw API key
+   │
+   ├──> client stores raw secret
+   │
+   └──> SHA-256
+          │
+          └──> QuaranGate stores keyHash
+```
+
+### Why hash the key?
+
+If committed configuration or a backup containing `keyHash` is exposed, the original reusable credential should not be sitting there in plaintext.
+
+This is particularly useful because client identities are intentionally long-lived configuration objects while raw secrets should be rotatable independently.
+
+### What hashing does not solve
+
+- If the **raw key** is leaked from the client, shell history, chat transcript or another secret store, it is compromised and must be rotated.
+- A hash does not reduce the authority of a valid raw credential. Scopes and allowlists do that.
+- Hashing does not replace transport security.
+
+A previously exposed credential in this project's history was treated as compromised and rotated. That remains the correct handling rule: **a raw credential shown in an uncontrolled transcript is no longer trusted.**
+
+## Per-client principals
+
+Principals have independent:
+
+- identity;
+- enabled/disabled state;
+- API key hash;
+- scopes;
+- target allowlist;
+- agent project/backend/profile grants;
+- optional rate limits.
+
+### Why separate principals?
+
+A ChatGPT credential, Claude credential and IDE credential should not have to share one global secret or one global permission set.
+
+Compromise or revocation of one principal should not require replacing every other client's credential.
+
+---
+
+# OAuth 2.1 browser authorization
+
+Browser clients that require OAuth use a small standards-compatible authorization façade.
+
+The implemented browser path includes:
+
+- Protected Resource metadata;
+- Authorization Server metadata;
+- JSON Dynamic Client Registration for public clients;
+- exact redirect URI validation;
+- authorization code flow;
+- **PKCE S256**;
+- MCP resource binding;
+- single-use authorization codes;
+- rotating refresh tokens;
+- bounded persisted OAuth state;
+- hashed persisted sensitive OAuth token/state material;
+- restrictive authorization-page content security policy.
+
+The OAuth bearer resolves to the **same QuaranGate principal model** as a static API key. OAuth changes the authentication mechanism; it does not bypass authorization.
+
+## Why PKCE S256?
+
+PKCE binds an authorization code to the client instance that initiated the flow. Intercepting the authorization code by itself should not be sufficient to exchange it for a token without the matching verifier.
+
+## Why exact redirect validation?
+
+A browser authorization flow must not be allowed to redirect tokens/codes to an arbitrary destination supplied at runtime.
+
+## Why resource binding?
+
+A token issued for the MCP resource should be bound to that intended resource rather than treated as an ambient bearer for unrelated services.
+
+## Persistent OAuth storage
+
+The gateway's persistent data directory is separate from the executor job database. Existing hardening records the gateway data directory as private to the non-root gateway process and sensitive state files with restrictive permissions.
+
+---
+
+# Authorization model
+
+Authentication answers:
+
+> Who is this caller?
+
+Authorization separately answers:
+
+> What may that caller do, and where?
+
+## Direct target operations
+
+A target operation requires the appropriate scope and an authorized target.
+
+Examples:
+
+```text
+files:read
+files:write
+files:delete
+terminal:exec
+git:read
+process:read
+```
+
+Target discovery does not grant target authority.
+
+## Agent Control Plane
+
+The implemented agent scopes are:
+
+```text
+agents:read
+agents:dispatch
+agents:cancel
+agents:apply
+```
+
+Agent authorization additionally considers:
+
+```text
+principal
+operation
+project
+backend
+profile
+job ownership
+```
+
+Missing grants mean **deny**.
+
+Target authority does not imply agent authority.
+
+`agent_apply` requires separate apply authority and cannot be reached merely because a caller was allowed to dispatch a job.
+
+## IDE Session Control
+
+The North-Star IDE Session Control Plane is separately authorized. Agent Dispatch authority must not imply authority over active IDE sessions, and IDE-session discovery must not create ambient access to every IDE open on the host.
+
+---
+
+# Gateway and executor separation
+
+## Gateway
+
+The gateway is responsible for:
+
+- MCP protocol handling;
+- client authentication;
+- principal resolution;
+- scope/grant checks;
+- strict input/output schemas;
+- rate limiting;
+- audit;
+- forwarding a bounded operation to the executor.
+
+It must not receive `/var/run/docker.sock`.
+
+## Executor
+
+The executor:
+
+- is private/unpublished;
+- holds Docker socket access;
+- resolves targets/projects using trusted configuration;
+- re-validates target/workspace and agent/project policy independently;
+- owns durable agent job/evidence metadata;
+- controls ephemeral runners/helpers.
+
+## Why independently validate in the executor?
+
+The gateway is not treated as the only security boundary. The privileged component should not blindly trust caller-shaped values simply because they came through another QuaranGate service.
+
+This is defense in depth, not a claim that the executor is safe if fully compromised.
+
+---
+
+# Target and workspace confinement
+
+Direct target filesystem operations accept **workspace-relative** paths.
+
+The path model rejects or confines:
+
+- absolute paths;
+- `..` traversal;
+- null bytes;
+- platform path tricks covered by the path grammar;
+- symlink/nested-symlink resolution outside the configured workspace.
+
+The executor canonicalizes the configured workspace and the requested path or nearest existing ancestor **inside the target**, then verifies the operation stays under the approved root.
+
+Content IO uses Docker archive operations where appropriate; other non-terminal operations use bounded argv-style execution rather than shell-concatenated path strings.
+
+### Why canonicalize in the target?
+
+A path such as:
+
+```text
+workspace/link -> /etc
+```
+
+may appear syntactically inside the workspace while resolving elsewhere. String-prefix checks are not enough.
+
+### Residual TOCTOU risk
+
+Canonicalization occurs immediately before the operation, but an attacker that already controls the target filesystem could attempt to change a symlink between verification and use.
+
+That race is narrowed, not mathematically eliminated.
+
+---
+
+# Agent sandbox isolation
+
+The Agent Control Plane does not normally give a write-capable coding model the real project as its read/write workspace.
+
+The intended/implemented lifecycle is:
+
+```text
+trusted project
+     ↓
+controlled snapshot/staging
+     ↓
+Docker-managed sandbox storage
+     ↓
+ephemeral runner
+```
+
+Runner hardening includes the established A3-A5 controls:
+
+- non-root execution;
+- non-privileged container;
+- `CapDrop=ALL`;
+- `no-new-privileges`;
+- read-only root filesystem;
+- no Docker socket;
+- no arbitrary host binds;
+- private namespaces;
+- exact CPU/memory/PID/runtime/output limits;
+- egress policy restricted to `deny` or `backend-only` rather than an ordinary unrestricted mode.
+
+### Why sandbox first?
+
+An agent prompt is not a safe promotion boundary. Keeping implementation away from live source gives QuaranGate an opportunity to measure what changed before deciding whether it is acceptable.
+
+---
+
+# Evidence, diff and promotion authority
+
+## Agent result is not proof by itself
+
+A model may state:
+
+> I changed two files and all tests passed.
+
+QuaranGate separately derives evidence from the sandbox/job state.
+
+## `agent_diff`
+
+`agent_diff` exposes bounded, machine-derived change evidence rather than blindly repeating agent prose.
+
+The contract includes integrity metadata such as a full-diff hash and bounded/cursor-based retrieval for large evidence.
+
+### Why bounded retrieval?
+
+Evidence should be complete enough to audit without turning one MCP result into an unbounded memory/transport dump.
+
+## `agent_apply`
+
+`agent_apply` takes **no caller-supplied patch text**.
+
+It operates against stored evidence associated with the completed job.
+
+### Why?
+
+If the reviewer approves artifact A, the apply path must not accept artifact B from a later caller message.
+
+The evidence being promoted must remain bound to the job that produced it.
+
+---
+
+# Apply safety, rollback and quarantine
+
+Apply is deliberately treated as a high-risk transition.
+
+Current controls include:
+
+- `agents:apply` scope;
+- exact job ownership;
+- project grant;
+- completed-job prerequisite;
+- one-time disposition;
+- base-state verification;
+- guarded-path validation;
+- fail-closed patch/application checks;
+- dedicated short-lived apply helper rather than reusing the agent runner;
+- durable apply-attempt evidence;
+- rollback verification;
+- quarantine when rollback cannot be proven.
+
+## Stale source protection
+
+A job records the source/base state it was created from. If the live project has changed incompatibly before apply, QuaranGate refuses rather than guessing how to merge old work into new source.
+
+### Why?
+
+Review evidence is only meaningful relative to the state that produced it.
+
+## Guarded paths
+
+Projects may designate sensitive paths that a normal apply may not modify.
+
+Typical classes include secrets, credentials, security configuration and other owner-controlled files.
+
+### Why?
+
+A coding agent does not gain stronger authority merely because it can produce a syntactically valid patch.
+
+## `UNCERTAIN` and project quarantine
+
+If apply fails and rollback can be proven, the failure can be classified without claiming a net change.
+
+If rollback **cannot** be proven, QuaranGate records uncertainty and blocks further apply activity for the project.
+
+### Why?
+
+The dangerous response to ambiguous mutation is continuing as if nothing happened.
+
+Quarantine makes the uncertainty visible and requires deliberate recovery rather than automated optimism.
+
+---
+
+# Secrets and provider credentials
+
+## Prohibited handling
+
+Secrets should not be:
+
+- committed to the repository;
+- baked into images;
+- placed in MCP arguments when a safer secret channel exists;
+- returned in result objects;
+- blindly written to audit logs;
+- shared with unrelated backends.
+
+## Backend separation
+
+A Kiro worker should receive only the credential it needs for Kiro. A future Copilot worker should receive only its own credential.
+
+Normal jobs should not receive every provider credential simply because QuaranGate knows how to use several backends.
+
+## Prompt handling
+
+The implemented Agent Control Plane stores the bounded raw prompt in the executor-side job store for execution/recovery needs, while audit/log surfaces use prompt identity/hash rather than blindly reproducing the full body.
+
+This helps separate operational evidence from potentially sensitive user/project text.
+
+## Redaction
+
+Known secret patterns/values should be redacted from logs and returned errors where possible.
+
+Residual risk remains for unusual secret formats embedded in arbitrary terminal command strings. Operators should avoid putting secrets directly into shell command text where a safer mechanism exists.
+
+---
+
+# Network and data-leakage boundaries
+
+QuaranGate distinguishes network planes rather than treating “the machine is local” as a security property.
+
+```text
+PUBLIC CONTROL PLANE
+external MCP client
+        ↓
+approved ingress
+        ↓
+Gateway
+
+PRIVATE EXECUTION/OPERATIONS PLANE
+Gateway
+        ↓
+private executor path
+
+AGENT DATA PLANE
+sandboxed runner
+        ↓
+only the backend egress allowed by policy
+```
+
+## Local models
+
+Running inference through local Ollama can remove cloud-model prompt transmission from that model call. It does **not** prove that the surrounding IDE, extension host, package manager, build process or other tooling has no external network path.
+
+This distinction is mandatory in production claims.
+
+## Build-time dependencies
+
+The build-reproducibility work deliberately separates external dependency acquisition from the real source build.
+
+The Tini package-download dependency has already been replaced by an exact local Tini 0.19.0 artifact with SHA-256 verification and recorded provenance.
+
+N1 completed the npm offline-source-build remediation. The dependency preparation phase is source-free and validates the complete lock before the first download; the real Docker build then uses a verified lock-scoped bundle, a fresh tmpfs npm cache and `npm ci --offline --ignore-scripts` under build network `none`.
+
+The accepted claim is **offline source build with approved pre-provisioned inputs**. It is not an empty-machine/no-artifact claim. The preparation container currently uses ordinary Docker bridge networking and relies on exact application-level URL validation (`registry.npmjs.org:443` only) plus mandatory SHA-512 verification rather than kernel-level egress filtering. The Dockerfile also still uses the mutable `node:24-alpine` tag, so cross-machine bit-for-bit base-image reproducibility remains separate hardening work.
+
+---
+
+# Audit and retention
+
+Important actions should be attributable to:
+
+```text
+timestamp
+request/correlation identity
+principal
+operation
+target or job
+project/backend/profile when applicable
+decision/outcome
+duration
+```
+
+Sensitive prompts, tokens, filesystem bodies and provider responses should not be blindly copied into the audit stream.
+
+## Job evidence lifecycle
+
+The A6 retained-resource lifecycle separates:
+
+- physical evidence bytes;
+- durable job/apply/quarantine metadata.
+
+Eligible evidence may expire according to retention policy while durable metadata remains available to explain what happened.
+
+Incomplete/orphaned evidence is classified conservatively rather than automatically deleted merely because it is old.
+
+### Why?
+
+Cleanup is a security decision when evidence is part of the proof that a mutation occurred correctly.
+
+---
+
+# Threat model
+
+The table below summarizes the important current threats and the control that limits each one.
+
+| Threat | Main control | Residual risk |
+|---|---|---|
+| Stolen raw client key | Per-client credentials, scopes, allowlists, revocation/rotation | Valid key can act as that principal until revoked |
+| Exposed `keyHash` configuration | Raw API key not stored there | Offline brute force remains theoretically possible; high-entropy keys are required |
+| Compromised MCP client | Deterministic server-side authz | Client may use every capability genuinely granted to it |
+| Prompt injection | Container/config/policy boundaries do not rely on prompt obedience | Injection can still influence choices inside granted authority |
+| Malformed tool input | Strict schemas, typed errors, fail closed | Parser/runtime bugs remain possible |
+| Path traversal | Gateway/executor validation + in-target canonicalization | Narrow symlink TOCTOU window remains |
+| Wrong/ambiguous target | Logical IDs + trusted resolver + ambiguity refusal | Misconfiguration remains an operator risk |
+| Arbitrary Docker control | Raw socket kept in private executor; narrow API | Executor compromise is high impact |
+| Agent reaches host files | Sandbox volume, no host binds, no Docker socket | Kernel/container-runtime vulnerability remains possible |
+| Two writers race on one project | Writer policy + apply/live-writer arbitration | Future concurrency features must preserve the invariant |
+| Stale patch | Recorded base-state verification | User must regenerate/reconcile work after legitimate source drift |
+| Agent changes protected files | Guarded-path apply policy | Guard configuration must be maintained correctly |
+| Partial/failed apply | Apply journal + rollback proof + quarantine | Manual recovery may be required after `UNCERTAIN` |
+| Runaway agent/process | CPU/memory/PID/runtime/output bounds | Best-effort cleanup cannot guarantee every detached target process dies immediately |
+| Credential output | Secret isolation + redaction | Novel/unrecognized secret formats can evade pattern-based redaction |
+| Local-model leakage assumption | Separate egress qualification | Other host/IDE/build processes may still network |
+| Build dependency drift | Pinned/local artifact work + integrity verification | Supply-chain governance still depends on approved artifact acquisition |
+
+---
+
+# Residual risks
+
+## Docker socket authority
+
+This is the primary structural residual risk.
+
+The executor's Docker socket access is required for the current target/runner architecture. If the executor itself is compromised, the impact may be severe despite its container hardening.
+
+Mitigations reduce exposure:
+
+- no public port;
+- private service path;
+- internal token;
+- non-root process;
+- read-only filesystem;
+- dropped capabilities;
+- narrow application API.
+
+They do not turn Docker authority into a low-privilege capability.
+
+## Authorized terminal power
+
+A principal granted `terminal:exec` can intentionally run shell commands inside the authorized target workspace/container subject to QuaranGate's bounds.
+
+That is an intended capability and should be granted conservatively.
+
+## Symlink race
+
+Canonical path checking narrows but does not entirely eliminate a race where an already-compromised target modifies filesystem links between validation and operation.
+
+## Timeout cleanup
+
+Docker exec does not provide a perfect kill primitive for every detached descendant. Cleanup is bounded/best effort.
+
+## Operator configuration
+
+QuaranGate can enforce configured boundaries, but a dangerously broad target/project/principal configuration is still dangerous.
+
+Least privilege remains an operator responsibility.
+
+---
+
+# Security rules that must not regress
+
+The following are architecture-level stop conditions, not ordinary bugs to work around:
+
+```text
+gateway receives docker.sock
+executor becomes publicly published
+runner receives docker.sock
+runner receives arbitrary host bind
+caller can choose host project path
+caller can choose privileged/network/container options
+missing agent grants become allow
+agent completion automatically applies live changes
+agent_apply accepts arbitrary caller patch text
+stale base-state check can be bypassed
+uncertain rollback is reported as success
+credentials appear in committed config/result/audit evidence
+local inference is claimed to prove entire IDE/build air-gap
+```
+
+If a future feature requires weakening one of these boundaries, that change requires an explicit architecture/security decision rather than being hidden inside implementation work.

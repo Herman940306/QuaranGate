@@ -1,326 +1,921 @@
-# Operations
+# QuaranGate Operations
 
-All commands run from the repo root. The bridge stack is `compose.yaml`; the disposable demo target
-is `test-target/compose.yaml`.
+This document is the operator runbook for QuaranGate. It focuses on actions that change or validate the running system: configuration, builds, deployment, health, credentials, target checks, evidence, ingress, recovery and troubleshooting.
 
-## Prerequisites
+QuaranGate is intentionally conservative about operational authority. A successful source build is not a deployment. A successful agent job is not an apply. A running process is not necessarily ready. Those distinctions are part of the product, not ceremony around it.
+
+> [!IMPORTANT]
+> The executor holds `/var/run/docker.sock`. Docker socket access is effectively host-level authority. QuaranGate limits that authority by keeping the executor private and exposing only a narrow internal API, but the residual impact of an executor or Docker-daemon compromise is still high. Never publish the executor and never mount the Docker socket into the gateway or an agent runner.
+
+> [!IMPORTANT]
+> This runbook is finalized against accepted local baseline `18179696b3ef3ff2192805590027d2e1a43a43d4` (`build: add governed offline npm dependency bundle`). N1 was accepted and committed locally with 44/44 unit test files, 1693/1693 tests, source build PASS and a no-cache/network-none Docker build PASS. It was not pushed, deployed, or used to enable O1 as part of that gate.
+
+---
+
+## Contents
+
+- [Operational model](#operational-model)
+- [Supported operator environment](#supported-operator-environment)
+- [Repository and shell](#repository-and-shell)
+- [First-time configuration](#first-time-configuration)
+- [Secrets and sensitive configuration](#secrets-and-sensitive-configuration)
+- [Build reproducibility](#build-reproducibility)
+- [Starting and stopping QuaranGate](#starting-and-stopping-quarangate)
+- [Health and readiness](#health-and-readiness)
+- [Image provenance](#image-provenance)
+- [Runtime identity and compatibility](#runtime-identity-and-compatibility)
+- [Client credentials](#client-credentials)
+- [Agent backend configuration](#agent-backend-configuration)
+- [Targets](#targets)
+- [Logs and audit evidence](#logs-and-audit-evidence)
+- [Remote ingress](#remote-ingress)
+- [Testing and acceptance](#testing-and-acceptance)
+- [Backup and recovery](#backup-and-recovery)
+- [Troubleshooting](#troubleshooting)
+- [Operational rules](#operational-rules)
+
+---
+
+# Operational model
+
+QuaranGate has three operationally distinct areas:
+
+```text
+PUBLIC CONTROL PLANE
+MCP client
+   |
+   v
+Gateway
+authentication / OAuth / scopes / audit
+NO Docker socket
+
+PRIVATE EXECUTION PLANE
+Gateway
+   |
+   v
+Executor
+Docker authority / trusted config / job store
+NO published port
+
+WORK EXECUTION
+Executor
+   +--> authorized target containers
+   +--> isolated agent runners
+   +--> dedicated apply helpers
+```
+
+The most important operating rule is:
+
+> **Do not use one plane to compensate for a failure in another.**
+
+Examples:
+
+- do not give the gateway a Docker socket because the executor is inconvenient;
+- do not mount a live project read-write into an agent runner because sandbox apply is inconvenient;
+- do not expose the executor publicly because a client cannot reach it directly;
+- do not weaken a failed build check merely to create an image;
+- do not treat liveness as readiness.
+
+---
+
+# Supported operator environment
+
+## Current strongest evidence
+
+The project has been developed and most deeply exercised on:
+
+```text
+Windows 11
+  -> WSL2 Ubuntu 24.04
+  -> Docker Desktop / Linux containers
+```
+
+This is the current verified operator environment.
+
+## Linux
+
+The architecture is Linux-container-native and is **design-compatible with a normal Linux Docker host**. Native-Linux qualification should still be recorded before the project claims that every installation path has been verified there.
+
+## macOS
+
+The architecture is **design-compatible with Docker Desktop on macOS**, including the current named BuildKit-context direction for offline npm artifacts. macOS has not been accepted as a production platform yet. Apple Silicon also requires the correct pre-provisioned Linux/arm64 image and dependency artifacts.
+
+## Native Windows without WSL2
+
+Not currently claimed as verified.
+
+---
+
+# Repository and shell
+
+Canonical project path on the current workstation:
+
+```text
+/home/herman/projects/mcp-ide-bridge
+```
+
+Run project commands from that repository unless a command explicitly says otherwise.
+
+Before any mutation, establish the real state:
+
+```bash
+cd /home/herman/projects/mcp-ide-bridge
+
+git rev-parse HEAD
+git branch --show-current
+git status --short
+git diff --cached --name-only
+```
+
+For governed project work, exact Git state is evidence. Do not continue from a remembered SHA when the live repository says something else.
+
+---
+
+# First-time configuration
+
+QuaranGate intentionally has no meaningful "run one command and trust the defaults" installation mode.
+
+At minimum the operator must create live configuration from the committed examples:
 
 ```bash
 cp .env.example .env
-# INTERNAL_TOKEN: openssl rand -base64 32
-# DOCKER_GID:     stat -c %g /var/run/docker.sock
 cp config/bridge.example.yaml  config/bridge.yaml
 cp config/clients.example.yaml config/clients.yaml
-npm install
-npm run validate-config           # sanity-check config before starting
 ```
 
-## Build / start / stop / restart
+The Agent Control Plane is optional. To enable it, create and review:
+
+```text
+config/agents.yaml
+```
+
+from the supplied example/configuration contract.
+
+Live configuration is gitignored. The repository contains examples and schemas; the real deployment contains principals, host paths, image selections and other local decisions.
+
+## `.env`
+
+Important values include:
+
+```text
+INTERNAL_TOKEN
+DOCKER_GID
+BRIDGE_PUBLIC_URL
+GIT_REVISION
+GATEWAY_IMAGE
+EXECUTOR_IMAGE
+agent runtime image references / secret-file paths when Agent Control is enabled
+```
+
+N1 introduces a build-only `QUARANGATE_NPM_BUNDLE_PATH`. It is required for a valid source build but deliberately not required for ordinary runtime Compose operations such as `ps`, `logs` or `restart`.
+
+Generate the internal gateway-to-executor token with a cryptographically secure random source, for example:
 
 ```bash
-docker compose build
-docker compose up -d
-docker compose restart gateway
-docker compose down                       # stop (keeps the quarangate-data volume)
-docker compose down -v                    # stop + remove the quarangate-data volume
+openssl rand -base64 32
 ```
 
-Disposable demo target:
+Determine the Docker socket group visible on the Linux/WSL host:
+
+```bash
+stat -c %g /var/run/docker.sock
+```
+
+Do not paste secret values into chat transcripts, tickets or committed files.
+
+---
+
+# Secrets and sensitive configuration
+
+QuaranGate separates **references to secrets** from **secret values** wherever practical.
+
+## Client API keys
+
+Generate one principal key per client rather than sharing one browser/IDE identity:
+
+```bash
+npm run gen-key -- <client-id>
+```
+
+The raw key is printed once. Only its hash belongs in `config/clients.yaml`.
+
+If a raw key appears in a chat transcript or other uncontrolled record, treat it as exposed and rotate it.
+
+## Kiro automation key
+
+The Kiro automation key is stored in a host file and mounted as a Compose secret into the executor. It must not be placed in source, normal Compose environment variables, MCP arguments or logs.
+
+Current preferred host path:
+
+```text
+/home/herman/.config/quarangate/kiro-api-key
+```
+
+The legacy path remains a compatibility fallback where the accepted migration code still supports it:
+
+```text
+/home/herman/.config/mcp-ide-bridge/kiro-api-key
+```
+
+Do not keep two uncontrolled live copies of the same credential merely for convenience.
+
+## `docker compose config` warning
+
+Compose can render environment values into its expanded configuration. Do not paste unfiltered output from:
+
+```bash
+docker compose config
+```
+
+into external logs or chats.
+
+When validating image/config selections, filter for the exact non-secret fields you need.
+
+---
+
+# Build reproducibility
+
+QuaranGate distinguishes three very different statements:
+
+```text
+1. The source compiles.
+2. The image can be rebuilt on this machine with approved local inputs.
+3. A different machine can reproduce the same build with pre-provisioned inputs.
+```
+
+They are not interchangeable.
+
+## Accepted Tini boundary
+
+Tini `0.19.0` is vendored under:
+
+```text
+third_party/tini/0.19.0/
+```
+
+Accepted binary SHA-256:
+
+```text
+1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc
+```
+
+Accepted license SHA-256:
+
+```text
+e5f46bca81266bdd511cf08018d66866870531794569c04f9b45f50dd23c28b0
+```
+
+The Dockerfile verifies the binary before using it as `/sbin/tini`.
+
+### Why it is vendored
+
+The previous Dockerfile installed Tini using Alpine package repositories during the image build. That meant a supposedly offline build could not start without external package access.
+
+Vendoring the exact accepted binary removes that dependency and makes its provenance inspectable.
+
+### What this does not mean
+
+Vendoring Tini did **not**, by itself, prove the entire image could be rebuilt offline. The next blocker was npm dependency acquisition. That work is N1 and is intentionally a separate gate.
+
+## N1 npm offline-build architecture — accepted
+
+N1 separates dependency acquisition from the build that sees application source:
+
+```text
+CONTROLLED DEPENDENCY PREPARATION
+package.json + package-lock.json + preparation tool
+                 |
+                 | bounded HTTPS to exact lock URLs
+                 | no project source / Git / runtime config / credentials
+                 v
+verified external npm artifact bundle
+                 |
+                 | read-only BuildKit named context
+                 v
+REAL SOURCE BUILD
+network = none
+canonical package-lock.json
+fresh ephemeral npm cache
+npm ci --offline --ignore-scripts
+```
+
+Accepted checkpoint:
+
+```text
+18179696b3ef3ff2192805590027d2e1a43a43d4
+build: add governed offline npm dependency bundle
+```
+
+Accepted dependency identity:
+
+```text
+package-lock SHA-256:
+31688b0a46cb5051e069ff049bbafd34752ace10dfb9dac3a60c9a3fef5258e5
+
+lock entries:           221
+unique artifact bodies: 220
+SHA-512 coverage:       221 / 221
+allowed dependency host:
+registry.npmjs.org:443
+
+bundle manifest SHA-256:
+43eb077e7f23c23014882738508b624dd738cc0315d5ea8730392e15e6aec788
+```
+
+Two lock paths reference the same `content-type@2.0.0` tarball with identical URL and integrity, which is why 221 lock entries map to 220 artifact bodies.
+
+### Choose the artifact root
+
+The current workstation uses an operator-owned location outside the repository:
+
+```bash
+export QUARANGATE_NPM_ARTIFACT_ROOT="$HOME/.local/share/quarangate/build-artifacts/npm"
+```
+
+This is an operator choice, not a Dockerfile constant. Another Linux/WSL/macOS host may use a different host path.
+
+### Controlled preparation — networked but source-free
+
+Preparation requires the `node:24-alpine` image to already exist locally. The tool intentionally uses `--pull=never`; it will stop rather than silently pulling the image.
+
+Check first:
+
+```bash
+docker image inspect node:24-alpine >/dev/null
+```
+
+If this fails, decide how the approved base image will be provisioned. In an online bootstrap that may be an explicit operator-controlled image acquisition. In an offline installation it must be imported/pre-provisioned from trusted media or an approved local registry/cache. Do not hide that acquisition inside the source build.
+
+Prepare the dependency bundle:
+
+```bash
+node scripts/npm-offline-bundle.mjs prepare \
+  --artifact-root "$QUARANGATE_NPM_ARTIFACT_ROOT"
+```
+
+The preparation container receives only:
+
+```text
+package.json                       read-only
+package-lock.json                  read-only
+scripts/npm-offline-bundle.mjs     read-only
+approved artifact root             read-write
+```
+
+It receives no repository-root mount, `.git`, source tree, live config, npmrc, Docker config, secret mount or Docker socket. It validates the complete lock before the first download, then requests the exact lockfile tarball URLs from `registry.npmjs.org` and rejects redirects. Every accepted artifact is checked against the lockfile SHA-512.
+
+> [!IMPORTANT]
+> The registry restriction is currently enforced by application URL policy plus SHA-512 verification. The preparation container itself uses Docker bridge networking; there is not yet a kernel/iptables host allowlist for that container. Treat this as a known defense-in-depth limitation, not as an air-gap claim.
+
+### Resolve and verify the exact bundle
+
+```bash
+export QUARANGATE_NPM_BUNDLE_PATH="$(node scripts/npm-offline-bundle.mjs print-path \
+  --artifact-root "$QUARANGATE_NPM_ARTIFACT_ROOT")"
+
+node scripts/npm-offline-bundle.mjs verify \
+  --bundle "$QUARANGATE_NPM_BUNDLE_PATH" \
+  --descriptor build/npm-dependencies.json
+```
+
+Verification checks the canonical lock hash, deterministic manifest, descriptor binding, exact file allowlist, every artifact filename/size/SHA-512, and rejects unexpected files/symlinks/hardlinks.
+
+### Build QuaranGate
+
+Set provenance and image references according to the deployment gate, then build:
+
+```bash
+export GIT_REVISION="$(git rev-parse HEAD)"
+export GATEWAY_IMAGE="quarangate:gateway-$GIT_REVISION"
+export EXECUTOR_IMAGE="quarangate:executor-$GIT_REVISION"
+export QUARANGATE_NPM_BUNDLE_PATH
+
+docker compose build
+```
+
+Both gateway and executor build definitions use the same named `npm_deps` context, build network `none`, and `pull: false`.
+
+Inside the build stage QuaranGate:
+
+1. verifies the bundle against the canonical lock and committed descriptor;
+2. copies re-verified tarball bytes into a private tmpfs directory;
+3. seeds a fresh ephemeral npm cache from those local tarballs;
+4. runs `npm ci --offline --ignore-scripts`;
+5. copies the application source only after dependency installation;
+6. compiles TypeScript;
+7. prunes development dependencies with network disabled and scripts ignored;
+8. copies only runtime `node_modules`, `dist` and `package.json` into the runtime stage.
+
+No dependency tarball bundle or temporary npm cache is retained in the final runtime image.
+
+### Missing bundle behavior
+
+`compose.yaml` deliberately defaults the named `npm_deps` context to `./build` when `QUARANGATE_NPM_BUNDLE_PATH` is unset.
+
+That is a **sentinel**, not a usable dependency bundle.
+
+This design allows ordinary commands such as:
+
+```bash
+docker compose config --services
+docker compose ps
+docker compose logs
+docker compose restart gateway
+```
+
+to parse/run without requiring a build artifact path. If someone actually tries to build without configuring a valid bundle, the Dockerfile verifier rejects `./build` before npm runs. The acceptance suite includes this regression check.
+
+### Full N1 acceptance
+
+Run the bounded acceptance driver against an already-prepared bundle:
+
+```bash
+node scripts/accept-npm-offline-build.mjs \
+  --bundle "$QUARANGATE_NPM_BUNDLE_PATH"
+```
+
+The accepted N1 run proved:
+
+```text
+TypeScript:                 PASS
+unit test files:            44 / 44 PASS
+unit tests:                 1693 / 1693 PASS
+source build:               PASS
+npm ci offline:             PASS
+npm lifecycle scripts:      disabled
+Docker no-cache build:      PASS
+Docker build network:       none
+Docker pull:                false
+runtime dependency bundle:  absent
+runtime npm cache:           absent
+live stack mutation:         none
+```
+
+The acceptance driver creates/removes only bounded temporary acceptance resources; it does not deploy the resulting image into the live QuaranGate stack.
+
+## Base-image limitation
+
+The current Dockerfile uses:
+
+```text
+node:24-alpine
+```
+
+N1 proves a current-machine offline build against an already-local image identity. The source does not yet bind `FROM` to an immutable cross-machine digest.
+
+Therefore:
+
+```text
+current-machine rebuild with approved local base image:
+can be proven
+
+cross-machine bit-for-bit base-image reproducibility:
+not yet proven by the tag alone
+```
+
+Do not claim otherwise.
+
+## Dependency update workflow
+
+A legitimate dependency change intentionally invalidates the old bundle. Do not “fix” that failure by pointing the build at a broader npm cache.
+
+The governed flow is:
+
+```text
+reviewed package.json / package-lock.json change
+        ↓
+new package-lock SHA-256
+        ↓
+old descriptor/bundle no longer match
+        ↓
+review package/version/source/install-script changes
+        ↓
+prepare new source-free bundle
+        ↓
+verify every artifact against the new lock SHA-512
+        ↓
+generate/review new build/npm-dependencies.json descriptor
+        ↓
+run full offline acceptance
+        ↓
+separate commit/promotion decision
+```
+
+Useful commands after the dependency/lock change has been separately authorized:
+
+```bash
+node scripts/npm-offline-bundle.mjs prepare \
+  --artifact-root "$QUARANGATE_NPM_ARTIFACT_ROOT"
+
+export QUARANGATE_NPM_BUNDLE_PATH="$(node scripts/npm-offline-bundle.mjs print-path \
+  --artifact-root "$QUARANGATE_NPM_ARTIFACT_ROOT")"
+
+node scripts/npm-offline-bundle.mjs descriptor \
+  --bundle "$QUARANGATE_NPM_BUNDLE_PATH" \
+  > /tmp/npm-dependencies.json
+```
+
+Review `/tmp/npm-dependencies.json` before replacing the tracked `build/npm-dependencies.json`. Do not redirect generated metadata straight into the tracked file before review. Then run `verify`, typecheck/tests/build and the complete offline acceptance driver.
+
+A lock change may also introduce a new registry host, Git/file dependency, non-SHA512 integrity form or required install script. The current preparation policy should fail closed in those cases; changing that policy is a separate security decision, not an automatic dependency-update step.
+
+---
+
+# Starting and stopping QuaranGate
+
+Runtime commands should remain usable independently of whether a new source build is being prepared.
+
+Typical operations are:
+
+```bash
+docker compose up -d
+docker compose ps
+docker compose logs -f gateway
+docker compose logs -f executor
+docker compose restart gateway
+docker compose restart executor
+docker compose down
+```
+
+Do not use `docker compose down -v` casually. Volume deletion has a different risk profile from container recreation.
+
+## Disposable demo target
+
+The repository includes a disposable target for integration testing:
 
 ```bash
 docker compose -f test-target/compose.yaml up -d --build
 docker compose -f test-target/compose.yaml down -v
 ```
 
-## Image provenance
+Keep disposable test-stack operations separate from the live QuaranGate stack.
 
-Production gateway and executor image references must be immutable and service-specific:
-`quarangate:gateway-<sha>` and `quarangate:executor-<sha>`. Both services build from the same
-Dockerfile/context and are tagged independently; `compose.yaml` selects them via `GATEWAY_IMAGE` and
-`EXECUTOR_IMAGE`. `quarangate:latest` is the unset default and a dev convenience only — it is
-never authoritative for production provenance. (The pre-existing `agentcontrol:*` candidate image
-family — e.g. `agentcontrol:gateway-candidate-f37ff70` — and the `mcp-ide-bridge:*` family are
-preserved as historical/rollback evidence and are not part of this convention; see
-`MCP_IDE_BRIDGE_MASTER_PRD.md` §47 for the full identity migration contract.)
+---
 
-Build with provenance, then deploy the exact immutable tags.
+# Health and readiness
 
-**Deployment configuration lives in the deployment directory's `.env` — never in
-one-off inline or exported shell variables.** A value that exists only in the
-shell that happened to run `docker compose up` does not survive a fresh shell, a
-restart, or a move to another checkout: Compose silently falls back to the
-`:-` defaults in `compose.yaml`, so the stack comes back up as
-`quarangate:latest` with `GIT_REVISION=unknown` and — because every `AGENT_*`
-default is empty — with the real Kiro backend **disabled** (fake-only). That
-regression is silent; nothing fails loudly. Pin it in `.env` instead.
+QuaranGate deliberately separates liveness from readiness.
 
-### 1. Build the immutable images
+## Liveness
 
 ```bash
-SHA=$(git rev-parse HEAD)
-docker build --build-arg GIT_REVISION="$SHA" -t "quarangate:gateway-$SHA" .
-docker build --build-arg GIT_REVISION="$SHA" -t "quarangate:executor-$SHA" .
+curl -fsS http://127.0.0.1:8787/healthz
 ```
 
-### 2. Pin the deployment in `.env`
+`/healthz` answers the narrow question:
 
-`.env` is gitignored and untracked; it holds non-secret configuration only. The
-Kiro API key itself stays in a single host file and reaches the executor solely
-through the Compose `kiro_api_key` secret — `.env` names the FILE, never the
-value (see "Secrets" below).
+> Is the gateway process alive?
 
-```dotenv
-GIT_REVISION=<full reviewed commit sha>
-GATEWAY_IMAGE=quarangate:gateway-<full reviewed commit sha>
-EXECUTOR_IMAGE=quarangate:executor-<full reviewed commit sha>
+It should not depend on client configuration or executor reachability.
 
-AGENT_RUNNER_IMAGE=mcp-ide-bridge-kiro-runner:a4
-AGENT_PROXY_IMAGE=quarangate:executor-<full reviewed commit sha>
-AGENT_KIRO_KEY_PATH=/run/secrets/kiro-api-key
-AGENT_KIRO_KEY_FILE=/home/herman/.config/quarangate/kiro-api-key
-AGENT_KIRO_DRY_RUN=false
-```
-
-`AGENT_KIRO_DRY_RUN` is parsed as `/^(1|true|yes)$/i` (`src/executor/index.ts`),
-so `false` is the explicit canonical non-dry-run value. State it rather than
-leaving it empty. If the key file has not yet moved to the QuaranGate path,
-resolve it new-path-first with `node scripts/resolve-kiro-key-file.mjs` and
-write the result into `.env`.
-
-### 3. Verify the resolved configuration from a FRESH shell
-
-The point of this step is to prove nothing depends on the current shell, so run
-it in a shell that has exported none of these variables:
+## Readiness
 
 ```bash
-docker compose config | grep -E 'image:|GIT_REVISION|AGENT_'
+curl -fsS http://127.0.0.1:8787/readyz
 ```
 
-Every value must be the intended one — no empty `AGENT_*`, no
-`quarangate:latest`, no `GIT_REVISION: unknown`.
+`/readyz` answers:
 
-> **`docker compose config` prints `INTERNAL_TOKEN` in cleartext** (once per
-> service) because it is passed as a plain environment variable. Always filter
-> its output as above rather than paging the whole document, and never paste
-> unfiltered `docker compose config` output into a log, ticket, or review.
-> The Kiro API key is *not* exposed this way: it is a Compose **secret**, so
-> only its host FILE PATH appears — verify it with
-> `docker compose config | grep -A1 'kiro_api_key'`.
+> Is the gateway actually in a state where it can serve authenticated QuaranGate work?
 
-### 4. Deploy
+Readiness fails closed if the clients configuration is unavailable/invalid or the executor cannot be reached.
+
+This distinction prevents a process with an empty `/config` mount from being reported as operational merely because Node is still running.
+
+## Docker service health
 
 ```bash
-docker compose up -d
+docker compose ps
 ```
 
-Every production build candidate must carry the commit it was built from, applied at build time
-(never baked into source) via the `GIT_REVISION` build arg:
+The gateway healthcheck uses readiness rather than simple liveness. A configuration failure should surface as unhealthy while leaving the process alive long enough to diagnose.
+
+---
+
+# Image provenance
+
+Production candidates must be attributable to the exact reviewed Git state.
+
+Current naming convention:
+
+```text
+quarangate:gateway-<full-reviewed-sha>
+quarangate:executor-<full-reviewed-sha>
+```
+
+Both are built from the same source/Dockerfile but are independently selectable deployment references.
+
+The unset/development fallback `quarangate:latest` is not production provenance.
+
+Build candidates carry OCI labels including:
 
 ```text
 org.opencontainers.image.revision=<exact commit SHA>
 org.opencontainers.image.source=https://github.com/Herman940306/QuaranGate
 ```
 
-Verify provenance on the built image before deploying:
+Verify the labels on the actual image before deployment.
 
-```bash
-docker image inspect quarangate:gateway-$SHA \
-  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+Do not use `docker commit` of a running container as a production rollback artifact.
+
+---
+
+# Runtime identity and compatibility
+
+The canonical product identity is QuaranGate.
+
+Most live runtime identity migration is already designed/implemented around compatibility rather than deleting history.
+
+Important retained compatibility identifiers include:
+
+```text
+mcp-bridge-jobs
 ```
 
-The OAuth data volume (`quarangate-data`) has a lifecycle separate from the image lifecycle.
-Replacing the gateway is forward recovery only: build a new image from a committed revision and
-start it against the existing persistent OAuth volume and host config. Never use `docker commit` of
-a running container as a rollback image, and never bake live credentials, tokens, or config into any
-candidate or rollback image.
+for durable agent job/evidence storage and existing target Compose project names such as the review/test targets where those remain part of the compatibility contract.
 
-## Runtime identity compatibility (N1D)
+Current resource ownership uses the QuaranGate namespace while reconciliation code continues to understand approved legacy namespaces long enough for historical resources to age out safely.
 
-The runtime carries the QuaranGate identity. Discovery and cleanup remain **dual-read** so
-pre-cutover resources stay visible; only new writes use the QuaranGate namespace.
+Do not rename persistent Docker resources simply to remove old text from `docker volume ls`. A compatibility artifact is not the same thing as the product's public identity.
 
-| Concern | Written now | Also read (legacy, never written) |
-|---|---|---|
-| Ownership labels | `io.quarangate.*` | `io.mcp-ide-bridge.*`, `io.mcp-bridge.*` |
-| Evidence volumes | `io-quarangate-evidence-*` | `io-mcp-ide-bridge-evidence-*` |
-| Target opt-in discovery | *(not written by the bridge)* | `mcp.bridge.*` |
+See the Master PRD identity-migration record for the decision history.
 
-Notes that matter operationally:
+---
 
-- Docker ANDs the entries of a single `label` filter, so dual-read is implemented as **one query per
-  namespace, unioned and de-duplicated** (`managedLabelFilters()` in `src/executor/agents/sandboxSpec.ts`).
-  A resource carrying two namespaces is processed exactly once.
-- Ambiguity fails safe. If two accepted namespaces disagree on `managed`/`resource`/`job`, the value
-  reads as unproven and the resource is **retained**, never deleted.
-- Historical evidence is never renamed or migrated. It ages out under its existing retention policy.
-- `mcp.bridge.*` target discovery is **deliberately not migrated**: those labels are authored by
-  operator Compose files, including ones outside this repo. Changing them here would empty
-  `targets_list`. This is its own, longer compatibility window (§47.4).
+# Client credentials
 
-Identifiers deliberately retained under approved decisions:
-
-- `mcp-bridge-jobs` — durable job/evidence store, physical name retained (§47.13 DECISION-2).
-- Target Compose projects (`mcp-ide-bridge-testtarget`, `mcp-ide-bridge-review`) — unchanged; the
-  client-facing contract is the target `id`, not the project (§47.7).
-
-Host secret path (§47.8, DECISION-4): `/home/herman/.config/quarangate/kiro-api-key`, with the legacy
-`/home/herman/.config/mcp-ide-bridge/kiro-api-key` still supported as a fallback. Resolve it with
-`node scripts/resolve-kiro-key-file.mjs` (explicit env → new path → legacy path). Migrate by **moving**
-the file, never copying — two live copies of one credential have no source of truth.
-
-## Health / readiness
+## Generate / rotate
 
 ```bash
-curl -s http://127.0.0.1:8787/healthz     # gateway LIVENESS only: process is up
-curl -s http://127.0.0.1:8787/readyz      # gateway READINESS: clients config loaded AND executor reachable
-docker compose ps
+npm run gen-key -- <client-id>
 ```
 
-`/healthz` never depends on config or executor state. `/readyz` fails closed with `503` unless the
-clients config loaded *and* the executor answers. A valid config with zero clients counts as loaded.
+Replace the client's stored hash in `config/clients.yaml`, then reload/restart the gateway according to the accepted config-reload procedure.
 
-The Docker healthcheck for the gateway probes `/readyz` (the executor's own healthcheck still probes
-`/healthz`). A missing, unreadable, malformed, or structurally invalid `config/clients.yaml` — for
-example an empty `/config` bind mount after a reboot — therefore shows the gateway as **unhealthy**
-instead of falsely healthy. The gateway process stays alive and diagnosable; it does not exit or
-crash-loop. The reason category is logged at startup (`clients config not loaded`), never returned in
-the `/readyz` body.
+## Disable / revoke
 
-## Logs (structured JSON audit, redacted)
+Use the repository's client-revocation tooling rather than deleting unrelated state.
 
 ```bash
-docker compose logs -f gateway            # audit entries: principal, tool, target, decision, duration
+npm run revoke-key -- <client-id>
+```
+
+Use the explicit removal mode only when deleting the principal is the intended action.
+
+## OAuth clients
+
+Browser clients that require OAuth still resolve to the same QuaranGate principal/authorization model as static API keys.
+
+OAuth state is stored on the gateway data volume. It is not the agent job database.
+
+---
+
+# Agent backend configuration
+
+Agent Control is optional and deny-by-default.
+
+Without a trusted `config/agents.yaml`, the direct MCP target surface remains available but governed agent tools fail closed as unavailable.
+
+Trusted agent configuration controls:
+
+```text
+logical projects
+host-side project resolution
+allowed backends
+profiles
+resource policies
+network policy
+runner images
+retention
+```
+
+These values are executor-owned policy. They are not caller inputs.
+
+## Kiro
+
+Kiro automation uses a dedicated automation credential and isolated runner state. Do not reuse a normal personal interactive session as implicit machine authority.
+
+## Ollama O1
+
+The O1 source and model selection are qualified, but final container deployment/post-deployment acceptance remains a separate operational gate. Do not interpret model qualification as production activation.
+
+---
+
+# Targets
+
+Callers address logical target IDs, never host paths or Docker IDs.
+
+Operationally, target availability is the intersection of:
+
+```text
+container/config discovery
+AND
+principal authorization
+```
+
+Discovery alone does not grant access.
+
+Before adding a real target, verify:
+
+- exact Compose project/service identity;
+- intended workspace path inside the container;
+- desired RO/RW authority;
+- principal allowlist;
+- target has only the tools/runtime assumptions QuaranGate expects.
+
+See `docs/TARGETS.md` for the complete target contract.
+
+---
+
+# Logs and audit evidence
+
+Gateway and executor logs:
+
+```bash
+docker compose logs -f gateway
 docker compose logs -f executor
 ```
 
-Audit entries never contain API keys, tokens, headers, or file contents. Command arguments are
-redacted best-effort (`src/shared/redact.ts`).
-
-## Credential lifecycle
-
-```bash
-# Create / rotate: generate a key, then paste the printed keyHash into config/clients.yaml
-npm run gen-key -- vscode
-# Rotation = new key for the same client id, replace its keyHash, reload.
-
-# Revoke (disable): keys/tokens for that client are rejected
-npm run revoke-key -- vscode              # sets enabled: false
-npm run revoke-key -- vscode --remove     # deletes the client entry
-
-# Apply config changes without a full restart:
-docker compose restart gateway            # reload clients.yaml (gateway)
-# reload targets in the executor:
-TOKEN=$(grep INTERNAL_TOKEN .env | cut -d= -f2-)
-docker compose exec executor node -e "fetch('http://127.0.0.1:8990/reload',{method:'POST',headers:{'x-internal-token':process.env.INTERNAL_TOKEN}}).then(r=>console.log(r.status))"
-```
-
-Rotating `INTERNAL_TOKEN` requires restarting both services (`docker compose up -d`).
-
-
-### OAuth data-volume permissions
-
-Fresh gateway images create `/data` as `node:node` with mode `0700`; OAuth state files are written
-with mode `0600`. This preserves a non-root gateway while allowing the OAuth façade to persist
-registrations and hashed token state.
-
-An existing data volume created by an older image (`quarangate-data`, or the legacy `mcp-bridge-data`) may still be `root:root` and therefore
-unwritable by the gateway. Diagnose without reading file contents:
-
-```bash
-docker compose exec -T gateway sh -lc 'id; stat -c "mode=%a uid=%u gid=%g path=%n" /data; test -w /data && echo writable || echo not-writable'
-```
-
-If the volume is bridge-owned and confirmed to contain no user data requiring different ownership,
-stop only the gateway and repair the volume root:
-
-```bash
-docker compose stop gateway
-docker run --rm --user 0:0 \
-  --mount type=volume,source=quarangate-data,target=/data \
-  alpine:3.20 sh -eu -c 'chown 1000:1000 /data; chmod 0700 /data'
-docker compose up -d --no-deps --force-recreate gateway
-```
-
-Do not solve this by running the gateway as root or by making `/data` world-writable.
-
-## Inspect discovered / configured targets
-
-```bash
-API_KEY=<a client key> ./scripts/mcp-check.sh          # protocol smoke test
-# or list targets via the MCP tool:
-npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8787/mcp \
-  --transport http --header "Authorization: Bearer <key>" \
-  --method tools/call --tool-name targets_list
-```
-
-## Run tests
-
-```bash
-npm test                                   # unit tests (no Docker needed)
-# integration tests (need the stack + demo target up, and the generated keys):
-KEYS_ENV=/path/to/keys.env npm run test:integration
-```
-
-## Remote ingress
-
-Remote browser access is a deliberate operator action because it creates the project's public attack
-surface. The gateway itself must remain bound to `127.0.0.1:8787`; never publish the executor.
-
-### Current verified browser ingress — Tailscale Funnel
-
-Approved for Claude and verified on 2026-07-27; reused and verified for ChatGPT on 2026-07-28:
+QuaranGate audit evidence is intended to answer:
 
 ```text
-Claude.ai / ChatGPT
-   │ HTTPS
-   ▼
-https://wolf.taildc680e.ts.net
-   │ Tailscale Funnel
-   ▼
-http://127.0.0.1:8787
-   │ private Docker network
-   ▼
-executor (no published ports)
+who
+asked for what
+against which target/project/job
+under which scope/profile
+allowed or denied
+how long it took
+what terminal state resulted
 ```
 
-The persisted Funnel mapping is:
+It is not intended to become a raw repository/prompt/secret dump.
+
+Do not paste large unredacted logs into external systems without reviewing them first.
+
+---
+
+# Remote ingress
+
+The gateway binds to loopback by default:
 
 ```text
-https://wolf.taildc680e.ts.net
-|-- / proxy http://127.0.0.1:8787
+127.0.0.1:8787
 ```
 
-The corresponding `.env` setting is:
+That should remain true even when remote browser access is enabled through an external ingress layer.
+
+The currently proven browser-ingress pattern is Tailscale Funnel terminating public HTTPS and forwarding to the loopback gateway.
+
+The executor remains private and unpublished.
+
+Before changing ingress, preserve these invariants:
 
 ```text
-BRIDGE_PUBLIC_URL=https://wolf.taildc680e.ts.net
+TLS for remote clients
+exact BRIDGE_PUBLIC_URL
+loopback-only gateway bind
+no public executor port
+no Docker socket in the gateway
+OAuth metadata matches the public origin
 ```
 
-After changing `BRIDGE_PUBLIC_URL`, recreate only the gateway and verify both local and public OAuth
-metadata before client authorization. Useful checks:
+Ingress configuration is host infrastructure. Agent workers must not receive authority to run `tailscale serve`, `tailscale funnel`, firewall or equivalent exposure-changing commands unless a future separately governed operations capability explicitly allows it.
+
+---
+
+# Testing and acceptance
+
+Ordinary source validation:
 
 ```bash
-curl -fsS https://wolf.taildc680e.ts.net/healthz
-curl -fsS https://wolf.taildc680e.ts.net/readyz
-curl -fsS https://wolf.taildc680e.ts.net/.well-known/oauth-protected-resource | jq .
-curl -fsS https://wolf.taildc680e.ts.net/.well-known/oauth-authorization-server | jq .
-tailscale funnel status
+npm run typecheck
+npm test
+npm run build
 ```
 
-A public unauthenticated MCP initialize request must return HTTP `401` with OAuth resource metadata;
-that check was verified before connecting either browser client. The executor had `Ports: {}` and the
-gateway had no `/var/run/docker.sock` throughout Claude and ChatGPT external validation. ChatGPT
-action definitions may need an explicit **Refresh** after server-side tool metadata changes; the
-14 tools verified at that milestone advertise `outputSchema` and return `structuredContent` plus
-legacy JSON text. The current surface is 23 tools (the original 14 plus nine Agent Control Plane
-tools), so a Refresh is required after upgrading a client that was connected before A6.
+The current accepted local baseline is:
 
-For a different ingress provider or hostname, preserve the same invariants: TLS on, exact
-`BRIDGE_PUBLIC_URL`, loopback-only gateway bind, executor private, and no raw Docker socket in the
-public-facing gateway. Public-ingress changes still require explicit operator approval.
+```text
+HEAD: 18179696b3ef3ff2192805590027d2e1a43a43d4
+TypeScript: PASS
+44 / 44 unit test files PASS
+1693 / 1693 unit tests PASS
+source build: PASS
+no-cache network-none Docker build with approved pre-provisioned inputs: PASS
+```
 
-## Backups / state
+The preceding Tini-only checkpoint (`6129d3d`) remains historical evidence at 43 files / 1671 tests.
 
-The only disposable persistent state is the `quarangate-data` volume (hashed OAuth tokens). It is safe
-to drop; the durable agent job/evidence store `mcp-bridge-jobs` is NOT (§47.13 DECISION-2).
-clients simply re-authorize. Config lives in `config/*.yaml` (gitignored) and `.env`.
+Integration, Docker, destructive apply and credentialed provider tests have additional prerequisites and authority boundaries. Do not run every test merely because it exists.
+
+See `docs/TEST_RESULTS.md` for point-in-time evidence and historical counts.
+
+---
+
+# Backup and recovery
+
+## Gateway OAuth data
+
+Gateway OAuth state is intentionally separate from durable agent-job evidence. The gateway data volume is lower-stakes and can be recreated under the approved identity migration policy, at the cost of client reauthorization.
+
+## Agent job/evidence database
+
+The physical `mcp-bridge-jobs` volume is intentionally retained because it contains durable SQLite job state, retained-resource metadata and quarantine/evidence relationships.
+
+Treat it as persistent operational data.
+
+Before any operation that could affect that volume:
+
+1. establish exact current volume identity;
+2. stop writers or otherwise reach a stable state;
+3. take a verified backup;
+4. record DB integrity/state evidence;
+5. test the recovery path before deleting the old copy.
+
+Do not rename/copy the job store merely for cosmetic identity cleanup.
+
+## Quarantined projects
+
+An `UNCERTAIN` apply means rollback could not be proven.
+
+That is not a normal retry state.
+
+Do not clear quarantine through ad-hoc database edits or by deleting evidence. Investigate and reconcile the real project state first, then use an explicitly designed recovery procedure.
+
+---
+
+# Troubleshooting
+
+## Gateway is running but unhealthy
+
+Check readiness first:
+
+```bash
+curl -i http://127.0.0.1:8787/readyz
+docker compose logs gateway
+```
+
+Likely categories include:
+
+- clients config missing/invalid;
+- executor unreachable;
+- deployment config drift.
+
+Do not solve a readiness failure by changing the Docker healthcheck back to liveness.
+
+## Executor is unreachable
+
+Verify:
+
+```text
+executor container running
+internal network intact
+shared internal token consistent
+no public-port workaround was introduced
+```
+
+Do not publish port `8990` to "see if it helps".
+
+## Build fails while offline
+
+First classify the failure:
+
+```text
+missing pre-provisioned base image
+missing/invalid npm bundle
+lock/descriptor mismatch
+corrupt tarball
+Tini hash mismatch
+source compile/test failure
+```
+
+Do not turn networking back on inside the real source build as the first troubleshooting step.
+
+## Tests fail because an optional native npm package is missing
+
+The project has already encountered a stale local dependency environment where the repository source was valid but `node_modules` was incomplete for the current platform.
+
+Classify dependency-environment failures separately from source failures. Do not edit source until the environment evidence says the source is the problem.
+
+## Browser client cannot perform a destructive tool
+
+A client may apply its own safety policy before a request reaches QuaranGate. Check gateway audit evidence before declaring the server broken.
+
+---
+
+# Operational rules
+
+These rules summarize the runbook:
+
+1. **Verify exact Git state before mutation.**
+2. **Build evidence is not deployment authority.**
+3. **Liveness is not readiness.**
+4. **The gateway never receives the Docker socket.**
+5. **The executor is never published.**
+6. **Agent runners never receive host/Docker authority.**
+7. **Dependency acquisition and source compilation are separate trust domains.**
+8. **A lock/hash mismatch fails closed; do not regenerate silently.**
+9. **Do not weaken a gate to make a candidate pass.**
+10. **Historical evidence stays historical.**
+11. **A model being local does not prove the IDE/build/runtime is private.**
+12. **Only the exact reviewed artifact should be promoted.**

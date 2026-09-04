@@ -1,198 +1,416 @@
-# Test results
+# Test Results
 
-This document records **point-in-time verification evidence**. Each section states when it was
-executed and what the baseline was at that moment. Older milestone counts are retained as
-historical truth and are *not* the current baseline — read §"Current verified baseline" first.
+This document records **point-in-time verification evidence**.
 
-## Current verified baseline
+Older counts are preserved as historical truth. They are not silently replaced with the newest number. Read the current baseline first, then use the historical sections when investigating when a capability was introduced or accepted.
 
-Executed at commit `67146a4` (`fix: harden gateway readiness and image provenance`).
-
-| Suite | Result |
-|---|---|
-| Unit (`npm test`) | **1420 / 1420 passed**, 35 test files |
-| TypeScript typecheck (`npm run typecheck`) | PASS |
-| Integration, live stack (`npm run test:integration`) | Not re-run at this commit — requires an authorized Docker stack |
-
-The unit suite needs no Docker. The integration suites (`tests/integration/`) require the live
-stack plus generated client keys, and the A4/A5/A6 Docker suites additionally require the runner
-images and provider credentials; they are run only under explicit runtime authorization.
-
-Historical milestone counts recorded below (20/20 unit, 37/37 and 40/40 integration, 14-tool
-surface, 1398/1398 unit at A6 closeout) were correct when recorded and are preserved as evidence.
+> [!IMPORTANT]
+> Current accepted local source baseline: `18179696b3ef3ff2192805590027d2e1a43a43d4` (`build: add governed offline npm dependency bundle`). N1 is committed locally but was not pushed, deployed, or used to enable O1 as part of its acceptance. Older counts below remain historical evidence.
 
 ---
 
-## Historical milestone — initial bridge verification (2026-07-27)
+## Contents
 
-Executed 2026-07-27 on WSL2 Ubuntu 24.04 (`Wolf`), Docker 29.6.2, Compose v5.3.1, Node 24.15.0,
-`@modelcontextprotocol/sdk` 1.30.0, MCP Inspector CLI (latest). Protocol version negotiated:
-**2025-11-25**. The MCP surface was 14 tools at this milestone; it is 23 today.
+- [Current verified baseline](#current-verified-baseline)
+- [What the current baseline proves](#what-the-current-baseline-proves)
+- [O1/Tini build-remediation evidence](#o1tini-build-remediation-evidence)
+- [Historical milestone — initial bridge verification](#historical-milestone--initial-bridge-verification)
+- [OAuth hardening](#oauth-hardening)
+- [External Claude acceptance](#external-claude-acceptance)
+- [External ChatGPT acceptance](#external-chatgpt-acceptance)
+- [Agent Control Plane milestones](#agent-control-plane-milestones)
+- [How to interpret test counts](#how-to-interpret-test-counts)
+- [Reproduction boundaries](#reproduction-boundaries)
 
-## Summary (2026-07-27 milestone)
+---
 
-| Suite | Result |
+# Current verified baseline
+
+Accepted N1 source checkpoint:
+
+```text
+HEAD:
+18179696b3ef3ff2192805590027d2e1a43a43d4
+
+commit:
+build: add governed offline npm dependency bundle
+
+parent:
+6129d3d715e914e1f69d777fddd7a365bd902d44
+
+TypeScript typecheck:
+PASS
+
+Unit test files:
+44 / 44 PASS
+
+Unit tests:
+1693 / 1693 PASS
+
+Source build:
+PASS
+
+No-cache Docker build with pre-provisioned inputs:
+PASS
+
+Docker build network:
+none
+
+Docker image pull during acceptance:
+false
+
+package-lock SHA-256:
+31688b0a46cb5051e069ff049bbafd34752ace10dfb9dac3a60c9a3fef5258e5
+
+Staging after commit:
+empty
+
+Known unrelated untracked:
+.kiro/
+```
+
+N1 committed exactly ten paths:
+
+```text
+.dockerignore
+.env.example
+.gitignore
+Dockerfile
+compose.yaml
+package.json
+build/npm-dependencies.json
+scripts/accept-npm-offline-build.mjs
+scripts/npm-offline-bundle.mjs
+tests/unit/npm-offline-bundle.test.ts
+```
+
+No production push, deployment, live-container restart/recreation or O1 enablement was part of the N1 acceptance/commit boundary.
+
+---
+
+# What the current baseline proves
+
+The N1 baseline proves the source and build system can use a governed external npm dependency bundle without giving the real source build npm network authority.
+
+Accepted N1 evidence includes:
+
+- canonical `package-lock.json` remained byte-for-byte unchanged;
+- lockfile v3 with 221 resolved entries and 220 unique artifact bodies;
+- SHA-512 integrity coverage for 221/221 lock entries;
+- dependency preparation limited to exact `registry.npmjs.org:443` lock URLs, with no redirects, npm credentials, Docker socket or project-source mount;
+- deterministic bundle manifest SHA-256 `43eb077e7f23c23014882738508b624dd738cc0315d5ea8730392e15e6aec788`;
+- full independent SHA-512 audit of all 220 tarballs;
+- `npm ci --offline --ignore-scripts` PASS;
+- TypeScript build PASS;
+- no-cache Docker build PASS with build network `none` and `pull=false`;
+- Tini 0.19.0 remained exact;
+- dependency bundle/cache absent from the runtime image;
+- live gateway/executor anchors unchanged by acceptance.
+
+It does **not** prove:
+
+- a completely empty machine can build with no pre-provisioned artifacts;
+- cross-machine bit-for-bit base-image reproducibility, because the Dockerfile still uses `node:24-alpine` rather than an immutable digest in `FROM`;
+- kernel-level egress filtering for the preparation container; its registry restriction is enforced by application URL policy;
+- O1 container deployment is accepted or enabled;
+- macOS production support;
+- the newer MCP ecosystem has been migrated into the current implementation;
+- full IDE Session Control production readiness.
+
+A passing source/build suite should never be expanded into a claim it did not test.
+
+---
+
+# O1/Tini build-remediation evidence
+
+## O1 final pre-rebase/source baseline
+
+Before the Tini commit, the accepted O1 source baseline had already reached:
+
+```text
+43 test files
+1671 / 1671 PASS
+TypeScript PASS
+```
+
+The same count was re-established during C2 R3 after the local dependency environment was restored offline.
+
+## Why earlier C2 R1 showed 1661/1671
+
+The first C2 validation encountered:
+
+```text
+Cannot find module 'ollama'
+```
+
+and ten related test failures.
+
+Independent reconciliation proved this was **LOCAL_DEPENDENCY_ENVIRONMENT_STALE**, not a source regression:
+
+- `package.json` and `package-lock.json` required `ollama@0.6.3`;
+- repository `node_modules` did not contain it;
+- `npm ci --offline` succeeded from the local cache;
+- the restored environment contained `ollama@0.6.3`;
+- typecheck then passed;
+- all 1671 tests passed.
+
+This is a useful example of why QuaranGate's development process distinguishes:
+
+```text
+source failure
+```
+
+from:
+
+```text
+environment failure
+```
+
+rather than editing code until a broken environment stops complaining.
+
+## Tini acceptance
+
+Accepted Tini artifact:
+
+```text
+version:
+0.19.0
+
+SHA-256:
+1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc
+
+mode:
+0755
+```
+
+Accepted Tini license SHA-256:
+
+```text
+e5f46bca81266bdd511cf08018d66866870531794569c04f9b45f50dd23c28b0
+```
+
+License evidence was corrected to use the exact Tini binary's built-in:
+
+```text
+tini -l
+```
+
+rather than scraping strings from the executable.
+
+## Tini build claim boundary
+
+Proven:
+
+```text
+TINI_BUILD_NETWORK_DEPENDENCY_REMOVED=YES
+```
+
+Not yet proven at that milestone:
+
+```text
+FULL_COLD_OFFLINE_BUILD_PROVEN=NO
+```
+
+Remaining issue at that point:
+
+```text
+npm ci inside the Docker build stage
+```
+
+N1 is the separate remediation for that remaining dependency path.
+
+---
+
+# Historical milestone — initial bridge verification
+
+Executed 2026-07-27 on the original WSL2 development environment.
+
+At that milestone the bridge had the original 14-tool direct target surface.
+
+| Suite | Historical result |
 |---|---|
-| Unit (`npm test`) | **20 / 20 passed** |
-| Integration, live stack (`npm run test:integration`) | **37 / 37 passed** |
-| MCP Inspector CLI protocol validation | tools/list (14 tools) + tools/call verified |
-| Adversarial security checks | 12 / 12 as expected |
+| Unit | **20 / 20 PASS** |
+| Live integration | **37 / 37 PASS** |
+| MCP Inspector | 14 tools discovered and callable |
+| Adversarial security checks | **12 / 12 expected** |
 
-## Unit tests (`tests/unit`, 20 at the 2026-07-27 milestone)
+These counts are preserved because they prove the original bridge boundary before Agent Control Plane expansion.
 
-- `pathcheck` (7): relative-path acceptance; `..` traversal rejected; absolute/drive-letter
-  rejected; null-byte/backslash rejected; normalized traversal rejected; `joinWorkspace`;
-  `isInside` containment (incl. `/workspace-evil` not inside `/workspace`).
-- `auth` (7): stable hashing; valid key accepted; missing → `UNAUTHENTICATED`; invalid →
-  `INVALID_CREDENTIAL`; disabled → `CLIENT_DISABLED`; independent client identities; scope/target
-  checks.
-- `redact` (4): bridge keys, bearer headers, key=value secrets redacted; ordinary text intact.
-- `ratelimit` (2): blocks beyond limit; unlimited when unset.
+## Initial unit coverage
 
-## Integration tests (`tests/integration/bridge.test.ts`, 37, against the running stack)
+The original unit suite included checks for:
 
-Run via the official MCP SDK client over Streamable HTTP.
+- path traversal/absolute path rejection;
+- workspace containment;
+- API key hashing/verification;
+- invalid/disabled client handling;
+- independent principals;
+- redaction;
+- rate limiting.
 
-- **Authentication (5):** missing/malformed/invalid → 401; valid → 200; `X-API-Key` accepted.
-- **OAuth 2.1 façade (3):** JSON Dynamic Client Registration works and rejects unsafe redirects;
-  authorization requires exact registered redirect URIs and the MCP resource; Authorization Code +
-  PKCE completes end-to-end and the resulting resource-bound token authenticates to `/mcp`.
-- **Protocol (4):** all 14 tools listed; unknown tool → error result; malformed args (missing
-  `target`) → error result.
-- **Targets/discovery (3):** manual `demo` listed; unlabeled `decoy` **not** listed; unknown target
-  denied.
-- **Authorization (3):** client with `targets: []` → `FORBIDDEN_TARGET`; read-only client write →
-  `FORBIDDEN_SCOPE`; read-only client read succeeds.
-- **Filesystem (7):** list/stat/read; write+read-back; patch unique; patch non-unique →
-  `PATCH_FAILED`; search; delete.
-- **Path confinement / isolation (5):** `../../etc/passwd` → `PATH_VIOLATION`; `/etc/passwd` →
-  `PATH_VIOLATION`; symlink-to-file (`escape-passwd`→`/etc/passwd`) → `PATH_VIOLATION`;
-  symlink-to-dir (`escape-dir`→`/secretzone`) → `PATH_VIOLATION`; secret outside workspace not
-  found by search.
-- **Terminal (6):** command runs in workspace; non-zero exit reported; **timeout enforced**
-  (`sleep 30`, `timeoutMs=1500` → `timedOut:true` in ~1.7 s); output bounded (`truncated:true`);
-  cwd escape (`cwd:"../.."`) → `PATH_VIOLATION`; runs in target (hostname ≠ host `Wolf`).
-- **Git/processes (3):** `git_status`, `git_log` (shows `initial`), `process_list` (shows `sleep`).
+## Initial live integration coverage
 
-### Notable fix during testing
+The initial integration suite exercised:
 
-A single undici `Client` (one connection) let a long-running `exec/start` stream block the
-timeout-kill call behind it, so `terminal_exec` timeouts hung ~30 s. Switched the executor's Docker
-client to an undici `Pool` (16 connections). Timeout now fires correctly (~1.7 s). Re-verified.
+- authentication failures and success;
+- OAuth flow;
+- target discovery and decoy denial;
+- authorization matrix;
+- filesystem CRUD/patch/search;
+- traversal and symlink escapes;
+- terminal execution, timeout, output limits and cwd confinement;
+- Git/process tools.
 
+### Docker HTTP concurrency fix discovered during testing
 
-## OAuth hardening verification (post-build)
+A single undici connection allowed a long-running Docker exec stream to block the timeout-kill request behind it.
 
-After the original local-verification baseline, the OAuth façade was hardened and re-tested on the
-same local Docker stack:
+The Docker client was moved to a connection pool, after which the timeout path behaved within the expected bound.
 
-- `npm run typecheck` — **PASS**.
-- Unit tests — **20 / 20 passed**.
-- Live integration tests — **37 / 37 passed** (the original 34 tests remained green plus 3 OAuth
-  regression tests).
-- Independent adversarial OAuth probe — **PASS**: unsafe redirect rejection, exact redirect binding,
-  mandatory RFC 8707 resource binding, PKCE failure rejection, single-use authorization codes,
-  resource-bound access-token use, refresh-client/resource binding, refresh rotation, and replay
-  rejection.
-- Gateway runtime — non-root `uid=1000(node)`; `/data` mode `0700`, owned by `node`; OAuth state files
-  mode `0600`; no matching `EACCES`, unhandled, fatal, or generic runtime errors after verification.
+Why this matters:
 
-## MCP Inspector CLI (official protocol validation)
+> Integration testing caught a control-path problem that unit tests alone could not demonstrate against real Docker exec behavior.
 
+---
+
+# OAuth hardening
+
+The OAuth/browser path was hardened and re-tested after the initial bridge milestone.
+
+Verified properties included:
+
+- unsafe redirect rejection;
+- exact registered redirect matching;
+- mandatory MCP resource binding;
+- PKCE failure rejection;
+- single-use authorization codes;
+- resource-bound access tokens;
+- refresh client/resource binding;
+- refresh rotation;
+- replay rejection;
+- non-root gateway data storage with restrictive permissions.
+
+The historical suite remained green after the hardening.
+
+---
+
+# External Claude acceptance
+
+Historical real-client verification against Claude proved the complete remote path rather than only a local HTTP script.
+
+Accepted areas included:
+
+```text
+remote HTTPS MCP connection
+OAuth discovery + authorization
+Dynamic Client Registration
+principal attribution
+target discovery
+filesystem read
+Git inspection
+terminal execution
+controlled file write/read-back
+permanent delete against disposable target
 ```
-npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8787/mcp \
-  --transport http --header "Authorization: Bearer <key>" --method tools/list
-# → 14 tools: targets_list, target_inspect, fs_list, fs_stat, fs_read, fs_search,
-#   fs_write, fs_patch, fs_delete, terminal_exec, git_status, git_diff, git_log, process_list
 
-npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8787/mcp \
-  --transport http --header "Authorization: Bearer <key>" \
-  --method tools/call --tool-name targets_list
-# → {"targets":[{"id":"demo","source":"manual","running":true,"workspace":"/workspace",...}]}
+The controlled test artifact was removed and its absence independently confirmed.
+
+The gateway/executor boundary remained unchanged after exposure.
+
+Current Claude product/UI behavior should be rechecked before repeating the test because external clients evolve independently of QuaranGate.
+
+---
+
+# External ChatGPT acceptance
+
+Historical real-client verification against ChatGPT proved:
+
+```text
+remote OAuth connection
+tool discovery
+structured schemas/results
+target discovery
+filesystem read
+Git inspection
+terminal execution
+controlled write/read-back
+principal attribution in gateway audit
 ```
 
-## Adversarial security checks (Phase 12)
+During that test, the ChatGPT client blocked a permanent-delete invocation before it reached QuaranGate.
 
-| # | Check | Result |
-|---|---|---|
-| 1 | Gateway container holds the Docker socket? | **No** — `/var/run/docker.sock` absent in gateway |
-| 2 | Gateway reaches executor over internal net? | Yes (expected) — `/healthz` ok |
-| 3 | Executor publishes any ports? | **No** — `Ports: {}` |
-| 4 | Gateway runs as root? | **No** — `uid=1000(node)` |
-| 5 | Gateway rootfs writable? | **No** — read-only confirmed |
-| 6 | Executor reachable from host `:8990`? | **No** — connection refused/empty |
-| 7 | Internal network egress-isolated? | Yes — `Internal: true` |
-| 8 | Executor call without internal token? | **Rejected** — `UNAUTHENTICATED` |
-| 9 | WSL home / Windows mounts visible in containers? | **No** — `/home/herman`, `/mnt/c` absent |
-| 10 | Decoy container targetable even **with** internal token? | **No** — `UNKNOWN_TARGET` |
-| 11 | Secrets (2 API keys + internal token) present in logs? | **No** — logs clean |
-| 12 | Compose `--force-recreate` bypasses authz/confinement? | **No** — resolved by stable identity (new container id), traversal still `PATH_VIOLATION` |
+This was recorded as **client-side policy**, not a server failure.
 
-## Reproduce
+QuaranGate kept the destructive annotation accurate and did not route around the client safety decision.
+
+Current OpenAI MCP availability is plan/workspace dependent and should be revalidated before repeating the historical browser procedure.
+
+---
+
+# Agent Control Plane milestones
+
+The Agent Control Plane deliberately grew through bounded gates.
+
+Historical counts below remain evidence for the point where each architecture layer was introduced; they are not the current total.
+
+| Gate | Key evidence boundary |
+|---|---|
+| A1 | Contracts/scopes/config/state-machine introduced; no real runtime agent |
+| A2 | Durable SQLite job engine + deterministic fake backend; six agent tools activated |
+| A3 | Runner sandbox, resource limits and Docker lifecycle foundation |
+| A4 | Real Kiro ACP read-only backend |
+| A5 | Kiro sandbox-write implementation profile |
+| A6 | Machine diff, guarded apply/discard and retained-resource lifecycle |
+
+The supplied Master PRD/audit series records exact per-gate counts and commit evidence. Those frozen audit records should be used when an investigation needs the exact number at that phase.
+
+## A6 closeout history
+
+A6 evidence included a `1398 / 1398` unit milestone during retained-resource lifecycle closeout plus dedicated policy/lifecycle suites. Later post-A6/O1 work increased the canonical suite to 43 files / 1671 tests.
+
+Both statements are true because they describe different checkpoints.
+
+---
+
+# How to interpret test counts
+
+A single number without a commit/state boundary is weak evidence.
+
+The project therefore records:
+
+```text
+commit/source state
+suite
+count
+runtime prerequisites
+what was and was not rerun
+```
+
+Examples:
+
+### Strong statement
+
+> At `18179696`, `npm run typecheck` passed and 1693/1693 unit tests passed across 44 files, and the independently rechecked no-cache Docker build passed with source-build networking disabled.
+
+### Weak statement
+
+> All tests pass.
+
+The second statement does not identify which tests, when, on which source or whether an integration/runtime suite was even available.
+
+---
+
+# Reproduction boundaries
+
+The ordinary source validation commands remain:
 
 ```bash
-docker compose -f test-target/compose.yaml up -d --build
-docker compose up -d --build
+npm run typecheck
 npm test
-KEYS_ENV=<keys.env> npm run test:integration
-API_KEY=<key> ./scripts/mcp-check.sh
 ```
 
-## Claude browser external verification
+Docker/live integration suites require the relevant target/runtime infrastructure, secrets and explicit authorization.
 
-Completed 2026-07-27 against the real Claude web client through the approved Tailscale Funnel:
+Do not automatically run credentialed provider tests, destructive apply tests or live deployment acceptance merely because they exist in the repository.
 
-- Public endpoint: `https://wolf.taildc680e.ts.net/mcp`.
-- Public `healthz` / `readyz`: **PASS** repeatedly.
-- OAuth Protected Resource + Authorization Server metadata: **PASS**.
-- Anonymous public MCP initialize: **401 fail-closed PASS**.
-- Dynamic Client Registration + browser Authorization Code / PKCE flow: **PASS**.
-- Browser CSP redirect compatibility: **PASS** with `form-action` restricted to `self` plus the
-  validated redirect origin.
-- Principal identity: all host config, running gateway config, OAuth token state, and audit logs
-  agreed on `claude-browser`.
-- Real Claude tool calls against authorized target `demo`: `targets_list`, `fs_read`, `git_status`,
-  `terminal_exec`, `fs_write`, read-back, and `fs_delete` — **PASS**.
-- Controlled write artifact `gen/claude-browser-e2e.txt` was deleted and independently confirmed
-  absent afterward.
-- Gateway audit records attributed each operation to `claude-browser` with `decision=allow`.
-- Post-Claude regression at that milestone: typecheck **PASS**, unit **20/20**, live integration
-  **37/37**. The later structured-output upgrade increased the integration baseline to **40/40**.
-- Security invariants after exposure: gateway still loopback-bound, gateway Docker socket absent,
-  executor published ports `{}`.
-
-**Claude browser status: EXTERNALLY VERIFIED.**
-
-## ChatGPT browser external verification
-
-Completed 2026-07-28 against the real ChatGPT web plugin/developer-mode client through the same
-approved Tailscale Funnel:
-
-- Public endpoint: `https://wolf.taildc680e.ts.net/mcp`.
-- OAuth discovery, Dynamic Client Registration, browser authorization, and token exchange: **PASS**.
-- ChatGPT imported the MCP action surface and displayed tool annotations and schemas.
-- Structured-output upgrade: all **14/14** tools advertise an object `outputSchema`; successful tool
-  calls return `structuredContent` while preserving legacy JSON text. The ChatGPT
-  `OUTPUT SCHEMA RECOMMENDED` warning disappeared after refreshing actions.
-- Real ChatGPT calls against authorized target `demo`: `targets_list`, `fs_read`, `git_status`,
-  `terminal_exec`, `fs_write`, and read-back — **PASS**.
-- Gateway audit records attributed successful calls to principal `chatgpt-browser`.
-- `fs_delete` was discovered as WRITE / DESTRUCTIVE, but the real ChatGPT client blocked the
-  invocation before it reached the gateway. The bridge's delete behavior remains independently
-  covered by the live integration suite. No attempt was made to bypass that client-side safety check.
-- The known ChatGPT test artifact was removed out-of-band only after verifying its exact marker
-  content, then confirmed absent.
-- Final post-ChatGPT regression: typecheck **PASS**, unit **20/20**, live integration **40/40**.
-- Security invariants after both browser validations: public health/readiness **PASS**, gateway
-  Docker socket absent, executor published ports `{}`.
-
-**ChatGPT browser status: EXTERNALLY VERIFIED WITH CLIENT-SIDE PERMANENT-DELETE RESTRICTION.**
-
-## Current external-client status
-
-- **Claude browser:** externally verified for discovery, read, Git, terminal, write/read-back, and
-  permanent delete against the disposable `demo` target.
-- **ChatGPT browser:** externally verified for discovery, read, Git, terminal, and write/read-back;
-  permanent delete is server-verified but was blocked by the tested ChatGPT client before invocation.
-- Product UI, entitlement, and safety behavior are time-sensitive and should be revalidated before a
-  different production deployment.
+N1 adds deterministic npm-bundle tests and `scripts/accept-npm-offline-build.mjs`. The accepted reproduction procedure is documented in `docs/OPERATIONS.md`. Re-running the complete Docker acceptance still requires the approved external bundle and Docker access; do not substitute a networked install if the bundle is missing.

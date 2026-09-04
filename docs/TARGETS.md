@@ -1,122 +1,342 @@
 # Targets
 
-A **target** is a Docker container the bridge is allowed to automate, plus the absolute
-in-container **workspace** path that filesystem/terminal tools are confined to.
+Targets are the Docker containers QuaranGate may operate on through its direct MCP tool surface.
 
-Two independent gates must both pass for a client to use a target:
-1. The target exists in the bridge (manual config **or** opt-in discovery).
-2. The client's `targets` list in `config/clients.yaml` includes that target id (or `"*"`).
+A target is **not** the host. It is a deliberately registered or opt-in container with a defined in-container workspace and an independent client authorization boundary.
 
-**Discovery identifies; it never authorizes.**
+---
 
-## Manual targets (recommended, stable)
+## Contents
 
-`config/bridge.yaml`:
+- [Target model](#target-model)
+- [Why callers use logical IDs](#why-callers-use-logical-ids)
+- [Manual targets](#manual-targets)
+- [Opt-in discovery](#opt-in-discovery)
+- [Authorization](#authorization)
+- [Workspace boundary](#workspace-boundary)
+- [Fail-closed resolution](#fail-closed-resolution)
+- [Minimum target requirements](#minimum-target-requirements)
+- [Target lanes shipped with QuaranGate](#target-lanes-shipped-with-quarangate)
+- [Read-only review lanes](#read-only-review-lanes)
+- [Constrained write lane](#constrained-write-lane)
+- [Adding an existing project as a target](#adding-an-existing-project-as-a-target)
+- [Target security checklist](#target-security-checklist)
+
+---
+
+# Target model
+
+The direct tool surface addresses a target by an operator-defined ID such as:
+
+```text
+demo
+mcp-ide-bridge-review
+assistant-environment-review
+```
+
+The trusted target definition maps that logical identity to a real running container and an absolute **path inside that container** that becomes the authorized workspace.
+
+```mermaid
+flowchart LR
+    C["MCP caller"] -->|"targetId = review"| G["Gateway authorization"]
+    G --> E["Executor target resolver"]
+    E --> CFG["Trusted target config / opt-in labels"]
+    CFG --> T["Exact running container"]
+    T --> W["Configured in-container workspace"]
+```
+
+The client does not get to replace that mapping with arbitrary Docker parameters.
+
+---
+
+# Why callers use logical IDs
+
+Public input should look like:
+
+```json
+{
+  "target": "mcp-ide-bridge-review",
+  "path": "src/executor/index.ts"
+}
+```
+
+not:
+
+```json
+{
+  "container": "some-random-container-id",
+  "hostPath": "/home/herman",
+  "mount": "/"
+}
+```
+
+### Why?
+
+If the caller could choose the container or host path directly, the target registry would not be an authorization boundary.
+
+Logical IDs let QuaranGate expose a stable API while keeping Docker/host details under operator control.
+
+---
+
+# Manual targets
+
+Manual targets are the recommended model for stable environments.
+
+A trusted configuration entry identifies the target using stable deployment metadata such as a Compose project/service and defines the in-container workspace.
+
+Conceptually:
 
 ```yaml
 targets:
-  - id: demo                              # stable id used by clients + tools
-    composeProject: myproject             # com.docker.compose.project label
-    composeService: dev                   # com.docker.compose.service label
-    workspace: /workspace                 # absolute path INSIDE the container
+  - id: mcp-ide-bridge-review
+    composeProject: mcp-ide-bridge-review
+    composeService: review
+    workspace: /workspace
 ```
 
-Identity is the **Compose project + service**, resolved to a live container id at request time.
-This survives `docker compose up --force-recreate` (verified). Alternatively pin a fixed name:
+The exact committed example schema is authoritative for the current release.
 
-```yaml
-  - id: legacy
-    containerName: my-existing-container
-    workspace: /srv/app
-```
+## Why use Compose identity instead of one container ID?
 
-You do **not** need to edit the target project's Compose files to use manual targets.
+Container IDs change when a service is recreated.
 
-## Opt-in discovery (no manual config)
+A logical mapping based on the intended deployment identity allows QuaranGate to resolve the current running container rather than storing a transient Docker ID as the public contract.
 
-Set on the target container (labels), then it appears automatically:
+---
 
-```yaml
-labels:
-  mcp.bridge.enabled: "true"
-  mcp.bridge.workspace: "/workspace"      # required, absolute
-  mcp.bridge.name: "demo"                 # optional display id
-```
+# Opt-in discovery
 
-Disable discovery globally with `discovery.enabled: false` in `config/bridge.yaml`. Manual config
-always wins over a discovered target with the same id (no silent conflicts).
+QuaranGate also supports explicit label-based discovery.
 
-## Permissions
+A container must deliberately opt in using the target-discovery label contract, including an approved in-container workspace.
 
-Authorization is per client in `config/clients.yaml`:
+Discovery means:
 
-```yaml
-clients:
-  - id: vscode
-    targets: ["demo"]        # explicit ids, OR ["*"] = all CONFIGURED targets (never all containers)
-    scopes: [targets:read, files:read, files:write, terminal:exec, git:read]
-```
+> This container identifies itself as a QuaranGate target candidate.
 
-Scopes: `targets:read` `files:read` `files:write` `files:delete` `terminal:exec` `git:read`
-`process:read`.
+It does **not** mean:
 
-## Fail-closed behaviour
+> Every QuaranGate client may use it.
 
-| Situation | Result |
-|---|---|
-| Target not in config/discovery | `UNKNOWN_TARGET` |
-| Target not in the client's `targets` | `FORBIDDEN_TARGET` |
-| ≥2 running containers match one target | `AMBIGUOUS_TARGET` |
-| Target container stopped | `TARGET_OFFLINE` |
-| Target has no `/bin/sh` / workspace missing | `TARGET_UNSUPPORTED` |
-| Missing scope for the tool | `FORBIDDEN_SCOPE` |
+That second decision belongs to principal authorization.
 
-## Minimum target requirements
+## Why discovery is separate from authorization
 
-`/bin/sh` and `readlink -f` or `realpath` (GNU coreutils **or** busybox qualify). `git` only for the
-git tools. Distroless/scratch containers are unsupported.
+Infrastructure ownership and client permissions change for different reasons.
 
-## Target lanes shipped in this repository
+An operator may make a container discoverable while allowing only one review principal to inspect it.
 
-The repo ships four target definitions demonstrating three distinct authority levels. Each is an
-independent Compose stack; none of them is started by `compose.yaml`.
+---
 
-| Definition | Source mount | Role |
-|---|---|---|
-| `test-target/` | none (disposable container) | Integration fixture. Service `dev` is the authorized `demo` target; service `decoy` carries no bridge labels and must never be reachable — it is an active negative test. |
-| `review-target/` | this repo, `:ro` | Read-only review of the bridge's own source. `git` and `python3` are baked into the image at build time (no runtime `apk`); `node_modules` and `dist` are writable named volumes so tooling can run. |
-| `assistant-environment-review-target/` | a separate project, `:ro` | Read-only review lane for another project. `git`, `bash`, `python3` baked in. |
-| `assistant-environment-work-target/` | a separate project, `:rw`, with `.git` re-mounted `:ro` | Constrained **write** lane. |
+# Authorization
 
-### Read-only review lanes
-
-The source is mounted `:ro`, so no tool — including `terminal_exec` — can modify it. Writable
-scratch space is provided separately as tmpfs or named volumes. This is the right lane for code
-review, search, and analysis.
-
-### The constrained write lane
-
-`assistant-environment-work-target` is deliberately narrower than "writable":
+Two independent questions must both resolve successfully:
 
 ```text
-/workspace       project source   READ/WRITE
-/workspace/.git  Git metadata     READ-ONLY   (nested bind overrides the parent)
+Does the target exist / resolve unambiguously?
+               AND
+May this principal use that target?
 ```
 
-The read-only `.git` overlay is the hard technical boundary: the agent may edit source, run
-tests, and read Git history, but cannot stage, commit, branch, tag, stash, rebase, merge, or
-push. Repository history cannot be rewritten from inside the target.
+A target listed in Docker but absent from a client's allowlist remains unavailable to that client.
 
-The container runs as `user: "1000:1000"` with `cap_drop: ALL`. Because there is no
-`CAP_DAC_OVERRIDE`, write access comes from ordinary file permissions rather than from
-privilege, and files created in the workspace stay owned by the host user.
+A principal using:
 
-These definitions reference absolute host paths and are environment-specific — treat them as
-patterns to copy, not as portable configuration.
+```yaml
+targets: ["*"]
+```
 
-## Using an existing project as a target (manual, opt-in)
+means all targets in QuaranGate's trusted configured/discovered target registry, **not every Docker container on the host**.
 
-You can add one of your existing containers as a **manual** target without modifying its stack —
-just add a `targets:` entry referencing its Compose project/service (or container name) and its
-workspace path, then authorize a client for it. The bridge never restarts, rebuilds, relabels, or
-re-networks existing containers.
+---
+
+# Workspace boundary
+
+Each target has one configured workspace root.
+
+Direct filesystem and terminal operations are confined relative to that root.
+
+Example:
+
+```text
+target workspace: /workspace
+public path:       src/index.ts
+resolved target:  /workspace/src/index.ts
+```
+
+The path model rejects traversal/absolute-path forms and the executor verifies the canonical in-target path remains under the canonical workspace.
+
+### Why not let the caller choose `cwd=/`?
+
+A target is intentionally smaller than “the whole container”. The workspace is the configured engineering boundary.
+
+---
+
+# Fail-closed resolution
+
+Target resolution is conservative.
+
+Examples:
+
+| Condition | Result |
+|---|---|
+| Unknown target ID | Refused |
+| No running container for required target | `TARGET_OFFLINE` / refused |
+| Multiple running containers match a supposedly unique target | `AMBIGUOUS_TARGET` / refused |
+| Path escapes configured workspace | Refused |
+| Target lacks required runtime capability | `TARGET_UNSUPPORTED` / refused |
+
+### Why ambiguity is an error
+
+QuaranGate should never “pick one” when more than one live container matches a target identity. Acting on the wrong development environment is a security and correctness failure.
+
+---
+
+# Minimum target requirements
+
+The exact requirement depends on the tool being used.
+
+The current direct execution model generally assumes:
+
+- Linux/POSIX-style target environment;
+- `/bin/sh` for terminal execution;
+- canonical-path support such as `readlink -f` or `realpath` for confinement;
+- Git only when Git tools are requested;
+- the configured workspace exists and is accessible to the container's normal user/policy.
+
+Shell-less/distroless/scratch containers are not normal v1 interactive targets and should fail clearly rather than causing QuaranGate to improvise an unsafe fallback.
+
+---
+
+# Target lanes shipped with QuaranGate
+
+The repository includes target definitions representing different authority models.
+
+| Lane | Source access | Git metadata | Intended use |
+|---|---|---|---|
+| Disposable test target | Fixture-owned | Fixture-owned | Integration/adversarial tests |
+| Review target | Read-only | Read-only as part of source mount | Independent source review/audit |
+| Assistant review target | Read-only | Read-only | Review lane for another approved project |
+| Assistant work target | Read/write source | `.git` read-only | Constrained file-edit lane without Git mutation |
+
+These lanes exist because “can edit files” and “can rewrite repository history” are different authorities.
+
+---
+
+# Read-only review lanes
+
+A review target mounts project source read-only.
+
+This is useful when a remote client needs to:
+
+- inspect source;
+- run read-only/search/test commands that do not require source mutation;
+- inspect Git history/state;
+- audit another writer's candidate.
+
+The Docker-level read-only mount is stronger than telling the model:
+
+> Please do not edit files.
+
+### Why?
+
+Prompt restrictions are behavioral requests. A read-only mount is an operating-system/container enforcement boundary.
+
+---
+
+# Constrained write lane
+
+The assistant work lane demonstrates a different design:
+
+```text
+source tree: read/write
+.git:        read-only
+```
+
+This allows ordinary file editing while preventing normal Git staging/commit/branch/rebase/push mutations through that mounted worktree.
+
+The lane also runs with an ordinary non-root UID/GID and dropped capabilities so files are created with normal developer ownership rather than privileged ownership.
+
+### Why separate source write from Git write?
+
+An editor/worker may legitimately need to change files while promotion/history remains a different review authority.
+
+This follows the same QuaranGate principle used by Agent Control Plane apply:
+
+```text
+create candidate
+    !=
+promote candidate
+```
+
+---
+
+# Adding an existing project as a target
+
+A project should be added deliberately rather than by exposing the host broadly.
+
+The safe pattern is:
+
+1. decide whether the lane is read-only or read/write;
+2. mount only the project needed by that lane;
+3. set the in-container workspace explicitly;
+4. avoid mounting host home directories or unrelated projects;
+5. avoid the Docker socket unless the target is specifically a privileged infrastructure component—which ordinary development targets should not be;
+6. use an ordinary non-root user where practical;
+7. opt the container into QuaranGate target discovery or add a manual target entry;
+8. grant the target only to the client principals that need it;
+9. validate `targets_list` and `target_inspect` before granting write/terminal authority.
+
+## Read-only example pattern
+
+Conceptually:
+
+```yaml
+volumes:
+  - type: bind
+    source: /approved/project
+    target: /workspace
+    read_only: true
+```
+
+## Constrained write example pattern
+
+Conceptually:
+
+```yaml
+volumes:
+  - type: bind
+    source: /approved/project
+    target: /workspace
+    read_only: false
+
+  - type: bind
+    source: /approved/project/.git
+    target: /workspace/.git
+    read_only: true
+```
+
+Do not copy these examples blindly if the project's ownership/UID model differs. The target compose/config shipped in the repository is the source of truth for the current implementation.
+
+---
+
+# Target security checklist
+
+Before treating a new target as accepted, verify:
+
+```text
+[ ] target ID is logical and stable
+[ ] container resolves uniquely
+[ ] workspace is explicit
+[ ] source mount is no broader than necessary
+[ ] read-only lane is actually Docker-read-only
+[ ] write lane uses expected UID/GID and permissions
+[ ] Docker socket is absent unless explicitly required by architecture
+[ ] unrelated host directories are absent
+[ ] target is not reachable by principals that do not need it
+[ ] traversal/symlink confinement is exercised
+[ ] terminal authority is granted separately from read authority
+[ ] target survives/re-resolves correctly after expected recreation
+```
+
+A target is an authorization boundary. Treat its Compose/mount configuration with the same care as the MCP permission model.

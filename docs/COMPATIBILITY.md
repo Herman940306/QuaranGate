@@ -1,85 +1,253 @@
-# Client compatibility (verified against current official docs)
+# Compatibility
 
-> This document records compatibility verification as of 2026-07-27/2026-07-28.
-> It is a point-in-time verification record, not the authoritative current
-> feature/status register. Tool counts and phase status cited below (e.g. "14
-> tools") reflect what was live at the time each verification ran. See
-> README.md, MCP_IDE_BRIDGE_MASTER_PRD.md, and docs/AGENT_CONTROL_PLANE.md for
-> current tool counts and phase status.
+This document separates **the protocol/client ecosystem as it exists now** from **the exact compatibility QuaranGate has already proven**.
 
-All facts checked **2026-07-27**. Materially-architectural facts carry a source URL.
+External products change. The statements below were rechecked against official documentation on **2026-09-04** and should be revalidated before a release that depends on a specific client UI or entitlement.
 
-## Model Context Protocol
+---
 
-| Fact | Source | Checked |
+## Contents
+
+- [Compatibility summary](#compatibility-summary)
+- [MCP protocol baseline](#mcp-protocol-baseline)
+- [QuaranGate MCP implementation boundary](#quarangate-mcp-implementation-boundary)
+- [ChatGPT](#chatgpt)
+- [Claude](#claude)
+- [VS Code](#vs-code)
+- [Kiro](#kiro)
+- [Operating systems](#operating-systems)
+- [What external compatibility does not prove](#what-external-compatibility-does-not-prove)
+- [Official references](#official-references)
+
+---
+
+# Compatibility summary
+
+| Surface | QuaranGate status | Current external ecosystem status |
 |---|---|---|
-| Current stable spec revision **2025-11-25**; a `2026-07-28` revision finalizes imminently (stateless core) | https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/ ; https://modelcontextprotocol.io/specification | 2026-07-27 |
-| Remote transport = **Streamable HTTP** (single `/mcp` endpoint, POST + optional GET SSE) | https://modelcontextprotocol.io/specification (transports) | 2026-07-27 |
-| Legacy **HTTP+SSE transport is deprecated** (superseded by Streamable HTTP since 2025-03-26; formally "Deprecated" in the 2026-07-28 RC) | https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/ | 2026-07-27 |
-| Remote auth = **OAuth 2.1** (PKCE S256, exact redirect URIs, DCR/CIMD); servers host Protected Resource Metadata | MCP authorization spec | 2026-07-27 |
-| Tool annotations (`readOnlyHint`/`destructiveHint`/`openWorldHint`) supported | MCP tools spec | 2026-07-27 |
-| Official TypeScript SDK `@modelcontextprotocol/sdk` latest **1.30.0** | npm registry | 2026-07-27 |
+| Remote MCP over HTTP | **Implemented and historically accepted** | MCP current specification revision is now `2026-07-28`; QuaranGate's accepted implementation is still based on the v1 TypeScript SDK / earlier protocol-era contract and requires an explicit migration gate before claiming the new revision |
+| ChatGPT remote MCP | **Historically externally verified** | Current OpenAI full-MCP/write availability and UI are plan/workspace dependent; recheck before setup |
+| Claude remote MCP | **Historically externally verified** | Claude supports remote MCP custom connectors, Streamable HTTP/SSE and OAuth/DCR on supported paid plans |
+| VS Code remote MCP | **Supported design; client configuration documented** | VS Code supports remote HTTP MCP servers, headers and OAuth in `mcp.json` |
+| Kiro remote MCP | **Supported design; client configuration documented** | Kiro supports remote HTTP MCP servers, headers and OAuth with user/workspace MCP config |
+| Windows 11 + WSL2 | **Primary current development/qualification environment** | Supported by Docker Desktop/WSL workflow |
+| Linux | **Architecture target** | Linux containers/native Docker are the core runtime model |
+| macOS + Docker Desktop | **Design target, qualification pending** | Host-independent named-context/config design is intended to support it |
 
-**Decision:** implement Streamable HTTP with the official SDK 1.30.0; advertise protocol
-`2025-11-25`; expose tool annotations; provide OAuth 2.1 metadata + PKCE for browser clients.
+---
 
-## Claude browser (custom connectors / remote MCP)
+# MCP protocol baseline
 
-| Fact | Source | Checked |
-|---|---|---|
-| Claude connects to the MCP server **from Anthropic's cloud** → server must be reachable over public internet (allowlist Anthropic IPs) | https://support.claude.com/en/articles/11175166 | 2026-07-27 |
-| Supports **authless and OAuth** servers; OAuth callback `https://claude.ai/api/mcp/auth_callback` (also allowlist `claude.com`); supports token expiry/refresh | https://support.claude.com/en/articles/11503834 | 2026-07-27 |
-| Supports **SSE and Streamable HTTP**; SSE may be deprecated soon | https://support.claude.com/en/articles/11503834 | 2026-07-27 |
-| **Beta:** static request-header auth (API key/bearer) configurable in the connector dialog | https://claude.com/docs/connectors/custom/remote-mcp | 2026-07-27 |
-| Availability: Pro, Max, Team, Enterprise (Desktop connectors only via Settings > Connectors) | https://support.claude.com/en/articles/11175166 | 2026-07-27 |
+The Model Context Protocol has advanced since QuaranGate's original implementation baseline.
 
-**Decision:** provide OAuth 2.1 façade **and** accept a static Bearer/`X-API-Key`; both map to the
-same per-client principal. **External verification completed 2026-07-27** using the OAuth path over
-Tailscale Funnel HTTPS. The gateway stayed loopback-bound and the executor stayed unpublished.
+## Current MCP specification
 
-## ChatGPT browser (developer-mode MCP plugins/apps)
+The current stable MCP specification is **`2026-07-28`**. It introduced major protocol changes including a stateless core, updated authorization behavior, extensions and updated Tier-1 SDK lines.
 
-| Fact | Source | Checked |
-|---|---|---|
-| Requires **HTTPS endpoint + OAuth** (or "no auth" for dev/testing, which we reject) | https://developers.openai.com/api/docs/mcp ; https://help.openai.com/en/articles/12584461 | 2026-07-27 |
-| Supports **SSE and Streamable HTTP**; use `/mcp` for HTTP transport | https://developers.openai.com/api/docs/mcp | 2026-07-27 |
-| Developer Mode toggled in Settings; org admins enable per-workspace; write actions prompt for confirmation | https://help.openai.com/en/articles/12584461 | 2026-07-27 |
-| Product/account availability and permissions are time-sensitive; current official guidance says full MCP/write support is rolling out for Business and Enterprise/Edu, with narrower Pro support | https://help.openai.com/en/articles/12584461 | 2026-07-28 |
+The MCP TypeScript SDK now has a stable **v2** line that implements the `2026-07-28` specification and replaces the older monolithic `@modelcontextprotocol/sdk` package with separate client/server packages.
 
-**Decision:** OAuth 2.1 façade at `/mcp`. **External verification completed 2026-07-28** over the
-same approved Tailscale Funnel used for Claude. ChatGPT completed OAuth/DCR, imported the 14 tools,
-and successfully invoked discovery, read, Git, terminal, and write/read-back operations as principal
-`chatgpt-browser`. `fs_delete` was visible as WRITE / DESTRUCTIVE but was blocked client-side before
-reaching the gateway; retain its destructive classification.
+## Why this matters to QuaranGate
 
-## VS Code
+QuaranGate was originally implemented and externally validated using the v1 TypeScript SDK line and the earlier `2025-11-25` protocol-era behavior.
 
-| Fact | Source | Checked |
-|---|---|---|
-| MCP config in `.vscode/mcp.json` (workspace) or user `mcp.json`; `"type":"http"`, `url`, `headers` | https://code.visualstudio.com/docs/copilot/customization/mcp-servers | 2026-07-27 |
-| Secrets via `inputs` (promptString/password) — do not hardcode | same | 2026-07-27 |
+That historical acceptance remains valid evidence for the implementation that was tested. It must **not** be silently rewritten into a claim that QuaranGate already implements every breaking change in `2026-07-28`.
 
-**Decision:** ship `config/vscode.mcp.example.json` (`type: http`, Authorization header via
-`${input:bridge_key}`). Works against the **local** `http://127.0.0.1:8787/mcp`.
+The correct current statement is:
 
-## Kiro
+```text
+QuaranGate remote MCP implementation: IMPLEMENTED / accepted on its current v1 SDK contract
+Current MCP ecosystem revision:       2026-07-28
+QuaranGate v2/spec migration:          requires explicit compatibility/implementation gate
+```
 
-| Fact | Source | Checked |
-|---|---|---|
-| Config `~/.kiro/settings/mcp.json` (user) or `.kiro/settings/mcp.json` (workspace); remote server = `url` + `headers`, streamable-http; `disabled`, `disabledTools` supported; env refs `${VAR}` | https://kiro.dev/docs/mcp/configuration/ | 2026-07-27 |
-| Known bug: remote URLs ending in `/message` mis-detected as SSE (we use `/mcp`) | https://github.com/kirodotdev/Kiro/issues/8313 | 2026-07-27 |
+### Why not upgrade inside documentation reconciliation?
 
-**Decision:** ship `config/kiro.mcp.example.json` (`url` + Authorization header via `${BRIDGE_KEY}`).
-Works against the **local** endpoint.
+A protocol/SDK migration can change wire behavior, OAuth/authentication semantics and client interoperability. Documentation should expose that gap; it should not perform or imply an unreviewed runtime upgrade.
 
-## Summary
+---
 
-- **VS Code and Kiro** work fully against the local loopback endpoint.
-- **Claude browser** is externally verified over the approved Tailscale Funnel ingress, including
-  OAuth and real read/execute/write/delete tool calls against the disposable `demo` target.
-- **ChatGPT browser** is externally verified over the approved Tailscale Funnel ingress, including
-  OAuth/DCR, tool discovery, structured schemas, read/Git/terminal/write/read-back calls, and audit
-  attribution to `chatgpt-browser`. Permanent `fs_delete` remained available server-side but the real
-  ChatGPT client blocked that invocation before it reached the gateway.
-- ChatGPT product/account requirements and safety policy remain time-sensitive; re-check current
-  OpenAI documentation before another deployment.
+# QuaranGate MCP implementation boundary
+
+QuaranGate currently exposes a remote MCP endpoint at:
+
+```text
+/mcp
+```
+
+The accepted implementation includes:
+
+- authenticated remote HTTP MCP access;
+- typed tool schemas;
+- structured tool results;
+- per-principal authorization;
+- OAuth façade for compatible browser clients;
+- 23 current operational QuaranGate tools (14 direct target tools + 9 Agent Control Plane tools).
+
+The exact protocol revision negotiated by a real client must be verified against the running build rather than inferred from this document.
+
+---
+
+# ChatGPT
+
+## QuaranGate evidence
+
+QuaranGate has historical real-client acceptance from ChatGPT against the remote MCP endpoint, including discovery, read/Git/terminal operations and a controlled write/read-back path. The tested ChatGPT client applied its own safety restriction to permanent delete before the request reached QuaranGate; QuaranGate did not disguise or route around that client-side decision.
+
+That evidence remains a historical acceptance record.
+
+## Current OpenAI product boundary — checked 2026-09-04
+
+OpenAI's current help documentation describes **full MCP support including write/modify actions** through ChatGPT developer-mode/custom apps as a beta capability for **Business and Enterprise/Edu** workspaces. The same documentation states that Pro users can connect MCPs with read/fetch permissions in developer mode, while full MCP availability is more restricted.
+
+OpenAI also states that ChatGPT connects to **remote MCP servers**, not directly to a normal local-only MCP listener; private/on-prem/local deployments require a supported remote/tunnel mechanism.
+
+### Documentation consequence
+
+QuaranGate must not claim:
+
+> Every ChatGPT plan can connect with the full write-capable MCP surface.
+
+Instead:
+
+> QuaranGate provides a remote authenticated MCP endpoint. Whether a particular ChatGPT account/workspace can import and invoke its full tool surface depends on current OpenAI plan, admin and product policy.
+
+The setup guide therefore tells operators to confirm current OpenAI availability before reproducing the historical browser test.
+
+---
+
+# Claude
+
+## QuaranGate evidence
+
+Claude remote browser/client integration was historically accepted against the real QuaranGate endpoint, including OAuth and controlled direct target operations.
+
+## Current Anthropic boundary — checked 2026-09-04
+
+Anthropic currently documents remote custom MCP connectors for Claude/Claude Desktop on **Pro, Max, Team and Enterprise** plans.
+
+Current documented remote-server behavior includes:
+
+- Streamable HTTP and SSE support (with SSE expected to deprecate over time);
+- OAuth or authless remote servers;
+- Dynamic Client Registration support;
+- custom client ID/secret support for servers that do not use DCR;
+- token expiry/refresh support;
+- tools, prompts and resources.
+
+QuaranGate's browser setup should prefer Streamable HTTP and its OAuth path rather than preserving old SSE examples simply because external clients may still support them.
+
+---
+
+# VS Code
+
+## Current VS Code boundary — checked 2026-09-04
+
+VS Code supports MCP server configuration in `mcp.json`, including:
+
+- workspace `.vscode/mcp.json`;
+- user-profile MCP configuration;
+- remote HTTP server entries;
+- authentication headers;
+- OAuth configuration;
+- trust/enable/disable controls;
+- MCP server management through the Command Palette/UI.
+
+For HTTP servers, VS Code currently tries the HTTP Stream transport and can fall back to SSE where needed.
+
+VS Code documentation also now distinguishes configuration used by its Agent Host. Portable Agent Host configurations may use workspace `.mcp.json` or user `~/.copilot/mcp-config.json` rather than relying only on `.vscode/mcp.json`.
+
+### QuaranGate recommendation
+
+For the normal editor/workspace path, the committed QuaranGate example continues to use a remote HTTP MCP server entry with the QuaranGate endpoint and a secret input/environment mechanism rather than hard-coding the raw key.
+
+Do not copy real API keys into a committed workspace file.
+
+---
+
+# Kiro
+
+## Current Kiro boundary — checked 2026-09-04
+
+Kiro supports remote MCP servers with a URL, optional headers and OAuth configuration.
+
+Current Kiro documentation lists:
+
+```text
+workspace: .kiro/settings/mcp.json
+user:      ~/.kiro/settings/mcp.json
+```
+
+Kiro supports:
+
+- remote HTTPS MCP endpoints (HTTP allowed for localhost);
+- headers;
+- OAuth and OAuth scopes;
+- Dynamic Client Registration when supported;
+- `disabled` server state;
+- `autoApprove` tool lists;
+- `disabledTools` for removing tools from the agent's visible choice set.
+
+### Security consequence
+
+QuaranGate documentation should prefer **disabling tools a Kiro workflow does not need** over merely telling the model not to call them.
+
+`autoApprove: ["*"]` is not an appropriate default for a high-authority QuaranGate client.
+
+---
+
+# Operating systems
+
+## Windows 11 + WSL2 + Docker Desktop
+
+This is the current primary development environment and the strongest platform evidence available for the project.
+
+Repository/shell operations should be documented from the WSL Linux environment unless explicitly Windows-side.
+
+## Linux
+
+QuaranGate's runtime is Linux-container based and the architecture is naturally compatible with native Linux Docker deployments. A release should still run an explicit install/build/acceptance matrix rather than assuming the developer's WSL acceptance automatically proves every Linux distribution.
+
+## macOS + Docker Desktop
+
+The design target is compatibility through Docker Desktop/Linux containers and operator-supplied paths rather than Linux-host-specific hard-coded home paths.
+
+macOS is **design-compatible, qualification required**.
+
+Apple Silicon introduces an additional requirement: the base images and any native npm/model artifacts must be present/qualified for the target container architecture.
+
+## Native Windows containers
+
+Not a current product target.
+
+---
+
+# What external compatibility does not prove
+
+A client successfully connecting to QuaranGate does not by itself prove:
+
+- the client will invoke every destructive/write tool without its own confirmation/safety policy;
+- a future client version preserves the same UI labels;
+- the client's agent/extension host has no network egress;
+- the client grants no additional authority through its own settings;
+- the latest MCP protocol revision is implemented by the QuaranGate server;
+- the current account/workspace plan is entitled to all MCP capabilities;
+- an external ingress method is safe for every deployment.
+
+Client behavior is one part of the end-to-end trust boundary and must be revalidated when it changes.
+
+---
+
+# Official references
+
+Verified/rechecked 2026-09-04:
+
+- Model Context Protocol — 2026-07-28 specification release: `https://blog.modelcontextprotocol.io/posts/2026-07-28/`
+- MCP TypeScript SDK v2: `https://ts.sdk.modelcontextprotocol.io/v2/`
+- OpenAI — Developer mode and MCP apps in ChatGPT: `https://help.openai.com/en/articles/12584461-developer-mode-apps-and-full-mcp-connectors-in-chatgpt-beta`
+- Anthropic — Building Custom Connectors via Remote MCP Servers: `https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers`
+- Anthropic — Getting Started with Custom Connectors Using Remote MCP: `https://support.anthropic.com/en/articles/11175166-about-custom-integrations-using-remote-mcp`
+- VS Code — MCP configuration reference: `https://code.visualstudio.com/docs/agents/reference/mcp-configuration`
+- VS Code — Add and manage MCP servers: `https://code.visualstudio.com/docs/agent-customization/mcp-servers`
+- Kiro — MCP configuration: `https://kiro.dev/docs/mcp/configuration/`
+
+Historical compatibility evidence belongs in `docs/TEST_RESULTS.md` and frozen audit records; this document describes the current external compatibility picture.

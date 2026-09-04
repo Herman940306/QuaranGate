@@ -56,11 +56,13 @@ The MIT license text was captured by executing the exact trusted vendored binary
 
 ## Security / Reproducibility Note
 
-The vendored binary is intentionally fixed so QuaranGate container builds do not need to resolve an unpinned Alpine tini package at build time. This ensures:
+The vendored binary is intentionally fixed so QuaranGate container builds do not need to resolve an Alpine Tini package at build time. This gives QuaranGate:
 
-1. **Build reproducibility**: Builds work without network access
-2. **Version stability**: Explicit control over tini version changes
-3. **Supply chain integrity**: Binary hash verification at build time
+1. **Tini build independence**: the source build does not need Alpine package-network access to obtain Tini;
+2. **Version stability**: Tini changes are explicit rather than whatever a mutable package repository returns;
+3. **Supply-chain evidence**: the exact binary is verified by SHA-256 during the image build.
+
+Tini vendoring alone did not prove the entire Docker build offline. The remaining npm dependency path was closed separately by N1 (`18179696b3ef3ff2192805590027d2e1a43a43d4`), which proved a no-cache source build with networking disabled when the required base image and verified lock-scoped npm bundle are already available locally.
 
 Upgrading Tini requires a separately reviewed dependency change.
 
