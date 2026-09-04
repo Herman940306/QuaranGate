@@ -1,11 +1,14 @@
 node_modules
 dist
 .git
+.kiro/
 .env
 config/bridge.yaml
 config/clients.yaml
+config/agents.yaml
 data
 tests
 test-target
 docs
 *.md
+.npm-offline-artifacts/

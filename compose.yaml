@@ -25,6 +25,10 @@ services:
     <<: *hardening
     build:
       context: .
+      additional_contexts:
+        npm_deps: "${QUARANGATE_NPM_BUNDLE_PATH:-./build}"
+      network: none
+      pull: false
       args:
         GIT_REVISION: "${GIT_REVISION:-unknown}"
     # One shared build artifact, independently taggable per service. Production
@@ -70,6 +74,10 @@ services:
     image: ${EXECUTOR_IMAGE:-quarangate:latest}
     build:
       context: .
+      additional_contexts:
+        npm_deps: "${QUARANGATE_NPM_BUNDLE_PATH:-./build}"
+      network: none
+      pull: false
       args:
         GIT_REVISION: "${GIT_REVISION:-unknown}"
     command: ["node", "dist/executor/index.js"]

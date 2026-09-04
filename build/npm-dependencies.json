@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "packageLockSha256": "31688b0a46cb5051e069ff049bbafd34752ace10dfb9dac3a60c9a3fef5258e5",
+  "packageLockVersion": 3,
+  "packageEntryCount": 221,
+  "artifactCount": 220,
+  "manifestSha256": "43eb077e7f23c23014882738508b624dd738cc0315d5ea8730392e15e6aec788",
+  "allowedHosts": [
+    "registry.npmjs.org:443"
+  ]
+}

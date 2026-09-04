@@ -15,6 +15,9 @@
     "executor": "node dist/executor/index.js",
     "test": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration --no-file-parallelism",
+    "deps:prepare": "node scripts/npm-offline-bundle.mjs prepare",
+    "deps:verify": "node scripts/npm-offline-bundle.mjs verify",
+    "build:offline-acceptance": "node scripts/accept-npm-offline-build.mjs",
     "gen-key": "node scripts/gen-client-key.mjs",
     "revoke-key": "node scripts/revoke-client.mjs",
     "validate-config": "node scripts/validate-config.mjs"

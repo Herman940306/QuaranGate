@@ -7,3 +7,4 @@ data/
 *.log
 .vitest-cache/
 config/agents.yaml
+.npm-offline-artifacts/
