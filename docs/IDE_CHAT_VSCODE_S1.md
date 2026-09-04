@@ -480,3 +480,272 @@ This classification does not mean `PRODUCTION_READY`, `AIR_GAP_CERTIFIED`,
 trusted enrollment, audit, crash recovery, capability policy, writer arbitration, production
 provider/model policy, and IDE-host egress/data-leakage qualification must all precede production
 work. Kiro S2 remains unauthorized, and no production implementation has started.
+
+## 13. Final S1 live human acceptance — picker limitation resolved
+
+**Date:** 2026-09-04 (later same day)
+
+**Experiment scope:** The owner authorized a bounded experiment to resolve the
+`BLOCKED_BY_HOST_PICKER` limitation from section 12. The goal was to verify whether a supported
+local-provider extension could expose local models in the normal Ask picker, allowing live human
+streaming and cancellation evidence through the QuaranGate participant handler.
+
+**No S1 implementation change:** The QuaranGate spike source, provider, participant, `AgentCore`,
+IPC, tests, manifest, or lockfile were not modified. The deterministic local provider shim remains
+exactly as implemented in R2.
+
+**Official Ollama provider setup:**
+
+| Property | Value |
+|---|---|
+| Extension ID | `Ollama.ollama` |
+| Installed version | `0.0.8` |
+| Installation scope | Remote WSL |
+| Remote extension path evidence | `~/.vscode-server/extensions/ollama.ollama-0.0.8` |
+| Local Ollama endpoint | `http://127.0.0.1:11434` |
+| Ollama version | `0.23.1` |
+| Account/sign-in | None performed |
+| API key configured | No |
+| Remote Ollama endpoint configured | No |
+| Cloud provider configured | No |
+| VS Code upgrade performed | No |
+| Ollama upgrade performed | No |
+| Model pull during experiment | No |
+
+The owner installed the official Ollama extension into the Remote WSL scope only to supply a
+supported picker-visible provider. No Ollama account or remote configuration was required. The local
+Ollama service and models were already present from prior unrelated work.
+
+### 13.1 Normal Ask picker evidence
+
+The owner opened the actual Remote WSL Extension Development Host with the S1 spike loaded and
+observed the normal Chat Ask picker. Live screenshot evidence confirmed:
+
+**Picker UI:** Normal Ask mode, not Plan mode
+
+**Models visible in picker:**
+- `qwen3.5:9b-q4_K_M`
+- `qwen3.5:4b-q4_K_M`
+
+The official Ollama provider successfully exposed local models in the normal Chat picker where the
+QuaranGate deterministic provider shim had been absent.
+
+**Selected model:** The owner selected exactly `qwen3.5:9b-q4_K_M` for the final S1 human acceptance
+run.
+
+**Result:**
+- `NORMAL_ASK_LOCAL_MODEL_PICKER=PASS`
+- `OFFICIAL_OLLAMA_PROVIDER_PICKER=PASS`
+
+**Clarification:** The QuaranGate deterministic provider itself did not become visible in the
+picker. The official Ollama provider supplied the valid selectable local model that allowed VS Code
+to invoke the participant handler with a real human request.
+
+### 13.2 Live human streaming evidence
+
+The owner invoked the QuaranGate participant through the normal Chat UI:
+
+**Invocation:** `@quarangate-spike deterministic transport proof`
+
+**Chat UI output visible:**
+```text
+request accepted
+workspace verified
+step 1
+step 2
+complete
+```
+
+**Operation ID:** `f4c4bb7a-5553-47d0-8ada-cc4d63573b41`
+
+**QuaranGate Output log evidence:**
+```text
+started sequence=0
+chunk sequence=1
+chunk sequence=2
+chunk sequence=3
+chunk sequence=4
+chunk sequence=5
+completed sequence=6
+origin: human
+workspaceFingerprint: 2675f46820ac3809
+```
+
+**Result:**
+- `PARTICIPANT_HANDLER_REACHED=PASS`
+- `LIVE_HUMAN_STREAMING=PASS`
+- `LIVE_HUMAN_COMPLETION=PASS`
+- `OPERATION_PROVENANCE=PASS`
+
+The participant handler was invoked with a genuine `ChatRequest`, rendered deterministic events
+through the genuine `ChatResponseStream`, and reached terminal `completed` state with provenance
+correctly recorded as `human` origin.
+
+### 13.3 Live human cancellation evidence
+
+The owner invoked the participant a second time with the identical prompt and then cancelled the
+operation through the Chat UI stop control.
+
+**Operation ID:** `1e1baba9-2b8d-4324-8030-0de26aa88bce`
+
+**QuaranGate Output log evidence:**
+```text
+started sequence=0
+chunk sequence=1
+chunk sequence=2
+chunk sequence=3
+cancelled sequence=4
+origin: human
+workspaceFingerprint: 2675f46820ac3809
+```
+
+**Observation:** The operation did NOT emit `completed` after `cancelled`. The earlier completed
+operation ID `f4c4bb7a-5553-47d0-8ada-cc4d63573b41` remained independently completed.
+
+**Result:**
+- `LIVE_HUMAN_CANCELLATION=PASS`
+- `SAME_OPERATION_CANCELLED=PASS`
+- `CROSS_OPERATION_CANCELLATION=NO_EVIDENCE` (not tested)
+- `FALSE_COMPLETION_AFTER_CANCELLATION=NO`
+
+The `CancellationToken` integration correctly propagated human cancellation to the exact operation
+handle without completing it or affecting the prior independent operation.
+
+### 13.4 Prompt and logging boundary
+
+The QuaranGate Output evidence for both human operations contains:
+- Operation ID
+- Origin (`human`)
+- State transitions (`started`, `chunk`, `completed`/`cancelled`)
+- Sequence numbers
+- Workspace fingerprint (`2675f46820ac3809`)
+
+**The log does NOT contain:**
+- Raw human prompt body (`deterministic transport proof`)
+
+**Boundary classification:**
+- `RAW_PROMPT_BODY_IN_QUARANGATE_OUTPUT=NO`
+
+**Do NOT overclaim:**
+- `PROMPT_NEVER_EXISTED_IN_VSCODE_MEMORY` — not proven
+- `ENTIRE_VSCODE_HOST_NO_DATA_EGRESS` — not proven
+
+The prompt necessarily existed in VS Code memory as part of the `ChatRequest` object. The
+deterministic `AgentCore` validated prompt bounds but otherwise ignored its content. The absence from
+the QuaranGate Output log is confirmed; broader host memory/egress claims remain outside the S1
+evidence boundary.
+
+### 13.5 Model inference precision
+
+The owner selected local model `qwen3.5:9b-q4_K_M` through the official Ollama provider. The
+deterministic QuaranGate participant architecture is designed such that `AgentCore` does not require
+or invoke model inference to produce its fixed transport proof.
+
+However, unless direct runtime evidence proves whether VS Code or the Ollama provider invoked the
+selected model internally during this test, the classification must remain:
+
+**`DETERMINISTIC_TEST_MODEL_INFERENCE`:** `NOT_REQUIRED_BY_QUARANGATE_PATH / NOT_INDEPENDENTLY_PROVEN`
+
+This is not a claim that `NO INFERENCE` occurred. It is a statement that:
+1. The QuaranGate deterministic core does not need inference;
+2. Whether the host/Ollama invoked the model is not independently proven by the captured evidence.
+
+### 13.6 Final S1 classification — limitation resolved
+
+The previous `BLOCKED_BY_HOST_PICKER` limitation from section 12 is now resolved for S1 acceptance
+purposes through the supported official Ollama provider.
+
+**Final S1 results:**
+
+| Property | Result |
+|---|---|
+| Remote WSL host | `PASS` |
+| Participant visible | `PASS` |
+| Custom provider registration | `PASS` |
+| Custom provider public registry | `PASS` |
+| Official Ollama provider picker | `PASS` |
+| Normal Ask local model picker | `PASS` |
+| Participant handler reached | `PASS` |
+| Live human streaming | `PASS` |
+| Live human completion | `PASS` |
+| Live human cancellation | `PASS` |
+| Operation provenance | `PASS` |
+| S1 external host limitation resolved | `YES` |
+| S1 final human acceptance complete | `YES` |
+| S1 architecture feasibility | `PASS` |
+
+The previous classification `PASS_WITH_EXTERNAL_HOST_LIMITATION` was correct at that point in the
+chronology. The FINAL S1 acceptance state after this experiment is:
+
+**`S1_ARCHITECTURE_FEASIBILITY=PASS`**
+
+### 13.7 What S1 PASS does NOT mean
+
+Explicitly preserved limitations:
+
+| Property | Status |
+|---|---|
+| Production ready | `NO` |
+| Air-gap certified | `NO` |
+| Entire VS Code host air-gap proven | `NO` |
+| Production IDE host egress qualified | `NO` |
+| Kiro S2 started | `NO` |
+| Production implementation started | `NO` |
+
+**Broader host security observation:** Other VS Code/Copilot extensions were observed making
+external network connections during prior diagnostics (section 9, External host trace boundary).
+This does NOT prove QuaranGate prompt or repository leakage. It DOES mean the complete VS Code host
+remains a separate trust/egress surface that must be qualified before production or air-gap claims.
+
+### 13.8 Architectural interpretation
+
+**The S1 architecture is now proven viable for both surfaces:**
+
+**Human surface:**
+```text
+VS Code Chat Participant
+  → genuine ChatRequest/ChatResponseStream/CancellationToken
+  → shared AgentCore
+```
+
+**Machine surface:**
+```text
+authenticated owner-only Unix-domain IPC
+  → strict NDJSON frames
+  → shared AgentCore
+```
+
+**Provider resolution:** The supported official Ollama provider (`Ollama.ollama` version `0.0.8`)
+resolved the VS Code model-selection host precondition for live human acceptance.
+
+**This does NOT mean:**
+- Ollama is a mandatory permanent production dependency;
+- the QuaranGate deterministic provider shim should be deleted;
+- production provider/host architecture is finalized;
+- further S1 implementation is authorized.
+
+Production provider/model policy, trusted enrollment, and IDE-host egress qualification remain later
+owner decisions.
+
+### 13.9 S1 closeout
+
+S1 spike implementation is FROZEN. The human acceptance evidence is COMPLETE.
+
+**No mutation performed during this documentation phase:**
+- No implementation changed
+- No extensions installed/uninstalled beyond the bounded Ollama provider experiment
+- No settings changed
+- No Chat invocations during documentation
+- No models pulled
+- No Ollama/VS Code/Kiro upgrades
+- No Docker mutation
+- No deployment
+- No commit created
+- No push performed
+
+The next authorized work is a separate documentation-only commit recording this final evidence.
+Production implementation and Kiro S2 remain unauthorized.
+
+---
+
+**END S1 FINAL ACCEPTANCE DOCUMENTATION**
