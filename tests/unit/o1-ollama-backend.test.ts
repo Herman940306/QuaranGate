@@ -437,6 +437,74 @@ describe('O1 tool authority', () => {
   });
 });
 
+describe('O1 governed result delivery', () => {
+  async function makeResultBackend(chatResponses: unknown[]) {
+    const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
+    let callIdx = 0;
+    const mockChat = vi.fn().mockImplementation(async () => {
+      const response = chatResponses[callIdx++] ?? { message: { content: 'done', tool_calls: [] }, done: true };
+      return (async function* () { yield response; })();
+    });
+    const MockOllamaClass = vi.fn().mockReturnValue({ chat: mockChat }) as unknown as typeof import('ollama').Ollama;
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'inspect the repository', hostPath: '/srv', policy: POLICY },
+      { ollamaHost: 'http://x', modelQualifier: 'm:v1', helperImage: 'h:v1', stagerImage: 'h:v1', sensitiveReadGlobs: ['**/.env'], OllamaClass: MockOllamaClass },
+    );
+    (backend as unknown as Record<string, unknown>)['target'] = { containerId: 'fake', workspace: '/workspace' };
+    return { backend, mockChat };
+  }
+
+  it('returns the final assistant answer after native tool call and tool result', async () => {
+    const nativeToolCall = { function: { name: 'literal_search', arguments: { directory: 'src', query: 'needle' } } };
+    const finalAnswer = 'src/example.ts contains the requested constant.';
+    const { backend, mockChat } = await makeResultBackend([
+      { message: { content: '', tool_calls: [nativeToolCall] }, done: true },
+      { message: { content: finalAnswer, tool_calls: [] }, done: true },
+    ]);
+    const executeToolCall = vi.fn().mockResolvedValue(JSON.stringify({
+      success: true,
+      data: { matches: [{ path: 'src/example.ts', line: 7 }] },
+    }));
+    (backend as unknown as { executeToolCall: typeof executeToolCall }).executeToolCall = executeToolCall;
+
+    await backend.run(new AbortController().signal);
+    const result = await backend.validate(new AbortController().signal);
+
+    expect(result.summary).toBe(finalAnswer);
+    expect(result.changedFiles).toBeUndefined();
+    expect(executeToolCall).toHaveBeenCalledExactlyOnceWith(nativeToolCall);
+    expect(mockChat).toHaveBeenCalledTimes(2);
+    const followup = mockChat.mock.calls[1]?.[0] as { messages: Array<{ role: string; content: string; tool_calls?: unknown[] }> };
+    expect(followup.messages).toContainEqual(expect.objectContaining({ role: 'assistant', tool_calls: [nativeToolCall] }));
+    expect(followup.messages).toContainEqual(expect.objectContaining({ role: 'tool' }));
+  });
+
+  it('returns a useful no-tool textual response instead of execution telemetry', async () => {
+    const finalAnswer = 'No repository inspection is required for this answer.';
+    const { backend } = await makeResultBackend([
+      { message: { content: finalAnswer, tool_calls: [] }, done: true },
+    ]);
+
+    await backend.run(new AbortController().signal);
+    const result = await backend.validate(new AbortController().signal);
+
+    expect(result.summary).toBe(finalAnswer);
+    expect(result.summary).not.toContain('read-only execution completed');
+  });
+
+  it('bounds the final assistant answer to the public agent_result summary limit', async () => {
+    const { MAX_AGENT_SUMMARY_CHARS } = await import('../../src/gateway/agentSchemas.js');
+    const { backend } = await makeResultBackend([
+      { message: { content: 'x'.repeat(MAX_AGENT_SUMMARY_CHARS + 257), tool_calls: [] }, done: true },
+    ]);
+
+    await backend.run(new AbortController().signal);
+    const result = await backend.validate(new AbortController().signal);
+
+    expect(result.summary).toBe('x'.repeat(MAX_AGENT_SUMMARY_CHARS));
+  });
+});
+
 // ---------------------------------------------------------------------------
 // §24 PATH / SENSITIVE POLICY (Reqs 17-26)
 // ---------------------------------------------------------------------------
@@ -1610,6 +1678,30 @@ describe('O1 conservative chat envelope', () => {
     expect(MAX_OLLAMA_CHAT_ENVELOPE_BYTES).toBe(48 * 1024);
     await expect(backend.run(new AbortController().signal)).resolves.not.toThrow();
     expect(mockChat).toHaveBeenCalledOnce();
+    const request = mockChat.mock.calls[0]?.[0] as { messages: Array<{ role: string; content: string }> };
+    expect(request.messages[0]).toEqual(expect.objectContaining({ role: 'system' }));
+    expect(request.messages[0]?.content).toMatch(/claims about repository contents must be based on those tools/i);
+    expect(request.messages[0]?.content).toMatch(/no write, shell, web, apply, artifact, or fallback authority/i);
+  });
+
+  it('counts the system instruction inside initial request-envelope enforcement', async () => {
+    const {
+      OLLAMA_O1_SYSTEM_MESSAGE,
+      MAX_OLLAMA_CHAT_ENVELOPE_BYTES,
+      measureOllamaChatEnvelopeBytes,
+    } = await import('../../src/executor/agents/ollamaBackend.js');
+    const emptyUserBytes = measureOllamaChatEnvelopeBytes('m:v1', [{ role: 'user', content: '' }]);
+    const prompt = 'x'.repeat(MAX_OLLAMA_CHAT_ENVELOPE_BYTES - emptyUserBytes);
+    expect(measureOllamaChatEnvelopeBytes('m:v1', [{ role: 'user', content: prompt }]))
+      .toBeLessThanOrEqual(MAX_OLLAMA_CHAT_ENVELOPE_BYTES);
+    expect(measureOllamaChatEnvelopeBytes('m:v1', [
+      { role: 'system', content: OLLAMA_O1_SYSTEM_MESSAGE },
+      { role: 'user', content: prompt },
+    ])).toBeGreaterThan(MAX_OLLAMA_CHAT_ENVELOPE_BYTES);
+
+    const { backend, mockChat } = await makeBackend(prompt, []);
+    await expect(backend.run(new AbortController().signal)).rejects.toMatchObject({ code: 'FORBIDDEN_POLICY' });
+    expect(mockChat).not.toHaveBeenCalled();
   });
 
   it('measures UTF-8 bytes instead of JavaScript character length', async () => {

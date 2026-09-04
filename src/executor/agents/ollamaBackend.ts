@@ -41,6 +41,17 @@ const MAX_TURNS = 10;
 const MAX_TOOL_CALLS_TOTAL = 50;
 const MAX_TOOL_CALLS_PER_TURN = 10;
 export const MAX_OLLAMA_CHAT_ENVELOPE_BYTES = 48 * 1024;
+const MAX_RESULT_SUMMARY_CHARS = 16_384;
+
+export const OLLAMA_O1_SYSTEM_MESSAGE = [
+  'You are QuaranGate O1, a read-only repository audit, plan, and review assistant.',
+  'Use only the provided read tools.',
+  'Claims about repository contents must be based on those tools; never claim repository inspection without using them.',
+  'A task that requires no repository inspection may be answered without a tool call.',
+  'Return a concise final answer only.',
+  'Do not include raw prompts, raw tool-result JSON, secrets, credentials, host paths, or hidden runtime state.',
+  'You have no write, shell, web, apply, artifact, or fallback authority.',
+].join(' ');
 
 // ---------------------------------------------------------------------------
 // Ollama tool definitions for native tool-calling
@@ -250,6 +261,7 @@ export class OllamaBackend implements AgentBackendAdapter {
   private turnCount = 0;
   private toolCallsTotal = 0;
   private readonly aggregateReadTracker = { bytesRead: 0 };
+  private finalAnswer = '';
 
   constructor(
     private readonly job: OllamaJob,
@@ -320,6 +332,7 @@ export class OllamaBackend implements AgentBackendAdapter {
     });
 
     const messages: Message[] = [
+      { role: 'system', content: OLLAMA_O1_SYSTEM_MESSAGE },
       { role: 'user', content: this.job.prompt },
     ];
 
@@ -362,6 +375,7 @@ export class OllamaBackend implements AgentBackendAdapter {
       // §4: ONLY native message.tool_calls are authoritative
       if (toolCalls.length === 0) {
         // No tool calls — conversation complete
+        this.finalAnswer = fullContent;
         log('ollama backend: inference complete (no tool calls)', {
           jobId: this.job.jobId, turns: this.turnCount,
         });
@@ -440,7 +454,9 @@ export class OllamaBackend implements AgentBackendAdapter {
     this.checkAbort(signal);
     // No artifact production (§21 — O1 is read-only, never produces B3 artifact)
     return {
-      summary: `Ollama O1 read-only execution completed (${this.turnCount} turns, ${this.toolCallsTotal} tool calls, ${this.aggregateReadTracker.bytesRead} bytes read)`,
+      // Keep the provider response inside the existing public agent_result
+      // summary contract. Tool transcripts and execution telemetry stay local.
+      summary: this.finalAnswer.slice(0, MAX_RESULT_SUMMARY_CHARS),
       exitCode: 0,
       baseCommit: this.baseCommit,
       // No changedFiles (read-only, no mutations)
