@@ -16,14 +16,15 @@ import type { AgentBackendAdapter } from './jobEngine.js';
 import type { AgentJobRow } from './jobStore.js';
 import type { AgentProjectConfig } from '../agentConfig.js';
 import { OllamaBackend } from './ollamaBackend.js';
+import { RunnerSandbox } from './sandboxRunner.js';
 
 export interface OllamaFactoryDeps {
   ollamaHost: string;
   modelQualifier: string;
   /** Generic helper image for read-only workspace access. */
   helperImage: string;
-  /** Stager image (same generic helper used for staging). */
-  stagerImage: string;
+  /** Stager/runner image for workspace staging (RunnerSandbox). */
+  runnerImage: string;
   projects: AgentProjectConfig[];
   /** Injectable Ollama class for testing. */
   OllamaClass: typeof import('ollama').Ollama;
@@ -38,6 +39,8 @@ export function createOllamaBackendFactory(
   deps: OllamaFactoryDeps,
 ): (job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null {
   const projectById = new Map(deps.projects.map((p) => [p.id, p]));
+  // R2: Create a single shared RunnerSandbox instance for staging
+  const sandbox = new RunnerSandbox({ image: deps.runnerImage });
 
   return (job, policy) => {
     if (job.backend !== 'ollama') return null; // Not Ollama → use existing resolution
@@ -63,7 +66,7 @@ export function createOllamaBackendFactory(
         ollamaHost: deps.ollamaHost,
         modelQualifier: deps.modelQualifier,
         helperImage: deps.helperImage,
-        stagerImage: deps.stagerImage,
+        sandbox,
         sensitiveReadGlobs: project.sensitiveReadGlobs,
         OllamaClass: deps.OllamaClass,
       },

@@ -312,6 +312,13 @@ export function resolveNetworkMode(policy: AgentNetworkPolicy): 'none' {
  * never reached. This applies to ALL tracked symlinks regardless of where their
  * target points (inside or outside the workspace). Read-only profiles leave
  * REJECT_SYMLINKS unset and are unaffected (A4 parity).
+ *
+ * R2 O1 read-only staging: when REQUIRE_CLEAN_WORKTREE is explicitly set to
+ * "false", the git-status dirty check is SKIPPED and `git archive HEAD` is used
+ * DIRECTLY to stage only tracked committed content. Untracked files, ignored
+ * files, and modified working-tree bytes are NEVER included. Default behavior
+ * (REQUIRE_CLEAN_WORKTREE unset or any other value) requires a clean worktree
+ * (strict A4/A5 Kiro/writer semantics).
  */
 export const GIT_STAGING_SCRIPT = [
   'set -e',
@@ -319,8 +326,10 @@ export const GIT_STAGING_SCRIPT = [
   'GIT="git -c safe.directory=$SD -C $SD"',
   'if ! $GIT rev-parse --git-dir >/dev/null 2>&1; then echo NOT_A_GIT_REPO >&2; exit 4; fi',
   'if ! HEAD=$($GIT rev-parse HEAD 2>/dev/null); then echo NO_RESOLVABLE_HEAD >&2; exit 5; fi',
-  'STATUS=$($GIT status --porcelain --untracked-files=all)',
-  'if [ -n "$STATUS" ]; then echo DIRTY_WORKING_TREE >&2; exit 3; fi',
+  'if [ "$REQUIRE_CLEAN_WORKTREE" != "false" ]; then',
+  '  STATUS=$($GIT status --porcelain --untracked-files=all)',
+  '  if [ -n "$STATUS" ]; then echo DIRTY_WORKING_TREE >&2; exit 3; fi',
+  'fi',
   'if [ -n "$REJECT_SYMLINKS" ]; then',
   '  SYMS=$($GIT ls-files -s | awk \'$1=="120000"{print $4}\');',
   '  if [ -n "$SYMS" ]; then echo "TRACKED_SYMLINK $SYMS" >&2; exit 6; fi',
@@ -403,6 +412,12 @@ export function buildStagerCreateBody(opts: {
    * Read-only profiles omit this (default false) — A4 parity.
    */
   rejectTrackedSymlinks?: boolean;
+  /**
+   * R2 O1 read-only staging: when false, staging archives exact committed HEAD
+   * WITHOUT requiring a clean worktree. Default: true (strict clean-worktree
+   * requirement — preserves current Kiro/writer behavior).
+   */
+  requireCleanWorktree?: boolean;
 }): DockerCreateBody {
   assertJobId(opts.jobId);
   if (!opts.hostPath.startsWith('/') || opts.hostPath.includes('\0')) {
@@ -410,6 +425,9 @@ export function buildStagerCreateBody(opts: {
   }
   const env = ['HOME=/tmp', 'GIT_OPTIONAL_LOCKS=0'];
   if (opts.rejectTrackedSymlinks) env.push('REJECT_SYMLINKS=1');
+  // R2: only set REQUIRE_CLEAN_WORKTREE to "false" when explicitly opted out.
+  // Unset (default) means strict clean-worktree enforcement.
+  if (opts.requireCleanWorktree === false) env.push('REQUIRE_CLEAN_WORKTREE=false');
   return {
     Image: opts.image,
     User: RUNNER_USER,

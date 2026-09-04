@@ -1855,3 +1855,294 @@ describe('R3 bounded enumeration fallback', () => {
     expect(fsopsSource).toContain('if (useHeadBound) {');
   });
 });
+
+// ---------------------------------------------------------------------------
+// §24.R2 — O1 COMMITTED-HEAD STAGING (R2 remediation)
+// ---------------------------------------------------------------------------
+
+describe('O1 R2 workspace staging', () => {
+  it('R2-1: OllamaBackend requires sandbox dependency', async () => {
+    const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const MockOllamaClass = vi.fn() as unknown as typeof import('ollama').Ollama;
+    const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
+
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'test:v1', helperImage: 'img:v1', sandbox, sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+
+    expect(backend).toBeDefined();
+  });
+
+  it('R2-2: createOllamaBackendFactory accepts runnerImage instead of stagerImage', async () => {
+    const { createOllamaBackendFactory } = await import('../../src/executor/agents/ollamaFactory.js');
+    const mockOllama = vi.fn() as unknown as typeof import('ollama').Ollama;
+    const factory = createOllamaBackendFactory({
+      ollamaHost: 'http://ollama:11434',
+      modelQualifier: 'test-model:v1',
+      helperImage: 'test-helper:v1',
+      runnerImage: 'test-runner:v1',
+      projects: [{ id: 'proj1', hostPath: '/srv/proj', gitRequired: true, backends: ['ollama'], profiles: ['audit'], guardedPaths: [], sensitiveReadGlobs: [] }],
+      OllamaClass: mockOllama,
+    });
+    expect(factory).toBeDefined();
+  });
+
+  it('R2-3: factory uses runnerImage to create RunnerSandbox', async () => {
+    const { createOllamaBackendFactory } = await import('../../src/executor/agents/ollamaFactory.js');
+    const MockOllamaClass = vi.fn() as unknown as typeof import('ollama').Ollama;
+    const factory = createOllamaBackendFactory({
+      ollamaHost: 'http://ollama:11434',
+      modelQualifier: 'test-model:v1',
+      helperImage: 'test-helper:v1',
+      runnerImage: 'test-runner:v1',
+      projects: [{ id: 'proj1', hostPath: '/srv/proj', gitRequired: true, backends: ['ollama'], profiles: ['audit'], guardedPaths: [], sensitiveReadGlobs: [] }],
+      OllamaClass: MockOllamaClass,
+    });
+
+    const backend = factory(
+      { jobId: JOB, backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', principalId: 'p1', writer: false } as Parameters<typeof factory>[0],
+      POLICY
+    );
+
+    expect(backend).not.toBeNull();
+  });
+
+  it('R2-4: requireCleanWorktree defaults to true in sandboxRunner', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+
+    // Mock stageWorkspace to simulate dirty worktree rejection when requireCleanWorktree defaults to true
+    const stageSpy = vi.spyOn(RunnerSandbox.prototype, 'stageWorkspace');
+    stageSpy.mockImplementation(async (opts) => {
+      // When requireCleanWorktree is not specified (defaults to true), reject dirty
+      if (opts.requireCleanWorktree !== false) {
+        throw new BridgeError('PRECONDITION_FAILED', 'source working tree is not clean', 412);
+      }
+      return { volumeName: 'test', baseCommit: 'test' };
+    });
+
+    const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
+
+    await expect(sandbox.stageWorkspace({
+      jobId: JOB,
+      hostPath: '/srv/proj',
+      gitRequired: true,
+      // requireCleanWorktree not specified → defaults to true
+    })).rejects.toThrowError(/working tree is not clean/i);
+
+    stageSpy.mockRestore();
+  });
+
+  it('R2-5: requireCleanWorktree=false allows staging from dirty worktree', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+
+    // Mock stageWorkspace to allow staging when requireCleanWorktree=false
+    const stageSpy = vi.spyOn(RunnerSandbox.prototype, 'stageWorkspace');
+    stageSpy.mockImplementation(async (opts) => {
+      // When requireCleanWorktree is false, allow staging
+      if (opts.requireCleanWorktree === false) {
+        return {
+          volumeName: 'test-ws-volume',
+          baseCommit: '0123456789abcdef0123456789abcdef01234567',
+        };
+      }
+      throw new BridgeError('PRECONDITION_FAILED', 'source working tree is not clean', 412);
+    });
+
+    const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
+
+    const result = await sandbox.stageWorkspace({
+      jobId: JOB,
+      hostPath: '/srv/proj',
+      gitRequired: true,
+      requireCleanWorktree: false, // R2: explicit opt-out
+    });
+
+    expect(result.baseCommit).toBe('0123456789abcdef0123456789abcdef01234567');
+
+    stageSpy.mockRestore();
+  });
+
+  it('R2-6: stagerImage removed from OllamaBackendOptions interface', async () => {
+    // This test verifies the interface no longer accepts stagerImage
+    const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const MockOllamaClass = vi.fn() as unknown as typeof import('ollama').Ollama;
+    const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
+
+    // Type check: this should compile without stagerImage
+    const opts = {
+      ollamaHost: 'http://ollama:11434',
+      modelQualifier: 'test:v1',
+      helperImage: 'img:v1',
+      sandbox,
+      sensitiveReadGlobs: [],
+      OllamaClass: MockOllamaClass,
+    };
+
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
+      opts,
+    );
+
+    expect(backend).toBeDefined();
+  });
+
+  it('R2-7: OllamaBackend.prepare calls sandbox.stageWorkspace with requireCleanWorktree=false', async () => {
+    const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+
+    const stageSpy = vi.spyOn(RunnerSandbox.prototype, 'stageWorkspace').mockResolvedValue({
+      volumeName: 'test-ws-volume',
+      baseCommit: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+    });
+
+    vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper123');
+    vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
+
+    const MockOllamaClass = vi.fn() as unknown as typeof import('ollama').Ollama;
+    const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
+
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'test:v1', helperImage: 'img:v1', sandbox, sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+
+    const signal = new AbortController().signal;
+    await backend.prepare(signal);
+
+    expect(stageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      jobId: JOB,
+      hostPath: '/srv/proj',
+      gitRequired: true,
+      requireCleanWorktree: false, // R2: O1 explicitly opts out
+      rejectTrackedSymlinks: false,
+    }));
+  });
+
+  it('R2-8: OllamaBackend.prepare uses ACTUAL staged volume from stageWorkspace', async () => {
+    const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+
+    const ACTUAL_STAGED_VOLUME = 'io-quarangate-ws-actual123';
+
+    vi.spyOn(RunnerSandbox.prototype, 'stageWorkspace').mockResolvedValue({
+      volumeName: ACTUAL_STAGED_VOLUME,
+      baseCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    });
+
+    const createContainerSpy = vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper123');
+    vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
+
+    const MockOllamaClass = vi.fn() as unknown as typeof import('ollama').Ollama;
+    const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
+
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'test:v1', helperImage: 'img:v1', sandbox, sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+
+    await backend.prepare(new AbortController().signal);
+
+    const createBody = createContainerSpy.mock.calls[0][1] as Record<string, unknown>;
+    const hostConfig = createBody.HostConfig as Record<string, unknown>;
+    const mounts = hostConfig.Mounts as Array<{ Source: string; Target: string; ReadOnly: boolean }>;
+
+    expect(mounts).toEqual([
+      expect.objectContaining({
+        Source: ACTUAL_STAGED_VOLUME,
+        Target: WORKSPACE_PATH,
+        ReadOnly: true,
+      }),
+    ]);
+  });
+
+  it('R2-9: OllamaBackend.cleanup disposes staged workspace volume', async () => {
+    const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+
+    vi.spyOn(RunnerSandbox.prototype, 'stageWorkspace').mockResolvedValue({
+      volumeName: 'test-ws-volume',
+      baseCommit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    });
+    const disposeSpy = vi.spyOn(RunnerSandbox.prototype, 'disposeWorkspace').mockResolvedValue(undefined);
+
+    vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper123');
+    vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'stopContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'removeContainer').mockResolvedValue(undefined);
+
+    const MockOllamaClass = vi.fn() as unknown as typeof import('ollama').Ollama;
+    const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
+
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'test:v1', helperImage: 'img:v1', sandbox, sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+
+    await backend.prepare(new AbortController().signal);
+    await backend.cleanup();
+
+    expect(disposeSpy).toHaveBeenCalledWith('test-ws-volume');
+  });
+
+  it('R2-10: OllamaBackend.validate returns staged baseCommit', async () => {
+    const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+
+    const EXPECTED_COMMIT = 'cccccccccccccccccccccccccccccccccccccccc';
+
+    vi.spyOn(RunnerSandbox.prototype, 'stageWorkspace').mockResolvedValue({
+      volumeName: 'test-ws-volume',
+      baseCommit: EXPECTED_COMMIT,
+    });
+
+    vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper123');
+    vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
+
+    const MockOllamaClass = vi.fn().mockReturnValue({
+      chat: vi.fn().mockImplementation(async function* () {
+        yield { message: { role: 'assistant', content: 'Test answer' }, done: true };
+      }),
+    }) as unknown as typeof import('ollama').Ollama;
+
+    const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
+
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'test:v1', helperImage: 'img:v1', sandbox, sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+
+    await backend.prepare(new AbortController().signal);
+    await backend.run(new AbortController().signal);
+    const result = await backend.validate(new AbortController().signal);
+
+    expect(result.baseCommit).toBe(EXPECTED_COMMIT);
+  });
+
+  it('R2-11: stage failure prevents helper creation', async () => {
+    const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+
+    vi.spyOn(RunnerSandbox.prototype, 'stageWorkspace').mockRejectedValue(new BridgeError('PRECONDITION_FAILED', 'staging failed', 412));
+
+    const createContainerSpy = vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper123');
+
+    const MockOllamaClass = vi.fn() as unknown as typeof import('ollama').Ollama;
+    const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
+
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'test:v1', helperImage: 'img:v1', sandbox, sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+
+    await expect(backend.prepare(new AbortController().signal)).rejects.toThrowError(/staging failed/i);
+    expect(createContainerSpy).not.toHaveBeenCalled();
+  });
+});

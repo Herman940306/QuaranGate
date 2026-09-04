@@ -260,7 +260,7 @@ let server: ReturnType<typeof app.listen>;
         ollamaHost: startupPolicy.ollama.host,
         modelQualifier: startupPolicy.ollama.modelQualifier,
         helperImage: startupPolicy.ollama.helperImage,
-        stagerImage: startupPolicy.ollama.helperImage,
+        runnerImage: startupPolicy.runnerImage,
         projects: agentConfig.projects,
         OllamaClass: Ollama,
       });

@@ -98,6 +98,14 @@ export class RunnerSandbox {
      * profiles leave this false (A4 parity).
      */
     rejectTrackedSymlinks?: boolean;
+    /**
+     * R2 O1 read-only staging: when false, staging archives exact committed
+     * HEAD via `git archive` WITHOUT requiring a clean working tree.
+     * Untracked/ignored/modified working-tree bytes are NEVER included.
+     * Default: true (strict clean-worktree requirement — preserves current
+     * Kiro/writer behavior exactly as today).
+     */
+    requireCleanWorktree?: boolean;
   }): Promise<StageResult> {
     if (!opts.gitRequired) {
       // v1 is git-project-first; a non-git snapshot policy is a later decision.
@@ -110,6 +118,7 @@ export class RunnerSandbox {
     const body = buildStagerCreateBody({
       image: this.opts.image, jobId: opts.jobId, hostPath: opts.hostPath, volumeName,
       rejectTrackedSymlinks: opts.rejectTrackedSymlinks,
+      requireCleanWorktree: opts.requireCleanWorktree ?? true,
     });
     let containerId: string | undefined;
     try {

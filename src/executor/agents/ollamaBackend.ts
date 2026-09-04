@@ -18,7 +18,7 @@ import { BridgeError } from '../../shared/errors.js';
 import { isWriterProfile, type AgentProfileId, type AgentResourcePolicy } from '../../shared/agents.js';
 import type { AgentBackendAdapter } from './jobEngine.js';
 import type { ConfinedTarget } from '../execops.js';
-import { WORKSPACE_PATH, toRunnerLimits, buildOllamaReadHelperCreateBody, ollamaReadHelperContainerName, workspaceVolumeName } from './sandboxSpec.js';
+import { WORKSPACE_PATH, toRunnerLimits, buildOllamaReadHelperCreateBody, ollamaReadHelperContainerName } from './sandboxSpec.js';
 import {
   createContainer, startContainer, stopContainer, removeContainer,
 } from '../docker.js';
@@ -243,8 +243,8 @@ export interface OllamaBackendOptions {
   modelQualifier: string;
   helperImage: string;
   sensitiveReadGlobs: readonly string[];
-  /** Stager image for workspace staging (generic runner/helper image). */
-  stagerImage: string;
+  /** RunnerSandbox dependency for workspace staging. */
+  sandbox: import('./sandboxRunner.js').RunnerSandbox;
   /** Injectable Ollama constructor for testing. */
   OllamaClass: typeof import('ollama').Ollama;
 }
@@ -256,6 +256,7 @@ function log(msg: string, fields: Record<string, unknown>): void {
 export class OllamaBackend implements AgentBackendAdapter {
   private readonly ollama: Ollama;
   private helperContainerId: string | null = null;
+  private workspaceVolumeName: string | null = null;
   private target: ConfinedTarget | null = null;
   private baseCommit: string | null = null;
   private turnCount = 0;
@@ -284,12 +285,25 @@ export class OllamaBackend implements AgentBackendAdapter {
     log('ollama backend: staging workspace', { jobId: this.job.jobId });
     this.checkAbort(signal);
 
-    // Stage committed-HEAD snapshot via the stager (same as Kiro backend)
-    const volumeName = workspaceVolumeName(this.job.jobId);
-    // Volume is created by the sandbox infrastructure before we get here;
-    // we just need to set up the read-helper against it.
-    // Note: in full integration, sandbox.stageWorkspace is called by the engine
-    // or by a preceding stager step. For O1 we track the staged volume by name.
+    // R2: Stage committed-HEAD snapshot via RunnerSandbox (trusted, proven).
+    // O1 read-only jobs explicitly opt out of clean-worktree requirement —
+    // staging archives ONLY committed HEAD bytes via `git archive HEAD`,
+    // never untracked/ignored/modified working-tree content.
+    const staged = await this.opts.sandbox.stageWorkspace({
+      jobId: this.job.jobId,
+      hostPath: this.job.hostPath,
+      gitRequired: true,
+      rejectTrackedSymlinks: false, // O1 is read-only, no A5 write restrictions
+      requireCleanWorktree: false,  // R2: allow staging from dirty host for O1
+    });
+    this.workspaceVolumeName = staged.volumeName;
+    this.baseCommit = staged.baseCommit;
+
+    log('ollama backend: workspace staged', {
+      jobId: this.job.jobId,
+      volumeName: this.workspaceVolumeName,
+      baseCommit: this.baseCommit,
+    });
 
     // Create the read-helper container (long-lived, RO workspace mount)
     log('ollama backend: creating read-helper container', { jobId: this.job.jobId });
@@ -300,7 +314,7 @@ export class OllamaBackend implements AgentBackendAdapter {
     const body = buildOllamaReadHelperCreateBody({
       image: this.opts.helperImage,
       jobId: this.job.jobId,
-      workspaceVolumeName: volumeName,
+      workspaceVolumeName: this.workspaceVolumeName,
       limits,
     });
 
@@ -483,7 +497,7 @@ export class OllamaBackend implements AgentBackendAdapter {
   }
 
   async cleanup(): Promise<void> {
-    // Always remove the read-helper container (§12)
+    // R2: Always remove BOTH the read-helper container AND the staged workspace volume
     if (this.helperContainerId) {
       log('ollama backend: cleaning up read-helper', { jobId: this.job.jobId });
       try { await stopContainer(this.helperContainerId, 2); } catch { /* best-effort */ }
@@ -493,6 +507,16 @@ export class OllamaBackend implements AgentBackendAdapter {
     // Also attempt by name (defense in depth)
     const helperName = ollamaReadHelperContainerName(this.job.jobId);
     try { await removeContainer(helperName, true); } catch { /* best-effort */ }
+
+    // R2: Dispose the staged workspace volume
+    if (this.workspaceVolumeName) {
+      log('ollama backend: cleaning up staged workspace', {
+        jobId: this.job.jobId,
+        volumeName: this.workspaceVolumeName,
+      });
+      try { await this.opts.sandbox.disposeWorkspace(this.workspaceVolumeName); } catch { /* best-effort */ }
+      this.workspaceVolumeName = null;
+    }
   }
 
   private checkAbort(signal: AbortSignal): void {
