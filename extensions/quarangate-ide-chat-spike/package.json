@@ -1,0 +1,59 @@
+{
+  "name": "quarangate-ide-chat-spike",
+  "displayName": "QuaranGate IDE Chat Spike",
+  "description": "Bounded, read-only VS Code dual-mode companion feasibility spike.",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "quarangate-spike",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "Chat"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onChatParticipant:quarangate.ideChatSpike",
+    "onLanguageModelChat:quarangate-spike-local-deterministic",
+    "onCommand:quarangateIdeChatSpike.showStatus"
+  ],
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "quarangate.ideChatSpike",
+        "name": "quarangate-spike",
+        "fullName": "QuaranGate IDE Chat Spike",
+        "description": "SPIKE ONLY: deterministic, read-only transport and cancellation proof.",
+        "isSticky": false
+      }
+    ],
+    "languageModelChatProviders": [
+      {
+        "vendor": "quarangate-spike-local-deterministic",
+        "displayName": "QuaranGate Spike Local Provider (Non-Inference)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "quarangateIdeChatSpike.showStatus",
+        "title": "QuaranGate IDE Chat Spike: Show Attestation and IPC Status"
+      }
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "live-probe": "node dist/src/liveProbe.js"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.0",
+    "@types/vscode": "1.109.0",
+    "typescript": "5.9.2"
+  }
+}
