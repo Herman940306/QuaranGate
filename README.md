@@ -95,7 +95,7 @@ QuaranGate inserts a control layer that makes authority explicit and enumerable:
 | GitHub Copilot backend | **Roadmap (A7)** | `copilot` exists as a contract enum id only; disabled in config, no implementation |
 | Session continuity / resume | **Roadmap (A8)** | `sessionPolicy: "resume"` is representable but explicitly rejected at dispatch |
 | Production hardening + full E2E | **Roadmap (A9)** | Not started |
-| Governed Ollama local backend | **Owner-approved immediate milestone** | Separate Kiro lane; not implemented or redesigned here |
+| Governed Ollama local backend (O1) | **✅ Q1D qualified** | Read-only backend operational; model selection frozen: `qwen3.5:4b-q4_K_M` |
 | IDE Session Control | **Approved North Star (I0-I6)** | Design only; no adapter or runtime implementation |
 
 **Explicitly not supported.** Host shell execution. Browser or GUI automation as the primary
@@ -378,7 +378,7 @@ see [`docs/TEST_RESULTS.md`](docs/TEST_RESULTS.md) for the full record.
 | [docs/CLIENT_SETUP.md](docs/CLIENT_SETUP.md) | Per-client setup for Claude, ChatGPT, VS Code, Kiro |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Build, run, health, credentials, image provenance, ingress |
 | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) | Client and protocol requirements with citations |
-| [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) | Verification evidence and baselines |
+| [docs/O1_MODEL_QUALIFICATION.md](docs/O1_MODEL_QUALIFICATION.md) | O1 Ollama model selection, qualification evidence, deployment guidance |
 | [docs/audits/](docs/audits/) | Frozen per-phase audit records (A0–A6) |
 | [PLAN.md](PLAN.md) | The original pre-implementation plan (historical) |
 

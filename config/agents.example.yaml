@@ -29,9 +29,12 @@ backends:
   # Enable only after setting OLLAMA_HOST, OLLAMA_MODEL_QUALIFIER, and
   # AGENT_HELPER_IMAGE in .env (or compose.ollama.yaml). NO default model,
   # NO :latest. Supported profiles: audit, plan, review only.
-  # MODEL_SELECTION=PENDING_QUALIFICATION — do not enable until qualified.
+  #
+  # OWNER-APPROVED PRIMARY MODEL (Q1D-qualified): qwen3.5:4b-q4_K_M
+  # No material degradation observed in the bounded O1 qualification suite.
+  # Capacity reserve: qwen3.5:9b-q4_K_M ; Qualified alternate: ministral-3:8b-instruct-2512-q4_K_M
   - id: ollama
-    enabled: false                       # safe default; enable after qualification
+    enabled: false                       # safe default; enable post-deployment
     profiles: [audit, plan, review]      # implement/writer is hard-refused
     defaultResourcePolicy: economy
 
