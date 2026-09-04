@@ -29,11 +29,30 @@ services:
     networks:
       - inference
     volumes:
-      - ollama-models:/root/.ollama
+      - ollama-models:/model-store:ro
+    tmpfs:
+      - /root/.ollama:rw,noexec,nosuid,nodev,size=16m
+      - /tmp:rw,nosuid,nodev,size=256m
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_MODELS=/model-store/models
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:?set qualified OLLAMA_CONTEXT_LENGTH}
+      - OLLAMA_NO_CLOUD=1
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
     # NO published ports — internal network only
-    # Resource limits: operator-configured via Docker daemon (no Compose defaults)
+    cpus: "${OLLAMA_CPU_LIMIT:?set qualified OLLAMA_CPU_LIMIT}"
+    mem_limit: "${OLLAMA_MEM_LIMIT:?set qualified OLLAMA_MEM_LIMIT}"
+    pids_limit: "${OLLAMA_PIDS_LIMIT:?set qualified OLLAMA_PIDS_LIMIT}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids:
+                - "${OLLAMA_GPU_DEVICE:?set qualified OLLAMA_GPU_DEVICE}"
+              capabilities:
+                - gpu
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
@@ -44,8 +63,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # Note: Ollama may need specific capabilities for GPU access if enabled
-    # (not configured in O1; GPU selection is deferred to post-qualification)
+    read_only: true
 
 networks:
   # Inference network: executor ↔ Ollama only, internal (no external routing)

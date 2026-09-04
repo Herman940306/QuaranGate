@@ -253,7 +253,7 @@ A test count, verdict or architectural statement that was true at one checkpoint
 | `agent_discard` | **Available** | Live source untouched |
 | Retained-resource lifecycle | **Available** | Evidence lifecycle governed independently |
 | Governed offline npm source build | **Available** | Lock-scoped bundle; canonical lock; source build network `none` |
-| O1 local Ollama backend | **Implemented — controlled runtime acceptance pending** | Read-only local backend; model frozen |
+| O1 local Ollama backend | **Implemented — hardened disposable canary accepted; production deployment pending** | Read-only local backend; model frozen |
 | GitHub Copilot backend | **Roadmap** | A7 |
 | Session continuity | **Roadmap** | A8 |
 | IDE Session Control | **North Star** | Design/feasibility evidence only |
@@ -608,6 +608,13 @@ list_files
 literal_search
 ```
 
+`read_file` accepts a required workspace-relative `path` plus optional positive
+integer `startLine` (default `1`) and `maxLines` (default `200`, maximum `400`).
+Eligible files remain capped at `256 KiB`, but one invocation exposes at most
+`8 KiB` of complete lines with deterministic `nextStartLine`/`eof` metadata.
+Callers should use `literal_search` to locate relevant code in large files and
+paginate with `nextStartLine`; a line that alone exceeds `8 KiB` is withheld.
+
 Key reasons:
 
 - limit aggregate reads;
@@ -630,13 +637,46 @@ The owner-approved deployment direction uses:
 - offline/controlled model seeding;
 - backend disabled until infrastructure checks pass.
 
+Current-host O1 production profile is owner-approved but not deployed: Ollama
+`0.32.3` (`sha256:ec24bcaa2a810eb74171ce7c517813ef4821ed678988845e8d76cf62467036d4`),
+`qwen3.5:4b-q4_K_M`
+(`2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd`),
+context `65536`, GPU device `0` (GTX 1080 Ti), CPU `2.0`, RAM `3 GiB`,
+PIDs `256`, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`, and
+`OLLAMA_NO_CLOUD=1`. Portable Compose requires explicit context/GPU/CPU/RAM/PID
+inputs; it does not default to this host profile. Any change requires deployment
+requalification. No automatic model or cloud fallback is authorized.
+
+The production design reserves persistent `quarangate-ollama-models` storage
+for model artifacts only and mounts it read-only at `/model-store` with
+`OLLAMA_MODELS=/model-store/models`. New production runtime cannot write Ollama
+identity/config/runtime state there: `/root/.ollama` and `/tmp` are ephemeral
+tmpfs and the container root filesystem is read-only. `OLLAMA_NO_CLOUD=1` is
+mandatory, while Docker's internal inference network remains a separate egress
+boundary.
+
+Current operational state is not yet identical to that design: the retained
+volume still contains the legacy pre-hardening filenames `id_ed25519` and
+`id_ed25519.pub`. Their contents were not read. Bounded sanitization is a
+separate next operational gate before production deployment and must remove
+only that legacy identity state while preserving every verified model manifest
+and blob byte. This document does not claim sanitization has occurred.
+
+Every O1 chat request has a fixed `49152`-byte UTF-8 request-envelope limit.
+Measurement covers model qualifier, messages, current tool definitions and JSON
+request structure. Oversized initial requests fail closed; oversized successful
+tool results are withheld and replaced with bounded structured policy results.
+This conservative guard prevents reliance on silent context truncation.
+
 Production documentation must not instruct the running QuaranGate deployment to perform an uncontrolled online `ollama pull`.
 
 ## 12.5 Container-version qualification boundary
 
 The host Ollama environment used during model qualification and the selected container Ollama version are different runtime versions.
 
-The container runtime therefore requires canary requalification before production acceptance.
+Exact Ollama `0.32.3` hardened runtime passed disposable O1-C3 canary
+requalification. Controlled production deployment and post-enable acceptance
+remain separate pending gates.
 
 ---
 
@@ -1108,7 +1148,7 @@ Current known limitations/debt include:
 - N1 is accepted, but the dependency-preparation container's external-host restriction is enforced at the application URL-validation layer rather than by a kernel-level egress firewall;
 - the Dockerfile still uses the mutable base tag `node:24-alpine`, so cross-machine bit-for-bit base-image reproducibility is not yet proven by source pinning alone;
 - `validateResolvedUrl` could be defense-in-depth hardened against redundant double-slash registry paths even though exact-host validation plus mandatory SHA-512 prevents artifact substitution;
-- O1 container-runtime canary/acceptance remains pending;
+- O1 hardened disposable container-runtime canary is accepted;
 - O1 production activation remains pending;
 - GitHub Copilot backend A7 not started;
 - session continuity A8 not started;
@@ -1177,7 +1217,7 @@ The local Ollama backend was implemented and model-qualified. Its deployment pat
 - Tini C2 local vendoring/provenance;
 - npm N1 lock-scoped dependency bundling and source-build network isolation.
 
-N1 closed at `18179696b3ef3ff2192805590027d2e1a43a43d4` with 44/44 unit test files and 1693/1693 tests, plus an independently rechecked no-cache/network-none Docker build. O1 container canary/deployment acceptance remains separate and pending.
+N1 closed at `18179696b3ef3ff2192805590027d2e1a43a43d4` with 44/44 unit test files and 1693/1693 tests, plus an independently rechecked no-cache/network-none Docker build. O1-C3 later accepted the hardened disposable container canary; controlled production deployment and post-enable acceptance remain pending.
 
 This is an example of the project treating deployment evidence as part of the feature rather than stopping at source compilation.
 

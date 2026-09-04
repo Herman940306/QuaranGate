@@ -95,7 +95,7 @@ O1 source implementation                    COMPLETE
 Primary/capacity/alternate model qualification COMPLETE
 Primary model selection                     FROZEN
 Controlled container deployment             PENDING ACCEPTANCE
-Ollama container/version canary acceptance  PENDING
+Ollama hardened disposable canary acceptance COMPLETE (O1-C3)
 Production activation                       NOT CLAIMED
 ```
 
@@ -226,7 +226,14 @@ O1 uses a deliberately small model-facing tool set.
 
 ## `read_file`
 
-Bounded file read under canonical workspace confinement and O1-specific read limits.
+Bounded file read under canonical workspace confinement and O1-specific read
+limits. `path` is required; `startLine` defaults to `1`, and `maxLines` defaults
+to `200` with a maximum of `400`. A file may be eligible up to `256 KiB`, but a
+call exposes at most `8 KiB` of complete lines. Results include deterministic
+line range, total-line, `nextStartLine` and `eof` metadata. Use
+`literal_search` before a targeted window in large files, or continue from
+`nextStartLine` for sequential reading. An individually oversized line is
+withheld rather than truncated.
 
 ## `list_files`
 
@@ -267,6 +274,23 @@ Recorded bounded qualification profile:
 
 These measurements describe the qualification environment, not a universal minimum/guaranteed runtime profile.
 
+## Current deployment host — owner-approved C2 evidence
+
+This workstation's approved O1 profile is context `65536`, GPU device `0`
+(GTX 1080 Ti), CPU limit `2.0` cores, RAM limit `3 GiB`, PIDs limit `256`,
+`OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`, and mandatory
+`OLLAMA_NO_CLOUD=1`.
+
+C2 at context `65536` recorded 100% GPU placement, peak VRAM `7684 MiB`,
+approximately `3580 MiB` remaining GPU headroom, approximately `1520 MiB`
+container RAM peak, approximately `11690 MiB` host available RAM, approximately
+`102.08%` CPU peak, and approximately `47.60 tok/s` generation.
+
+These values are accepted only for this deployment host. Portable Compose
+requires explicit operator inputs for context, GPU, CPU, RAM and PIDs rather
+than silently assuming them. Changing any context/GPU/resource setting requires
+deployment requalification.
+
 ### Why not hard-code resource requirements from this table?
 
 Operational CPU/RAM/GPU limits are owner/operator deployment choices and should be based on the actual workstation/server plus the containerized Ollama canary evidence.
@@ -300,6 +324,30 @@ The model/backend should remain disabled until:
 No documentation step should tell the operator to enable O1 before those prerequisites pass.
 
 The dedicated store is the externally provisioned persistent volume `quarangate-ollama-models`. It must be created, seeded and verified before deployment. Compose consumes it but does not create or own it, and must fail closed if it is absent. Consequently, normal Compose teardown (including `docker compose down -v`) must preserve it. Explicit `docker volume rm quarangate-ollama-models` is destructive and must never be routine teardown.
+
+By design, this volume is model-artifact storage only. Production mounts it
+read-only at `/model-store` and sets `OLLAMA_MODELS=/model-store/models`.
+Ollama-generated identity, configuration and runtime home state belongs on
+ephemeral `/root/.ollama` tmpfs; `/tmp` is ephemeral too. New production runtime
+cannot write Ollama private identity into the persistent model store.
+
+The current retained volume still contains the legacy pre-hardening filenames
+`id_ed25519` and `id_ed25519.pub`; their contents were not read. Removing those
+two legacy identity entries is a separate bounded sanitization gate required
+before production deployment. That operation remains pending and must preserve
+all verified model manifest and blob bytes. Qualification does not claim the
+legacy entries have already been removed.
+
+`OLLAMA_NO_CLOUD=1` is mandatory. It prevents Ollama cloud mode; Docker internal
+networking is a separate egress boundary and must not be represented as the same
+control.
+
+O1 also freezes a conservative `48 KiB` (`49152` byte) UTF-8 chat-envelope
+guard. Exact outgoing JSON includes model qualifier, messages and current tool
+definitions. Oversized initial requests are refused before inference. Tool
+content that would overflow the next request is withheld behind a bounded
+`CONTEXT_BUDGET_EXCEEDED` result. Arbitrary truncation and model-controlled
+budget increases are forbidden.
 
 The destination model volume is not an agent/sandbox resource and must remain outside sandbox cleanup authority. Never create it with `ownershipLabels(...)`, sandbox/resource cleanup labels, or `managed=true` in any accepted namespace: `io.quarangate.managed`, `io.mcp-ide-bridge.managed` or `io.mcp-bridge.managed`. Those markers authorize executor startup orphan reconciliation to delete ephemeral resources. Disposable seed containers or staging resources may have their own cleanup identity; the destination model volume must not inherit it.
 
@@ -361,7 +409,10 @@ Evidence:
 - runtime image contains no bundle/cache artifacts;
 - live QuaranGate stack unchanged.
 
-This clears the npm source-build blocker. It **does not** complete O1 itself. The O1 container canary, GPU/resource qualification, controlled model-storage seeding, backend enablement and post-enable MCP acceptance still have to pass before O1 can be called production-active.
+This clears the npm source-build blocker. O1-C1/C2 prepared and qualified the
+model/resource profile; O1-C3 accepted the exact hardened runtime in a
+disposable canary. This still **does not** make O1 production-active. Controlled
+deployment, deliberate backend enablement and post-enable MCP acceptance remain.
 
 ---
 

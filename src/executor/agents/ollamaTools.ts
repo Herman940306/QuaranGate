@@ -15,8 +15,14 @@ import { validateGuardPattern, pathIsGuarded } from './applyPolicy.js';
 // O1 Qualification Limits (§8) — frozen, model cannot raise them
 // ---------------------------------------------------------------------------
 
+export const MAX_READ_CHUNK_BYTES = 8 * 1024;
+export const DEFAULT_READ_START_LINE = 1;
+export const DEFAULT_READ_MAX_LINES = 200;
+export const MAX_READ_LINES = 400;
+
 export const OLLAMA_O1_LIMITS = {
   MAX_FILE_READ_BYTES: 256 * 1024,      // 256 KiB per file
+  MAX_READ_CHUNK_BYTES,                  // 8 KiB exposed content per read window
   MAX_TOOL_RESULT_BYTES: 256 * 1024,    // 256 KiB per tool result
   MAX_AGGREGATE_READ_BYTES: 512 * 1024, // 512 KiB total across all reads
   MAX_SEARCH_FILES: 100,                 // Max files to enumerate for search
@@ -126,11 +132,108 @@ function fileTooLarge(canonicalRel: string, limitBytes: number): OllamaToolResul
 // read_file (§16) — bounded read with sensitive-path enforcement
 // ---------------------------------------------------------------------------
 
+/** Select and account for one complete-line read window from an eligible file. */
+export function buildOllamaReadWindow(
+  canonicalRel: string,
+  content: Buffer,
+  fileSize: number,
+  aggregateTracker: { bytesRead: number },
+  startLine = DEFAULT_READ_START_LINE,
+  maxLines = DEFAULT_READ_MAX_LINES,
+): OllamaToolResult {
+  const remainingBudget = OLLAMA_O1_LIMITS.MAX_AGGREGATE_READ_BYTES - aggregateTracker.bytesRead;
+  if (remainingBudget <= 0) {
+    return {
+      success: false,
+      error: 'AGGREGATE_LIMIT_EXCEEDED',
+      details: {
+        totalBytesRead: aggregateTracker.bytesRead,
+        limit: OLLAMA_O1_LIMITS.MAX_AGGREGATE_READ_BYTES,
+      },
+    };
+  }
+
+  const lineEnds: number[] = [];
+  for (let index = 0; index < content.length; index++) {
+    if (content[index] === 0x0a) lineEnds.push(index + 1);
+  }
+  if (content.length > 0 && content[content.length - 1] !== 0x0a) {
+    lineEnds.push(content.length);
+  }
+
+  const totalLines = lineEnds.length;
+  const firstIndex = Math.min(startLine - 1, totalLines);
+  const byteStart = firstIndex === 0 ? 0 : lineEnds[firstIndex - 1]!;
+  let byteEnd = byteStart;
+  let selectedLines = 0;
+
+  while (firstIndex + selectedLines < totalLines && selectedLines < maxLines) {
+    const candidateEnd = lineEnds[firstIndex + selectedLines]!;
+    const lineBytes = candidateEnd - byteEnd;
+    if (selectedLines === 0 && lineBytes > OLLAMA_O1_LIMITS.MAX_READ_CHUNK_BYTES) {
+      return {
+        success: false,
+        error: 'LINE_TOO_LARGE',
+        details: {
+          path: canonicalRel,
+          lineNumber: startLine,
+          limitBytes: OLLAMA_O1_LIMITS.MAX_READ_CHUNK_BYTES,
+          contentWithheld: true,
+        },
+      };
+    }
+    if (candidateEnd - byteStart > OLLAMA_O1_LIMITS.MAX_READ_CHUNK_BYTES) break;
+    byteEnd = candidateEnd;
+    selectedLines++;
+  }
+
+  const exposed = content.subarray(byteStart, byteEnd);
+  if (exposed.length > remainingBudget) {
+    return {
+      success: false,
+      error: 'AGGREGATE_LIMIT_EXCEEDED',
+      details: {
+        path: canonicalRel,
+        requestedContentBytes: exposed.length,
+        remainingBudget,
+        totalBytesRead: aggregateTracker.bytesRead,
+        limit: OLLAMA_O1_LIMITS.MAX_AGGREGATE_READ_BYTES,
+        contentWithheld: true,
+      },
+    };
+  }
+
+  aggregateTracker.bytesRead += exposed.length;
+  // When startLine > totalLines (beyond EOF) selectedLines is 0 and startLine - 1
+  // would exceed totalLines, producing misleading metadata.  Clamp to totalLines.
+  const endLine = selectedLines === 0
+    ? Math.min(startLine - 1, totalLines)
+    : startLine + selectedLines - 1;
+  const nextStartLine = firstIndex + selectedLines < totalLines ? endLine + 1 : null;
+
+  return {
+    success: true,
+    data: {
+      path: canonicalRel,
+      content: exposed.toString('utf8'),
+      fileSize,
+      contentBytes: exposed.length,
+      startLine,
+      endLine,
+      totalLines,
+      nextStartLine,
+      eof: nextStartLine === null,
+    },
+  };
+}
+
 export async function ollamaReadFile(
   t: ConfinedTarget,
   rel: string,
   sensitiveGlobs: readonly string[],
   aggregateTracker: { bytesRead: number },
+  startLine = DEFAULT_READ_START_LINE,
+  maxLines = DEFAULT_READ_MAX_LINES,
 ): Promise<OllamaToolResult> {
   try {
     // Sensitive path check (canonical + built-in + project globs)
@@ -164,61 +267,28 @@ export async function ollamaReadFile(
       return fileTooLarge(check.canonicalRel, OLLAMA_O1_LIMITS.MAX_FILE_READ_BYTES);
     }
 
-    if (stat.size > remainingBudget) {
-      // File is within per-file limit but exceeds remaining aggregate budget
-      return {
-        success: false,
-        error: 'AGGREGATE_LIMIT_EXCEEDED',
-        details: {
-          path: check.canonicalRel,
-          fileSize: stat.size,
-          remainingBudget,
-          totalBytesRead: aggregateTracker.bytesRead,
-          limit: OLLAMA_O1_LIMITS.MAX_AGGREGATE_READ_BYTES,
-        },
-      };
-    }
-
-    // Constrain read to remaining aggregate budget and per-file limit
-    const effectiveLimit = Math.min(remainingBudget, OLLAMA_O1_LIMITS.MAX_FILE_READ_BYTES);
-
-    // Bounded read with constrained limit
+    // Read only files proven eligible by the whole-file limit. The full bounded
+    // source is needed to derive stable line numbers and totalLines, but only a
+    // complete-line window is ever exposed to the model or charged to aggregate.
     let content: Buffer;
     try {
-      content = await fsReadFile(t, rel, effectiveLimit);
+      content = await fsReadFile(t, rel, OLLAMA_O1_LIMITS.MAX_FILE_READ_BYTES);
     } catch (e) {
       if (e instanceof BridgeError && e.code === 'OUTPUT_TRUNCATED') {
-        // Truncation indicates file exceeded effective limit
-        // Re-check which limit was violated
-        if (stat.size > OLLAMA_O1_LIMITS.MAX_FILE_READ_BYTES) {
-          return fileTooLarge(check.canonicalRel, OLLAMA_O1_LIMITS.MAX_FILE_READ_BYTES);
-        } else {
-          return {
-            success: false,
-            error: 'AGGREGATE_LIMIT_EXCEEDED',
-            details: {
-              path: check.canonicalRel,
-              remainingBudget,
-              totalBytesRead: aggregateTracker.bytesRead,
-              limit: OLLAMA_O1_LIMITS.MAX_AGGREGATE_READ_BYTES,
-            },
-          };
-        }
+        // The file grew after stat or otherwise exceeded the eligibility bound.
+        return fileTooLarge(check.canonicalRel, OLLAMA_O1_LIMITS.MAX_FILE_READ_BYTES);
       }
       throw e;
     }
 
-    // Update aggregate tracker
-    aggregateTracker.bytesRead += content.length;
-
-    return {
-      success: true,
-      data: {
-        path: check.canonicalRel,
-        content: content.toString('utf8'),
-        size: content.length,
-      },
-    };
+    return buildOllamaReadWindow(
+      check.canonicalRel,
+      content,
+      stat.size,
+      aggregateTracker,
+      startLine,
+      maxLines,
+    );
   } catch (e) {
     if (e instanceof BridgeError) {
       if (e.code === 'FORBIDDEN_POLICY') {

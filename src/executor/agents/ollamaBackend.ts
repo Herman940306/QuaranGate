@@ -27,6 +27,9 @@ import {
   ollamaListFiles,
   ollamaLiteralSearch,
   OLLAMA_O1_LIMITS,
+  DEFAULT_READ_START_LINE,
+  DEFAULT_READ_MAX_LINES,
+  MAX_READ_LINES,
   type OllamaToolResult,
 } from './ollamaTools.js';
 
@@ -37,23 +40,35 @@ import {
 const MAX_TURNS = 10;
 const MAX_TOOL_CALLS_TOTAL = 50;
 const MAX_TOOL_CALLS_PER_TURN = 10;
+export const MAX_OLLAMA_CHAT_ENVELOPE_BYTES = 48 * 1024;
 
 // ---------------------------------------------------------------------------
 // Ollama tool definitions for native tool-calling
 // ---------------------------------------------------------------------------
 
-const OLLAMA_TOOL_DEFINITIONS = [
+export const OLLAMA_TOOL_DEFINITIONS = [
   {
     type: 'function' as const,
     function: {
       name: 'read_file',
-      description: 'Read the contents of a single file from the workspace. Returns file content as text. Maximum 256 KiB per file.',
+      description: 'Read a bounded complete-line window from one workspace file. For large files, use literal_search to locate relevant code, then use startLine/maxLines; continue sequential reads with nextStartLine. Path-only calls default to startLine 1 and maxLines 200. Each response exposes at most 8 KiB of file content; 256 KiB is only the maximum eligible total file size.',
       parameters: {
         type: 'object' as const,
         properties: {
           path: {
             type: 'string' as const,
             description: 'Workspace-relative path to the file (e.g., "src/index.ts")',
+          },
+          startLine: {
+            type: 'integer' as const,
+            minimum: 1,
+            description: 'First 1-based line to return (default 1)',
+          },
+          maxLines: {
+            type: 'integer' as const,
+            minimum: 1,
+            maximum: 400,
+            description: 'Maximum complete lines to return (default 200, maximum 400)',
           },
         },
         required: ['path'],
@@ -107,15 +122,35 @@ const OLLAMA_TOOL_DEFINITIONS = [
   },
 ] as const;
 
+function buildOllamaChatRequest(modelQualifier: string, messages: Message[]) {
+  return {
+    model: modelQualifier,
+    messages,
+    tools: OLLAMA_TOOL_DEFINITIONS as unknown as import('ollama').Tool[],
+    stream: true as const,
+  };
+}
+
+/** UTF-8 size of exact JSON/request structure sent to Ollama. */
+export function measureOllamaChatEnvelopeBytes(
+  modelQualifier: string,
+  messages: Message[],
+): number {
+  return Buffer.byteLength(
+    JSON.stringify(buildOllamaChatRequest(modelQualifier, messages)),
+    'utf8',
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tool argument validation — strict schema (§4)
 // ---------------------------------------------------------------------------
 
-interface ReadFileArgs { path: string }
+interface ReadFileArgs { path: string; startLine: number; maxLines: number }
 interface ListFilesArgs { path: string; maxDepth?: number }
 interface LiteralSearchArgs { directory: string; query: string }
 
-function validateReadFileArgs(args: unknown): ReadFileArgs {
+export function validateReadFileArgs(args: unknown): ReadFileArgs {
   if (typeof args !== 'object' || args === null || Array.isArray(args)) {
     throw new BridgeError('MALFORMED_REQUEST', 'read_file: arguments must be a plain object', 400);
   }
@@ -124,9 +159,19 @@ function validateReadFileArgs(args: unknown): ReadFileArgs {
     throw new BridgeError('MALFORMED_REQUEST', 'read_file: path must be a non-empty string', 400);
   }
   for (const key of Object.keys(obj)) {
-    if (key !== 'path') throw new BridgeError('MALFORMED_REQUEST', `read_file: unexpected field "${key}"`, 400);
+    if (key !== 'path' && key !== 'startLine' && key !== 'maxLines') {
+      throw new BridgeError('MALFORMED_REQUEST', `read_file: unexpected field "${key}"`, 400);
+    }
   }
-  return { path: obj.path };
+  const startLine = obj.startLine ?? DEFAULT_READ_START_LINE;
+  if (typeof startLine !== 'number' || !Number.isInteger(startLine) || startLine < 1) {
+    throw new BridgeError('MALFORMED_REQUEST', 'read_file: startLine must be a positive integer', 400);
+  }
+  const maxLines = obj.maxLines ?? DEFAULT_READ_MAX_LINES;
+  if (typeof maxLines !== 'number' || !Number.isInteger(maxLines) || maxLines < 1 || maxLines > MAX_READ_LINES) {
+    throw new BridgeError('MALFORMED_REQUEST', `read_file: maxLines must be an integer 1-${MAX_READ_LINES}`, 400);
+  }
+  return { path: obj.path, startLine, maxLines };
 }
 
 function validateListFilesArgs(args: unknown): ListFilesArgs {
@@ -289,12 +334,9 @@ export class OllamaBackend implements AgentBackendAdapter {
       let fullContent = '';
       let toolCalls: Array<{ function: { name: string; arguments: Record<string, unknown> } }> = [];
 
-      const stream = await this.ollama.chat({
-        model: this.opts.modelQualifier,
-        messages,
-        tools: OLLAMA_TOOL_DEFINITIONS as unknown as import('ollama').Tool[],
-        stream: true,
-      });
+      const request = buildOllamaChatRequest(this.opts.modelQualifier, messages);
+      this.requireEnvelopeWithinBudget(messages);
+      const stream = await this.ollama.chat(request);
 
       // Consume the stream
       for await (const chunk of stream) {
@@ -350,11 +392,33 @@ export class OllamaBackend implements AgentBackendAdapter {
 
         this.checkAbort(signal);
 
-        const toolResultContent = await this.executeToolCall(toolCall);
-        messages.push({
+        const aggregateBytesBeforeCall = this.aggregateReadTracker.bytesRead;
+        const rawToolResultContent = await this.executeToolCall(toolCall);
+        let toolResultMessage: Message = {
           role: 'tool',
-          content: toolResultContent,
-        });
+          content: rawToolResultContent,
+        };
+
+        if (this.measureProjectedEnvelope(messages, toolResultMessage) > MAX_OLLAMA_CHAT_ENVELOPE_BYTES) {
+          // The raw window is not exposed to the model, so its provisional
+          // content-byte charge must not consume the aggregate exposure budget.
+          this.aggregateReadTracker.bytesRead = aggregateBytesBeforeCall;
+          toolResultMessage = {
+            role: 'tool',
+            content: JSON.stringify({
+              success: false,
+              error: 'CONTEXT_BUDGET_EXCEEDED',
+              details: {
+                contentWithheld: true,
+                resultBytes: Buffer.byteLength(rawToolResultContent, 'utf8'),
+                envelopeLimitBytes: MAX_OLLAMA_CHAT_ENVELOPE_BYTES,
+              },
+            }),
+          };
+        }
+
+        this.requireEnvelopeWithinBudget([...messages, toolResultMessage]);
+        messages.push(toolResultMessage);
       }
     }
 
@@ -425,6 +489,21 @@ export class OllamaBackend implements AgentBackendAdapter {
     }
   }
 
+  private measureProjectedEnvelope(messages: Message[], nextMessage: Message): number {
+    return measureOllamaChatEnvelopeBytes(this.opts.modelQualifier, [...messages, nextMessage]);
+  }
+
+  private requireEnvelopeWithinBudget(messages: Message[]): void {
+    const envelopeBytes = measureOllamaChatEnvelopeBytes(this.opts.modelQualifier, messages);
+    if (envelopeBytes > MAX_OLLAMA_CHAT_ENVELOPE_BYTES) {
+      throw new BridgeError(
+        'FORBIDDEN_POLICY',
+        `Ollama O1 request envelope ${envelopeBytes} bytes exceeds fixed limit ${MAX_OLLAMA_CHAT_ENVELOPE_BYTES}`,
+        403,
+      );
+    }
+  }
+
   private async executeToolCall(
     toolCall: { function: { name: string; arguments: Record<string, unknown> } },
   ): Promise<string> {
@@ -448,6 +527,8 @@ export class OllamaBackend implements AgentBackendAdapter {
           validated.path,
           this.opts.sensitiveReadGlobs,
           this.aggregateReadTracker,
+          validated.startLine,
+          validated.maxLines,
         );
         break;
       }

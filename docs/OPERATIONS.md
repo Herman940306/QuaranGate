@@ -699,7 +699,66 @@ Kiro automation uses a dedicated automation credential and isolated runner state
 
 The O1 source and model selection are qualified, but final container deployment/post-deployment acceptance remains a separate operational gate. Do not interpret model qualification as production activation.
 
+Current workstation's approved, not-yet-deployed O1 profile:
+
+```text
+model=qwen3.5:4b-q4_K_M
+model_id=2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd
+image=ollama/ollama:0.32.3
+image_id=sha256:ec24bcaa2a810eb74171ce7c517813ef4821ed678988845e8d76cf62467036d4
+OLLAMA_CONTEXT_LENGTH=65536
+OLLAMA_GPU_DEVICE=0
+OLLAMA_CPU_LIMIT=2.0
+OLLAMA_MEM_LIMIT=3g
+OLLAMA_PIDS_LIMIT=256
+OLLAMA_NUM_PARALLEL=1
+OLLAMA_MAX_LOADED_MODELS=1
+OLLAMA_NO_CLOUD=1
+```
+
+GPU `0` is this host's GTX 1080 Ti. C2 at context `65536` recorded 100% GPU,
+VRAM peak `7684 MiB`, approximately `3580 MiB` GPU headroom, approximately
+`1520 MiB` container RAM peak, approximately `11690 MiB` host available RAM,
+approximately `102.08%` CPU peak, and approximately `47.60 tok/s` generation.
+Portable Compose requires explicit context/GPU/CPU/RAM/PID inputs with no host
+defaults. Changing them requires deployment requalification.
+
+O1-C3 accepted these exact settings in a disposable hardened Ollama `0.32.3`
+canary: read-only root, model store read-only, ephemeral Ollama home/temp,
+GPU device `0`, `100% GPU`, context `65536`, successful local inference, no OOM,
+no restart, no pull, and positive `Ollama cloud disabled: true` log evidence.
+Canary resources were removed afterward. Production O1 was not started or enabled.
+
 `quarangate-ollama-models` is the external persistent artifact store for the verified O1 model. Create and seed it through the separate controlled model-seeding operation before O1 deployment. Compose consumes this exact volume but does not create or own it; deployment must fail closed when it is absent.
+
+Mount this artifact store read-only at `/model-store`; set
+`OLLAMA_MODELS=/model-store/models`. `/root/.ollama` and `/tmp` are ephemeral
+tmpfs. Persistent model storage must not receive Ollama-generated identity,
+configuration or runtime state. `OLLAMA_NO_CLOUD=1` is mandatory; private Docker
+networking remains a separate egress boundary.
+
+O1 request envelopes are capped at `49152` UTF-8 bytes, including model,
+messages, tool definitions and request JSON structure. Initial overflow fails
+before Ollama invocation. Tool output that would overflow the next request is
+withheld using bounded `CONTEXT_BUDGET_EXCEEDED` metadata. No arbitrary silent
+truncation or model-driven budget increase is permitted.
+
+O1 `read_file` therefore returns line windows rather than whole eligible files.
+`path` alone remains valid and defaults to `startLine=1,maxLines=200`; operators
+and qualification prompts may request positive integer `startLine` and
+`maxLines` up to `400`. Total eligible file size remains `256 KiB`, while one
+successful response exposes no more than `8192` bytes of complete file-content
+lines and reports `nextStartLine` plus `eof`. Use `literal_search` to find a
+target in a large file, then request the corresponding bounded window.
+
+The production storage design reserves `quarangate-ollama-models` for model
+artifacts only. The current retained volume is not yet sanitized: it still
+contains the legacy pre-hardening filenames `id_ed25519` and `id_ed25519.pub`.
+Their contents were not read. A separate bounded sanitization gate must remove
+those legacy identity entries before production deployment while preserving
+every verified model manifest and blob byte. Do not represent that pending gate
+as complete. The hardened production runtime keeps the store read-only and
+places new Ollama home/identity/runtime state on ephemeral `/root/.ollama`.
 
 Normal teardown, including `docker compose down -v`, must not delete this external volume. Explicit `docker volume rm quarangate-ollama-models` remains destructive and must never be part of routine teardown. Reseeding is also a separate controlled operation, not a deployment or teardown side effect.
 
