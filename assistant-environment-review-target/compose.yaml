@@ -15,11 +15,16 @@ services:
       mcp.bridge.enabled: "true"
       mcp.bridge.workspace: "/workspace"
       mcp.bridge.name: "assistant-environment-review"
+    # Trust only the exact read-only workspace bind for Git ownership checks.
+    environment:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /workspace
     # git, bash, and python3 are baked into the image at build time — no runtime apk.
     command: ["sh", "-c", "while true; do sleep 3600; done"]
     volumes:
       # READ-ONLY mount of the source repository
-      - /home/herman/projects/Secure Dev:/workspace:ro
+      - /home/herman/projects/governed-ai-engineering-platform:/workspace:ro
     tmpfs:
       - /tmp
     restart: unless-stopped

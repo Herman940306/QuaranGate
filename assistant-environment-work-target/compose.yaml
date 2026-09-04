@@ -38,10 +38,10 @@ services:
     command: ["sh", "-c", "while true; do sleep 3600; done"]
     volumes:
       # READ/WRITE mount of the project source
-      - /home/herman/projects/Secure Dev:/workspace:rw
+      - /home/herman/projects/governed-ai-engineering-platform:/workspace:rw
       # READ-ONLY overlay of the repository metadata. Nested destination, so it
       # is mounted after the parent and wins for everything under /workspace/.git.
-      - /home/herman/projects/Secure Dev/.git:/workspace/.git:ro
+      - /home/herman/projects/governed-ai-engineering-platform/.git:/workspace/.git:ro
     tmpfs:
       - /tmp
     restart: unless-stopped
