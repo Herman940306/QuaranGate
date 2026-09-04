@@ -54,6 +54,9 @@ networks:
     internal: true
 
 volumes:
-  # Ollama model storage (persistent across restarts)
+  # Externally provisioned verified O1 model store; Compose consumes it but
+  # does not own its lifecycle. It must not carry sandbox-managed ownership
+  # labels.
   ollama-models:
     name: quarangate-ollama-models
+    external: true

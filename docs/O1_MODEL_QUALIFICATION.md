@@ -299,6 +299,18 @@ The model/backend should remain disabled until:
 
 No documentation step should tell the operator to enable O1 before those prerequisites pass.
 
+The dedicated store is the externally provisioned persistent volume `quarangate-ollama-models`. It must be created, seeded and verified before deployment. Compose consumes it but does not create or own it, and must fail closed if it is absent. Consequently, normal Compose teardown (including `docker compose down -v`) must preserve it. Explicit `docker volume rm quarangate-ollama-models` is destructive and must never be routine teardown.
+
+The destination model volume is not an agent/sandbox resource and must remain outside sandbox cleanup authority. Never create it with `ownershipLabels(...)`, sandbox/resource cleanup labels, or `managed=true` in any accepted namespace: `io.quarangate.managed`, `io.mcp-ide-bridge.managed` or `io.mcp-bridge.managed`. Those markers authorize executor startup orphan reconciliation to delete ephemeral resources. Disposable seed containers or staging resources may have their own cleanup identity; the destination model volume must not inherit it.
+
+Before and after seeding, inspect only the destination labels:
+
+```bash
+docker volume inspect quarangate-ollama-models --format '{{json .Labels}}'
+```
+
+Null/empty labels or benign persistent metadata are acceptable. If any accepted current/legacy QuaranGate sandbox namespace contains `managed=true`, stop and do not start or restart the executor. Model-content verification and lifecycle-identity verification are separate gates.
+
 ---
 
 # Model seeding policy
@@ -316,6 +328,8 @@ verify exact model identity
         ↓
 start canary with no external model pull
 ```
+
+Model reseeding remains a separate controlled operation; deployment and teardown must not perform it implicitly.
 
 ### Why avoid runtime model pull?
 

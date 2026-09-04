@@ -699,6 +699,30 @@ Kiro automation uses a dedicated automation credential and isolated runner state
 
 The O1 source and model selection are qualified, but final container deployment/post-deployment acceptance remains a separate operational gate. Do not interpret model qualification as production activation.
 
+`quarangate-ollama-models` is the external persistent artifact store for the verified O1 model. Create and seed it through the separate controlled model-seeding operation before O1 deployment. Compose consumes this exact volume but does not create or own it; deployment must fail closed when it is absent.
+
+Normal teardown, including `docker compose down -v`, must not delete this external volume. Explicit `docker volume rm quarangate-ollama-models` remains destructive and must never be part of routine teardown. Reseeding is also a separate controlled operation, not a deployment or teardown side effect.
+
+### Persistent model-store ownership invariant
+
+The destination volume `quarangate-ollama-models` is not a sandbox resource. Create it independently; do not use `ownershipLabels(...)`, sandbox/resource cleanup labels or any accepted current/legacy sandbox ownership marker. In particular, the destination volume must not carry:
+
+```text
+io.quarangate.managed=true
+io.mcp-ide-bridge.managed=true
+io.mcp-bridge.managed=true
+```
+
+These markers grant deletion authority over ephemeral QuaranGate agent/sandbox resources. Executor startup reconciliation is permitted to remove resources carrying them. Seed containers or temporary staging resources may use their own disposable cleanup identity when needed, but that identity must not be applied to the destination model volume.
+
+Inspect destination labels both before and after seeding. This command prints labels only:
+
+```bash
+docker volume inspect quarangate-ollama-models --format '{{json .Labels}}'
+```
+
+An accepted result is `null`, empty, or benign persistent metadata. If any accepted QuaranGate current/legacy namespace reports `managed=true`, stop: do not start or restart the executor. Verification of model contents and verification of lifecycle identity are separate required gates.
+
 ---
 
 # Targets

@@ -756,6 +756,13 @@ describe('O1 compose validation', () => {
     expect(ollamaComposeText).toMatch(/ollama:/);
   });
 
+  it('compose.ollama.yaml consumes the external O1 model store', () => {
+    const modelVolume = ollamaComposeText.match(/^  ollama-models:\s*\n((?: {4}.*(?:\n|$))*)/m)?.[1];
+    expect(modelVolume).toBeDefined();
+    expect(modelVolume).toMatch(/^    name:\s*quarangate-ollama-models\s*$/m);
+    expect(modelVolume).toMatch(/^    external:\s*true\s*$/m);
+  });
+
   // Req 50: gateway NOT attached to inference network
   it('base compose.yaml does not attach gateway to inference network', () => {
     // "inference" only appears in compose.yaml as part of "Zero-inference" comment — not as a network
