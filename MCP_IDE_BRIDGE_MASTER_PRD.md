@@ -655,12 +655,17 @@ tmpfs and the container root filesystem is read-only. `OLLAMA_NO_CLOUD=1` is
 mandatory, while Docker's internal inference network remains a separate egress
 boundary.
 
-Current operational state is not yet identical to that design: the retained
-volume still contains the legacy pre-hardening filenames `id_ed25519` and
-`id_ed25519.pub`. Their contents were not read. Bounded sanitization is a
-separate next operational gate before production deployment and must remove
-only that legacy identity state while preserving every verified model manifest
-and blob byte. This document does not claim sanitization has occurred.
+**Historical state:** Earlier pre-hardening Ollama startup created `id_ed25519`
+and `id_ed25519.pub` in the retained model volume. Their contents were never
+read.
+
+**Current state (O1-C4 complete):** Both legacy identity files were removed
+through bounded offline sanitization on 2026-09-04. The persistent volume now
+contains only `models/` at the top level. The model manifest
+(`2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd`) and all
+four blobs were verified byte-identical before and after sanitization. Volume
+labels remained null throughout. The hardened disposable verification runtime
+did not recreate persistent identity files.
 
 Every O1 chat request has a fixed `49152`-byte UTF-8 request-envelope limit.
 Measurement covers model qualifier, messages, current tool definitions and JSON
@@ -675,8 +680,10 @@ Production documentation must not instruct the running QuaranGate deployment to 
 The host Ollama environment used during model qualification and the selected container Ollama version are different runtime versions.
 
 Exact Ollama `0.32.3` hardened runtime passed disposable O1-C3 canary
-requalification. Controlled production deployment and post-enable acceptance
-remain separate pending gates.
+requalification. O1-C4 completed the bounded legacy-identity sanitization,
+removing exactly `id_ed25519` and `id_ed25519.pub` while preserving all model
+artifacts byte-for-byte. Controlled production deployment and post-enable
+acceptance remain separate pending gates.
 
 ---
 

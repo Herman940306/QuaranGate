@@ -751,14 +751,23 @@ successful response exposes no more than `8192` bytes of complete file-content
 lines and reports `nextStartLine` plus `eof`. Use `literal_search` to find a
 target in a large file, then request the corresponding bounded window.
 
-The production storage design reserves `quarangate-ollama-models` for model
-artifacts only. The current retained volume is not yet sanitized: it still
-contains the legacy pre-hardening filenames `id_ed25519` and `id_ed25519.pub`.
-Their contents were not read. A separate bounded sanitization gate must remove
-those legacy identity entries before production deployment while preserving
-every verified model manifest and blob byte. Do not represent that pending gate
-as complete. The hardened production runtime keeps the store read-only and
-places new Ollama home/identity/runtime state on ephemeral `/root/.ollama`.
+**Historical state:** Earlier pre-hardening Ollama startup created `id_ed25519`
+and `id_ed25519.pub` in the retained volume; their contents were never read.
+
+**Current state (O1-C4 complete, 2026-09-04):** Both legacy identity files were
+removed through bounded offline sanitization. The persistent volume now contains
+only `models/` at the top level, consistent with the model-artifact-only design.
+The model manifest and all four blobs were verified byte-identical before and
+after removal. The hardened disposable verification runtime confirmed it did not
+recreate persistent identity files in the persistent store.
+
+**Operational invariant:** The persistent model volume must contain only model
+artifacts. Reappearance of top-level identity, configuration or runtime files
+(such as `id_ed25519`, `id_ed25519.pub`, or similar Ollama-generated state) is
+an integrity regression. Production runtime uses read-only `/model-store` and
+ephemeral `/root/.ollama`; runtime must not write identity/config to the
+persistent volume. If unexpected top-level non-model files appear, investigate
+before enabling O1 or promoting to production.
 
 Normal teardown, including `docker compose down -v`, must not delete this external volume. Explicit `docker volume rm quarangate-ollama-models` remains destructive and must never be part of routine teardown. Reseeding is also a separate controlled operation, not a deployment or teardown side effect.
 

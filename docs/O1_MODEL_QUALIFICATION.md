@@ -331,12 +331,14 @@ Ollama-generated identity, configuration and runtime home state belongs on
 ephemeral `/root/.ollama` tmpfs; `/tmp` is ephemeral too. New production runtime
 cannot write Ollama private identity into the persistent model store.
 
-The current retained volume still contains the legacy pre-hardening filenames
-`id_ed25519` and `id_ed25519.pub`; their contents were not read. Removing those
-two legacy identity entries is a separate bounded sanitization gate required
-before production deployment. That operation remains pending and must preserve
-all verified model manifest and blob bytes. Qualification does not claim the
-legacy entries have already been removed.
+**Historical state:** Earlier pre-hardening Ollama startup created `id_ed25519`
+and `id_ed25519.pub` in the retained volume; their contents were never read.
+
+**Current state (O1-C4 complete, 2026-09-04):** Both legacy identity files were
+removed through bounded offline sanitization. The persistent volume now contains
+only `models/` at the top level. The model manifest and all four blobs were
+verified byte-identical before and after removal. The hardened disposable
+verification runtime confirmed it did not recreate persistent identity files.
 
 `OLLAMA_NO_CLOUD=1` is mandatory. It prevents Ollama cloud mode; Docker internal
 networking is a separate egress boundary and must not be represented as the same
@@ -358,6 +360,32 @@ docker volume inspect quarangate-ollama-models --format '{{json .Labels}}'
 ```
 
 Null/empty labels or benign persistent metadata are acceptable. If any accepted current/legacy QuaranGate sandbox namespace contains `managed=true`, stop and do not start or restart the executor. Model-content verification and lifecycle-identity verification are separate gates.
+
+---
+
+# O1-C4 Legacy identity sanitization — complete
+
+**Gate completion date:** 2026-09-04
+
+**Objective:** Remove exactly `id_ed25519` and `id_ed25519.pub` from the persistent model volume while preserving all model artifacts byte-for-byte.
+
+**Evidence:**
+
+| Check | Result |
+|---|---|
+| **Identity files before** | `id_ed25519` (present, regular file), `id_ed25519.pub` (present, regular file) |
+| **Identity file content read** | **NO** — contents were never read |
+| **Top-level removals** | Exactly two: `id_ed25519`, `id_ed25519.pub` |
+| **Top-level additions** | None |
+| **Model file count** | 5 before, 5 after (unchanged) |
+| **Manifest SHA-256** | `2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd` (unchanged) |
+| **Blob count** | 4 before, 4 after (unchanged) |
+| **Blob hashes** | All four byte-identical before/after |
+| **Volume labels** | `null` before, `null` after (unchanged) |
+| **Hardened Ollama verifier** | Successful `ollama list` and `ollama show` with hardened storage design |
+| **Persistent identity recreated** | **NO** — verification runtime did not write identity to persistent store |
+
+**Current state:** The persistent volume contains only `models/` at the top level. Model artifacts remain intact and verified. The hardened production storage design (read-only `/model-store`, ephemeral `/root/.ollama`) is now consistent with the actual volume contents.
 
 ---
 
@@ -411,8 +439,9 @@ Evidence:
 
 This clears the npm source-build blocker. O1-C1/C2 prepared and qualified the
 model/resource profile; O1-C3 accepted the exact hardened runtime in a
-disposable canary. This still **does not** make O1 production-active. Controlled
-deployment, deliberate backend enablement and post-enable MCP acceptance remain.
+disposable canary; O1-C4 completed the bounded legacy-identity sanitization.
+Controlled production deployment, deliberate backend enablement and post-enable
+MCP acceptance remain pending gates.
 
 ---
 
