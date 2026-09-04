@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { BridgeError } from '../../src/shared/errors.js';
 import { AGENT_BACKEND_IDS } from '../../src/shared/agents.js';
 import { validateAgentConfig } from '../../src/executor/agentConfig.js';
+import { resolveExecutorStartupPolicy } from '../../src/executor/startupPolicy.js';
 import {
   buildOllamaReadHelperCreateBody,
   ollamaReadHelperContainerName,
@@ -180,64 +181,94 @@ describe('O1 backend/config', () => {
 });
 
 // ---------------------------------------------------------------------------
-// §24 STARTUP MATRIX (Reqs 3-5 — tested via index.ts startup logic in unit form)
+// §24 STARTUP MATRIX (Reqs 2-5, 8 — production startup policy)
 // ---------------------------------------------------------------------------
 
 describe('O1 startup matrix', () => {
-  // Simulate the startup validation logic from index.ts
-  function simulateStartup(env: Record<string, string>, ollamaEnabled: boolean): string | null {
-    if (!ollamaEnabled) return null; // disabled — no validation needed
-
-    const OLLAMA_HOST = env.OLLAMA_HOST ?? '';
-    const OLLAMA_MODEL_QUALIFIER = env.OLLAMA_MODEL_QUALIFIER ?? '';
-    const HELPER_IMAGE = env.AGENT_HELPER_IMAGE ?? '';
-
-    if (!OLLAMA_HOST) return 'FATAL: Ollama backend enabled but OLLAMA_HOST is not set';
-    if (!OLLAMA_MODEL_QUALIFIER) return 'FATAL: Ollama backend enabled but OLLAMA_MODEL_QUALIFIER is not set';
-    if (!HELPER_IMAGE) return 'FATAL: Ollama backend enabled but AGENT_HELPER_IMAGE is not set';
-    if (OLLAMA_MODEL_QUALIFIER.includes(':latest') || HELPER_IMAGE.includes(':latest')) {
-      return 'FATAL: :latest tags not allowed for OLLAMA_MODEL_QUALIFIER or AGENT_HELPER_IMAGE';
-    }
-    return null; // OK
-  }
-
-  // Req 2: disabled allows env absent
-  it('disabled Ollama: no validation error even with all env absent', () => {
-    expect(simulateStartup({}, false)).toBeNull();
+  it('disabled Ollama with no environment remains valid', () => {
+    expect(resolveExecutorStartupPolicy(false, {})).toEqual({
+      runnerImage: '',
+      kiroHelperImage: '',
+      ollama: { enabled: false },
+    });
   });
 
-  // Req 3: enabled + missing OLLAMA_HOST fails
-  it('enabled + missing OLLAMA_HOST → fatal error', () => {
-    const err = simulateStartup({ OLLAMA_MODEL_QUALIFIER: 'model:v1', AGENT_HELPER_IMAGE: 'img:v1' }, true);
-    expect(err).toMatch(/OLLAMA_HOST/);
+  it('disabled Ollama with all O1 environment populated does not authorize factory activation', () => {
+    const policy = resolveExecutorStartupPolicy(false, {
+      ollamaHost: 'http://ollama:11434',
+      ollamaModelQualifier: 'model:v1',
+      agentHelperImage: 'helper:v1',
+    });
+    expect(policy.ollama.enabled).toBe(false);
   });
 
-  // Req 4: enabled + missing OLLAMA_MODEL_QUALIFIER fails
-  it('enabled + missing OLLAMA_MODEL_QUALIFIER → fatal error', () => {
-    const err = simulateStartup({ OLLAMA_HOST: 'http://ollama:11434', AGENT_HELPER_IMAGE: 'img:v1' }, true);
-    expect(err).toMatch(/OLLAMA_MODEL_QUALIFIER/);
+  it('enabled + missing OLLAMA_HOST is refused', () => {
+    expect(() => resolveExecutorStartupPolicy(true, {
+      ollamaModelQualifier: 'model:v1',
+      agentHelperImage: 'helper:v1',
+    })).toThrow(/OLLAMA_HOST/);
   });
 
-  // Req 5: enabled + missing AGENT_HELPER_IMAGE fails
-  it('enabled + missing AGENT_HELPER_IMAGE → fatal error', () => {
-    const err = simulateStartup({ OLLAMA_HOST: 'http://ollama:11434', OLLAMA_MODEL_QUALIFIER: 'model:v1' }, true);
-    expect(err).toMatch(/AGENT_HELPER_IMAGE/);
+  it('enabled + missing OLLAMA_MODEL_QUALIFIER is refused', () => {
+    expect(() => resolveExecutorStartupPolicy(true, {
+      ollamaHost: 'http://ollama:11434',
+      agentHelperImage: 'helper:v1',
+    })).toThrow(/OLLAMA_MODEL_QUALIFIER/);
   });
 
-  // Req 8: :latest is rejected
-  it('enabled + :latest OLLAMA_MODEL_QUALIFIER → fatal error', () => {
-    const err = simulateStartup({ OLLAMA_HOST: 'http://ollama:11434', OLLAMA_MODEL_QUALIFIER: 'llama3.2:latest', AGENT_HELPER_IMAGE: 'img:v1' }, true);
-    expect(err).toMatch(/:latest/);
+  it('enabled + missing AGENT_HELPER_IMAGE is refused', () => {
+    expect(() => resolveExecutorStartupPolicy(true, {
+      ollamaHost: 'http://ollama:11434',
+      ollamaModelQualifier: 'model:v1',
+    })).toThrow(/AGENT_HELPER_IMAGE/);
   });
 
-  it('enabled + :latest AGENT_HELPER_IMAGE → fatal error', () => {
-    const err = simulateStartup({ OLLAMA_HOST: 'http://ollama:11434', OLLAMA_MODEL_QUALIFIER: 'model:v1', AGENT_HELPER_IMAGE: 'runner:latest' }, true);
-    expect(err).toMatch(/:latest/);
+  it('enabled + AGENT_RUNNER_IMAGE only is refused', () => {
+    expect(() => resolveExecutorStartupPolicy(true, {
+      agentRunnerImage: 'runner:v1',
+      ollamaHost: 'http://ollama:11434',
+      ollamaModelQualifier: 'model:v1',
+    })).toThrow(/AGENT_HELPER_IMAGE/);
   });
 
-  it('enabled + all valid env → no error', () => {
-    const err = simulateStartup({ OLLAMA_HOST: 'http://ollama:11434', OLLAMA_MODEL_QUALIFIER: 'model:1.0.0', AGENT_HELPER_IMAGE: 'runner:v1.2.3' }, true);
-    expect(err).toBeNull();
+  it('enabled + :latest OLLAMA_MODEL_QUALIFIER is refused', () => {
+    expect(() => resolveExecutorStartupPolicy(true, {
+      ollamaHost: 'http://ollama:11434',
+      ollamaModelQualifier: 'llama3.2:latest',
+      agentHelperImage: 'helper:v1',
+    })).toThrow(/:latest/);
+  });
+
+  it('enabled + :latest AGENT_HELPER_IMAGE is refused', () => {
+    expect(() => resolveExecutorStartupPolicy(true, {
+      ollamaHost: 'http://ollama:11434',
+      ollamaModelQualifier: 'model:v1',
+      agentHelperImage: 'helper:latest',
+    })).toThrow(/:latest/);
+  });
+
+  it('enabled + all explicit variables is accepted', () => {
+    expect(resolveExecutorStartupPolicy(true, {
+      agentRunnerImage: 'kiro-runner:v1',
+      ollamaHost: 'http://ollama:11434',
+      ollamaModelQualifier: 'model:1.0.0',
+      agentHelperImage: 'helper:v1.2.3',
+    }).ollama).toEqual({
+      enabled: true,
+      host: 'http://ollama:11434',
+      modelQualifier: 'model:1.0.0',
+      helperImage: 'helper:v1.2.3',
+    });
+  });
+
+  it('Kiro retains runner fallback and explicit helper precedence', () => {
+    expect(resolveExecutorStartupPolicy(false, {
+      agentRunnerImage: 'kiro-runner:v1',
+    }).kiroHelperImage).toBe('kiro-runner:v1');
+    expect(resolveExecutorStartupPolicy(false, {
+      agentRunnerImage: 'kiro-runner:v1',
+      agentHelperImage: 'shared-helper:v1',
+    }).kiroHelperImage).toBe('shared-helper:v1');
   });
 });
 

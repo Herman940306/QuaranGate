@@ -12,6 +12,7 @@ import { confinedTarget, confinePath, runArgv, runShell } from './execops.js';
 import * as fsops from './fsops.js';
 import { ping } from './docker.js';
 import { loadAgentConfig } from './agentConfig.js';
+import { resolveExecutorStartupPolicy } from './startupPolicy.js';
 import { AgentJobStore } from './agents/jobStore.js';
 import { AgentJobEngine, type AgentBackendAdapter, type EvidenceReaderFactory } from './agents/jobEngine.js';
 import { createDockerEvidenceReader } from './agents/artifactReader.js';
@@ -47,7 +48,7 @@ const JOBS_DB = process.env.JOBS_DB ?? '/jobs/agents.db';
 // behavior). None of these are ever caller-selectable.
 const RUNNER_IMAGE = process.env.AGENT_RUNNER_IMAGE ?? '';
 const PROXY_IMAGE = process.env.AGENT_PROXY_IMAGE ?? '';
-const HELPER_IMAGE = process.env.AGENT_HELPER_IMAGE ?? RUNNER_IMAGE;
+const EXPLICIT_HELPER_IMAGE = process.env.AGENT_HELPER_IMAGE ?? '';
 const KIRO_KEY_PATH = process.env.AGENT_KIRO_KEY_PATH ?? '';
 // Trusted zero-inference verification switch. When set truthy the real Kiro
 // backend stops after ACP session/new (no session/prompt, no model turn) — used
@@ -55,9 +56,10 @@ const KIRO_KEY_PATH = process.env.AGENT_KIRO_KEY_PATH ?? '';
 const KIRO_DRY_RUN = /^(1|true|yes)$/i.test(process.env.AGENT_KIRO_DRY_RUN ?? '');
 
 // O1: Ollama read-only backend (TRUSTED configuration, never caller-selectable).
-// When OLLAMA_HOST / OLLAMA_MODEL_QUALIFIER are both set, the real Ollama backend
-// is wired for `backend: ollama`. AGENT_HELPER_IMAGE is also required (generic
-// helper for read operations). No default model, no :latest, fail closed.
+// When the trusted config enables `backend: ollama`, its explicit environment
+// is validated before the real backend is wired. AGENT_HELPER_IMAGE is required
+// independently of the Kiro runner/helper relationship. No defaults, no
+// :latest, fail closed.
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? '';
 const OLLAMA_MODEL_QUALIFIER = process.env.OLLAMA_MODEL_QUALIFIER ?? '';
 
@@ -224,39 +226,26 @@ let server: ReturnType<typeof app.listen>;
   if (fs.existsSync(AGENTS_CONFIG)) {
     const agentConfig = loadAgentConfig(AGENTS_CONFIG);
 
-    // O1: Fail-closed startup validation (§7) — if Ollama backend is enabled,
-    // require all environment variables; if disabled, permit them to be absent.
     const ollamaBackend = agentConfig.backends.find((b) => b.id === 'ollama');
-    if (ollamaBackend?.enabled) {
-      if (!OLLAMA_HOST) {
-        console.error('FATAL: Ollama backend enabled but OLLAMA_HOST is not set');
-        process.exit(1);
-      }
-      if (!OLLAMA_MODEL_QUALIFIER) {
-        console.error('FATAL: Ollama backend enabled but OLLAMA_MODEL_QUALIFIER is not set');
-        process.exit(1);
-      }
-      if (!HELPER_IMAGE) {
-        console.error('FATAL: Ollama backend enabled but AGENT_HELPER_IMAGE is not set');
-        process.exit(1);
-      }
-      // Reject :latest tags (§8)
-      if (OLLAMA_MODEL_QUALIFIER.includes(':latest') || HELPER_IMAGE.includes(':latest')) {
-        console.error('FATAL: :latest tags not allowed for OLLAMA_MODEL_QUALIFIER or AGENT_HELPER_IMAGE');
-        process.exit(1);
-      }
-    }
+    const startupPolicy = resolveExecutorStartupPolicy(ollamaBackend?.enabled === true, {
+      agentRunnerImage: RUNNER_IMAGE,
+      agentHelperImage: EXPLICIT_HELPER_IMAGE,
+      ollamaHost: OLLAMA_HOST,
+      ollamaModelQualifier: OLLAMA_MODEL_QUALIFIER,
+    });
+    const kiroHelperImage = startupPolicy.kiroHelperImage;
 
     // Step 1: construct + migrate DB.
     agentStore = new AgentJobStore(JOBS_DB);
-    const sandbox = new RunnerSandbox({ image: RUNNER_IMAGE });
+    const sandbox = new RunnerSandbox({ image: startupPolicy.runnerImage });
 
     // A4: wire the real Kiro backend when the trusted runner infrastructure is
     // configured. The factory selects KiroBackend ONLY for backend=kiro and
     // falls back to the fake backend otherwise.
-    // O1: wire the real Ollama backend when OLLAMA_HOST and OLLAMA_MODEL_QUALIFIER
-    // are configured. The factory chain selects OllamaBackend for backend=ollama,
-    // KiroBackend for backend=kiro, and falls back to fake backend otherwise.
+    // O1: wire the real Ollama backend only when trusted config enables it and
+    // startup policy accepts its explicit environment. The factory chain selects
+    // OllamaBackend for backend=ollama, KiroBackend for backend=kiro, and falls
+    // back to the fake backend otherwise.
     let backendFactory:
       | ((job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null)
       | undefined;
@@ -266,12 +255,12 @@ let server: ReturnType<typeof app.listen>;
     // Build composed factory chain (Ollama → Kiro → null)
     const factories: Array<(job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null> = [];
 
-    if (OLLAMA_HOST && OLLAMA_MODEL_QUALIFIER && HELPER_IMAGE) {
+    if (startupPolicy.ollama.enabled) {
       const ollamaFactory = createOllamaBackendFactory({
-        ollamaHost: OLLAMA_HOST,
-        modelQualifier: OLLAMA_MODEL_QUALIFIER,
-        helperImage: HELPER_IMAGE,
-        stagerImage: HELPER_IMAGE,
+        ollamaHost: startupPolicy.ollama.host,
+        modelQualifier: startupPolicy.ollama.modelQualifier,
+        helperImage: startupPolicy.ollama.helperImage,
+        stagerImage: startupPolicy.ollama.helperImage,
         projects: agentConfig.projects,
         OllamaClass: Ollama,
       });
@@ -279,11 +268,11 @@ let server: ReturnType<typeof app.listen>;
       ollamaEnabled = true;
     }
 
-    if (RUNNER_IMAGE && PROXY_IMAGE && KIRO_KEY_PATH) {
-      const credentialManager = new CredentialManager({ credentialPath: KIRO_KEY_PATH, helperImage: HELPER_IMAGE });
+    if (startupPolicy.runnerImage && PROXY_IMAGE && KIRO_KEY_PATH) {
+      const credentialManager = new CredentialManager({ credentialPath: KIRO_KEY_PATH, helperImage: kiroHelperImage });
       const kiroFactory = createKiroBackendFactory(agentConfig.projects, {
-        runnerImage: RUNNER_IMAGE,
-        helperImage: HELPER_IMAGE,
+        runnerImage: startupPolicy.runnerImage,
+        helperImage: kiroHelperImage,
         proxyImage: PROXY_IMAGE,
         proxyCmd: ['node', '/app/dist/executor/agents/egressProxyMain.js'],
         credentialManager,
@@ -325,15 +314,15 @@ let server: ReturnType<typeof app.listen>;
       };
     }
 
-    const evidenceReaderFactory: EvidenceReaderFactory | undefined = HELPER_IMAGE
-      ? (volume, jobId) => createDockerEvidenceReader(volume, HELPER_IMAGE, jobId)
+    const evidenceReaderFactory: EvidenceReaderFactory | undefined = kiroHelperImage
+      ? (volume, jobId) => createDockerEvidenceReader(volume, kiroHelperImage, jobId)
       : undefined;
 
-    const applierIO = HELPER_IMAGE ? createDockerApplierIO() : undefined;
+    const applierIO = kiroHelperImage ? createDockerApplierIO() : undefined;
 
     agentEngine = new AgentJobEngine(
       agentStore, agentConfig, undefined, backendFactory,
-      evidenceReaderFactory, HELPER_IMAGE || undefined, applierIO,
+      evidenceReaderFactory, kiroHelperImage || undefined, applierIO,
     );
 
     // Step 2: recover active jobs (fail closed to FAILED_INFRASTRUCTURE).
