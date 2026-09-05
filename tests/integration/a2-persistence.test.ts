@@ -46,12 +46,12 @@ describe('A2 durable persistence + startup recovery (live)', () => {
 
     // 3) Restart the executor while A is active (SIGTERM → graceful shutdown
     //    fails active work closed; hard-kill fallback is startup recover()).
-    execSync('docker compose -p mcp-ide-bridge restart executor', { stdio: 'ignore' });
+    execSync('docker compose -p quarangate restart executor', { stdio: 'ignore' });
 
     // 4) Wait for the executor to be healthy again.
     for (let i = 0; i < 60; i++) {
       try {
-        const out = execSync('docker inspect -f "{{.State.Health.Status}}" mcp-ide-bridge-executor-1').toString().trim();
+        const out = execSync('docker inspect -f "{{.State.Health.Status}}" quarangate-executor-1').toString().trim();
         if (out === 'healthy') break;
       } catch { /* transient */ }
       await sleep(1000);

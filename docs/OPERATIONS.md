@@ -8,7 +8,7 @@ QuaranGate is intentionally conservative about operational authority. A successf
 > The executor holds `/var/run/docker.sock`. Docker socket access is effectively host-level authority. QuaranGate limits that authority by keeping the executor private and exposing only a narrow internal API, but the residual impact of an executor or Docker-daemon compromise is still high. Never publish the executor and never mount the Docker socket into the gateway or an agent runner.
 
 > [!IMPORTANT]
-> This runbook is finalized against accepted local baseline `18179696b3ef3ff2192805590027d2e1a43a43d4` (`build: add governed offline npm dependency bundle`). N1 was accepted and committed locally with 44/44 unit test files, 1693/1693 tests, source build PASS and a no-cache/network-none Docker build PASS. It was not pushed, deployed, or used to enable O1 as part of that gate.
+> Current source/deployment baseline: `a41c4bc6d568dd00bd323d67c342c1f60f587dd6` (`fix(o1): complete staged workspace qualification`). The governed offline build gate passes at 46/46 unit files and 1825/1825 tests. R2 is deployed and committed workspace staging is proven, but post-enable acceptance remains incomplete because 2/3 audit runs returned an empty result summary.
 
 ---
 
@@ -697,9 +697,11 @@ Kiro automation uses a dedicated automation credential and isolated runner state
 
 ## Ollama O1
 
-The O1 source and model selection are qualified, but final container deployment/post-deployment acceptance remains a separate operational gate. Do not interpret model qualification as production activation.
+The O1 source/model are qualified and the current image is deployed. Post-enable
+production acceptance remains a separate incomplete gate. Do not interpret a
+healthy deployment as accepted repository-inspection behavior.
 
-Current workstation's approved, not-yet-deployed O1 profile:
+Current workstation's deployed O1 profile:
 
 ```text
 model=qwen3.5:4b-q4_K_M
@@ -723,11 +725,54 @@ approximately `102.08%` CPU peak, and approximately `47.60 tok/s` generation.
 Portable Compose requires explicit context/GPU/CPU/RAM/PID inputs with no host
 defaults. Changing them requires deployment requalification.
 
-O1-C3 accepted these exact settings in a disposable hardened Ollama `0.32.3`
+O1-C3 historically accepted these exact settings in a disposable hardened Ollama `0.32.3`
 canary: read-only root, model store read-only, ephemeral Ollama home/temp,
 GPU device `0`, `100% GPU`, context `65536`, successful local inference, no OOM,
 no restart, no pull, and positive `Ollama cloud disabled: true` log evidence.
-Canary resources were removed afterward. Production O1 was not started or enabled.
+Canary resources were removed afterward. Production deployment occurred later.
+
+Current deployment record:
+
+```text
+previous deployment revision:   199c567008d9c8fe047235332ce79dd6a006170b
+previous production image:      sha256:3df1d4f6b88d442e363d67ff2c75582c37805482fce3a85c3acf44d85f0d23d5
+R1 remediated revision:          92b39ec98c423413c61880cde75b3f9ca4d21c45
+R1 production image:             sha256:6f56657ddfd87f145de900c52d18fc49bf8135ee777c42650dd28de341903be9
+current deployed revision:       a41c4bc6d568dd00bd323d67c342c1f60f587dd6
+current gateway image:           sha256:b117566a28030adcf13e41212443fc0d6a4cced3f09bc195104189227cda0c68
+current executor image:          sha256:065b7f00433d7acb787ecad2f92f7d46ce63e047d775bd738b32c3dd1f2970f7
+current acceptance:              PRODUCTION DEPLOYED / POST-ENABLE ACCEPTANCE INCOMPLETE
+```
+
+R2 deployed accepted revision `a41c4bc6d568dd00bd323d67c342c1f60f587dd6`
+on 2026-09-05. Exact committed-HEAD staging, plan, review and all refusal gates
+passed, but audit reliability was 1/3: two successfully completed jobs returned
+zero-byte summaries. O1 therefore remains not production-accepted.
+
+The first production gate recorded 5/6 checks and triggered R1 because
+`agent_result` returned generic telemetry instead of the model's final answer.
+R1 fixed result delivery and preserved the public 16384-character summary bound.
+R1's live matrix then exposed the empty-workspace defect; R2 closed that staging
+lifecycle defect and exposed the separate successful-empty-result contract hole.
+Do not close O1 or compensate with retries, a model change, fallback, wider
+authority, or a manually manufactured summary.
+
+**R3 source candidate (uncommitted, not deployed):** the backend now refuses
+empty or whitespace-only terminal assistant content as an agent failure, records
+only bounded content/thinking byte counts plus tool-call and completion metadata,
+and never publishes raw thinking as the public answer. A streamed response that
+ends without a terminal `done=true` signal also fails closed. No inference knob,
+model, provider, resource, network, fallback, or public-authority setting changed.
+
+Before an R3 qualification commit, the normal desktop host must remove any
+remaining `/tmp/quarangate-r3-*` temporary credential artifacts from the prior
+integration attempt and rerun the focused O1 test, full main unit suite and live
+integration suite. The confined review target passes typecheck and diff/static
+checks but cannot run Vitest because its Alpine/musl dependency environment lacks
+the matching Rollup optional native package. Do not install dependencies or alter
+the lockfile to bypass that environment-only limitation. An immutable R3 image
+must be built from an exact committed revision after explicit commit approval.
+A8 remains blocked until the complete O1 live matrix passes.
 
 `quarangate-ollama-models` is the external persistent artifact store for the verified O1 model. Create and seed it through the separate controlled model-seeding operation before O1 deployment. Compose consumes this exact volume but does not create or own it; deployment must fail closed when it is absent.
 
@@ -888,15 +933,15 @@ npm run build
 The current accepted local baseline is:
 
 ```text
-HEAD: 18179696b3ef3ff2192805590027d2e1a43a43d4
+HEAD: 92b39ec98c423413c61880cde75b3f9ca4d21c45
 TypeScript: PASS
-44 / 44 unit test files PASS
-1693 / 1693 unit tests PASS
+45 / 45 unit test files PASS
+1786 / 1786 unit tests PASS
 source build: PASS
-no-cache network-none Docker build with approved pre-provisioned inputs: PASS
+full governed no-cache/network-none Docker acceptance with approved pre-provisioned inputs: PASS
 ```
 
-The preceding Tini-only checkpoint (`6129d3d`) remains historical evidence at 43 files / 1671 tests.
+The N1 checkpoint (`18179696`) remains historical evidence at 44 files / 1693 tests. The preceding Tini-only checkpoint (`6129d3d`) remains historical evidence at 43 files / 1671 tests.
 
 Integration, Docker, destructive apply and credentialed provider tests have additional prerequisites and authority boundaries. Do not run every test merely because it exists.
 

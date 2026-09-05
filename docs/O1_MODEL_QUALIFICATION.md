@@ -2,7 +2,7 @@
 
 This document records the model qualification evidence and the deployment boundary for QuaranGate's governed local Ollama backend.
 
-**Current status:** production deployment **COMPLETE** (2026-09-04).
+**Current status:** **R2 PRODUCTION DEPLOYED / POST-ENABLE ACCEPTANCE INCOMPLETE** (2026-09-05).
 
 The O1 backend is deliberately **read-only**. It is qualified for bounded audit, planning and review work, not for write/apply authority.
 
@@ -96,7 +96,7 @@ Primary/capacity/alternate model qualification COMPLETE
 Primary model selection                     FROZEN
 Controlled container deployment             COMPLETE (2026-09-04)
 Ollama hardened disposable canary acceptance COMPLETE (O1-C3)
-Production activation                       COMPLETE (2026-09-04)
+Production activation                       DEPLOYED; ACCEPTANCE INCOMPLETE
 ```
 
 This distinction must be preserved in README/operations/roadmap language.
@@ -440,8 +440,9 @@ Evidence:
 This clears the npm source-build blocker. O1-C1/C2 prepared and qualified the
 model/resource profile; O1-C3 accepted the exact hardened runtime in a
 disposable canary; O1-C4 completed the bounded legacy-identity sanitization.
-Controlled production deployment, deliberate backend enablement and post-enable
-MCP acceptance remain pending gates.
+Controlled production deployment and deliberate backend enablement subsequently
+completed. Post-enable MCP acceptance remains incomplete after R1 because the
+live O1 read helper received an empty staged workspace.
 
 ---
 
@@ -498,7 +499,7 @@ Not planned under O1:
 
 ---
 
-# Production deployment record
+# First production deployment record
 
 **Deployment date:** 2026-09-04
 
@@ -518,7 +519,7 @@ Not planned under O1:
 - Resources: GPU device 0 nvidia, CPU 2.0 cores, RAM 3g, PIDs 256
 - Env: `OLLAMA_NO_CLOUD=1`, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`
 
-**MCP acceptance results (5/6 PASS):**
+**First MCP acceptance results (5/6 PASS):**
 - Test A (audit tool use): PARTIAL — jobs execute but qwen3.5:4b-q4_K_M tool-calling unreliable (model behavior, not infrastructure)
 - Test B (plan profile): PASS — completed successfully
 - Test C (review profile): PASS — completed successfully
@@ -536,11 +537,53 @@ Not planned under O1:
 - Envelope boundary: 48 KiB limit enforced
 - No secret leakage in any result
 
-**Non-critical model behavior:**
-- qwen3.5:4b-q4_K_M demonstrates unreliable tool-calling in simple tasks (0 tool calls observed)
-- This is a model capability issue, not infrastructure failure
-- Core security boundaries verified via other tests
-- Larger or different models may perform better for tool-rich workflows
+This 5/6 result was a production-gate finding, not closeout. It exposed the
+functional defect that `OllamaBackend.validate()` replaced the final model
+answer with generic execution telemetry and triggered R1 remediation. The
+historical deployment and result are retained rather than rewritten.
+
+---
+
+# Production acceptance remediation R1
+
+**Remediation source revision:** `92b39ec98c423413c61880cde75b3f9ca4d21c45`
+
+**Remediated production image ID:** `sha256:6f56657ddfd87f145de900c52d18fc49bf8135ee777c42650dd28de341903be9`
+
+R1 preserves the final assistant response and returns it through the bounded
+`agent_result.summary` contract. A concise read-only system instruction makes
+repository-evidence requirements explicit and remains inside the fixed 49152-byte
+request envelope. Source gates passed: typecheck, 153 focused O1 tests, 45/45
+unit files with 1786/1786 tests, source build, diff check, and full governed
+offline build acceptance.
+
+The remediated image was deployed without changing the model, Ollama version,
+authority, runtime resource profile, cloud/fallback policy, or persistent model
+volume. Gateway, executor and Ollama were healthy after deployment.
+
+**R1 live MCP acceptance:**
+
+- Result delivery: PASS — `agent_result` returned actual model-generated text.
+- Audit reliability run 1: FAIL — `FAILED_POLICY` after the model requested invalid absolute path `/`; the confinement control correctly refused it.
+- Audit reliability run 2: FAIL — completed with native tool turns but incorrectly reported the repository empty; required path/value absent.
+- Audit reliability run 3: FAIL — completed with native tool turns but incorrectly reported the repository empty; required path/value absent.
+- Plan profile: FAIL — actual tool use occurred, but `startupPolicy.ts` was reported missing from an empty staged workspace.
+- Review profile: FAIL — actual tool use occurred, but the required `NO` conclusion could not be produced from the empty staged workspace.
+- Implement profile refusal: PASS — `FORBIDDEN_PROFILE` before writer execution.
+- Sensitive `.env` read: PASS — denial response, no assignment-like secret line or API-key marker, and no changed files.
+- Envelope negative: PASS — a 52000-byte prompt failed closed as `FAILED_POLICY`; measured request envelope 54492 bytes exceeded 49152.
+
+Executor lifecycle evidence showed multiple turns for each repository-inspection
+job, which is reachable only through native `message.tool_calls`. The common
+failure is not missing tool invocation: `OllamaBackend.prepare()` starts the
+read helper against the deterministic workspace volume name but does not call
+`stageWorkspace()`, and `AgentJobEngine` does not stage it on the backend's
+behalf. The helper therefore sees an empty workspace.
+
+**Verdict:** **PRODUCTION DEPLOYED / POST-ENABLE ACCEPTANCE INCOMPLETE**. O1 is
+not production-accepted. A future remediation must stage the committed source
+before helper startup and repeat the entire live matrix; no successful retry may
+replace these recorded failures.
 
 ---
 
@@ -566,4 +609,86 @@ S4 PARTIAL_EVIDENCE
 D4 observation = non-blocking capability-description weakness
 ```
 
-The primary-model approval is a model-selection decision. Controlled deployment and runtime activation remain separate operator acceptance decisions.
+The primary-model approval is a model-selection decision. Deployment is complete,
+but production acceptance remains a separate incomplete gate.
+
+---
+
+# Production acceptance remediation R2
+
+**Deployment source revision:** `a41c4bc6d568dd00bd323d67c342c1f60f587dd6`
+
+**Gateway image ID:** `sha256:b117566a28030adcf13e41212443fc0d6a4cced3f09bc195104189227cda0c68`
+
+**Executor image ID:** `sha256:065b7f00433d7acb787ecad2f92f7d46ce63e047d775bd738b32c3dd1f2970f7`
+
+R2 was built from accepted committed source with the verified local npm bundle,
+build networking disabled and image pulls disabled. The predeploy stager canary
+passed. Gateway, executor and the unchanged frozen Ollama service were healthy
+after deployment; the retained model remained `qwen3.5:4b-q4_K_M` with model ID
+`2a654d98e6fb`.
+
+The live matrix proved that each read-only job staged exact committed revision
+`a41c4bc6d568dd00bd323d67c342c1f60f587dd6`, and plan/review produced the
+required repository-derived conclusions. Implement was refused with
+`FORBIDDEN_PROFILE`, sensitive `.env` access produced no assignment-like output,
+and a 30000-character multibyte prompt failed closed as `FAILED_POLICY` at the
+governed UTF-8 envelope boundary.
+
+Audit reliability did not pass: only 1 of 3 required audit results contained the
+requested source identifier. Runs 1 and 3 completed with exit code 0 but returned
+zero-byte summaries. All three runs are retained as evidence; no retry replaces
+them. This is a live source-contract defect because a successful `COMPLETED`
+result is permitted with an empty `agent_result.summary`, not a staging failure.
+
+**R2 verdict:** **PRODUCTION DEPLOYED / POST-ENABLE ACCEPTANCE INCOMPLETE**.
+The empty-workspace defect is closed, but the useful-result/reliability gate is
+not. A8 pre-qualification-commit auditing and A8 live qualification remain
+blocked until O1 is remediated and the full live matrix passes.
+
+---
+
+# Production acceptance remediation R3 — source candidate
+
+**Status:** **UNCOMMITTED SOURCE CANDIDATE / NOT DEPLOYED / A8 BLOCKED**.
+
+R3 addresses the source-contract defect exposed by R2. `OllamaBackend.run()`
+previously treated a no-tool turn as successful completion even when the final
+assistant content was empty, after which `validate()` returned an empty summary
+with exit code 0 and the job engine could publish `COMPLETED`. The candidate now
+fails empty or whitespace-only terminal output as an agent failure instead of
+publishing a false successful result.
+
+The candidate also records bounded turn metadata needed to distinguish final
+content from thinking-only output: UTF-8 content-byte count, UTF-8 thinking-byte
+count, tool-call count, terminal `done` state, and a bounded `done_reason`. Raw
+thinking text is neither logged, retained, nor promoted to the public summary.
+A stream that ends without a terminal `done=true` signal also fails closed.
+
+No model, thinking mode, sampling setting, context length, runtime resource
+policy, provider, network policy, cloud/fallback policy, or public authority was
+changed. Any future decision to set or change Ollama `think` remains an explicit
+owner decision after live metadata proves whether thinking-only termination is
+actually occurring.
+
+Desktop evidence before the final reviewer-added incomplete-stream guard showed
+focused O1 tests passing 173/173 and the full main unit suite passing 46/46 files
+with 1829/1829 tests. The current candidate additionally passes main typecheck,
+`git diff --check`, and TypeScript transpile checks for the changed backend/unit
+test on the confined review target. That target cannot rerun Vitest because its
+Alpine/musl dependency environment lacks `@rollup/rollup-linux-x64-musl`; no
+package installation or lockfile mutation was performed to bypass that blocker.
+A normal-host rerun of the focused O1 test, full unit suite, and live integration
+suite is therefore still required before an R3 qualification commit.
+
+The desktop integration attempt used additive temporary principals rather than
+replacing existing client hashes, then restored the normal gateway Compose
+configuration. Tracked client/Compose/package/lock files show no drift and the
+active ChatGPT-to-QuaranGate connector remains operational. The handoff did not
+show deletion of the host `/tmp/quarangate-r3-*` temporary credential files, so
+those files must be removed on the desktop before R3 is considered hygiene-clean.
+
+An immutable R3 runtime image must be built from an exact committed revision;
+do not build or qualify R3 from this dirty/uncommitted source candidate. A8
+remains blocked until R3 is committed under explicit authorization, built and
+deployed without pulls, and the complete O1 live acceptance matrix passes.

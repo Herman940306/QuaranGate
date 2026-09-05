@@ -204,7 +204,7 @@ describe('QuaranGate — integration (live stack)', () => {
       expect(names).toContain('targets_list');
       expect(names).toContain('terminal_exec');
       expect(names).toContain('fs_patch');
-      expect(names.length).toBe(14);
+      expect(names.length).toBe(23);
     });
     it('unknown tool call returns an error result', async () => {
       const res: any = await vscode.callTool({ name: 'does_not_exist', arguments: {} });

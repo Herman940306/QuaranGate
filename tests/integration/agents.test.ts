@@ -149,12 +149,12 @@ describe('Agent Control Plane — live integration', () => {
       }
     });
 
-    it('rejects sessionPolicy resume explicitly', async () => {
+    it('rejects incomplete resume before and after the A8 deployment boundary', async () => {
       const res = await callTool(owner, 'agent_dispatch', {
         backend: 'kiro', project: 'mcp-ide-bridge', profile: 'audit', prompt: 'x', sessionPolicy: 'resume',
       });
       expect(res.isError).toBe(true);
-      expect(res.text).toContain('A8');
+      expect(res.text).toMatch(/sessionId|phase A8/);
     });
   });
 

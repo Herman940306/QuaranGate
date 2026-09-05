@@ -253,6 +253,18 @@ function log(msg: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ level: 'info', msg, ...fields }));
 }
 
+class OllamaAgentOutputError extends Error {
+  constructor(message = 'ollama backend returned no final answer') {
+    super(message);
+    this.name = 'OllamaAgentOutputError';
+  }
+}
+
+function boundedDoneReason(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  return /^[A-Za-z0-9_.-]{1,64}$/.test(value) ? value : 'other';
+}
+
 export class OllamaBackend implements AgentBackendAdapter {
   private readonly ollama: Ollama;
   private helperContainerId: string | null = null;
@@ -372,6 +384,10 @@ export class OllamaBackend implements AgentBackendAdapter {
 
       // §9: stream: true as required by O1 spec
       let fullContent = '';
+      let contentBytes = 0;
+      let thinkingBytes = 0;
+      let done = false;
+      let doneReason: string | null = null;
       let toolCalls: Array<{ function: { name: string; arguments: Record<string, unknown> } }> = [];
 
       const request = buildOllamaChatRequest(this.opts.modelQualifier, messages);
@@ -381,13 +397,37 @@ export class OllamaBackend implements AgentBackendAdapter {
       // Consume the stream
       for await (const chunk of stream) {
         this.checkAbort(signal);
-        if (chunk.message.content) fullContent += chunk.message.content;
+        if (chunk.message.content) {
+          fullContent += chunk.message.content;
+          contentBytes += Buffer.byteLength(chunk.message.content, 'utf8');
+        }
+        if (chunk.message.thinking) {
+          thinkingBytes += Buffer.byteLength(chunk.message.thinking, 'utf8');
+        }
         if (chunk.message.tool_calls) {
           for (const tc of chunk.message.tool_calls) {
             toolCalls.push(tc as { function: { name: string; arguments: Record<string, unknown> } });
           }
         }
-        if (chunk.done) break;
+        if (chunk.done) {
+          done = true;
+          doneReason = boundedDoneReason(chunk.done_reason);
+          break;
+        }
+      }
+
+      log('ollama backend: turn metadata', {
+        jobId: this.job.jobId,
+        turn: this.turnCount,
+        contentBytes,
+        thinkingBytes,
+        toolCallCount: toolCalls.length,
+        done,
+        doneReason,
+      });
+
+      if (!done) {
+        throw new OllamaAgentOutputError('ollama backend stream ended without terminal done signal');
       }
 
       // Add assistant response to conversation
@@ -401,7 +441,9 @@ export class OllamaBackend implements AgentBackendAdapter {
 
       // §4: ONLY native message.tool_calls are authoritative
       if (toolCalls.length === 0) {
-        // No tool calls — conversation complete
+        // No tool calls terminate successfully only with a useful public answer.
+        // Hidden thinking is counted above but is never retained or promoted.
+        if (fullContent.trim().length === 0) throw new OllamaAgentOutputError();
         this.finalAnswer = fullContent;
         log('ollama backend: inference complete (no tool calls)', {
           jobId: this.job.jobId, turns: this.turnCount,
@@ -480,6 +522,7 @@ export class OllamaBackend implements AgentBackendAdapter {
   }> {
     try {
       this.checkAbort(signal);
+      if (this.finalAnswer.trim().length === 0) throw new OllamaAgentOutputError();
       // No artifact production (§21 — O1 is read-only, never produces B3 artifact)
       return {
         // Keep the provider response inside the existing public agent_result
@@ -499,6 +542,7 @@ export class OllamaBackend implements AgentBackendAdapter {
   }
 
   isAgentFailure(e: unknown): boolean {
+    if (e instanceof OllamaAgentOutputError) return true;
     if (!(e instanceof Error)) return false;
     const msg = e.message.toLowerCase();
     // Classify Ollama inference / network errors as agent failures

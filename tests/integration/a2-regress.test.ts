@@ -5,7 +5,7 @@ import { connect, callTool, loadKeys } from './helpers.js';
 const keys = loadKeys();
 
 // Existing-tool regression through a dedicated full-scope test principal,
-// proving the 14 original tools still operate after Agent Control Plane (A2).
+// proving the 14 original tools still operate within the current 23-tool surface.
 describe('existing 14 tools still operate (A2 regression)', () => {
   let c: Client;
   afterAll(async () => { await c?.close(); });
@@ -13,7 +13,7 @@ describe('existing 14 tools still operate (A2 regression)', () => {
   it('exercises fs/terminal/git/process on the demo target', async () => {
     c = await connect(keys.itest_full);
     const { tools } = await c.listTools();
-    expect(tools).toHaveLength(20);
+    expect(tools).toHaveLength(23);
 
     expect((await callTool(c, 'targets_list', {})).json.targets.some((t: any) => t.id === 'demo')).toBe(true);
     expect((await callTool(c, 'target_inspect', { target: 'demo' })).json.running).toBe(true);

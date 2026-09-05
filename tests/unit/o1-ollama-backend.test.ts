@@ -311,14 +311,6 @@ describe('O1 tool authority', () => {
     // Inject a fake prepared target so prepare() is skipped
     (backend as unknown as Record<string, unknown>)['target'] = { containerId: 'fake', workspace: '/workspace' };
 
-    // Mock createContainer/startContainer to avoid Docker calls
-    vi.mock('../../src/executor/docker.js', () => ({
-      createContainer: vi.fn().mockResolvedValue('helper-cid'),
-      startContainer: vi.fn().mockResolvedValue(undefined),
-      stopContainer: vi.fn().mockResolvedValue(undefined),
-      removeContainer: vi.fn().mockResolvedValue(undefined),
-    }));
-
     // run() should complete without error (no tool execution)
     await expect(backend.run(new AbortController().signal)).resolves.not.toThrow();
     expect(mockChat).toHaveBeenCalledOnce();
@@ -506,6 +498,94 @@ describe('O1 governed result delivery', () => {
     const result = await backend.validate(new AbortController().signal);
 
     expect(result.summary).toBe('x'.repeat(MAX_AGENT_SUMMARY_CHARS));
+  });
+
+  it('refuses empty no-tool output as an agent failure and cannot validate it successfully', async () => {
+    const { backend } = await makeResultBackend([
+      { message: { content: '', tool_calls: [] }, done: true, done_reason: 'stop' },
+    ]);
+
+    let error: unknown;
+    try { await backend.run(new AbortController().signal); } catch (caught) { error = caught; }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('ollama backend returned no final answer');
+    expect(backend.isAgentFailure(error)).toBe(true);
+    await expect(backend.validate(new AbortController().signal)).rejects.toThrow('ollama backend returned no final answer');
+  });
+
+  it('refuses whitespace-only no-tool output', async () => {
+    const { backend } = await makeResultBackend([
+      { message: { content: ' \n\t ', tool_calls: [] }, done: true, done_reason: 'stop' },
+    ]);
+
+    await expect(backend.run(new AbortController().signal)).rejects.toThrow('ollama backend returned no final answer');
+  });
+
+  it('refuses a stream that ends without a terminal done signal even when content was emitted', async () => {
+    const { backend } = await makeResultBackend([
+      { message: { content: 'partial answer', tool_calls: [] }, done: false, done_reason: '' },
+    ]);
+
+    let error: unknown;
+    try { await backend.run(new AbortController().signal); } catch (caught) { error = caught; }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('ollama backend stream ended without terminal done signal');
+    expect(backend.isAgentFailure(error)).toBe(true);
+    await expect(backend.validate(new AbortController().signal)).rejects.toThrow('ollama backend returned no final answer');
+  });
+
+  it('counts thinking-only output without logging, retaining, or publishing raw thinking', async () => {
+    const hiddenThinking = 'PRIVATE_THINKING_SENTINEL';
+    const unboundedDoneReason = 'PRIVATE_DONE_REASON_SENTINEL/'.repeat(10);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { backend } = await makeResultBackend([
+      { message: { content: '', thinking: hiddenThinking, tool_calls: [] }, done: true, done_reason: unboundedDoneReason },
+    ]);
+
+    await expect(backend.run(new AbortController().signal)).rejects.toThrow('ollama backend returned no final answer');
+    const logs = logSpy.mock.calls.map(([line]) => String(line));
+    const metadata = logs.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.msg === 'ollama backend: turn metadata');
+
+    expect(metadata).toMatchObject({
+      jobId: JOB,
+      turn: 1,
+      contentBytes: 0,
+      thinkingBytes: Buffer.byteLength(hiddenThinking, 'utf8'),
+      toolCallCount: 0,
+      done: true,
+      doneReason: 'other',
+    });
+    expect(logs.join('\n')).not.toContain(hiddenThinking);
+    expect(logs.join('\n')).not.toContain(unboundedDoneReason);
+    expect(JSON.stringify(backend)).not.toContain(hiddenThinking);
+    await expect(backend.validate(new AbortController().signal)).rejects.toThrow('ollama backend returned no final answer');
+  });
+
+  it('records bounded metadata for tool-call then non-empty final response', async () => {
+    const hiddenThinking = 'TOOL_THINKING_SENTINEL';
+    const nativeToolCall = { function: { name: 'literal_search', arguments: { directory: 'src', query: 'needle' } } };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { backend } = await makeResultBackend([
+      { message: { content: '', thinking: hiddenThinking, tool_calls: [nativeToolCall] }, done: true, done_reason: 'stop' },
+      { message: { content: 'Evidence-based final.', tool_calls: [] }, done: true, done_reason: 'stop' },
+    ]);
+    (backend as unknown as { executeToolCall: (call: unknown) => Promise<string> }).executeToolCall = vi.fn().mockResolvedValue('{"success":true}');
+
+    await backend.run(new AbortController().signal);
+    const result = await backend.validate(new AbortController().signal);
+    const logs = logSpy.mock.calls.map(([line]) => String(line));
+    const metadata = logs.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((entry) => entry.msg === 'ollama backend: turn metadata');
+
+    expect(result.summary).toBe('Evidence-based final.');
+    expect(metadata).toEqual([
+      expect.objectContaining({ turn: 1, contentBytes: 0, thinkingBytes: Buffer.byteLength(hiddenThinking), toolCallCount: 1, doneReason: 'stop' }),
+      expect.objectContaining({ turn: 2, contentBytes: Buffer.byteLength('Evidence-based final.'), thinkingBytes: 0, toolCallCount: 0, doneReason: 'stop' }),
+    ]);
+    expect(logs.join('\n')).not.toContain(hiddenThinking);
   });
 });
 
