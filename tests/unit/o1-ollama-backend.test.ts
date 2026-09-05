@@ -1762,7 +1762,11 @@ describe('O1 conservative chat envelope', () => {
     expect(MAX_OLLAMA_CHAT_ENVELOPE_BYTES).toBe(48 * 1024);
     await expect(backend.run(new AbortController().signal)).resolves.not.toThrow();
     expect(mockChat).toHaveBeenCalledOnce();
-    const request = mockChat.mock.calls[0]?.[0] as { messages: Array<{ role: string; content: string }> };
+    const request = mockChat.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+      think?: boolean | 'high' | 'medium' | 'low';
+    };
+    expect(request.think).toBe(false);
     expect(request.messages[0]).toEqual(expect.objectContaining({ role: 'system' }));
     expect(request.messages[0]?.content).toMatch(/claims about repository contents must be based on those tools/i);
     expect(request.messages[0]?.content).toMatch(/no write, shell, web, apply, artifact, or fallback authority/i);
@@ -1820,6 +1824,7 @@ describe('O1 conservative chat envelope', () => {
 
     await expect(backend.run(new AbortController().signal)).resolves.not.toThrow();
     expect(mockChat).toHaveBeenCalledTimes(2);
+    expect(mockChat.mock.calls.every((call) => call[0]?.think === false)).toBe(true);
     const secondRequest = mockChat.mock.calls[1]?.[0] as { model: string; messages: Array<{ role: string; content: string }> };
     const replacement = secondRequest.messages.find((message) => message.role === 'tool');
     expect(replacement?.role).toBe('tool');

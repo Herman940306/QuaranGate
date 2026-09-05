@@ -139,6 +139,7 @@ function buildOllamaChatRequest(modelQualifier: string, messages: Message[]) {
     messages,
     tools: OLLAMA_TOOL_DEFINITIONS as unknown as import('ollama').Tool[],
     stream: true as const,
+    think: false as const,
   };
 }
 
