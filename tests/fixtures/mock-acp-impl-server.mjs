@@ -9,19 +9,34 @@
  *
  * Prompt behavior:
  *   contains "IMPLEMENT" -> write target.ts (modify) and generated.ts (create)
- *     directly to /workspace, emit read + edit tool_calls, then end_turn.
+ *     directly to WORKSPACE, emit read + edit tool_calls, then end_turn.
  *   contains "WIDEN"     -> emit a `bash` tool_call to prove forbidden kinds
  *     still fail read/write validation.
  *
  * No server->client fs requests are issued here — that was the speculative
  * client-FS path removed in the A5 forensic gate.
+ *
+ * H1-5 WORKSPACE ISOLATION FIX:
+ *   The workspace path is read from the ACP_MOCK_WORKSPACE environment variable
+ *   set by the test runner. It MUST NOT default to /workspace unconditionally:
+ *   writing to /workspace on the host (a real path in many CI/Docker environments)
+ *   would leak mock fixture artifacts outside the disposable test workspace,
+ *   contaminating the repository root or other host directories.
+ *
+ *   If ACP_MOCK_WORKSPACE is not set, the mock silently skips all filesystem
+ *   writes (the tool_call notifications are still emitted so the ACP protocol
+ *   behaviour can be tested without any filesystem side-effects). This keeps the
+ *   mock safe to run in any host context.
  */
 import readline from 'node:readline';
 import fs from 'node:fs';
 import path from 'node:path';
 
 let sessionId = null;
-const WORKSPACE = '/workspace';
+
+// H1-5: Read workspace from env — NEVER hardcode /workspace.
+// If not set: writes are skipped (safe default; protocol behaviour is unchanged).
+const WORKSPACE = process.env.ACP_MOCK_WORKSPACE ?? null;
 
 function send(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
 function respond(id, result) { send({ jsonrpc: '2.0', id, result }); }
@@ -82,13 +97,19 @@ rl.on('line', (line) => {
     // its fsWrite tool (pre-approved by allowedTools + --trust-tools).
     notify('session/update', { sessionId, update: { sessionUpdate: 'tool_call', toolCallId: 'r1', kind: 'read', title: 'read target', status: 'completed' } });
 
-    // Write files directly — this is the real path for an approved fsWrite.
-    try {
-      fs.writeFileSync(path.join(WORKSPACE, 'target.ts'), 'export const target = 2;\n', 'utf8');
-      fs.writeFileSync(path.join(WORKSPACE, 'generated.ts'), 'export const generated = true;\n', 'utf8');
-    } catch (e) {
-      // If workspace isn't mounted (unit test context), tolerate the error.
+    // H1-5: Write only into the injected disposable workspace — never to a
+    // hardcoded path. If no workspace is configured, skip filesystem writes
+    // entirely (the tool_call notifications are still emitted for protocol
+    // behaviour testing).
+    if (WORKSPACE) {
+      try {
+        fs.writeFileSync(path.join(WORKSPACE, 'target.ts'), 'export const target = 2;\n', 'utf8');
+        fs.writeFileSync(path.join(WORKSPACE, 'generated.ts'), 'export const generated = true;\n', 'utf8');
+      } catch (e) {
+        // Write failure: tolerate (mirrors permission-denied scenario in the FAIL path).
+      }
     }
+    // If WORKSPACE is null: no filesystem writes at all. Protocol continues correctly.
 
     notify('session/update', { sessionId, update: { sessionUpdate: 'tool_call', toolCallId: 'e1', kind: 'edit', title: 'write files', status: 'completed' } });
     notify('session/update', { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Implemented in sandbox.' } } });

@@ -333,7 +333,13 @@ export async function removeContainer(id: string, force = true): Promise<void> {
 // removal are always scoped by the managed-ownership label filter.
 // ---------------------------------------------------------------------------
 
-export interface NetworkSummary { Id: string; Name: string; Labels: Record<string, string> | null }
+export interface NetworkSummary {
+  Id: string;
+  Name: string;
+  Labels: Record<string, string> | null;
+  /** Container IDs connected to the network (keyed by container ID). Present in Docker API /networks response. */
+  Containers: Record<string, unknown> | null | undefined;
+}
 
 /** Create a user-defined network. `internal:true` gives NO external route. */
 export async function createNetwork(name: string, opts: { internal: boolean; labels: Record<string, string> }): Promise<string> {

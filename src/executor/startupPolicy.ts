@@ -4,6 +4,7 @@
  * Keeps provider enablement and trusted environment requirements in the same
  * production path used to decide which real backend factories are wired.
  */
+import { validateImageRef } from '../shared/imageRef.js';
 
 export interface ExecutorStartupEnvironment {
   agentRunnerImage?: string;
@@ -62,8 +63,18 @@ export function resolveExecutorStartupPolicy(
   if (!stagerImage) {
     throw new Error('Ollama backend enabled but AGENT_STAGER_IMAGE is not set');
   }
-  if (modelQualifier.includes(':latest') || explicitHelperImage.includes(':latest') || stagerImage.includes(':latest')) {
-    throw new Error(':latest tags not allowed for OLLAMA_MODEL_QUALIFIER, AGENT_HELPER_IMAGE, or AGENT_STAGER_IMAGE');
+  // H1-1: Use central image reference validator — catches registry:port/repo
+  // (implicit latest) as well as explicit :latest and malformed references.
+  // The old includes(':latest') check missed the implicit-latest failure class.
+  const helperErr = validateImageRef(explicitHelperImage);
+  if (helperErr) throw new Error(`AGENT_HELPER_IMAGE: ${helperErr}`);
+  const stagerErr = validateImageRef(stagerImage);
+  if (stagerErr) throw new Error(`AGENT_STAGER_IMAGE: ${stagerErr}`);
+  // modelQualifier is a model specifier, not a Docker image reference; it uses
+  // a different but overlapping format (name:tag or name). We keep the old
+  // exact-string check for it since it is NOT a Docker image reference.
+  if (modelQualifier.includes(':latest')) {
+    throw new Error(':latest tag not allowed for OLLAMA_MODEL_QUALIFIER');
   }
 
   return {

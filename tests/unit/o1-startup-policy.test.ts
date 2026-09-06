@@ -48,7 +48,7 @@ describe('O1 startup policy — stager validation', () => {
         agentHelperImage: 'helper:v1.0.0',
         agentStagerImage: 'stager:latest', // :latest tag forbidden
       })
-    ).toThrow(/:latest tags not allowed/);
+    ).toThrow(/uses the explicit :latest tag \(refused\)/);
   });
 
   it('enabled Ollama rejects :latest in stager even with valid qualifier and helper', () => {
@@ -59,7 +59,7 @@ describe('O1 startup policy — stager validation', () => {
         agentHelperImage: 'helper:v1.0.0', // valid
         agentStagerImage: 'quarangate/stager:latest', // :latest forbidden
       })
-    ).toThrow(/:latest tags not allowed/);
+    ).toThrow(/uses the explicit :latest tag \(refused\)/);
   });
 
   // Test 3: Runner cannot substitute for stager
@@ -161,7 +161,7 @@ describe('O1 startup policy — stager validation', () => {
         agentHelperImage: 'helper:v1.0.0',
         agentStagerImage: 'stager:v1.0.0',
       })
-    ).toThrow(/:latest tags not allowed/);
+    ).toThrow(/:latest tag not allowed for OLLAMA_MODEL_QUALIFIER/);
 
     // :latest in helperImage
     expect(() =>
@@ -171,7 +171,7 @@ describe('O1 startup policy — stager validation', () => {
         agentHelperImage: 'helper:latest', // :latest forbidden
         agentStagerImage: 'stager:v1.0.0',
       })
-    ).toThrow(/:latest tags not allowed/);
+    ).toThrow(/uses the explicit :latest tag \(refused\)/);
 
     // :latest in stagerImage
     expect(() =>
@@ -181,7 +181,7 @@ describe('O1 startup policy — stager validation', () => {
         agentHelperImage: 'helper:v1.0.0',
         agentStagerImage: 'stager:latest', // :latest forbidden
       })
-    ).toThrow(/:latest tags not allowed/);
+    ).toThrow(/uses the explicit :latest tag \(refused\)/);
   });
 
   it('enabled Ollama with all images explicitly versioned succeeds', () => {
@@ -203,7 +203,7 @@ describe('O1 startup policy — stager validation', () => {
   });
 
   it(':latest check is comprehensive across all Ollama image parameters', () => {
-    // Verify the error message mentions all three image types
+    // Verify the error message identifies the specific image parameter
     expect(() =>
       resolveExecutorStartupPolicy(true, {
         ollamaHost: 'http://ollama:11434',
@@ -211,7 +211,7 @@ describe('O1 startup policy — stager validation', () => {
         agentHelperImage: 'helper:v1.0.0',
         agentStagerImage: 'stager:latest',
       })
-    ).toThrow(/:latest tags not allowed for OLLAMA_MODEL_QUALIFIER, AGENT_HELPER_IMAGE, or AGENT_STAGER_IMAGE/);
+    ).toThrow(/AGENT_STAGER_IMAGE.*uses the explicit :latest tag \(refused\)/);
   });
 
   // Additional edge cases for comprehensive coverage

@@ -17,6 +17,8 @@ import { loadGitHubConfig } from './githubConfig.js';
 import { GitHubControl } from './githubControl.js';
 import { registerGitHubRoutes } from './githubRoutes.js';
 import { resolveExecutorStartupPolicy } from './startupPolicy.js';
+import { validateImageRef } from '../shared/imageRef.js';
+import { checkReadiness } from './readiness.js';
 import { AgentJobStore } from './agents/jobStore.js';
 import { AgentJobEngine, type AgentBackendAdapter, type EvidenceReaderFactory } from './agents/jobEngine.js';
 import { createDockerEvidenceReader } from './agents/artifactReader.js';
@@ -117,9 +119,14 @@ app.get('/healthz', (_req, res) => {
 });
 
 app.get('/readyz', handle(async () => {
-  const ok = await ping();
-  if (!ok) throw new BridgeError('DOCKER_UNAVAILABLE', 'docker not reachable', 503);
-  return { ok: true };
+  // H1-2: Full authority readiness — socket type + Docker API ping (bounded).
+  const SOCK = process.env.DOCKER_SOCK ?? '/var/run/docker.sock';
+  const result = await checkReadiness(SOCK);
+  if (!result.ready) {
+    // 503 with a diagnostic code — never leaks the socket path or secrets.
+    throw new BridgeError('DOCKER_UNAVAILABLE', `${result.code}: ${result.detail}`, 503);
+  }
+  return { ok: true, code: result.code };
 }));
 
 app.post('/reload', handle(async () => {
@@ -315,6 +322,11 @@ let server: ReturnType<typeof app.listen>;
     }
 
     if (startupPolicy.runnerImage && PROXY_IMAGE && KIRO_KEY_PATH) {
+      // H1-1: validate runner and proxy images using the central validator before wiring.
+      const runnerImgErr = validateImageRef(startupPolicy.runnerImage);
+      if (runnerImgErr) throw new BridgeError('PRECONDITION_FAILED', `AGENT_RUNNER_IMAGE: ${runnerImgErr}`, 503);
+      const proxyImgErr = validateImageRef(PROXY_IMAGE);
+      if (proxyImgErr) throw new BridgeError('PRECONDITION_FAILED', `AGENT_PROXY_IMAGE: ${proxyImgErr}`, 503);
       const credentialManager = new CredentialManager({ credentialPath: KIRO_KEY_PATH, helperImage: kiroHelperImage });
       const kiroFactory = createKiroBackendFactory(agentConfig.projects, {
         runnerImage: startupPolicy.runnerImage,
@@ -396,6 +408,7 @@ let server: ReturnType<typeof app.listen>;
       level: 'info', msg: 'sandbox orphan reconciliation',
       removedContainers: orphanResult.removedContainers.length,
       removedVolumes: orphanResult.removedVolumes.length,
+      removedNetworks: orphanResult.removedNetworks.length,
     }));
 
     // Steps 5-7: A6 evidence lifecycle (reconcile EXPIRED → Lane A → Lane B).
@@ -413,8 +426,10 @@ let server: ReturnType<typeof app.listen>;
   // GitHub accounts and gateway githubAccounts grants.
   if (fs.existsSync(GITHUB_CONFIG)) {
     if (!loadedAgentConfig) throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GitHub control requires the trusted agent project registry', 503);
-    if (!GITHUB_GIT_HELPER_IMAGE || GITHUB_GIT_HELPER_IMAGE.endsWith(':latest')) {
-      throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GITHUB_GIT_HELPER_IMAGE must be an explicit non-latest image', 503);
+    // H1-1: central validator catches registry:port/repo (implicit latest) in addition to explicit :latest.
+    const ghImgErr = validateImageRef(GITHUB_GIT_HELPER_IMAGE);
+    if (!GITHUB_GIT_HELPER_IMAGE || ghImgErr) {
+      throw new BridgeError('GITHUB_NOT_CONFIGURED', `GITHUB_GIT_HELPER_IMAGE must be an explicit non-latest image: ${ghImgErr ?? 'empty'}`, 503);
     }
     if (!GITHUB_CONTROL_NETWORK) throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GITHUB_CONTROL_NETWORK is required', 503);
     let githubHelperImageId: string;

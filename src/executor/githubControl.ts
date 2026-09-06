@@ -10,6 +10,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { BridgeError } from '../shared/errors.js';
+import { validateImageRef } from '../shared/imageRef.js';
 import {
   GITHUB_BRANCH_PATTERN,
   GITHUB_COMMIT_PATTERN,
@@ -123,7 +124,9 @@ export function buildGitHubHeadCheckSpec(opts: {
   hostPath: string;
   operationId: string;
 }): Record<string, unknown> {
-  if (!opts.image || opts.image.endsWith(':latest')) throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GitHub helper image must be an explicit immutable/non-latest selection', 503);
+  // H1-1: central validator catches registry:port/repo (implicit latest) in addition to explicit :latest.
+  const imgErr = validateImageRef(opts.image);
+  if (!opts.image || imgErr) throw new BridgeError('GITHUB_NOT_CONFIGURED', `GitHub helper image must be an explicit immutable non-latest image: ${imgErr ?? 'empty'}`, 503);
   if (!opts.hostPath.startsWith('/') || opts.hostPath.includes('\0')) throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GitHub project hostPath is invalid', 503);
   return {
     Image: opts.image,
@@ -170,7 +173,8 @@ export function buildGitHubPushHelperSpec(opts: {
   expectedHead: string;
   remoteBranch: string;
 }): Record<string, unknown> {
-  if (!opts.image || opts.image.endsWith(':latest')) throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GitHub helper image must be an explicit immutable/non-latest selection', 503);
+  const imgErr2 = validateImageRef(opts.image);
+  if (!opts.image || imgErr2) throw new BridgeError('GITHUB_NOT_CONFIGURED', `GitHub helper image must be an explicit immutable non-latest image: ${imgErr2 ?? 'empty'}`, 503);
   if (!opts.hostPath.startsWith('/') || opts.hostPath.includes('\0')) throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GitHub project hostPath is invalid', 503);
   if (!opts.controlNetwork) throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GitHub control network is not configured', 503);
   const remoteUrl = `https://github.com/${opts.owner}/${opts.repo}.git`;

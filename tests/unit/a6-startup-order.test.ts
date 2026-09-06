@@ -122,7 +122,7 @@ vi.mock('../../src/executor/agents/sandboxRunner.js', async (importOriginal) => 
     constructor(_opts: unknown) {}
     async reconcileOrphans() {
       h.stage('sandbox.reconcileOrphans');
-      return { removedContainers: [], removedVolumes: [] };
+      return { removedContainers: [], removedVolumes: [], removedNetworks: [] };
     }
   }
   return { ...actual, RunnerSandbox: FakeSandbox };

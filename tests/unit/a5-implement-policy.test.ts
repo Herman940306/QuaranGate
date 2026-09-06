@@ -9,10 +9,12 @@
  *   - the capability is keyed on the profile id — never on prompt text,
  *   - workspace-supplied MCP/hooks cannot widen the agent (empty + disabled).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import {
   resolveProfileCapability, assertKiroProfile, isWriteProfile,
   ACP_READONLY_TOOLS, ACP_IMPLEMENT_TOOLS, ACP_IMPLEMENT_TRUST_TOOLS_FLAG,
@@ -152,14 +154,32 @@ describe('A5 tool OUTCOME semantics — a CALLED write is not a SUCCEEDED write'
 });
 
 describe('A5 outcome evidence survives the runner boundary (runAcpJob, no provider)', () => {
+  // H1-5: disposable workspace for each test run. The mock writes only here.
+  let tmpWorkspace: string | null = null;
+
+  afterEach(() => {
+    if (tmpWorkspace) {
+      try { rmSync(tmpWorkspace, { recursive: true, force: true }); } catch { /* best effort */ }
+      tmpWorkspace = null;
+    }
+    // H1-5: clean up the env var after each test.
+    delete process.env.ACP_MOCK_WORKSPACE;
+  });
+
   function implControl(overrides: Partial<RunnerControl> = {}): RunnerControl {
+    // H1-5: provide a per-test disposable workspace via ACP_MOCK_WORKSPACE.
+    // The mock writes generated.ts and target.ts here, never to /workspace or cwd.
+    // runAcpJob passes process.env to AcpDriver which forks the mock; the env
+    // var is inherited by the mock child process.
+    tmpWorkspace = mkdtempSync(join(tmpdir(), 'a5-impl-test-'));
+    process.env.ACP_MOCK_WORKSPACE = tmpWorkspace;
     return {
       acpCommand: process.execPath,
       acpPrefixArgs: [IMPL_MOCK],
       agent: 'mcp_impl_' + randomBytes(16).toString('hex'),
       model: 'claude-sonnet-4.5',
       trustTools: ACP_IMPLEMENT_TRUST_TOOLS_FLAG,
-      cwd: process.cwd(),
+      cwd: tmpWorkspace,
       prompt: 'unused',
       dryRun: false,
       ...overrides,

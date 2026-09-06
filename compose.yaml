@@ -126,8 +126,14 @@ services:
     networks:
       - internal
     # No published ports. Reachable only from the gateway over the internal net.
+    # H1-2: /readyz is the AUTHORITY readiness check (Docker socket type + API
+    # ping). /healthz is process liveness only and is deliberately NOT used here.
+    # Production failure class: a stale bind produces a regular file at the
+    # socket path — /healthz would still pass (process alive) but /readyz fails.
+    # A7 integration note: A7 may also touch executor healthcheck. If so, the
+    # merge conflict is on this block only and the /readyz target MUST be kept.
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8990/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8990/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5

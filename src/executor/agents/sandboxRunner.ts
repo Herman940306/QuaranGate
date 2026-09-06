@@ -20,8 +20,8 @@ import {
   createVolume, removeVolume, listVolumesByFilter,
   createContainer, startContainer, inspectContainerFull, waitContainer,
   getContainerLogs, stopContainer, killContainer, removeContainer,
-  listContainersByFilter,
-  type ContainerSummary, type VolumeSummary,
+  listContainersByFilter, listNetworksByFilter, removeNetwork,
+  type ContainerSummary, type VolumeSummary, type NetworkSummary,
 } from '../docker.js';
 import {
   managedLabelFilters, isBridgeManaged, ownershipLabelValue,
@@ -254,9 +254,10 @@ export class RunnerSandbox {
    * are ephemeral and not attachable) and is failed closed: containers are
    * killed+removed, workspace volumes removed.
    */
-  async reconcileOrphans(): Promise<{ removedContainers: string[]; removedVolumes: string[] }> {
+  async reconcileOrphans(): Promise<{ removedContainers: string[]; removedVolumes: string[]; removedNetworks: string[] }> {
     const removedContainers: string[] = [];
     const removedVolumes: string[] = [];
+    const removedNetworks: string[] = [];
 
     // N1D: sweep every accepted ownership namespace. A single Docker label
     // filter ANDs its entries, so legacy-labelled orphans need their own query;
@@ -304,7 +305,69 @@ export class RunnerSandbox {
       removedVolumes.push(v.Name);
       log('sandbox orphan volume reconciled', { volume: v.Name, job: ownershipLabelValue(v.Labels, 'job') });
     }
-    return { removedContainers, removedVolumes };
+
+    // H1-6: Network orphan reconciliation.
+    //
+    // Authority requirement: a network may only be deleted when ALL of these
+    // are proven from trusted Docker labels (never from name matching):
+    //   1. QuaranGate managed label is present and "true"
+    //   2. resource label is "net" (kiroBackend.ts labels both internal and
+    //      external egress networks with resource='net')
+    //   3. A valid job ID label is present
+    //   4. No active container is connected to the network
+    //
+    // Malicious/lookalike names are irrelevant — only labels prove ownership.
+    // If any label is absent, contradictory, or unreadable: RETAIN (fail-safe).
+    const networksById = new Map<string, NetworkSummary>();
+    for (const filter of managedLabelFilters()) {
+      for (const n of await listNetworksByFilter(filter).catch(() => [])) {
+        networksById.set(n.Id, n);
+      }
+    }
+    for (const n of networksById.values()) {
+      if (!isBridgeManaged(n.Labels)) continue; // defense in depth
+
+      // resource label must be a known ephemeral network kind.
+      // kiroBackend.ts labels both the internal and external egress networks
+      // with resource='net'. Never delete networks with unknown resource labels.
+      const resource = ownershipLabelValue(n.Labels, 'resource');
+      if (resource !== 'net') {
+        // Unknown or unreadable resource label — retain rather than delete.
+        log('sandbox orphan network retained (resource label not a known ephemeral network kind)', {
+          networkId: n.Id, networkName: n.Name, resource,
+        });
+        continue;
+      }
+
+      // A valid job ID must be provable.
+      const jobId = ownershipLabelValue(n.Labels, 'job');
+      if (!jobId) {
+        log('sandbox orphan network retained (job label not provable)', {
+          networkId: n.Id, networkName: n.Name,
+        });
+        continue;
+      }
+
+      // Check whether any container is still connected to the network.
+      // A connected container means the job lifecycle may still be live;
+      // never delete a network with active attachments.
+      const containers = n.Containers;
+      if (containers && Object.keys(containers).length > 0) {
+        log('sandbox orphan network retained (containers still connected)', {
+          networkId: n.Id, networkName: n.Name, job: jobId,
+          connectedCount: Object.keys(containers).length,
+        });
+        continue;
+      }
+
+      await removeNetwork(n.Id).catch(() => {});
+      removedNetworks.push(n.Id);
+      log('sandbox orphan network reconciled', {
+        networkId: n.Id, networkName: n.Name, job: jobId, resource,
+      });
+    }
+
+    return { removedContainers, removedVolumes, removedNetworks };
   }
 
   /** Convenience: stage → probe → dispose, guaranteeing cleanup. A4 replaces the probe step. */
