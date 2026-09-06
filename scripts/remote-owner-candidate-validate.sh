@@ -10,7 +10,7 @@ printf 'BRANCH='; git branch --show-current
 
 printf '%s\n' '=== STATIC ==='
 git diff --check
-bash -n scripts/remote-owner-start.sh scripts/remote-owner-health.sh scripts/remote-owner-infra-acceptance.sh scripts/remote-owner-deploy-candidate.sh
+bash -n scripts/remote-owner-start.sh scripts/remote-owner-autostart.sh scripts/remote-owner-health.sh scripts/remote-owner-infra-acceptance.sh scripts/remote-owner-deploy-candidate.sh
 printf '%s\n' 'STATIC=PASS'
 
 printf '%s\n' '=== TYPECHECK ==='
@@ -36,7 +36,10 @@ PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}" \
 printf '%s\n' 'PROJECTS_WORK_COMPOSE=PASS'
 
 printf '%s\n' '=== LIVE CONFIG PARSE WITH CANDIDATE VALIDATOR ==='
-MAIN_ROOT="$(cd "$ROOT/../.." && pwd)"
+MAIN_ROOT="$ROOT"
+if [[ ! -f "$MAIN_ROOT/config/clients.yaml" && -f "$ROOT/../../config/clients.yaml" ]]; then
+  MAIN_ROOT="$(cd "$ROOT/../.." && pwd)"
+fi
 if [[ -f "$MAIN_ROOT/config/clients.yaml" && -f "$MAIN_ROOT/config/bridge.yaml" ]]; then
   CLIENTS_CONFIG="$MAIN_ROOT/config/clients.yaml" \
   BRIDGE_CONFIG="$MAIN_ROOT/config/bridge.yaml" \

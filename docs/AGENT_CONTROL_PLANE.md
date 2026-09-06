@@ -473,7 +473,7 @@ Kiro is the real implemented Agent Control Plane backend.
 
 A non-Kiro/fake path exists for deterministic testing and must not be described as a production AI backend.
 
-GitHub Copilot A7 remains future/owner-deferred because there is no current subscription/test capability. Session continuity A8 is the next active Agent Control Plane gate.
+GitHub Copilot A7 remains deferred until real subscription/test capability exists, but the owner now requires it to close before A9 production hardening. Session continuity A8 remains the next active Agent Control Plane gate.
 
 ---
 
@@ -741,7 +741,7 @@ A generic “ERROR” would throw away useful recovery information.
 
 ## A7 — GitHub Copilot backend
 
-The public contract is already backend-neutral, but Copilot is not a real production worker. This gate is **owner-deferred** until a real subscription/test capability exists. When reopened, A7 must choose the then-current supported programmatic interface based on structured events, cancellation, session behavior, permission control and maintenance/security properties.
+The public contract is already backend-neutral, but Copilot is not a real production worker. This gate remains **owner-deferred** until a real subscription/test capability exists, but the owner has now made A7 a mandatory pre-A9 gate. When reopened, A7 must choose the then-current supported programmatic interface based on structured events, cancellation, session behavior, permission control and maintenance/security properties. Lack of qualification capability may defer A7 scheduling; it does not authorize production closeout without A7.
 
 ## A8 — Session continuity
 
@@ -751,7 +751,7 @@ Session memory will not become an authorization mechanism when implemented.
 
 ## A9 — Production hardening and complete E2E
 
-The final production-hardening gate remains open.
+The final production-hardening gate remains open and is now explicitly downstream of A7, I1-I6, U1 Control Center, D1 guided installation, and D2 upgrade/repair/rollback/uninstall lifecycle. A9 hardens the intended release product rather than an operator-only intermediate build.
 
 ## O1 — governed Ollama backend
 

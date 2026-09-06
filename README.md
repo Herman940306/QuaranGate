@@ -159,9 +159,9 @@ These boundaries are intentional and should be read as part of the product, not 
 | Raw Docker API exposed to MCP clients | **Not supported** |
 | Automatic application of agent-generated changes | **Not supported** |
 | Automatic cloud fallback | **Not supported** |
-| GitHub Copilot production backend | **Future / owner-deferred — A7** (no current subscription/test capability) |
+| GitHub Copilot production backend | **Future / owner-deferred — A7; required before A9** (no current subscription/test capability) |
 | Session resume/continuity | **Next active Agent Control Plane gate — A8** |
-| Full production hardening program | **Roadmap — A9** |
+| Full production hardening program | **Roadmap — A9; blocked until A7, I1-I6, U1, D1 and D2 close** |
 | Production IDE Session Control adapter | **Roadmap / qualification program** |
 | macOS production acceptance | **Not yet verified** |
 | Native Windows-without-WSL production acceptance | **Not claimed** |
@@ -831,9 +831,29 @@ This is deliberately **not** the same as claiming that a completely empty machin
 | A4 | Kiro ACP read-only backend | ✅ Complete |
 | A5 | Kiro sandbox implementation | ✅ Complete |
 | A6 | Diff / guarded apply / discard + evidence lifecycle | ✅ Complete |
-| A7 | GitHub Copilot backend | ⏸️ Future / owner-deferred; no current subscription/test capability |
+| A7 | GitHub Copilot backend | ⏸️ Deferred until real qualification capability exists, but **required before A9** |
 | A8 | Session continuity | ⏭️ Next active Agent Control Plane gate |
-| A9 | Production hardening + complete E2E | 📋 Not started |
+| A9 | Production hardening + complete E2E | 📋 Not started; gated on the pre-production productization program below |
+
+## Required before production hardening
+
+The owner has frozen a productization rule: **A9 hardens the release product, not an operator-only intermediate build.** Before A9 may begin, QuaranGate must close:
+
+1. **A7 — GitHub Copilot backend** once real subscription/test capability is available.
+2. **I1-I6 — IDE Session Control**, including production adapters plus concurrency/recovery/live-writer arbitration.
+3. **U1 — QuaranGate Control Center**, a nontechnical GUI designed after a fresh forensic audit of the then-current repository/capabilities.
+4. **D1 — Guided installer and first-run setup**, providing click-install deployment with explicit owner choices.
+5. **D2 — Upgrade / repair / rollback / uninstall lifecycle**, proving safe ongoing product ownership after installation.
+
+Current intended path:
+
+```text
+A8 -> A7 -> I1-I6 -> U1 -> D1 -> D2 -> A9 -> v1.0
+```
+
+A8 remains the immediate next core gate. A7's current lack of test capability does not authorize skipping it at production closeout.
+
+See [Control Center](docs/CONTROL_CENTER.md) and [Installer Productization](docs/INSTALLER_PRODUCTIZATION.md).
 
 ## Parallel current programs
 
@@ -862,6 +882,8 @@ Approved North-Star program. VS Code Architecture B feasibility has been proven 
 | [Compatibility](docs/COMPATIBILITY.md) | Protocol/client compatibility evidence and external references. |
 | [Test Results](docs/TEST_RESULTS.md) | Current verified baseline followed by historical milestone evidence. |
 | [O1 Model Qualification](docs/O1_MODEL_QUALIFICATION.md) | Ollama model qualification, limitations and activation boundary. |
+| [Control Center](docs/CONTROL_CENTER.md) | Owner-approved U1 nontechnical GUI goals, information architecture and design constraints. |
+| [Installer Productization](docs/INSTALLER_PRODUCTIZATION.md) | Owner-approved D1/D2 click-install, first-run, upgrade, repair, rollback and uninstall requirements. |
 | `docs/audits/` | Frozen historical evidence. These records are not rewritten to make old results look current. |
 | [PLAN.md](PLAN.md) | Original executed implementation plan. Historical, not the current roadmap authority. |
 

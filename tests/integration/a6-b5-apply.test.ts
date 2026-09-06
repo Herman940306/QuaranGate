@@ -8,7 +8,7 @@
  * exercises through a faithful in-memory fake actually behave correctly
  * against a real container/filesystem. NO MCP client, NO gateway, NO live
  * stack, and — per the absolute rule governing this batch — this suite NEVER
- * targets /home/herman/projects/mcp-ide-bridge or any real user project; every
+ * targets /home/herman/projects/QuaranGate or any real user project; every
  * mutation test runs against a disposable git fixture created and destroyed
  * by this file alone.
  */

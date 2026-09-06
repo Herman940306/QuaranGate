@@ -74,11 +74,28 @@ describe('remote owner projects-work hard boundary', () => {
     }
   });
 
-  it('Windows autostart invokes only the bounded WSL recovery entrypoint at owner logon without elevation', () => {
-    const script = readFileSync(join(root, 'scripts', 'windows', 'Install-QuaranGateRemoteOwnerAutostart.ps1'), 'utf8');
-    expect(script).toContain('New-ScheduledTaskTrigger -AtLogOn');
-    expect(script).toContain('./scripts/remote-owner-start.sh');
-    expect(script).toContain('-RunLevel Limited');
-    expect(script).not.toMatch(/mcpb_|INTERNAL_TOKEN|API_KEY=/);
+  it('candidate validator resolves live config correctly from either main or a linked worktree', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-candidate-validate.sh'), 'utf8');
+    expect(script).toContain('MAIN_ROOT="$ROOT"');
+    expect(script).toContain('$ROOT/../../config/clients.yaml');
+    expect(script).toContain('MAIN_ROOT="$(cd "$ROOT/../.." && pwd)"');
+  });
+
+  it('Windows autostart uses a non-elevated local launcher that logs before entering WSL', () => {
+    const installer = readFileSync(join(root, 'scripts', 'windows', 'Install-QuaranGateRemoteOwnerAutostart.ps1'), 'utf8');
+    const wrapper = readFileSync(join(root, 'scripts', 'remote-owner-autostart.sh'), 'utf8');
+    expect(installer).toContain('New-ScheduledTaskTrigger -AtLogOn');
+    expect(installer).toContain('RemoteOwnerAutostart.ps1');
+    expect(installer).toContain('remote-owner-task.log');
+    expect(installer).toContain('REMOTE_OWNER_WINDOWS_TASK=START');
+    expect(installer).toContain('REMOTE_OWNER_WINDOWS_TASK=PASS');
+    expect(installer).toContain("'--exec', '/bin/bash', '$linuxEntrypoint'");
+    expect(installer).toContain('-RunLevel Limited');
+    expect(installer).not.toMatch(/mcpb_|INTERNAL_TOKEN|API_KEY=/);
+    expect(wrapper).toContain('remote-owner-autostart.log');
+    expect(wrapper).toContain('chmod 600');
+    expect(wrapper).toContain('remote-owner-start.sh');
+    expect(wrapper).toContain('REMOTE_OWNER_AUTOSTART=PASS');
+    expect(wrapper).not.toMatch(/mcpb_|INTERNAL_TOKEN|API_KEY=/);
   });
 });
