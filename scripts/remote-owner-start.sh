@@ -28,16 +28,27 @@ if [[ ! -f "$RUNTIME_ENV" && -f "$REPO_ROOT/../../.env" ]]; then
 fi
 [[ -f "$RUNTIME_ENV" ]] || fail 'runtime .env not found'
 
+# A linked candidate worktree does not carry ignored runtime config files.
+# Resolve the real operator runtime root separately so Compose always mounts
+# the live config/ directory rather than the candidate's tracked-only config.
+RUNTIME_ROOT="$REPO_ROOT"
+if [[ ! -f "$RUNTIME_ROOT/config/clients.yaml" && -f "$REPO_ROOT/../../config/clients.yaml" ]]; then
+  RUNTIME_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
+fi
+[[ -f "$RUNTIME_ROOT/config/clients.yaml" ]] || fail 'runtime clients.yaml not found'
+[[ -f "$RUNTIME_ROOT/config/bridge.yaml" ]] || fail 'runtime bridge.yaml not found'
+[[ -f "$RUNTIME_ROOT/compose.yaml" ]] || fail 'runtime compose.yaml not found'
+
 # Preserve the currently configured O1 composition. If the trusted runtime env
 # declares the Ollama backend OR an existing QuaranGate Ollama service exists,
 # recovery must include compose.ollama.yaml rather than silently dropping O1.
-QG_FILES=(-f "$REPO_ROOT/compose.yaml")
+QG_FILES=(-f "$RUNTIME_ROOT/compose.yaml")
 ollama_expected=0
 if grep -q '^OLLAMA_MODEL_QUALIFIER=' "$RUNTIME_ENV"; then ollama_expected=1; fi
 if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=ollama --format '{{.ID}}' | grep -q .; then ollama_expected=1; fi
 if [[ "$ollama_expected" == 1 ]]; then
-  [[ -f "$REPO_ROOT/compose.ollama.yaml" ]] || fail 'O1 is configured but compose.ollama.yaml is missing'
-  QG_FILES+=(-f "$REPO_ROOT/compose.ollama.yaml")
+  [[ -f "$RUNTIME_ROOT/compose.ollama.yaml" ]] || fail 'O1 is configured but compose.ollama.yaml is missing'
+  QG_FILES+=(-f "$RUNTIME_ROOT/compose.ollama.yaml")
 fi
 
 QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")

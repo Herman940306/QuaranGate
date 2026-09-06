@@ -47,6 +47,24 @@ describe('remote owner projects-work hard boundary', () => {
     expect(script).not.toMatch(/docker\s+pull/);
   });
 
+  it('candidate deployment builds candidate source but mounts live runtime config from the main operator root', () => {
+    const deploy = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(deploy).toContain('BUILD_QG=(docker compose');
+    expect(deploy).toContain('-f "$REPO_ROOT/compose.yaml"');
+    expect(deploy).toContain('QG_FILES=(-f "$MAIN_ROOT/compose.yaml")');
+    expect(deploy).toContain('$MAIN_ROOT/config/clients.yaml');
+    expect(deploy).toContain('$MAIN_ROOT/config/bridge.yaml');
+  });
+
+  it('linked-worktree recovery resolves the operator runtime root before composing QuaranGate', () => {
+    for (const name of ['remote-owner-start.sh', 'remote-owner-health.sh', 'remote-owner-infra-acceptance.sh']) {
+      const script = readFileSync(join(root, 'scripts', name), 'utf8');
+      expect(script, name).toContain('RUNTIME_ROOT="$REPO_ROOT"');
+      expect(script, name).toContain('$RUNTIME_ROOT/config/clients.yaml');
+      expect(script, name).toContain('QG_FILES=(-f "$RUNTIME_ROOT/compose.yaml")');
+    }
+  });
+
   it('Windows autostart invokes only the bounded WSL recovery entrypoint at owner logon without elevation', () => {
     const script = readFileSync(join(root, 'scripts', 'windows', 'Install-QuaranGateRemoteOwnerAutostart.ps1'), 'utf8');
     expect(script).toContain('New-ScheduledTaskTrigger -AtLogOn');

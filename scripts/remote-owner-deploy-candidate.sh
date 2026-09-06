@@ -24,21 +24,27 @@ if [[ ! -f "$MAIN_ROOT/.env" && -f "$REPO_ROOT/../../.env" ]]; then
 fi
 RUNTIME_ENV="${QUARANGATE_RUNTIME_ENV:-$MAIN_ROOT/.env}"
 [[ -f "$RUNTIME_ENV" ]] || fail 'runtime .env not found'
+[[ -f "$MAIN_ROOT/config/clients.yaml" ]] || fail 'runtime clients.yaml not found'
+[[ -f "$MAIN_ROOT/config/bridge.yaml" ]] || fail 'runtime bridge.yaml not found'
+[[ -f "$MAIN_ROOT/compose.yaml" ]] || fail 'runtime compose.yaml not found'
 
 export PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}"
 [[ -d "$PROJECTS_ROOT" ]] || fail "projects root missing: $PROJECTS_ROOT"
 
 # Preserve the current O1 overlay whenever it is configured or already exists.
-QG_FILES=(-f "$REPO_ROOT/compose.yaml")
+QG_FILES=(-f "$MAIN_ROOT/compose.yaml")
 ollama_expected=0
 if grep -q '^OLLAMA_MODEL_QUALIFIER=' "$RUNTIME_ENV"; then ollama_expected=1; fi
 if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=ollama --format '{{.ID}}' | grep -q .; then ollama_expected=1; fi
 if [[ "$ollama_expected" == 1 ]]; then
-  [[ -f "$REPO_ROOT/compose.ollama.yaml" ]] || fail 'O1 is configured but compose.ollama.yaml is missing'
-  QG_FILES+=(-f "$REPO_ROOT/compose.ollama.yaml")
+  [[ -f "$MAIN_ROOT/compose.ollama.yaml" ]] || fail 'O1 is configured but compose.ollama.yaml is missing'
+  QG_FILES+=(-f "$MAIN_ROOT/compose.ollama.yaml")
 fi
 
 QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
+# Build from the candidate worktree, but deploy from MAIN_ROOT so ignored live
+# config/ files are mounted from the operator runtime rather than disappearing.
+BUILD_QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate-candidate-build -f "$REPO_ROOT/compose.yaml")
 PW=(docker compose --env-file "$RUNTIME_ENV" -p projects-work -f "$REPO_ROOT/projects-work-target/compose.yaml")
 
 printf '%s\n' '=== PREDEPLOY BASELINE ==='
@@ -62,7 +68,7 @@ NEW_EXECUTOR_IMAGE="quarangate:executor-$REV"
 
 printf '%s\n' '=== OFFLINE BUILD ==='
 GIT_REVISION="$REV" GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE" \
-  "${QG[@]}" build --no-cache gateway
+  "${BUILD_QG[@]}" build --no-cache gateway
 # Gateway/executor intentionally use the same built artifact; tag the verified
 # gateway artifact independently for the executor service.
 docker tag "$NEW_GATEWAY_IMAGE" "$NEW_EXECUTOR_IMAGE"
