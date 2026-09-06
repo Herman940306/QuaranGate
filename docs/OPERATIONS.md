@@ -791,6 +791,12 @@ the lockfile to bypass that environment-only limitation. An immutable R3 image
 must be built from an exact committed revision after explicit commit approval.
 A8 remains blocked until the complete O1 live matrix passes.
 
+### 2026-09-06 O1 live re-acceptance result and next candidate
+
+The complete post-remediation re-acceptance attempt failed. Audit reliability was 0/3: two required audit jobs failed closed at the 10-turn limit and the third completed with an incorrect arithmetic interpretation of the inspected source (`48576` instead of `48 * 1024 = 49152`). Plan also hit the 10-turn ceiling; review incorrectly searched only for decimal `49152`. Implement refusal, sensitive-path refusal, and focused `read_file` / `list_files` / `literal_search` probes passed. Do not mark O1 accepted and do not replace the failed required runs with retries.
+
+The next committed source candidate is `a1ec1fcff0255c4dccfec9a9607b4c0967227725`. It raises only the bounded O1 reasoning budget to 16 turns / 64 total tool calls (10 per turn) and adds shortest-evidence-path, stop-when-proven, and simple source-arithmetic guidance. The Ollama runtime remains single-parallel (`OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`) on this workstation. Build/deploy this exact committed source immutably before any new live qualification.
+
 `quarangate-ollama-models` is the external persistent artifact store for the verified O1 model. Create and seed it through the separate controlled model-seeding operation before O1 deployment. Compose consumes this exact volume but does not create or own it; deployment must fail closed when it is absent.
 
 Mount this artifact store read-only at `/model-store`; set

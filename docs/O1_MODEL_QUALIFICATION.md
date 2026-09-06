@@ -605,7 +605,37 @@ dc6db39  fix(o1): disable thinking for reliable final output
 
 These commits are reachable from accepted local `main` `09672d5150075741bb7fdc48f5e9cce1eba07cca` and are included in the currently deployed GitHub/MCP candidate `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`. They preserve O1's read-only authority and do not authorize cloud/model fallback or writer profiles.
 
-This documentation reconciliation does **not** invent a final O1 acceptance result: the full live audit/plan/review/refusal/envelope matrix has not been re-established here after the complete remediation chain. Therefore O1 remains deployed but not fully production-accepted.
+## 2026-09-06 full post-remediation live acceptance attempt
+
+A fresh owner-authorized live matrix was run against the deployed `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a` gateway/executor candidate and registered committed project source. The normal `chatgpt-browser` agent grant was temporarily extended only for O1 qualification, then restored byte-for-byte and reloaded. No Docker, GitHub, network, model, resource, cloud/fallback, or writer authority was broadened.
+
+The required audit reliability gate failed **0/3** and no retry replaced a required run:
+
+- audit run 1: `FAILED_POLICY` after reaching the maximum 10-turn limit without completion;
+- audit run 2: same `FAILED_POLICY` 10-turn ceiling;
+- audit run 3: `COMPLETED`, but returned `48576` for a source constant implemented as `48 * 1024` (`49152`), so the source-derived answer was wrong.
+
+The plan profile also failed at the 10-turn ceiling. Review completed but incorrectly concluded the repository did not enforce `49152` because it searched only for the decimal literal and did not evaluate the inspected source expression. Implement refusal remained `FORBIDDEN_PROFILE`; sensitive `.env` access returned `ACCESS=DENIED`. Focused live probes separately proved all three bounded read tools operational: `read_file`, `list_files`, and `literal_search`. The earlier successful-empty-result defect was not observed.
+
+**Verdict:** `FAIL_O1_ACCEPTANCE`. The evidence narrows the remaining blocker to bounded multi-step repository reasoning/tool-loop reliability rather than workspace staging or basic read-tool availability. A8 remains blocked.
+
+## Post-failure remediation source candidate
+
+Committed remediation source: `a1ec1fcff0255c4dccfec9a9607b4c0967227725` (`fix(o1): improve bounded repository reasoning`).
+
+The candidate preserves the frozen model and runtime authority while changing the bounded reasoning contract to:
+
+```text
+MAX_TURNS=16
+MAX_TOOL_CALLS_TOTAL=64
+MAX_TOOL_CALLS_PER_TURN=10
+OLLAMA_NUM_PARALLEL=1 (unchanged runtime)
+OLLAMA_MAX_LOADED_MODELS=1 (unchanged runtime)
+```
+
+System guidance now prefers the shortest evidence path (`literal_search` -> bounded `read_file`), tells the model to stop calling tools once evidence is sufficient, and explicitly permits evaluation of simple deterministic source expressions such as `48 * 1024` instead of searching only for their decimal result. This is not production-accepted yet; it requires an immutable build/deploy and a completely fresh live matrix.
+
+Source validation for this candidate: focused O1 `233/233` PASS; full unit `50/50` files and `1880/1880` tests PASS; typecheck PASS; build PASS; `git diff --check` PASS.
 
 # Approval record
 
