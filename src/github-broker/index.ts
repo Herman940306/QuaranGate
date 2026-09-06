@@ -310,8 +310,8 @@ async function pullReadToken(owner: string, repo: string): Promise<string> {
 async function issuesReadToken(owner: string, repo: string): Promise<string> {
   return (await installationToken(owner, repo, { issues: 'read' })).token;
 }
-async function checksReadToken(owner: string, repo: string): Promise<string> {
-  return (await installationToken(owner, repo, { checks: 'read', statuses: 'read' })).token;
+async function statusesReadToken(owner: string, repo: string): Promise<string> {
+  return (await installationToken(owner, repo, { statuses: 'read' })).token;
 }
 
 app.post('/repositories', handle(async (body) => {
@@ -451,10 +451,11 @@ app.post('/pull/review-comments', handle(async (body) => {
 app.post('/checks', handle(async (body) => {
   const { owner, repo } = validateRepo(body.owner, body.repo);
   const ref = validateRef(body.ref);
-  const token = await checksReadToken(owner, repo);
-  const checks = await rawGitHub('GET', `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(ref)}/check-runs?per_page=100`, token);
+  // Owner-approved QuaranHUB policy intentionally does not grant Checks access.
+  // Keep the public response shape stable while reading only commit statuses.
+  const token = await statusesReadToken(owner, repo);
   const statuses = await rawGitHub('GET', `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(ref)}/status`, token);
-  return { checks: checks.json, statuses: statuses.json };
+  return { checks: { total_count: 0, check_runs: [] }, statuses: statuses.json };
 }));
 
 app.post('/pull/create', handle(async (body) => {

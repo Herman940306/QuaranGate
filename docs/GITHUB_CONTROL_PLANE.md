@@ -179,18 +179,19 @@ No force flag, delete refspec, tag refspec, arbitrary refspec, or caller-selecte
 
 ## GitHub App permissions
 
-Owner-approved minimum repository permissions:
+Owner-approved QuaranGate-required repository permissions:
 
 ```text
 Metadata:         Read-only
 Contents:         Read & write
 Pull requests:    Read & write
 Issues:           Read-only
-Checks:           Read-only
 Commit statuses:  Read-only
 ```
 
-No Administration permission and no Workflows permission are approved or required. Webhooks and user authorization are not required.
+GitHub **Checks** permission is intentionally not required. The public `github_checks` tool retains its existing response shape for compatibility, but reads only commit statuses and returns `checkRuns: []`. Any additional GitHub App permissions the owner has deliberately enabled (for example Actions or Discussions) remain owner-controlled and are not requested or depended on by QuaranGate.
+
+No Administration permission and no Workflows permission are required. Webhooks and user authorization are not required.
 
 The broker uses App JWT authentication to resolve trusted-account installations and repository installations. Discovery tokens are account-installation tokens reduced to metadata read and see only repositories granted to that installation. Operation tokens are reduced again to one repository and one operation-class permission set. Installation tokens expire according to GitHub's installation-token contract.
 
@@ -260,7 +261,7 @@ Before production enablement:
 14. arbitrary owner/repo/URL cannot be expressed;
 15. default/protected branch direct push is denied;
 16. exact-current-HEAD feature-branch push succeeds and post-verifies remote SHA;
-17. PR creation and bounded PR read/files/reviews/review-comments/checks plus issue/detail/comment reads succeed;
+17. PR creation and bounded PR read/files/reviews/review-comments plus `github_checks` commit-status reads and issue/detail/comment reads succeed;
 18. COMMENT review succeeds; APPROVE/REQUEST_CHANGES are exercised only on a disposable owner-approved PR where GitHub permits the App actor to submit that review;
 19. no merge scope/tool exists in the advertised MCP surface;
 20. gateway remains loopback-only and executor/broker/proxy remain unpublished;

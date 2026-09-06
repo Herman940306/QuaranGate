@@ -93,6 +93,17 @@ describe('GitHub public authority surface', () => {
     expect(broker).not.toMatch(/issues:\s*'write'/);
   });
 
+  it('honors the owner-approved no-Checks permission contract for github_checks', () => {
+    const broker = readFileSync(join(root, 'src', 'github-broker', 'index.ts'), 'utf8');
+    const tools = readFileSync(join(root, 'src', 'gateway', 'githubTools.ts'), 'utf8');
+    expect(broker).toContain("installationToken(owner, repo, { statuses: 'read' })");
+    expect(broker).not.toMatch(/checks:\s*'read'/);
+    expect(broker).not.toContain('/check-runs?per_page=100');
+    expect(broker).toContain("/commits/${encodeURIComponent(ref)}/status");
+    expect(broker).toContain("checks: { total_count: 0, check_runs: [] }");
+    expect(tools).toContain('checkRuns is retained for response compatibility and is empty');
+  });
+
   it('discovers repositories only through QuaranHUB installations on trusted accounts', () => {
     const broker = readFileSync(join(root, 'src', 'github-broker', 'index.ts'), 'utf8');
     const control = readFileSync(join(root, 'src', 'executor', 'githubControl.ts'), 'utf8');

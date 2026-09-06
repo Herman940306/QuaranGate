@@ -160,7 +160,7 @@ export function registerGitHubTools(server: McpServer): void {
   }, guarded('github_pull_request_review_comments', async ({ repository, number, maxItems }) => { requireGithub('github:read', { repository }); return { target: repository, result: { comments: await executor.githubPullReviewComments(repository, number, maxItems) } }; }));
 
   server.registerTool('github_checks', {
-    title: 'Read GitHub checks and statuses', description: 'Read bounded check-run and commit-status state for a branch or exact commit ref.',
+    title: 'Read GitHub commit statuses', description: 'Read bounded commit-status state for a branch or exact commit ref. checkRuns is retained for response compatibility and is empty because QuaranHUB does not request GitHub Checks permission.',
     inputSchema: { repository, ref },
     outputSchema: { ref: z.string(), checkRuns: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().optional(), htmlUrl: z.string().optional() })), statuses: z.array(z.object({ context: z.string(), state: z.string(), description: z.string().optional(), targetUrl: z.string().optional() })) }, annotations: READ,
   }, guarded('github_checks', async ({ repository, ref }) => { requireGithub('github:read', { repository }); return { target: repository, result: await executor.githubChecks(repository, ref) }; }));
