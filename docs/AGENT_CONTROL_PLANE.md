@@ -675,6 +675,8 @@ Two uncontrolled operations mutating the same real worktree cannot.
 
 Future concurrency may expand isolated parallelism, but apply and future live IDE mutation must share a live-writer arbitration boundary.
 
+Owner-approved productization target: up to 8 concurrent main agent trees, up to 4 subagents per main agent, 64 tool calls for each main agent, 32 per subagent, and a 192-tool-call aggregate ceiling per agent tree. These are future orchestration ceilings and do not claim current subagent runtime support. Backends may serialize execution beneath those ceilings; O1 remains single-parallel inference on the currently qualified workstation profile.
+
 ---
 
 # Network policy

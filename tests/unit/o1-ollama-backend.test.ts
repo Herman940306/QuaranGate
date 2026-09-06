@@ -1291,12 +1291,20 @@ describe('O1 qualification limits are frozen', () => {
     expect(mod.OLLAMA_O1_LIMITS.MAX_SEARCH_RESULTS).toBe(200);
   });
 
-  it('MAX_TURNS and MAX_TOOL_CALLS_TOTAL are frozen in OllamaBackend', async () => {
-    // These are module-level constants — we verify via the spec in §8
-    // The constants are 10, 50, 10 respectively
+  it('O1 execution limits are frozen with headroom for multi-step repository reasoning', async () => {
     const backendSrc = await import('../../src/executor/agents/ollamaBackend.js');
-    // Module loaded — constants exist (build succeeds means they're used)
-    expect(backendSrc).toBeTruthy();
+    expect(backendSrc.OLLAMA_O1_EXECUTION_LIMITS).toEqual({
+      MAX_TURNS: 16,
+      MAX_TOOL_CALLS_TOTAL: 64,
+      MAX_TOOL_CALLS_PER_TURN: 10,
+    });
+  });
+
+  it('O1 system guidance tells the model to stop once evidence is sufficient and evaluate source arithmetic', async () => {
+    const backendSrc = await import('../../src/executor/agents/ollamaBackend.js');
+    expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/Once the requested fact is proven, stop calling tools and answer/i);
+    expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/48 \* 1024/i);
+    expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/literal_search.*read_file/i);
   });
 });
 

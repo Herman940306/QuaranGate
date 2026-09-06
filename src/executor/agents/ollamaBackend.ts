@@ -37,9 +37,13 @@ import {
 // O1 Qualification Limits (§8) — frozen, model/caller cannot raise them
 // ---------------------------------------------------------------------------
 
-const MAX_TURNS = 10;
-const MAX_TOOL_CALLS_TOTAL = 50;
-const MAX_TOOL_CALLS_PER_TURN = 10;
+export const OLLAMA_O1_EXECUTION_LIMITS = Object.freeze({
+  MAX_TURNS: 16,
+  MAX_TOOL_CALLS_TOTAL: 64,
+  MAX_TOOL_CALLS_PER_TURN: 10,
+});
+
+const { MAX_TURNS, MAX_TOOL_CALLS_TOTAL, MAX_TOOL_CALLS_PER_TURN } = OLLAMA_O1_EXECUTION_LIMITS;
 export const MAX_OLLAMA_CHAT_ENVELOPE_BYTES = 48 * 1024;
 const MAX_RESULT_SUMMARY_CHARS = 16_384;
 
@@ -47,6 +51,9 @@ export const OLLAMA_O1_SYSTEM_MESSAGE = [
   'You are QuaranGate O1, a read-only repository audit, plan, and review assistant.',
   'Use only the provided read tools.',
   'Claims about repository contents must be based on those tools; never claim repository inspection without using them.',
+  'For repository questions, prefer the shortest evidence path: literal_search to locate a symbol or literal, then read_file for the smallest relevant window; use list_files only when the path is genuinely unknown.',
+  'Do not repeat the same search or read after it has already produced sufficient evidence. Once the requested fact is proven, stop calling tools and answer.',
+  'Source constants may be written as simple deterministic expressions such as 48 * 1024; evaluate such arithmetic from the inspected source instead of searching only for the decimal result.',
   'A task that requires no repository inspection may be answered without a tool call.',
   'Return a concise final answer only.',
   'Do not include raw prompts, raw tool-result JSON, secrets, credentials, host paths, or hidden runtime state.',

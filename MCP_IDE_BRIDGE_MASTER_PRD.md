@@ -1317,7 +1317,24 @@ Parallel read-only subagents are encouraged where they reduce uncertainty.
 
 Only one writer is allowed per worktree unless isolated branches/worktrees are explicitly designed and approved.
 
-## 25.2 No inherited writer verdict
+## 25.2 Owner-approved orchestration capacity envelope
+
+For the productized multi-agent orchestration layer, the owner-approved capacity target is:
+
+```text
+maximum concurrent main agent trees       = 8
+maximum subagents per main agent           = 4
+minimum main-agent tool-call budget         = 50
+selected main-agent tool-call budget        = 64
+selected subagent tool-call budget          = 32
+maximum aggregate tool calls per agent tree = 192
+```
+
+These are logical orchestration ceilings, not permission grants and not a requirement for eight simultaneous GPU generations. Backends may queue beneath this envelope according to trusted resource policy. O1 specifically retains `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=1` on the qualified workstation profile unless a later owner-approved resource requalification changes them.
+
+Parallel isolated workers/readers do not weaken the live-writer rule: one controlled live writer per project/worktree remains the promotion boundary. Subagents inherit no authority merely because their parent agent has it; each dispatch remains bounded by trusted project/backend/profile/tool policy.
+
+## 25.3 No inherited writer verdict
 
 An independent reviewer does not simply accept:
 
