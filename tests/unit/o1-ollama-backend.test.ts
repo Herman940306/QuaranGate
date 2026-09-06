@@ -297,6 +297,92 @@ describe('O1 tool authority', () => {
     return { OllamaBackend, MockOllamaClass, mockChat };
   }
 
+  it('publishes list_files maxDepth with the exact runtime integer 1-3 contract', async () => {
+    const { OLLAMA_TOOL_DEFINITIONS } = await import('../../src/executor/agents/ollamaBackend.js');
+    const listTool = OLLAMA_TOOL_DEFINITIONS.find((tool) => tool.function.name === 'list_files');
+    expect(listTool).toBeDefined();
+    const properties = listTool!.function.parameters.properties as Record<string, Record<string, unknown>>;
+    const maxDepth = properties.maxDepth;
+    expect(maxDepth).toMatchObject({
+      type: 'integer',
+      minimum: 1,
+      maximum: 3,
+    });
+    expect(listTool!.function.parameters.required).toEqual(['path']);
+    expect(listTool!.function.parameters.additionalProperties).toBe(false);
+  });
+
+  it('treats a malformed model-native tool call as an agent failure and logs only bounded metadata', async () => {
+    const privatePath = 'PRIVATE_TOOL_ARGUMENT_PATH_SENTINEL';
+    const nativeToolCall = { function: { name: 'list_files', arguments: { path: privatePath, maxDepth: 1.5 } } };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { OllamaBackend, MockOllamaClass } = await makeBackendWithMockChat([
+      { message: { content: '', tool_calls: [nativeToolCall] }, done: true },
+    ]);
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv', policy: POLICY },
+      { ollamaHost: 'http://x', modelQualifier: 'm:v1', helperImage: 'h:v1', stagerImage: 'h:v1', sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+    (backend as unknown as Record<string, unknown>)['target'] = { containerId: 'fake', workspace: '/workspace' };
+
+    let caught: unknown;
+    try { await backend.run(new AbortController().signal); } catch (e) { caught = e; }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe('ollama backend model emitted malformed list_files tool call');
+    expect((caught as Error).message).not.toContain(privatePath);
+    expect((caught as Error).message).not.toContain('1.5');
+    expect(backend.isAgentFailure(caught)).toBe(true);
+
+    const logs = logSpy.mock.calls.map(([line]) => String(line));
+    const toolMetadata = logs.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.msg === 'ollama backend: tool metadata');
+    expect(toolMetadata).toMatchObject({
+      jobId: JOB,
+      turn: 1,
+      turnToolCall: 1,
+      toolCallTotal: 1,
+      toolName: 'list_files',
+      success: false,
+      resultBytes: 0,
+      errorCode: 'MALFORMED_REQUEST',
+    });
+    expect(logs.join('\n')).not.toContain(privatePath);
+    expect(logs.join('\n')).not.toContain('1.5');
+    logSpy.mockRestore();
+  });
+
+  it('keeps forbidden unknown native tools as policy failures, not agent failures', async () => {
+    const nativeToolCall = { function: { name: 'write_file', arguments: { path: 'x', content: 'y' } } };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { OllamaBackend, MockOllamaClass } = await makeBackendWithMockChat([
+      { message: { content: '', tool_calls: [nativeToolCall] }, done: true },
+    ]);
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv', policy: POLICY },
+      { ollamaHost: 'http://x', modelQualifier: 'm:v1', helperImage: 'h:v1', stagerImage: 'h:v1', sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+    (backend as unknown as Record<string, unknown>)['target'] = { containerId: 'fake', workspace: '/workspace' };
+
+    let caught: unknown;
+    try { await backend.run(new AbortController().signal); } catch (e) { caught = e; }
+
+    expect(caught).toBeInstanceOf(BridgeError);
+    expect((caught as BridgeError).code).toBe('FORBIDDEN_POLICY');
+    expect(backend.isAgentFailure(caught)).toBe(false);
+    const logs = logSpy.mock.calls.map(([line]) => String(line));
+    const toolMetadata = logs.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.msg === 'ollama backend: tool metadata');
+    expect(toolMetadata).toMatchObject({
+      toolName: 'unknown',
+      success: false,
+      resultBytes: 0,
+      errorCode: 'FORBIDDEN_POLICY',
+    });
+    expect(logs.join('\n')).not.toContain('write_file');
+    logSpy.mockRestore();
+  });
+
   // Req 10: JSON-looking prose without tool_calls never executes
   it('prose response with no tool_calls terminates conversation without executing tools', async () => {
     const { OllamaBackend, MockOllamaClass, mockChat } = await makeBackendWithMockChat([
@@ -586,6 +672,53 @@ describe('O1 governed result delivery', () => {
       expect.objectContaining({ turn: 2, contentBytes: Buffer.byteLength('Evidence-based final.'), thinkingBytes: 0, toolCallCount: 0, doneReason: 'stop' }),
     ]);
     expect(logs.join('\n')).not.toContain(hiddenThinking);
+  });
+
+  it('logs successful tool results as bounded content-free metadata only', async () => {
+    const privateArgument = 'PRIVATE_TOOL_ARGUMENT_SENTINEL';
+    const privateResult = 'PRIVATE_TOOL_RESULT_SENTINEL';
+    const nativeToolCall = { function: { name: 'list_files', arguments: { path: privateArgument, maxDepth: 2 } } };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { backend } = await makeResultBackend([
+      { message: { content: '', tool_calls: [nativeToolCall] }, done: true, done_reason: 'stop' },
+      { message: { content: 'Evidence-based final.', tool_calls: [] }, done: true, done_reason: 'stop' },
+    ]);
+    const rawResult = JSON.stringify({
+      success: true,
+      data: {
+        path: privateArgument,
+        files: [`src/${privateResult}.ts`],
+        count: 7,
+        truncated: false,
+        content: privateResult,
+      },
+    });
+    (backend as unknown as { executeToolCall: (call: unknown) => Promise<string> }).executeToolCall = vi.fn().mockResolvedValue(rawResult);
+
+    await backend.run(new AbortController().signal);
+
+    const logs = logSpy.mock.calls.map(([line]) => String(line));
+    const toolMetadata = logs.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.msg === 'ollama backend: tool metadata');
+    expect(toolMetadata).toMatchObject({
+      jobId: JOB,
+      turn: 1,
+      turnToolCall: 1,
+      toolCallTotal: 1,
+      toolName: 'list_files',
+      success: true,
+      resultBytes: Buffer.byteLength(rawResult, 'utf8'),
+      itemCount: 7,
+      truncated: false,
+      envelopeWithheld: false,
+    });
+    expect(Object.keys(toolMetadata ?? {}).sort()).toEqual([
+      'jobId', 'level', 'msg', 'resultBytes', 'success', 'toolCallTotal',
+      'toolName', 'truncated', 'turn', 'turnToolCall', 'itemCount', 'envelopeWithheld',
+    ].sort());
+    expect(logs.join('\n')).not.toContain(privateArgument);
+    expect(logs.join('\n')).not.toContain(privateResult);
+    logSpy.mockRestore();
   });
 });
 
@@ -1808,9 +1941,10 @@ describe('O1 conservative chat envelope', () => {
     expect(mockChat).not.toHaveBeenCalled();
   });
 
-  it('withholds oversized tool result and never sends raw content', async () => {
+  it('withholds oversized tool result and never sends or logs raw content', async () => {
     const rawMarker = 'RAW_WITHHELD_SECRET_MARKER';
     const rawResult = JSON.stringify({ success: true, data: rawMarker.repeat(2500) });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const nativeToolCall = { function: { name: 'read_file', arguments: { path: 'README.md' } } };
     const { backend, mockChat, MAX_OLLAMA_CHAT_ENVELOPE_BYTES, measureOllamaChatEnvelopeBytes } = await makeBackend('review', [
       { message: { content: '', tool_calls: [nativeToolCall] }, done: true },
@@ -1835,6 +1969,18 @@ describe('O1 conservative chat envelope', () => {
     expect(JSON.stringify(secondRequest)).not.toContain(rawMarker);
     expect(measureOllamaChatEnvelopeBytes(secondRequest.model, secondRequest.messages)).toBeLessThanOrEqual(MAX_OLLAMA_CHAT_ENVELOPE_BYTES);
     expect(aggregateTracker.bytesRead).toBe(0);
+
+    const logs = logSpy.mock.calls.map(([line]) => String(line));
+    const toolMetadata = logs.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.msg === 'ollama backend: tool metadata');
+    expect(toolMetadata).toMatchObject({
+      toolName: 'read_file',
+      success: true,
+      resultBytes: Buffer.byteLength(rawResult, 'utf8'),
+      envelopeWithheld: true,
+    });
+    expect(logs.join('\n')).not.toContain(rawMarker);
+    logSpy.mockRestore();
   });
 
   it('model prompt cannot raise fixed envelope budget', async () => {

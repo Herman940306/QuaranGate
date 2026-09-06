@@ -100,7 +100,9 @@ export const OLLAMA_TOOL_DEFINITIONS = [
             description: 'Workspace-relative directory path (e.g., "src" or ".")',
           },
           maxDepth: {
-            type: 'number' as const,
+            type: 'integer' as const,
+            minimum: 1,
+            maximum: 3,
             description: 'Maximum directory depth to traverse (1-3, default 1)',
           },
         },
@@ -259,6 +261,71 @@ class OllamaAgentOutputError extends Error {
     super(message);
     this.name = 'OllamaAgentOutputError';
   }
+}
+
+/** Model-originated native-tool contract violation; never infrastructure. */
+class OllamaModelToolCallError extends Error {
+  constructor(toolName: string) {
+    super(`ollama backend model emitted malformed ${toolName} tool call`);
+    this.name = 'OllamaModelToolCallError';
+  }
+}
+
+function safeOllamaToolName(value: unknown): string {
+  return value === 'read_file' || value === 'list_files' || value === 'literal_search'
+    ? value
+    : 'unknown';
+}
+
+function boundedToolErrorCode(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  return /^[A-Z0-9_]{1,64}$/.test(value) ? value : 'other';
+}
+
+function safeNonNegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+/**
+ * Build content-free, bounded tool telemetry. Never include arguments, paths,
+ * queries, filenames, matches, file content, or raw tool-result JSON.
+ */
+function toolResultLogFields(toolName: unknown, rawResult: string): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    toolName: safeOllamaToolName(toolName),
+    resultBytes: Buffer.byteLength(rawResult, 'utf8'),
+  };
+
+  try {
+    const parsed = JSON.parse(rawResult) as { success?: unknown; error?: unknown; data?: unknown };
+    if (typeof parsed.success === 'boolean') fields.success = parsed.success;
+    const errorCode = boundedToolErrorCode(parsed.error);
+    if (errorCode !== null) fields.errorCode = errorCode;
+
+    if (parsed.success === true && typeof parsed.data === 'object' && parsed.data !== null && !Array.isArray(parsed.data)) {
+      const data = parsed.data as Record<string, unknown>;
+      if (safeOllamaToolName(toolName) === 'list_files') {
+        const itemCount = safeNonNegativeInteger(data.count);
+        if (itemCount !== null) fields.itemCount = itemCount;
+        if (typeof data.truncated === 'boolean') fields.truncated = data.truncated;
+      } else if (safeOllamaToolName(toolName) === 'read_file') {
+        const contentBytes = safeNonNegativeInteger(data.contentBytes);
+        if (contentBytes !== null) fields.contentBytes = contentBytes;
+        if (typeof data.eof === 'boolean') fields.eof = data.eof;
+      } else if (safeOllamaToolName(toolName) === 'literal_search') {
+        const filesSearched = safeNonNegativeInteger(data.filesSearched);
+        const totalMatches = safeNonNegativeInteger(data.totalMatches);
+        if (filesSearched !== null) fields.filesSearched = filesSearched;
+        if (totalMatches !== null) fields.totalMatches = totalMatches;
+        if (typeof data.truncated === 'boolean') fields.truncated = data.truncated;
+      }
+    }
+  } catch {
+    fields.success = null;
+    fields.errorCode = 'UNPARSEABLE_TOOL_RESULT';
+  }
+
+  return fields;
 }
 
 function boundedDoneReason(value: unknown): string | null {
@@ -462,7 +529,7 @@ export class OllamaBackend implements AgentBackendAdapter {
       }
 
       // Execute each tool call
-      for (const toolCall of toolCalls) {
+      for (const [turnToolCallIndex, toolCall] of toolCalls.entries()) {
         this.toolCallsTotal++;
 
         // Enforce total tool-call limit (§8)
@@ -477,13 +544,36 @@ export class OllamaBackend implements AgentBackendAdapter {
         this.checkAbort(signal);
 
         const aggregateBytesBeforeCall = this.aggregateReadTracker.bytesRead;
-        const rawToolResultContent = await this.executeToolCall(toolCall);
+        let rawToolResultContent: string;
+        try {
+          rawToolResultContent = await this.executeToolCall(toolCall);
+        } catch (e) {
+          const errorCode = e instanceof BridgeError ? boundedToolErrorCode(e.code) : null;
+          log('ollama backend: tool metadata', {
+            jobId: this.job.jobId,
+            turn: this.turnCount,
+            turnToolCall: turnToolCallIndex + 1,
+            toolCallTotal: this.toolCallsTotal,
+            toolName: safeOllamaToolName(toolCall.function?.name),
+            success: false,
+            resultBytes: 0,
+            errorCode: errorCode ?? 'INTERNAL',
+          });
+          if (e instanceof BridgeError && e.code === 'MALFORMED_REQUEST') {
+            throw new OllamaModelToolCallError(safeOllamaToolName(toolCall.function?.name));
+          }
+          throw e;
+        }
+
+        const toolLogFields = toolResultLogFields(toolCall.function?.name, rawToolResultContent);
+        let envelopeWithheld = false;
         let toolResultMessage: Message = {
           role: 'tool',
           content: rawToolResultContent,
         };
 
         if (this.measureProjectedEnvelope(messages, toolResultMessage) > MAX_OLLAMA_CHAT_ENVELOPE_BYTES) {
+          envelopeWithheld = true;
           // The raw window is not exposed to the model, so its provisional
           // content-byte charge must not consume the aggregate exposure budget.
           this.aggregateReadTracker.bytesRead = aggregateBytesBeforeCall;
@@ -500,6 +590,15 @@ export class OllamaBackend implements AgentBackendAdapter {
             }),
           };
         }
+
+        log('ollama backend: tool metadata', {
+          jobId: this.job.jobId,
+          turn: this.turnCount,
+          turnToolCall: turnToolCallIndex + 1,
+          toolCallTotal: this.toolCallsTotal,
+          ...toolLogFields,
+          envelopeWithheld,
+        });
 
         this.requireEnvelopeWithinBudget([...messages, toolResultMessage]);
         messages.push(toolResultMessage);
@@ -543,7 +642,7 @@ export class OllamaBackend implements AgentBackendAdapter {
   }
 
   isAgentFailure(e: unknown): boolean {
-    if (e instanceof OllamaAgentOutputError) return true;
+    if (e instanceof OllamaAgentOutputError || e instanceof OllamaModelToolCallError) return true;
     if (!(e instanceof Error)) return false;
     const msg = e.message.toLowerCase();
     // Classify Ollama inference / network errors as agent failures
