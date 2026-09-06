@@ -8,7 +8,7 @@
 import { BridgeError } from '../../shared/errors.js';
 import type { ConfinedTarget } from '../execops.js';
 import { confinePath, runArgv } from '../execops.js';
-import { readFile as fsReadFile, listDir, statPath } from '../fsops.js';
+import { readFile as fsReadFile, statPath } from '../fsops.js';
 import { validateGuardPattern, pathIsGuarded } from './applyPolicy.js';
 
 // ---------------------------------------------------------------------------
@@ -301,6 +301,105 @@ export async function ollamaReadFile(
 }
 
 // ---------------------------------------------------------------------------
+// O1 portable bounded enumeration
+// ---------------------------------------------------------------------------
+
+/**
+ * The O1 helper image is a QuaranGate runtime image and therefore has Node.js.
+ * Use Node filesystem APIs instead of GNU-only `find -printf` so the exact
+ * qualified Alpine/BusyBox helper environment is supported. Traversal is
+ * deterministic, does not follow symlink directories, and stops as soon as the
+ * trusted entry limit is reached.
+ */
+export const OLLAMA_BOUNDED_ENUMERATION_SCRIPT = [
+  'const fs=require("fs"),path=require("path");',
+  'const root=process.argv[1],workspace=process.argv[2];',
+  'const maxDepth=Number(process.argv[3]),limit=Number(process.argv[4]);',
+  'function fail(){process.exit(2);}',
+  'if(!root||!workspace||!Number.isInteger(maxDepth)||maxDepth<1||maxDepth>3||!Number.isInteger(limit)||limit<1||limit>101)fail();',
+  'const entries=[];let truncated=false;',
+  'function rel(abs){const r=path.relative(workspace,abs).split(path.sep).join("/");if(!r||r===".."||r.startsWith("../")||path.isAbsolute(r))fail();return r;}',
+  'function walk(dir,depth){',
+  '  let items;try{items=fs.readdirSync(dir,{withFileTypes:true});}catch(_){fail();}',
+  '  items.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);',
+  '  for(const ent of items){',
+  '    if(entries.length>=limit){truncated=true;return;}',
+  '    const abs=path.join(dir,ent.name);const r=rel(abs);',
+  '    entries.push(ent.isDirectory()?r+"/":r);',
+  '    if(ent.isDirectory()&&depth<maxDepth){walk(abs,depth+1);if(truncated)return;}',
+  '  }',
+  '}',
+  'walk(root,1);',
+  'process.stdout.write(JSON.stringify({entries,truncated})+"\\n");',
+].join('');
+
+export interface OllamaBoundedEnumerationResult {
+  entries: string[];
+  truncated: boolean;
+}
+
+interface OllamaEnumerationExecResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+}
+
+function enumerationFailure(): BridgeError {
+  return new BridgeError('COMMAND_FAILED', 'bounded O1 enumeration failed', 422);
+}
+
+/** Parse only a complete successful enumerator response; malformed/partial output fails closed. */
+export function parseOllamaBoundedEnumerationResult(
+  result: OllamaEnumerationExecResult,
+  maxEntries: number,
+): OllamaBoundedEnumerationResult {
+  if (result.exitCode !== 0 || result.truncated) throw enumerationFailure();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout.trim());
+  } catch {
+    throw enumerationFailure();
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw enumerationFailure();
+  const obj = parsed as Record<string, unknown>;
+  if (!Array.isArray(obj.entries) || typeof obj.truncated !== 'boolean') throw enumerationFailure();
+  if (obj.entries.length > maxEntries) throw enumerationFailure();
+
+  const entries: string[] = [];
+  for (const value of obj.entries) {
+    if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) throw enumerationFailure();
+    const bare = value.endsWith('/') ? value.slice(0, -1) : value;
+    if (!bare || bare.startsWith('/') || bare.split('/').includes('..')) throw enumerationFailure();
+    entries.push(value);
+  }
+
+  return { entries, truncated: obj.truncated };
+}
+
+async function boundedOllamaListDir(
+  t: ConfinedTarget,
+  rel: string,
+  maxDepth: number,
+  maxEntries: number,
+): Promise<OllamaBoundedEnumerationResult> {
+  if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 3) throw enumerationFailure();
+  if (!Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > OLLAMA_O1_LIMITS.MAX_SEARCH_FILES + 1) {
+    throw enumerationFailure();
+  }
+
+  const abs = await confinePath(t, rel, { mustExist: true });
+  const result = await runArgv(
+    t,
+    ['node', '-e', OLLAMA_BOUNDED_ENUMERATION_SCRIPT, abs, t.workspace, String(maxDepth), String(maxEntries)],
+    { principal: 'executor', timeoutMs: 15_000, maxOutputBytes: 128 * 1024 },
+  );
+  return parseOllamaBoundedEnumerationResult(result, maxEntries);
+}
+
+// ---------------------------------------------------------------------------
 // list_files (§17) — metadata-only, bounded enumeration
 // ---------------------------------------------------------------------------
 
@@ -313,11 +412,16 @@ export async function ollamaListFiles(
     // Canonicalize and confine
     await confinePath(t, rel, { mustExist: true });
 
-    // Use bounded enumeration primitive - stops at MAX_SEARCH_FILES
-    const files = await listDir(t, rel, Math.min(maxDepth, 3), OLLAMA_O1_LIMITS.MAX_SEARCH_FILES);
-
-    // files.length is already <= MAX_SEARCH_FILES due to bounded enumeration
-    const truncated = files.length === OLLAMA_O1_LIMITS.MAX_SEARCH_FILES;
+    // O1 uses its own qualified helper-local enumerator. It is bounded before
+    // output materialization and does not depend on GNU find extensions.
+    const enumeration = await boundedOllamaListDir(
+      t,
+      rel,
+      Math.min(maxDepth, 3),
+      OLLAMA_O1_LIMITS.MAX_SEARCH_FILES,
+    );
+    const files = enumeration.entries;
+    const truncated = enumeration.truncated;
 
     return {
       success: true,
@@ -416,12 +520,21 @@ export async function ollamaLiteralSearch(
     // Canonicalize directory
     await confinePath(t, relDir, { mustExist: true });
 
-    // Use bounded enumeration primitive - stops at MAX_SEARCH_FILES + 1 to detect truncation
-    const allFiles = await listDir(t, relDir, 2, OLLAMA_O1_LIMITS.MAX_SEARCH_FILES + 1);
+    // Enumerate at most MAX_SEARCH_FILES + 1 entries so search can detect that
+    // its 100-entry search window is incomplete without ever materializing an
+    // unbounded directory walk.
+    const enumeration = await boundedOllamaListDir(
+      t,
+      relDir,
+      2,
+      OLLAMA_O1_LIMITS.MAX_SEARCH_FILES + 1,
+    );
+    const allFiles = enumeration.entries;
     const regularFiles = allFiles.filter(f => !f.endsWith('/'));
 
-    // Determine if enumeration was truncated
-    const enumerationTruncated = regularFiles.length > OLLAMA_O1_LIMITS.MAX_SEARCH_FILES;
+    // The 101st entry is the truncation probe. Also preserve the helper's own
+    // signal if more than 101 entries existed.
+    const enumerationTruncated = enumeration.truncated || allFiles.length > OLLAMA_O1_LIMITS.MAX_SEARCH_FILES;
 
     // Take only MAX_SEARCH_FILES for processing
     const candidateFiles = regularFiles.slice(0, OLLAMA_O1_LIMITS.MAX_SEARCH_FILES);

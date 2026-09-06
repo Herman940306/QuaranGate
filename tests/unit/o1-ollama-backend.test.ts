@@ -6,8 +6,10 @@
  * No real model, no real inference, no runtime mutation.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { BridgeError } from '../../src/shared/errors.js';
 import { AGENT_BACKEND_IDS } from '../../src/shared/agents.js';
@@ -1384,95 +1386,92 @@ describe('R1 bounded search enumeration', () => {
 });
 
 // ---------------------------------------------------------------------------
-// R2 REMEDIATION TESTS — true bounded enumeration at primitive level
+// R6 REMEDIATION TESTS — portable bounded O1 enumeration
 // ---------------------------------------------------------------------------
 
-describe('R2 true bounded enumeration', () => {
-  it('listDir with maxEntries parameter uses bounded find+head pipeline', async () => {
-    const { listDir } = await import('../../src/executor/fsops.js');
+describe('R6 portable bounded O1 enumeration', () => {
+  async function runPortableEnumeration(root: string, workspace: string, maxDepth: number, limit: number) {
+    const { OLLAMA_BOUNDED_ENUMERATION_SCRIPT } = await import('../../src/executor/agents/ollamaTools.js');
+    const stdout = execFileSync(
+      process.execPath,
+      ['-e', OLLAMA_BOUNDED_ENUMERATION_SCRIPT, root, workspace, String(maxDepth), String(limit)],
+      { encoding: 'utf8' },
+    );
+    return JSON.parse(stdout) as { entries: string[]; truncated: boolean };
+  }
 
-    // The listDir function should accept optional maxEntries parameter
-    // and use it to bound the underlying find operation via head pipeline
+  it('enumerates a non-empty workspace and preserves file/directory metadata', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'qg-o1-enum-'));
+    try {
+      writeFileSync(join(root, 'a.txt'), 'a');
+      mkdirSync(join(root, 'dir'));
+      writeFileSync(join(root, 'dir', 'b.txt'), 'b');
 
-    // Test that the signature accepts maxEntries
-    const mockTarget = { containerId: 'cid', workspace: '/workspace' };
-    const mockConfinePath = vi.fn().mockResolvedValue('/workspace');
-    const mockRunArgv = vi.fn().mockResolvedValue({
-      exitCode: 0,
-      stdout: 'f /workspace/file1\nf /workspace/file2\n',
-      stderr: '',
-      truncated: false,
-    });
+      const depth1 = await runPortableEnumeration(root, root, 1, 100);
+      expect(depth1).toEqual({ entries: ['a.txt', 'dir/'], truncated: false });
 
-    vi.doMock('../../src/executor/execops.js', () => ({
-      confinePath: mockConfinePath,
-      runArgv: mockRunArgv,
-    }));
-
-    // The function should accept maxEntries as 4th parameter (optional)
-    // TypeScript will allow: listDir(target, rel, maxDepth, maxEntries)
-    // This test verifies the signature exists (build passes = signature works)
-    expect(listDir).toBeDefined();
-    expect(typeof listDir).toBe('function');
+      const depth2 = await runPortableEnumeration(root, root, 2, 100);
+      expect(depth2).toEqual({ entries: ['a.txt', 'dir/', 'dir/b.txt'], truncated: false });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
-  it('listDir without maxEntries maintains unbounded behavior for existing callers', async () => {
-    // Existing callers that don't provide maxEntries should get full results
-    // This is the regression test for Req 58 (non-Ollama behavior unchanged)
-
-    const mockTarget = { containerId: 'cid', workspace: '/workspace' };
-
-    // When maxEntries is undefined, listDir should use the original unbounded find
-    const unboundedArgs = ['find', '/workspace', '-maxdepth', '1', '-mindepth', '1', '-printf', '%y %p\\n'];
-
-    // The argv construction should NOT include head when maxEntries is undefined
-    expect(unboundedArgs).not.toContain('head');
-    expect(unboundedArgs.join(' ')).not.toMatch(/\| head/);
+  it('stops at the 100-entry list_files bound and reports truncation', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'qg-o1-enum-'));
+    try {
+      for (let i = 0; i < 105; i++) writeFileSync(join(root, `f${String(i).padStart(3, '0')}.txt`), 'x');
+      const result = await runPortableEnumeration(root, root, 1, 100);
+      expect(result.entries).toHaveLength(100);
+      expect(result.truncated).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
-  it('bounded enumeration uses sh -c pipeline with positional argv', async () => {
-    // The bounded form should use sh -c with positional parameters (no interpolation)
-    const boundedCmd = `find "$1" -maxdepth "$2" -mindepth 1 -printf '%y %p\\n' 2>/dev/null | head -n "$3"`;
-
-    // Verify the command uses positional parameters $1, $2, $3
-    expect(boundedCmd).toContain('$1');
-    expect(boundedCmd).toContain('$2');
-    expect(boundedCmd).toContain('$3');
-
-    // Verify it uses head -n for bounded output
-    expect(boundedCmd).toContain('| head -n');
-
-    // Verify it does NOT use variable interpolation like ${var}
-    expect(boundedCmd).not.toMatch(/\$\{/);
+  it('supports the exact 101-entry literal_search truncation probe', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'qg-o1-enum-'));
+    try {
+      for (let i = 0; i < 105; i++) writeFileSync(join(root, `f${String(i).padStart(3, '0')}.txt`), 'x');
+      const result = await runPortableEnumeration(root, root, 1, 101);
+      expect(result.entries).toHaveLength(101);
+      expect(result.truncated).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
-  it('ollamaListFiles uses bounded listDir primitive', async () => {
-    const { OLLAMA_O1_LIMITS } = await import('../../src/executor/agents/ollamaTools.js');
+  it('fails closed on execution failure, output truncation, and malformed output', async () => {
+    const { parseOllamaBoundedEnumerationResult } = await import('../../src/executor/agents/ollamaTools.js');
+    const bad = [
+      { exitCode: 1, stdout: '', stderr: 'failed', truncated: false },
+      { exitCode: 0, stdout: '{"entries":[]', stderr: '', truncated: true },
+      { exitCode: 0, stdout: 'not-json', stderr: '', truncated: false },
+      { exitCode: 0, stdout: '{"entries":["../escape"],"truncated":false}', stderr: '', truncated: false },
+    ];
 
-    // ollamaListFiles should call listDir with MAX_SEARCH_FILES as maxEntries
-    // This ensures the underlying enumeration itself stops at 100 files
-
-    // The key behavioral requirement: listDir is called with maxEntries=100
-    // and the filesystem operation itself materializes at most 100 entries
-
-    expect(OLLAMA_O1_LIMITS.MAX_SEARCH_FILES).toBe(100);
-
-    // When ollamaListFiles calls listDir, it should pass MAX_SEARCH_FILES
-    // Verification: the underlying find+head pipeline stops at 100 lines
+    for (const result of bad) {
+      let caught: unknown;
+      try { parseOllamaBoundedEnumerationResult(result, 100); } catch (e) { caught = e; }
+      expect(caught).toMatchObject({ code: 'COMMAND_FAILED' });
+    }
   });
 
-  it('ollamaLiteralSearch uses bounded listDir primitive', async () => {
-    const { OLLAMA_O1_LIMITS } = await import('../../src/executor/agents/ollamaTools.js');
+  it('does not turn a failed command into a false-empty success', async () => {
+    const { parseOllamaBoundedEnumerationResult } = await import('../../src/executor/agents/ollamaTools.js');
+    expect(parseOllamaBoundedEnumerationResult(
+      { exitCode: 0, stdout: '{"entries":[],"truncated":false}', stderr: '', truncated: false },
+      100,
+    )).toEqual({ entries: [], truncated: false });
 
-    // ollamaLiteralSearch should call listDir with MAX_SEARCH_FILES+1 as maxEntries
-    // to detect truncation while still bounding the underlying operation
-
-    // The enumeration itself should request at most 101 entries from find
-    const requestedLimit = OLLAMA_O1_LIMITS.MAX_SEARCH_FILES + 1;
-    expect(requestedLimit).toBe(101);
-
-    // This proves the filesystem operation materializes at most 101 entries,
-    // not all files in the repository
+    let caught: unknown;
+    try {
+      parseOllamaBoundedEnumerationResult(
+        { exitCode: 1, stdout: '', stderr: 'find unsupported', truncated: false },
+        100,
+      );
+    } catch (e) { caught = e; }
+    expect(caught).toMatchObject({ code: 'COMMAND_FAILED' });
   });
 });
 
@@ -1994,100 +1993,48 @@ describe('O1 conservative chat envelope', () => {
 });
 
 // ---------------------------------------------------------------------------
-// R3: Bounded enumeration fallback tests (Req 62-68)
+// R6: bounded enumeration wiring / regression checks
 // ---------------------------------------------------------------------------
 
-describe('R3 bounded enumeration fallback', () => {
-  it('Req 62: bounded listDir with working find returns at most maxEntries', async () => {
-    // This test would require actual Docker exec mocking; here we verify the
-    // contract at the fsops layer by reading the source
+describe('R6 bounded enumeration wiring', () => {
+  it('O1 no longer depends on the generic GNU find + head bounded path', () => {
     const fsopsSource = readFileSync(join(repoRoot, 'src/executor/fsops.ts'), 'utf8');
-
-    // Primary bounded path uses constant sh -c with head pipeline
-    // Check for key elements: positional params $1 $2 $3, find, head, no interpolation
-    expect(fsopsSource).toContain('find "$1"');
-    expect(fsopsSource).toContain('-maxdepth "$2"');
-    expect(fsopsSource).toContain('head -n "$3"');
-
-    // Dynamic values are positional parameters only
-    expect(fsopsSource).toContain(`'sh', abs, String(depth), String(maxEntries)`);
-  });
-
-  it('Req 63: bounded primary-path failure does NOT invoke unbounded ls fallback', async () => {
-    const fsopsSource = readFileSync(join(repoRoot, 'src/executor/fsops.ts'), 'utf8');
-
-    // When useHeadBound is true (maxEntries supplied), fallback throws COMMAND_FAILED
-    expect(fsopsSource).toContain('if (useHeadBound) {');
-    expect(fsopsSource).toContain('throw new BridgeError');
-    expect(fsopsSource).toContain('bounded listDir failed');
-    expect(fsopsSource).toContain('bounded enumeration is required');
-  });
-
-  it('Req 64: bounded failure fails closed with COMMAND_FAILED', async () => {
-    const fsopsSource = readFileSync(join(repoRoot, 'src/executor/fsops.ts'), 'utf8');
-
-    // Bounded path failure throws BridgeError with code COMMAND_FAILED
-    const boundedFailurePattern = /if \(useHeadBound\)[\s\S]*?throw new BridgeError\(\s*['"]COMMAND_FAILED['"]/;
-    expect(fsopsSource).toMatch(boundedFailurePattern);
-  });
-
-  it('Req 65: unbounded legacy listDir behavior preserved when maxEntries omitted', async () => {
-    const fsopsSource = readFileSync(join(repoRoot, 'src/executor/fsops.ts'), 'utf8');
-
-    // When maxEntries is undefined, uses unbounded find argv (no head)
-    expect(fsopsSource).toContain(`argv = ['find', abs, '-maxdepth', String(depth), '-mindepth', '1', '-printf', '%y %p\\n'];`);
-
-    // Legacy ls fallback is still reachable when useHeadBound is false
-    expect(fsopsSource).toContain('// Fallback for find without -printf (busybox): plain listing (unbounded legacy path only)');
-  });
-
-  it('Req 66: ollamaListFiles uses bounded listDir', async () => {
     const toolsSource = readFileSync(join(repoRoot, 'src/executor/agents/ollamaTools.ts'), 'utf8');
 
-    // ollamaListFiles calls listDir with MAX_SEARCH_FILES as fourth argument (after depth)
-    // The call is: await listDir(t, rel, Math.min(maxDepth, 3), OLLAMA_O1_LIMITS.MAX_SEARCH_FILES);
-    expect(toolsSource).toContain('OLLAMA_O1_LIMITS.MAX_SEARCH_FILES');
-    expect(toolsSource).toMatch(/listDir\(t,\s*rel,\s*Math\.min\(maxDepth,\s*3\),\s*OLLAMA_O1_LIMITS\.MAX_SEARCH_FILES\)/);
+    expect(fsopsSource).not.toContain('useHeadBound');
+    expect(fsopsSource).not.toContain('head -n "$3"');
+    expect(toolsSource).not.toContain('find "$1"');
+    expect(toolsSource).not.toContain('| head -n');
   });
 
-  it('Req 67: ollamaLiteralSearch uses bounded listDir', async () => {
+  it('O1 bounded enumeration executes the trusted Node helper directly with argv data', () => {
     const toolsSource = readFileSync(join(repoRoot, 'src/executor/agents/ollamaTools.ts'), 'utf8');
-
-    // literal_search calls listDir with MAX_SEARCH_FILES + 1 as fourth argument
-    expect(toolsSource).toMatch(/await listDir\([^)]+,\s*[^)]+,\s*[^)]+,\s*OLLAMA_O1_LIMITS\.MAX_SEARCH_FILES\s*\+\s*1\)/);
+    expect(toolsSource).toContain("['node', '-e', OLLAMA_BOUNDED_ENUMERATION_SCRIPT, abs, t.workspace, String(maxDepth), String(maxEntries)]");
+    expect(toolsSource).toContain('maxEntries > OLLAMA_O1_LIMITS.MAX_SEARCH_FILES + 1');
   });
 
-  it('Req 68: no model/caller value enters shell source text in bounded path', async () => {
-    const fsopsSource = readFileSync(join(repoRoot, 'src/executor/fsops.ts'), 'utf8');
-
-    // Shell program uses positional parameters $1 $2 $3 (not interpolated JS values)
-    expect(fsopsSource).toMatch(/find "\$1" -maxdepth "\$2"/);
-    expect(fsopsSource).toMatch(/head -n "\$3"/);
-
-    // All dynamic values supplied as positional argv after 'sh'
-    expect(fsopsSource).toContain(`'sh', abs, String(depth), String(maxEntries)`);
-
-    // The shell command string itself contains no JS interpolation
-    const boundedBlock = fsopsSource.substring(
-      fsopsSource.indexOf('if (maxEntries !== undefined && maxEntries > 0)'),
-      fsopsSource.indexOf('} else {', fsopsSource.indexOf('if (maxEntries !== undefined && maxEntries > 0)'))
-    );
-    // Within the bounded block, shell program has no ${...} template expressions
-    const shellLine = boundedBlock.split('\n').find(l => l.includes('find "$1"'));
-    expect(shellLine).toBeDefined();
-    expect(shellLine).not.toMatch(/\$\{[^}]+\}/); // No ${var} interpolation
+  it('list_files uses the 100-entry portable bound', () => {
+    const toolsSource = readFileSync(join(repoRoot, 'src/executor/agents/ollamaTools.ts'), 'utf8');
+    expect(toolsSource).toMatch(/boundedOllamaListDir\([\s\S]*?OLLAMA_O1_LIMITS\.MAX_SEARCH_FILES,[\s\S]*?\)/);
   });
 
-  it('Req 69: bounded path variable useHeadBound gates fallback behavior', async () => {
+  it('literal_search uses the 101-entry truncation probe', () => {
+    const toolsSource = readFileSync(join(repoRoot, 'src/executor/agents/ollamaTools.ts'), 'utf8');
+    expect(toolsSource).toContain('OLLAMA_O1_LIMITS.MAX_SEARCH_FILES + 1');
+    expect(toolsSource).toContain('enumeration.truncated || allFiles.length > OLLAMA_O1_LIMITS.MAX_SEARCH_FILES');
+  });
+
+  it('execution failure and output clipping are explicit fail-closed parser gates', () => {
+    const toolsSource = readFileSync(join(repoRoot, 'src/executor/agents/ollamaTools.ts'), 'utf8');
+    expect(toolsSource).toContain('if (result.exitCode !== 0 || result.truncated) throw enumerationFailure();');
+    expect(toolsSource).toContain("new BridgeError('COMMAND_FAILED', 'bounded O1 enumeration failed', 422)");
+  });
+
+  it('generic target listDir keeps its legacy three-argument behavior', () => {
     const fsopsSource = readFileSync(join(repoRoot, 'src/executor/fsops.ts'), 'utf8');
-
-    // useHeadBound is set true when maxEntries is supplied
-    expect(fsopsSource).toContain('let useHeadBound = false;');
-    expect(fsopsSource).toContain('if (maxEntries !== undefined && maxEntries > 0) {');
-    expect(fsopsSource).toContain('useHeadBound = true;');
-
-    // useHeadBound guards the bounded-failure path
-    expect(fsopsSource).toContain('if (useHeadBound) {');
+    expect(fsopsSource).toContain('export async function listDir(t: ConfinedTarget, rel: string, maxDepth = 1): Promise<string[]>');
+    expect(fsopsSource).toContain("['find', abs, '-maxdepth', String(depth), '-mindepth', '1', '-printf', '%y %p\\n']");
+    expect(fsopsSource).toContain("['ls', '-1ap', abs]");
   });
 });
 

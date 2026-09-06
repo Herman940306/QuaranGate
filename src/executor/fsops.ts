@@ -191,40 +191,22 @@ export async function statPath(t: ConfinedTarget, rel: string): Promise<FileStat
   };
 }
 
-export async function listDir(t: ConfinedTarget, rel: string, maxDepth = 1, maxEntries?: number): Promise<string[]> {
+export async function listDir(t: ConfinedTarget, rel: string, maxDepth = 1): Promise<string[]> {
   const abs = await confinePath(t, rel, { mustExist: true });
   const depth = Math.min(Math.max(1, maxDepth), 5);
 
-  // Build argv with optional bounded enumeration via head
-  let argv: string[];
-  let useHeadBound = false;
-
-  if (maxEntries !== undefined && maxEntries > 0) {
-    // Bounded enumeration: pipe find through head to stop at maxEntries lines
-    // Use sh -c to compose the pipeline with argv-only (no variable interpolation)
-    useHeadBound = true;
-    argv = [
-      '/bin/sh', '-c',
-      `find "$1" -maxdepth "$2" -mindepth 1 -printf '%y %p\\n' 2>/dev/null | head -n "$3"`,
-      'sh', abs, String(depth), String(maxEntries)
-    ];
-  } else {
-    // Unbounded (existing behavior)
-    argv = ['find', abs, '-maxdepth', String(depth), '-mindepth', '1', '-printf', '%y %p\n'];
-  }
-
-  const r = await runArgv(t, argv, { principal: 'executor', timeoutMs: 15_000, maxOutputBytes: 128 * 1024 });
+  // Generic target listing preserves the legacy behavior. O1 does NOT use this
+  // primitive for bounded enumeration: target containers are heterogeneous and
+  // may not provide GNU find semantics. The O1 helper has its own qualified,
+  // Node-based bounded enumerator in agents/ollamaTools.ts.
+  const r = await runArgv(
+    t,
+    ['find', abs, '-maxdepth', String(depth), '-mindepth', '1', '-printf', '%y %p\n'],
+    { principal: 'executor', timeoutMs: 15_000, maxOutputBytes: 128 * 1024 },
+  );
 
   if (r.exitCode !== 0 && !r.stdout) {
-    // Bounded enumeration failure must fail closed (no unbounded ls fallback)
-    if (useHeadBound) {
-      throw new BridgeError(
-        'COMMAND_FAILED',
-        `bounded listDir failed: find -printf not supported and bounded enumeration is required`,
-        422,
-      );
-    }
-    // Fallback for find without -printf (busybox): plain listing (unbounded legacy path only)
+    // Fallback for targets whose find lacks -printf (for example BusyBox).
     const r2 = await runArgv(t, ['ls', '-1ap', abs], { principal: 'executor', timeoutMs: 10_000 });
     const entries = r2.stdout.split('\n').filter(Boolean).map((n) => path.posix.join(rel || '.', n));
     return entries;
