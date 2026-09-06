@@ -55,6 +55,7 @@ export const OLLAMA_O1_SYSTEM_MESSAGE = [
   'Do not repeat the same search or read after it has already produced sufficient evidence. Once the requested fact is proven, stop calling tools and answer.',
   'Source constants may be written as simple deterministic expressions such as 48 * 1024; evaluate such arithmetic from the inspected source instead of searching only for the decimal result.',
   'For review tasks, direct defining-source evidence is sufficient to decide a claim unless the user explicitly requires test corroboration; once that source proves or refutes the claim, return the verdict instead of continuing to search.',
+  'Never treat SEARCH_INCOMPLETE or searchComplete=false as proof that a symbol or literal is absent. Narrow the search directory and try a different bounded search; for implementation/code-symbol claims, search src before making an absence claim.',
   'A task that requires no repository inspection may be answered without a tool call.',
   'Return a concise final answer only.',
   'Do not include raw prompts, raw tool-result JSON, secrets, credentials, host paths, or hidden runtime state.',

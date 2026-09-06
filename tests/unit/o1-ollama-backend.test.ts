@@ -1334,6 +1334,7 @@ describe('O1 qualification limits are frozen', () => {
     expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/48 \* 1024/i);
     expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/literal_search.*read_file/i);
     expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/review tasks.*direct defining-source evidence.*sufficient/i);
+    expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/SEARCH_INCOMPLETE.*absent.*src/i);
   });
 });
 
@@ -1557,6 +1558,15 @@ describe('R6 portable bounded O1 enumeration', () => {
 // ---------------------------------------------------------------------------
 // R7 REMEDIATION TESTS — truthful recursive literal_search completeness
 // ---------------------------------------------------------------------------
+
+describe('R7b incomplete zero-match search fails closed', () => {
+  it('does not expose an incomplete zero-match scan as a successful absence result', async () => {
+    const toolsSource = readFileSync(new URL('../../src/executor/agents/ollamaTools.ts', import.meta.url), 'utf8');
+    expect(toolsSource).toMatch(/!searchComplete && totalMatches === 0/);
+    expect(toolsSource).toMatch(/error: 'SEARCH_INCOMPLETE'/);
+    expect(toolsSource).toMatch(/Absence is not proven; narrow the directory and search again/);
+  });
+});
 
 describe('R7 literal_search completeness', () => {
   async function runSearchEnumeration(

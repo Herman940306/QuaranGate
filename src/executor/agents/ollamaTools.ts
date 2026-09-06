@@ -653,6 +653,21 @@ export async function ollamaLiteralSearch(
       && !resultLimitIncomplete
       && filesSearched === enumeration.files.length;
 
+    if (!searchComplete && totalMatches === 0) {
+      return {
+        success: false,
+        error: 'SEARCH_INCOMPLETE',
+        details: {
+          directory: relDir,
+          filesSearched,
+          totalMatches,
+          searchComplete: false,
+          truncated: true,
+          message: 'No match was found within the bounded partial scan. Absence is not proven; narrow the directory and search again.',
+        },
+      };
+    }
+
     return {
       success: true,
       data: {

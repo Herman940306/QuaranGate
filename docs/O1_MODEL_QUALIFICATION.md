@@ -655,6 +655,16 @@ The registered project snapshot inspected by these jobs remained committed `main
 
 This run shows that increasing the bounded reasoning budget fixed audit/plan reliability but did not by itself solve review termination. The next remediation therefore targets redundant immutable-snapshot tool loops and review-specific completion guidance rather than simply raising the turn ceiling again.
 
+### Live run of duplicate-loop remediation
+
+Runtime revision `9867cd66a451ec44bcd2e24d994e9aed78fb284f` deployed successfully with the same infrastructure boundary acceptance. Its review-specific completion guidance and exact duplicate-tool-call suppression fixed the prior non-termination: the review job completed in 163874 ms instead of reaching the 16-turn policy ceiling.
+
+The completed verdict was still incorrect. The model performed a root-level bounded literal search that examined 100 eligible files, received an incomplete zero-match result, and then treated that partial scan as proof that `MAX_OLLAMA_CHAT_ENVELOPE_BYTES` was absent from source. That conclusion contradicts committed source, which defines `export const MAX_OLLAMA_CHAT_ENVELOPE_BYTES = 48 * 1024` in `src/executor/agents/ollamaBackend.ts`.
+
+**Verdict:** O1 remains `FAIL_O1_ACCEPTANCE`. Termination is improved, but review correctness still fails on incomplete-search semantics. The next remediation keeps the existing resource limits unchanged and makes an incomplete zero-match literal search fail closed as `SEARCH_INCOMPLETE`; O1 is explicitly forbidden from using that state to support an absence claim and must narrow the search domain (for implementation symbols, `src`) before concluding absence.
+
+Source validation of this next candidate: focused O1 `235/235` PASS; canonical unit suite `50/50` files and `1882/1882` tests PASS; typecheck PASS; build PASS; explicit linked-worktree `git diff --check` PASS. An accidental unscoped Vitest invocation also exercised integration files without their required integration environment and produced environment/schema failures; that invocation is not counted as a unit regression or as integration acceptance.
+
 # Approval record
 
 | Item | Decision |
