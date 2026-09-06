@@ -1109,19 +1109,33 @@ targets:control scope is present
 
 The executor independently resolves the target from trusted configuration and refuses ambiguity. No lifecycle request can specify an image, bind mount, host path, network, port, privilege, device, capability or arbitrary Docker parameter.
 
-## Owner-logon recovery
+## Controlled deployment and owner-logon recovery
+
+Before installing unattended recovery, deploy the candidate with:
+
+```bash
+./scripts/remote-owner-deploy-candidate.sh
+```
+
+The deploy helper requires a clean candidate worktree, performs the source build with BuildKit network disabled and no pull, tags one verified shared artifact for gateway/executor, verifies the embedded Git revision, captures the exact currently running gateway/executor images for rollback, deploys the new gateway/executor without changing Docker mounts or public bindings, runs infrastructure acceptance, and only then persists the exact image tags into the ignored operator `.env`. It never prints the `.env` contents. A failure after mutation begins attempts to restore the prior image selections and prior `.env` bytes.
+
+If O1 is already configured (trusted `OLLAMA_MODEL_QUALIFIER` present or an existing QuaranGate Ollama service exists), deployment and recovery include `compose.ollama.yaml`. This prevents the remote-owner path from silently dropping the existing inference service/network while O1 remains open.
 
 `scripts/remote-owner-start.sh` is the bounded WSL recovery entrypoint. It:
 
 - waits up to 120 seconds for the already-installed Docker Engine;
+- resolves the ignored runtime `.env` without printing it;
+- refuses mutable `:latest` QuaranGate gateway/executor image selections;
+- verifies every configured image already exists locally;
 - performs no image pull or build;
+- preserves the configured O1 compose overlay when present;
 - starts the existing QuaranGate and `projects-work` compose services;
 - waits for gateway health;
 - proves the work target has no Docker socket;
 - checks local gateway readiness;
 - reports Tailscale Funnel status read-only when the CLI is available.
 
-The Windows helper `scripts/windows/Install-QuaranGateRemoteOwnerAutostart.ps1` installs a Task Scheduler action at owner logon that invokes this WSL recovery script. This is intentionally a **logon recovery** guarantee, not a claim that Docker Desktop can run an interactive-user stack before any Windows user session exists.
+The Windows helper `scripts/windows/Install-QuaranGateRemoteOwnerAutostart.ps1` installs a non-elevated Task Scheduler action at owner logon that invokes this WSL recovery script. This is intentionally a **logon recovery** guarantee, not a claim that Docker Desktop can run an interactive-user stack before any Windows user session exists.
 
 ## Remote acceptance
 

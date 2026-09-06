@@ -88,11 +88,15 @@ uid/gid:              1000:1000
 restart policy:        unless-stopped
 ```
 
-## Recovery path
+## Controlled deployment and recovery path
 
-`scripts/remote-owner-start.sh` is the WSL recovery entrypoint. It waits for the already-installed Docker Engine, starts only already-local images with `--no-build --pull never`, starts the normal QuaranGate compose project and `projects-work`, waits for gateway health, and then runs the health proof.
+`scripts/remote-owner-deploy-candidate.sh` is the bounded host-side promotion helper for this candidate. It requires a clean candidate worktree, builds the gateway artifact with BuildKit network disabled and no pull, tags that same verified artifact independently for the executor, verifies the embedded Git revision, deploys only the gateway/executor plus the existing `projects-work` target, runs infrastructure acceptance, and only then persists the exact gateway/executor image tags into the ignored operator `.env`. If deployment fails after mutation begins, it attempts rollback to the exact previously running gateway/executor image selections and restores the prior `.env` bytes.
 
-`scripts/windows/Install-QuaranGateRemoteOwnerAutostart.ps1` registers this entrypoint at owner logon. This is deliberately not represented as a pre-login/cold-boot guarantee: Docker Desktop normally belongs to the interactive user session and must itself be configured to start with Windows/user logon.
+The deploy/recovery scripts preserve the O1 composition when it is already configured: if the trusted runtime `.env` declares `OLLAMA_MODEL_QUALIFIER` or an existing QuaranGate Ollama service is present, `compose.ollama.yaml` is included. This prevents remote-owner recovery from silently dropping the inference network/backend while O1 remains open.
+
+`scripts/remote-owner-start.sh` is the WSL recovery entrypoint. It waits for the already-installed Docker Engine, resolves the ignored runtime `.env` without printing it, refuses mutable `:latest` QuaranGate image selections, verifies every configured image exists locally, starts only already-local images with `--no-build --pull never`, starts the normal QuaranGate composition and `projects-work`, waits for gateway health, and then runs the health proof.
+
+`scripts/windows/Install-QuaranGateRemoteOwnerAutostart.ps1` registers this entrypoint at owner logon using a non-elevated scheduled-task principal. This is deliberately not represented as a pre-login/cold-boot guarantee: Docker Desktop normally belongs to the interactive user session and must itself be configured to start with Windows/user logon.
 
 ## Ingress boundary
 

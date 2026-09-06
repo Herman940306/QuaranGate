@@ -13,10 +13,28 @@ docker info >/dev/null 2>&1 || fail 'Docker Engine unavailable'
 export PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}"
 [[ -d "$PROJECTS_ROOT" ]] || fail "projects root missing: $PROJECTS_ROOT"
 
+RUNTIME_ENV="${QUARANGATE_RUNTIME_ENV:-$REPO_ROOT/.env}"
+if [[ ! -f "$RUNTIME_ENV" && -f "$REPO_ROOT/../../.env" ]]; then
+  RUNTIME_ENV="$REPO_ROOT/../../.env"
+fi
+[[ -f "$RUNTIME_ENV" ]] || fail 'runtime .env not found'
+
+QG_FILES=(-f "$REPO_ROOT/compose.yaml")
+ollama_expected=0
+if grep -q '^OLLAMA_MODEL_QUALIFIER=' "$RUNTIME_ENV"; then ollama_expected=1; fi
+if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=ollama --format '{{.ID}}' | grep -q .; then ollama_expected=1; fi
+if [[ "$ollama_expected" == 1 ]]; then
+  [[ -f "$REPO_ROOT/compose.ollama.yaml" ]] || fail 'O1 is configured but compose.ollama.yaml is missing'
+  QG_FILES+=(-f "$REPO_ROOT/compose.ollama.yaml")
+fi
+
+QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
+PW=(docker compose --env-file "$RUNTIME_ENV" -p projects-work -f "$REPO_ROOT/projects-work-target/compose.yaml")
+
 # Resolve service containers from trusted Compose identity, not guessed names.
-gateway_id="$(docker compose -p quarangate -f compose.yaml ps -q gateway)"
-executor_id="$(docker compose -p quarangate -f compose.yaml ps -q executor)"
-projects_id="$(docker compose -p projects-work -f projects-work-target/compose.yaml ps -q work)"
+gateway_id="$("${QG[@]}" ps -q gateway)"
+executor_id="$("${QG[@]}" ps -q executor)"
+projects_id="$("${PW[@]}" ps -q work)"
 [[ -n "$gateway_id" ]] || fail 'gateway container missing'
 [[ -n "$executor_id" ]] || fail 'executor container missing'
 [[ -n "$projects_id" ]] || fail 'projects-work container missing'
@@ -47,6 +65,16 @@ pass EXECUTOR_ONLY_DOCKER_SOCKET
 mount_line="$(docker inspect "$projects_id" --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}|{{.Destination}}|{{.RW}}{{end}}{{end}}')"
 [[ "$mount_line" == "$PROJECTS_ROOT|/workspace|true" ]] || fail "unexpected projects-work bind: $mount_line"
 pass PROJECTS_ROOT_RW_BOUNDARY
+
+# If O1 is configured, prove the overlay is still represented in the live stack
+# rather than silently dropping the inference service during remote recovery.
+if [[ "$ollama_expected" == 1 ]]; then
+  ollama_id="$("${QG[@]}" ps -q ollama)"
+  [[ -n "$ollama_id" ]] || fail 'configured O1 Ollama service missing'
+  ollama_running="$(docker inspect "$ollama_id" --format '{{.State.Running}}')"
+  [[ "$ollama_running" == true ]] || fail 'configured O1 Ollama service is not running'
+  pass O1_COMPOSITION_PRESERVED
+fi
 
 curl -fsS "http://127.0.0.1:${BRIDGE_PORT:-8787}/readyz" >/dev/null || fail 'gateway readiness failed'
 pass LOCAL_GATEWAY_READY

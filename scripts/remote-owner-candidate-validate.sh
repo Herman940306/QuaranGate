@@ -10,7 +10,7 @@ printf 'BRANCH='; git branch --show-current
 
 printf '%s\n' '=== STATIC ==='
 git diff --check
-bash -n scripts/remote-owner-start.sh scripts/remote-owner-health.sh scripts/remote-owner-infra-acceptance.sh
+bash -n scripts/remote-owner-start.sh scripts/remote-owner-health.sh scripts/remote-owner-infra-acceptance.sh scripts/remote-owner-deploy-candidate.sh
 printf '%s\n' 'STATIC=PASS'
 
 printf '%s\n' '=== TYPECHECK ==='

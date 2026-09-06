@@ -31,13 +31,27 @@ describe('remote owner projects-work hard boundary', () => {
     expect(compose().services.work.restart).toBe('unless-stopped');
     const script = readFileSync(join(root, 'scripts', 'remote-owner-start.sh'), 'utf8');
     expect(script).toContain('--no-build --pull never');
+    expect(script).toContain('--env-file');
+    expect(script).toContain('mutable QuaranGate image refused');
+    expect(script).toContain('compose.ollama.yaml');
     expect(script).not.toMatch(/docker\s+build|docker\s+pull/);
   });
 
-  it('Windows autostart invokes only the bounded WSL recovery entrypoint at owner logon', () => {
+  it('candidate deployment builds one local artifact, preserves rollback state, and never pulls', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain('build --no-cache gateway');
+    expect(script).toContain('docker tag "$NEW_GATEWAY_IMAGE" "$NEW_EXECUTOR_IMAGE"');
+    expect(script).toContain('rollback_attempted');
+    expect(script).toContain('--no-build --pull never');
+    expect(script).toContain('compose.ollama.yaml');
+    expect(script).not.toMatch(/docker\s+pull/);
+  });
+
+  it('Windows autostart invokes only the bounded WSL recovery entrypoint at owner logon without elevation', () => {
     const script = readFileSync(join(root, 'scripts', 'windows', 'Install-QuaranGateRemoteOwnerAutostart.ps1'), 'utf8');
     expect(script).toContain('New-ScheduledTaskTrigger -AtLogOn');
     expect(script).toContain('./scripts/remote-owner-start.sh');
+    expect(script).toContain('-RunLevel Limited');
     expect(script).not.toMatch(/mcpb_|INTERNAL_TOKEN|API_KEY=/);
   });
 });
