@@ -115,7 +115,7 @@ export const OLLAMA_TOOL_DEFINITIONS = [
     type: 'function' as const,
     function: {
       name: 'literal_search',
-      description: 'Search for a literal string (fixed-string, not regex) across files in a directory. Skips sensitive files. Maximum 100 files searched, 200 results total.',
+      description: 'Recursively search for a literal string (fixed-string, not regex) across eligible regular files in a directory. Skips sensitive files. Maximum 100 eligible files searched and 200 results total. The result includes searchComplete; when false, absence is NOT proven and you must narrow the directory and search again before concluding the identifier is missing.',
       parameters: {
         type: 'object' as const,
         properties: {
@@ -317,6 +317,7 @@ function toolResultLogFields(toolName: unknown, rawResult: string): Record<strin
         const totalMatches = safeNonNegativeInteger(data.totalMatches);
         if (filesSearched !== null) fields.filesSearched = filesSearched;
         if (totalMatches !== null) fields.totalMatches = totalMatches;
+        if (typeof data.searchComplete === 'boolean') fields.searchComplete = data.searchComplete;
         if (typeof data.truncated === 'boolean') fields.truncated = data.truncated;
       }
     }

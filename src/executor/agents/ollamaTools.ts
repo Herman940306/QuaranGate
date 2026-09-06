@@ -444,8 +444,102 @@ export async function ollamaListFiles(
 }
 
 // ---------------------------------------------------------------------------
-// literal_search (§18) — bounded enumeration + per-file fixed-string search
+// literal_search (§18) — bounded recursive eligible-file search
 // ---------------------------------------------------------------------------
+
+/**
+ * Search enumeration is intentionally separate from list_files. It recursively
+ * walks the requested directory, does not follow symlink directories, skips
+ * built-in/project-sensitive paths before counting the search budget, and
+ * stops when it encounters the 101st eligible regular file. That makes the
+ * public 100-file limit truthful: directories and denied files do not consume
+ * the file-search budget.
+ *
+ * The helper imports the exact compiled guarded-path matcher from the same
+ * immutable QuaranGate image rather than reimplementing glob semantics.
+ */
+export const OLLAMA_BOUNDED_SEARCH_ENUMERATION_SCRIPT = [
+  'import fs from "node:fs";import path from "node:path";',
+  'const root=process.argv[1],workspace=process.argv[2],limit=Number(process.argv[3]),policyUrl=process.argv[4];',
+  'function fail(){process.exit(2);}',
+  'let builtins,sensitive;try{builtins=new Set(JSON.parse(process.argv[5]));sensitive=JSON.parse(process.argv[6]);}catch(_){fail();}',
+  'if(!root||!workspace||!policyUrl||!Number.isInteger(limit)||limit<1||limit>100||!Array.isArray(sensitive)||sensitive.some(x=>typeof x!=="string"))fail();',
+  'const mod=await import(policyUrl);if(typeof mod.pathIsGuarded!=="function")fail();const pathIsGuarded=mod.pathIsGuarded;',
+  'const files=[];let incomplete=false;',
+  'function rel(abs){const r=path.relative(workspace,abs).split(path.sep).join("/");if(!r||r===".."||r.startsWith("../")||path.isAbsolute(r))fail();return r;}',
+  'function allowed(r){const base=r.split("/").pop()||"";if(builtins.has(base))return false;try{return !pathIsGuarded(r,sensitive);}catch(_){fail();}}',
+  'function walk(dir){',
+  '  let items;try{items=fs.readdirSync(dir,{withFileTypes:true});}catch(_){fail();}',
+  '  items.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);',
+  '  for(const ent of items){',
+  '    const abs=path.join(dir,ent.name);',
+  '    if(ent.isDirectory()){walk(abs);if(incomplete)return;continue;}',
+  '    if(!ent.isFile())continue;',
+  '    const r=rel(abs);if(!allowed(r))continue;',
+  '    if(files.length>=limit){incomplete=true;return;}',
+  '    files.push(r);',
+  '  }',
+  '}',
+  'walk(root);',
+  'process.stdout.write(JSON.stringify({files,incomplete})+"\\n");',
+].join('');
+
+export interface OllamaSearchEnumerationResult {
+  files: string[];
+  incomplete: boolean;
+}
+
+function searchFailure(): BridgeError {
+  return new BridgeError('COMMAND_FAILED', 'bounded O1 literal search failed', 422);
+}
+
+export function parseOllamaSearchEnumerationResult(
+  result: OllamaEnumerationExecResult & { timedOut?: boolean },
+  maxFiles: number,
+): OllamaSearchEnumerationResult {
+  if (result.exitCode !== 0 || result.truncated || result.timedOut === true) throw searchFailure();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout.trim());
+  } catch {
+    throw searchFailure();
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw searchFailure();
+  const obj = parsed as Record<string, unknown>;
+  if (!Array.isArray(obj.files) || typeof obj.incomplete !== 'boolean' || obj.files.length > maxFiles) throw searchFailure();
+
+  const files: string[] = [];
+  for (const value of obj.files) {
+    if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) throw searchFailure();
+    if (value.startsWith('/') || value.endsWith('/') || value.split('/').includes('..')) throw searchFailure();
+    files.push(value);
+  }
+  return { files, incomplete: obj.incomplete };
+}
+
+async function boundedOllamaSearchFiles(
+  t: ConfinedTarget,
+  relDir: string,
+  sensitiveGlobs: readonly string[],
+): Promise<OllamaSearchEnumerationResult> {
+  const abs = await confinePath(t, relDir, { mustExist: true });
+  const applyPolicyModuleUrl = new URL('./applyPolicy.js', import.meta.url).href;
+  const result = await runArgv(
+    t,
+    [
+      'node', '--input-type=module', '-e', OLLAMA_BOUNDED_SEARCH_ENUMERATION_SCRIPT,
+      abs,
+      t.workspace,
+      String(OLLAMA_O1_LIMITS.MAX_SEARCH_FILES),
+      applyPolicyModuleUrl,
+      JSON.stringify([...BUILTIN_SENSITIVE_BASENAMES]),
+      JSON.stringify([...sensitiveGlobs]),
+    ],
+    { principal: 'executor', timeoutMs: 15_000, maxOutputBytes: 128 * 1024 },
+  );
+  return parseOllamaSearchEnumerationResult(result, OLLAMA_O1_LIMITS.MAX_SEARCH_FILES);
+}
 
 interface SearchMatch {
   line: number;
@@ -457,48 +551,49 @@ interface SearchFileResult {
   matches: SearchMatch[];
 }
 
+export interface OllamaLiteralFileSearchResult {
+  matches: SearchMatch[];
+  incomplete: boolean;
+}
+
+export function parseOllamaLiteralGrepResult(
+  result: { exitCode: number | null; stdout: string; stderr: string; truncated: boolean; timedOut?: boolean },
+  maxMatches: number,
+): OllamaLiteralFileSearchResult {
+  if (!Number.isInteger(maxMatches) || maxMatches < 1 || maxMatches > OLLAMA_O1_LIMITS.MAX_SEARCH_RESULTS) throw searchFailure();
+  if (result.timedOut === true || result.truncated || result.exitCode === null) throw searchFailure();
+  if (result.exitCode === 1) return { matches: [], incomplete: false }; // grep: ordinary no-match
+  if (result.exitCode !== 0 || result.stdout.length === 0) throw searchFailure();
+
+  const lines = result.stdout.split('\n').filter(Boolean);
+  const incomplete = lines.length > maxMatches;
+  const matches: SearchMatch[] = [];
+  for (const line of lines.slice(0, maxMatches)) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx <= 0) throw searchFailure();
+    const lineNum = Number.parseInt(line.slice(0, colonIdx), 10);
+    if (!Number.isInteger(lineNum) || lineNum < 1) throw searchFailure();
+    matches.push({ line: lineNum, content: line.slice(colonIdx + 1).slice(0, 200) });
+  }
+  return { matches, incomplete };
+}
+
 async function searchSingleFile(
   t: ConfinedTarget,
   relFile: string,
   query: string,
   maxMatches: number,
-): Promise<SearchMatch[]> {
-  // Verify target is a file
+): Promise<OllamaLiteralFileSearchResult> {
   const stat = await statPath(t, relFile);
-  if (stat.type !== 'file') {
-    return [];
-  }
+  if (stat.type !== 'file') throw searchFailure();
 
-  // Use grep with fixed-string semantics (no regex)
   const canonical = await confinePath(t, relFile, { mustExist: true });
   const result = await runArgv(
     t,
     ['grep', '-nI', '-F', '--', query, canonical],
     { principal: 'executor', timeoutMs: 10_000, maxOutputBytes: OLLAMA_O1_LIMITS.MAX_TOOL_RESULT_BYTES },
   );
-
-  if (result.exitCode !== 0 && !result.stdout) {
-    return []; // No matches or error
-  }
-
-  const matches: SearchMatch[] = [];
-  const lines = result.stdout.split('\n').filter(Boolean);
-
-  for (const line of lines) {
-    if (matches.length >= maxMatches) break;
-
-    const colonIdx = line.indexOf(':');
-    if (colonIdx === -1) continue;
-
-    const lineNum = parseInt(line.slice(0, colonIdx), 10);
-    const content = line.slice(colonIdx + 1).slice(0, 200); // Per-line content cap
-
-    if (!isNaN(lineNum)) {
-      matches.push({ line: lineNum, content });
-    }
-  }
-
-  return matches;
+  return parseOllamaLiteralGrepResult(result, maxMatches);
 }
 
 export async function ollamaLiteralSearch(
@@ -508,7 +603,6 @@ export async function ollamaLiteralSearch(
   sensitiveGlobs: readonly string[],
 ): Promise<OllamaToolResult> {
   try {
-    // Validate query length (characters, not bytes)
     if (typeof query !== 'string' || query.length === 0 || query.length > 1024) {
       return {
         success: false,
@@ -517,63 +611,47 @@ export async function ollamaLiteralSearch(
       };
     }
 
-    // Canonicalize directory
     await confinePath(t, relDir, { mustExist: true });
+    const enumeration = await boundedOllamaSearchFiles(t, relDir, sensitiveGlobs);
 
-    // Enumerate at most MAX_SEARCH_FILES + 1 entries so search can detect that
-    // its 100-entry search window is incomplete without ever materializing an
-    // unbounded directory walk.
-    const enumeration = await boundedOllamaListDir(
-      t,
-      relDir,
-      2,
-      OLLAMA_O1_LIMITS.MAX_SEARCH_FILES + 1,
-    );
-    const allFiles = enumeration.entries;
-    const regularFiles = allFiles.filter(f => !f.endsWith('/'));
-
-    // The 101st entry is the truncation probe. Also preserve the helper's own
-    // signal if more than 101 entries existed.
-    const enumerationTruncated = enumeration.truncated || allFiles.length > OLLAMA_O1_LIMITS.MAX_SEARCH_FILES;
-
-    // Take only MAX_SEARCH_FILES for processing
-    const candidateFiles = regularFiles.slice(0, OLLAMA_O1_LIMITS.MAX_SEARCH_FILES);
-
-    // Filter sensitive files before searching
-    const allowedFiles: string[] = [];
-    for (const file of candidateFiles) {
-      try {
-        const check = await checkSensitivePath(t, file, sensitiveGlobs);
-        if (check.allowed) {
-          allowedFiles.push(file);
-        }
-        // Sensitive files are silently skipped (never reach grep)
-      } catch {
-        // Skip files that fail canonicalization/sensitive check
-        continue;
-      }
-    }
-
-    // Search each allowed file
     const results: SearchFileResult[] = [];
     let totalMatches = 0;
+    let filesSearched = 0;
+    let resultLimitIncomplete = false;
 
-    for (const file of allowedFiles) {
-      if (totalMatches >= OLLAMA_O1_LIMITS.MAX_SEARCH_RESULTS) break;
+    for (let index = 0; index < enumeration.files.length; index++) {
+      const file = enumeration.files[index]!;
 
-      try {
-        const remainingMatches = OLLAMA_O1_LIMITS.MAX_SEARCH_RESULTS - totalMatches;
-        const matches = await searchSingleFile(t, file, query, Math.min(remainingMatches, 10));
+      // Defense in depth: the helper uses the same matcher, but the executor
+      // rechecks every returned path before exposing grep output to the model.
+      const check = await checkSensitivePath(t, file, sensitiveGlobs);
+      if (!check.allowed) throw searchFailure();
 
-        if (matches.length > 0) {
-          results.push({ file, matches });
-          totalMatches += matches.length;
-        }
-      } catch {
-        // Skip unreadable files (binary, permissions, etc.)
-        continue;
+      const remainingMatches = OLLAMA_O1_LIMITS.MAX_SEARCH_RESULTS - totalMatches;
+      if (remainingMatches <= 0) {
+        resultLimitIncomplete = true;
+        break;
+      }
+
+      const searched = await searchSingleFile(t, file, query, remainingMatches);
+      filesSearched++;
+      if (searched.matches.length > 0) {
+        results.push({ file, matches: searched.matches });
+        totalMatches += searched.matches.length;
+      }
+      if (searched.incomplete) {
+        resultLimitIncomplete = true;
+        break;
+      }
+      if (totalMatches >= OLLAMA_O1_LIMITS.MAX_SEARCH_RESULTS && index < enumeration.files.length - 1) {
+        resultLimitIncomplete = true;
+        break;
       }
     }
+
+    const searchComplete = !enumeration.incomplete
+      && !resultLimitIncomplete
+      && filesSearched === enumeration.files.length;
 
     return {
       success: true,
@@ -581,9 +659,10 @@ export async function ollamaLiteralSearch(
         query,
         directory: relDir,
         results,
-        filesSearched: allowedFiles.length,
+        filesSearched,
         totalMatches,
-        truncated: totalMatches >= OLLAMA_O1_LIMITS.MAX_SEARCH_RESULTS || enumerationTruncated,
+        searchComplete,
+        truncated: !searchComplete,
       },
     };
   } catch (e) {

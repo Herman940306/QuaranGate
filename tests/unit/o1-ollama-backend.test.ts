@@ -10,7 +10,7 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'nod
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { BridgeError } from '../../src/shared/errors.js';
 import { AGENT_BACKEND_IDS } from '../../src/shared/agents.js';
 import { validateAgentConfig } from '../../src/executor/agentConfig.js';
@@ -720,6 +720,48 @@ describe('O1 governed result delivery', () => {
     ].sort());
     expect(logs.join('\n')).not.toContain(privateArgument);
     expect(logs.join('\n')).not.toContain(privateResult);
+    logSpy.mockRestore();
+  });
+
+  it('logs literal_search completeness as bounded content-free metadata', async () => {
+    const privateQuery = 'PRIVATE_SEARCH_QUERY_SENTINEL';
+    const privatePath = 'PRIVATE_SEARCH_PATH_SENTINEL';
+    const nativeToolCall = { function: { name: 'literal_search', arguments: { directory: privatePath, query: privateQuery } } };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { backend } = await makeResultBackend([
+      { message: { content: '', tool_calls: [nativeToolCall] }, done: true, done_reason: 'stop' },
+      { message: { content: 'Evidence-based final.', tool_calls: [] }, done: true, done_reason: 'stop' },
+    ]);
+    const rawResult = JSON.stringify({
+      success: true,
+      data: {
+        query: privateQuery,
+        directory: privatePath,
+        results: [{ file: `src/${privatePath}.ts`, matches: [{ line: 1, content: privateQuery }] }],
+        filesSearched: 100,
+        totalMatches: 0,
+        searchComplete: false,
+        truncated: true,
+      },
+    });
+    (backend as unknown as { executeToolCall: (call: unknown) => Promise<string> }).executeToolCall = vi.fn().mockResolvedValue(rawResult);
+
+    await backend.run(new AbortController().signal);
+
+    const logs = logSpy.mock.calls.map(([line]) => String(line));
+    const toolMetadata = logs.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((entry) => entry.msg === 'ollama backend: tool metadata');
+    expect(toolMetadata).toMatchObject({
+      toolName: 'literal_search',
+      success: true,
+      filesSearched: 100,
+      totalMatches: 0,
+      searchComplete: false,
+      truncated: true,
+      envelopeWithheld: false,
+    });
+    expect(logs.join('\n')).not.toContain(privateQuery);
+    expect(logs.join('\n')).not.toContain(privatePath);
     logSpy.mockRestore();
   });
 });
@@ -1476,6 +1518,151 @@ describe('R6 portable bounded O1 enumeration', () => {
 });
 
 // ---------------------------------------------------------------------------
+// R7 REMEDIATION TESTS — truthful recursive literal_search completeness
+// ---------------------------------------------------------------------------
+
+describe('R7 literal_search completeness', () => {
+  async function runSearchEnumeration(
+    root: string,
+    workspace: string,
+    limit: number,
+    sensitiveGlobs: string[] = [],
+  ) {
+    const { OLLAMA_BOUNDED_SEARCH_ENUMERATION_SCRIPT } = await import('../../src/executor/agents/ollamaTools.js');
+    const policyDir = mkdtempSync(join(tmpdir(), 'qg-o1-policy-'));
+    const policyPath = join(policyDir, 'policy.mjs');
+    writeFileSync(policyPath, [
+      'export function pathIsGuarded(path, patterns) {',
+      '  return patterns.includes(path);',
+      '}',
+    ].join('\n'));
+    try {
+      const stdout = execFileSync(
+        process.execPath,
+        [
+          '--input-type=module', '-e', OLLAMA_BOUNDED_SEARCH_ENUMERATION_SCRIPT,
+          root,
+          workspace,
+          String(limit),
+          pathToFileURL(policyPath).href,
+          JSON.stringify(['.env', '.npmrc']),
+          JSON.stringify(sensitiveGlobs),
+        ],
+        { encoding: 'utf8' },
+      );
+      return JSON.parse(stdout) as { files: string[]; incomplete: boolean };
+    } finally {
+      rmSync(policyDir, { recursive: true, force: true });
+    }
+  }
+
+  it('recursively reaches the qualification target without a hidden depth cutoff', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'qg-o1-search-'));
+    try {
+      mkdirSync(join(root, 'src', 'executor', 'agents'), { recursive: true });
+      writeFileSync(
+        join(root, 'src', 'executor', 'agents', 'ollamaBackend.ts'),
+        'export const MAX_OLLAMA_CHAT_ENVELOPE_BYTES = 48 * 1024;\n',
+      );
+      writeFileSync(join(root, 'README.md'), 'readme');
+
+      const result = await runSearchEnumeration(root, root, 100);
+      expect(result.incomplete).toBe(false);
+      expect(result.files).toContain('src/executor/agents/ollamaBackend.ts');
+      expect(result.files).toContain('README.md');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('counts only eligible regular files toward the 100-file search bound', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'qg-o1-search-'));
+    try {
+      writeFileSync(join(root, '.env'), 'sensitive');
+      writeFileSync(join(root, 'skip.txt'), 'sensitive');
+      for (let i = 0; i < 105; i++) {
+        const dir = join(root, `d${String(i).padStart(3, '0')}`);
+        mkdirSync(dir);
+        writeFileSync(join(dir, 'file.ts'), `export const N = ${i};\n`);
+      }
+
+      const result = await runSearchEnumeration(root, root, 100, ['skip.txt']);
+      expect(result.files).toHaveLength(100);
+      expect(result.incomplete).toBe(true);
+      expect(result.files).not.toContain('.env');
+      expect(result.files).not.toContain('skip.txt');
+      expect(result.files.every((file) => !file.endsWith('/'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports complete when recursive traversal exhausts the requested domain within budget', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'qg-o1-search-'));
+    try {
+      for (let i = 0; i < 30; i++) mkdirSync(join(root, `empty-${i}`));
+      mkdirSync(join(root, 'deep', 'nested', 'path'), { recursive: true });
+      writeFileSync(join(root, 'deep', 'nested', 'path', 'one.ts'), 'needle');
+      writeFileSync(join(root, 'two.ts'), 'needle');
+
+      const result = await runSearchEnumeration(root, root, 100);
+      expect(result).toEqual({
+        files: ['deep/nested/path/one.ts', 'two.ts'],
+        incomplete: false,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on malformed, clipped, timed-out, or failed search enumeration output', async () => {
+    const { parseOllamaSearchEnumerationResult } = await import('../../src/executor/agents/ollamaTools.js');
+    const bad = [
+      { exitCode: 2, stdout: '', stderr: 'failed', truncated: false, timedOut: false },
+      { exitCode: 0, stdout: '{"files":[]', stderr: '', truncated: true, timedOut: false },
+      { exitCode: null, stdout: '', stderr: '', truncated: false, timedOut: true },
+      { exitCode: 0, stdout: 'not-json', stderr: '', truncated: false, timedOut: false },
+      { exitCode: 0, stdout: '{"files":["../escape.ts"],"incomplete":false}', stderr: '', truncated: false, timedOut: false },
+    ];
+    for (const result of bad) {
+      expect(() => parseOllamaSearchEnumerationResult(result, 100)).toThrowError(/bounded O1 literal search failed/);
+    }
+  });
+
+  it('distinguishes grep no-match from execution failure and reports result clipping truthfully', async () => {
+    const { parseOllamaLiteralGrepResult } = await import('../../src/executor/agents/ollamaTools.js');
+
+    expect(parseOllamaLiteralGrepResult(
+      { exitCode: 1, stdout: '', stderr: '', truncated: false, timedOut: false },
+      200,
+    )).toEqual({ matches: [], incomplete: false });
+
+    expect(() => parseOllamaLiteralGrepResult(
+      { exitCode: 2, stdout: '', stderr: 'grep failed', truncated: false, timedOut: false },
+      200,
+    )).toThrowError(/bounded O1 literal search failed/);
+
+    expect(() => parseOllamaLiteralGrepResult(
+      { exitCode: 0, stdout: '', stderr: '', truncated: false, timedOut: false },
+      200,
+    )).toThrowError(/bounded O1 literal search failed/);
+
+    expect(() => parseOllamaLiteralGrepResult(
+      { exitCode: 0, stdout: '1:a\n', stderr: '', truncated: true, timedOut: false },
+      200,
+    )).toThrowError(/bounded O1 literal search failed/);
+
+    expect(parseOllamaLiteralGrepResult(
+      { exitCode: 0, stdout: '1:a\n2:b\n3:c\n', stderr: '', truncated: false, timedOut: false },
+      2,
+    )).toEqual({
+      matches: [{ line: 1, content: 'a' }, { line: 2, content: 'b' }],
+      incomplete: true,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // R2 AGGREGATE LIMIT CLASSIFICATION — proper FILE_TOO_LARGE vs AGGREGATE_LIMIT_EXCEEDED
 // ---------------------------------------------------------------------------
 
@@ -1861,6 +2048,8 @@ describe('O1-C3-R1 windowed read_file', () => {
     expect(readTool!.function.parameters.required).toEqual(['path']);
     expect(readTool!.function.parameters.additionalProperties).toBe(false);
     expect(readTool!.function.description).toMatch(/literal_search[\s\S]*nextStartLine/);
+    const searchTool = OLLAMA_TOOL_DEFINITIONS.find((tool) => tool.function.name === 'literal_search');
+    expect(searchTool!.function.description).toMatch(/Recursively search[\s\S]*searchComplete[\s\S]*absence is NOT proven[\s\S]*narrow the directory/);
     expect(OLLAMA_TOOL_DEFINITIONS.map((tool) => tool.function.name)).toEqual(['read_file', 'list_files', 'literal_search']);
     expect(JSON.stringify(OLLAMA_TOOL_DEFINITIONS)).not.toMatch(/write_file|terminal_exec|shell/);
   });
@@ -2018,10 +2207,13 @@ describe('R6 bounded enumeration wiring', () => {
     expect(toolsSource).toMatch(/boundedOllamaListDir\([\s\S]*?OLLAMA_O1_LIMITS\.MAX_SEARCH_FILES,[\s\S]*?\)/);
   });
 
-  it('literal_search uses the 101-entry truncation probe', () => {
+  it('literal_search is wired to the recursive eligible-file enumerator, not the depth-limited list primitive', () => {
     const toolsSource = readFileSync(join(repoRoot, 'src/executor/agents/ollamaTools.ts'), 'utf8');
-    expect(toolsSource).toContain('OLLAMA_O1_LIMITS.MAX_SEARCH_FILES + 1');
-    expect(toolsSource).toContain('enumeration.truncated || allFiles.length > OLLAMA_O1_LIMITS.MAX_SEARCH_FILES');
+    expect(toolsSource).toContain('boundedOllamaSearchFiles(t, relDir, sensitiveGlobs)');
+    expect(toolsSource).toContain('OLLAMA_BOUNDED_SEARCH_ENUMERATION_SCRIPT');
+    expect(toolsSource).not.toMatch(/boundedOllamaListDir\(\s*t,\s*relDir,\s*2,/);
+    expect(toolsSource).toContain('filesSearched === enumeration.files.length');
+    expect(toolsSource).toContain('truncated: !searchComplete');
   });
 
   it('execution failure and output clipping are explicit fail-closed parser gates', () => {
