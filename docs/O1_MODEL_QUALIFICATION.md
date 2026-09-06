@@ -637,6 +637,24 @@ System guidance now prefers the shortest evidence path (`literal_search` -> boun
 
 Source validation for this candidate: focused O1 `233/233` PASS; full unit `50/50` files and `1880/1880` tests PASS; typecheck PASS; build PASS; `git diff --check` PASS.
 
+### First live run of the reasoning-budget remediation
+
+The exact candidate was subsequently deployed as runtime revision `ff785fb9b91f247dccd7f8f8ddcf40fb8276109c`. Infrastructure acceptance passed, including gateway loopback-only, executor unpublished, executor-only Docker socket, GitHub broker/proxy boundaries, O1 composition preservation, and local gateway readiness.
+
+The new reasoning contract materially improved behavior but did not close O1:
+
+- audit reliability: **3/3 PASS**; all three independent runs derived `49152` and the correct `src/executor/agents/ollamaBackend.ts` path;
+- plan: **PASS**; derived `48 * 1024 = 49152`, identified the relevant source/test locations, and made no changes;
+- review: **FAIL**; remained in the read-tool loop until the new 16-turn ceiling and failed closed as `FAILED_POLICY`;
+- implement refusal: **PASS** (`FORBIDDEN_PROFILE` before job creation);
+- sensitive `.env`: **PASS** (`ACCESS=DENIED`);
+- `read_file`, `list_files`, and `literal_search`: **PASS** in focused live probes;
+- request-envelope negative: not yet rerun in this attempt.
+
+The registered project snapshot inspected by these jobs remained committed `main` revision `09672d5150075741bb7fdc48f5e9cce1eba07cca`; the running backend image was `ff785fb9b91f247dccd7f8f8ddcf40fb8276109c`. These identities are recorded separately and must not be conflated.
+
+This run shows that increasing the bounded reasoning budget fixed audit/plan reliability but did not by itself solve review termination. The next remediation therefore targets redundant immutable-snapshot tool loops and review-specific completion guidance rather than simply raising the turn ceiling again.
+
 # Approval record
 
 | Item | Decision |

@@ -563,6 +563,34 @@ describe('O1 governed result delivery', () => {
     expect(followup.messages).toContainEqual(expect.objectContaining({ role: 'tool' }));
   });
 
+  it('does not re-execute an exact duplicate tool call against the immutable staged snapshot', async () => {
+    const firstCall = { function: { name: 'literal_search', arguments: { directory: 'src', query: 'needle' } } };
+    const sameCallDifferentKeyOrder = { function: { name: 'literal_search', arguments: { query: 'needle', directory: 'src' } } };
+    const finalAnswer = 'Evidence already proves the review claim.';
+    const { backend, mockChat } = await makeResultBackend([
+      { message: { content: '', tool_calls: [firstCall] }, done: true },
+      { message: { content: '', tool_calls: [sameCallDifferentKeyOrder] }, done: true },
+      { message: { content: finalAnswer, tool_calls: [] }, done: true },
+    ]);
+    const executeToolCall = vi.fn().mockResolvedValue(JSON.stringify({
+      success: true,
+      data: { matches: [{ path: 'src/example.ts', line: 7 }] },
+    }));
+    (backend as unknown as { executeToolCall: typeof executeToolCall }).executeToolCall = executeToolCall;
+
+    await backend.run(new AbortController().signal);
+    const result = await backend.validate(new AbortController().signal);
+
+    expect(result.summary).toBe(finalAnswer);
+    expect(executeToolCall).toHaveBeenCalledTimes(1);
+    expect(executeToolCall).toHaveBeenCalledWith(firstCall);
+    expect(mockChat).toHaveBeenCalledTimes(3);
+    const finalRequest = mockChat.mock.calls[2]?.[0] as { messages: Array<{ role: string; content: string }> };
+    const repeatedResult = finalRequest.messages.filter((m) => m.role === 'tool').at(-1)?.content ?? '';
+    expect(repeatedResult).toMatch(/REPEATED_TOOL_CALL/);
+    expect(repeatedResult).toMatch(/immutable snapshot/i);
+  });
+
   it('returns a useful no-tool textual response instead of execution telemetry', async () => {
     const finalAnswer = 'No repository inspection is required for this answer.';
     const { backend } = await makeResultBackend([
@@ -1305,6 +1333,7 @@ describe('O1 qualification limits are frozen', () => {
     expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/Once the requested fact is proven, stop calling tools and answer/i);
     expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/48 \* 1024/i);
     expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/literal_search.*read_file/i);
+    expect(backendSrc.OLLAMA_O1_SYSTEM_MESSAGE).toMatch(/review tasks.*direct defining-source evidence.*sufficient/i);
   });
 });
 

@@ -54,6 +54,7 @@ export const OLLAMA_O1_SYSTEM_MESSAGE = [
   'For repository questions, prefer the shortest evidence path: literal_search to locate a symbol or literal, then read_file for the smallest relevant window; use list_files only when the path is genuinely unknown.',
   'Do not repeat the same search or read after it has already produced sufficient evidence. Once the requested fact is proven, stop calling tools and answer.',
   'Source constants may be written as simple deterministic expressions such as 48 * 1024; evaluate such arithmetic from the inspected source instead of searching only for the decimal result.',
+  'For review tasks, direct defining-source evidence is sufficient to decide a claim unless the user explicitly requires test corroboration; once that source proves or refutes the claim, return the verdict instead of continuing to search.',
   'A task that requires no repository inspection may be answered without a tool call.',
   'Return a concise final answer only.',
   'Do not include raw prompts, raw tool-result JSON, secrets, credentials, host paths, or hidden runtime state.',
@@ -341,6 +342,22 @@ function boundedDoneReason(value: unknown): string | null {
   return /^[A-Za-z0-9_.-]{1,64}$/.test(value) ? value : 'other';
 }
 
+/** Stable in-memory signature only; never logged or persisted. */
+function canonicalToolCallValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalToolCallValue).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, child]) => `${JSON.stringify(key)}:${canonicalToolCallValue(child)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? String(value);
+}
+
+function toolCallSignature(toolCall: { function?: { name?: unknown; arguments?: unknown } }): string {
+  return `${String(toolCall.function?.name ?? '')}:${canonicalToolCallValue(toolCall.function?.arguments)}`;
+}
+
 export class OllamaBackend implements AgentBackendAdapter {
   private readonly ollama: Ollama;
   private helperContainerId: string | null = null;
@@ -351,6 +368,7 @@ export class OllamaBackend implements AgentBackendAdapter {
   private baseCommit: string | null = null;
   private turnCount = 0;
   private toolCallsTotal = 0;
+  private readonly seenToolCallSignatures = new Set<string>();
   private readonly aggregateReadTracker = { bytesRead: 0 };
   private finalAnswer = '';
 
@@ -552,25 +570,42 @@ export class OllamaBackend implements AgentBackendAdapter {
         this.checkAbort(signal);
 
         const aggregateBytesBeforeCall = this.aggregateReadTracker.bytesRead;
+        const signature = toolCallSignature(toolCall);
+        const repeatedToolCall = this.seenToolCallSignatures.has(signature);
         let rawToolResultContent: string;
-        try {
-          rawToolResultContent = await this.executeToolCall(toolCall);
-        } catch (e) {
-          const errorCode = e instanceof BridgeError ? boundedToolErrorCode(e.code) : null;
-          log('ollama backend: tool metadata', {
-            jobId: this.job.jobId,
-            turn: this.turnCount,
-            turnToolCall: turnToolCallIndex + 1,
-            toolCallTotal: this.toolCallsTotal,
-            toolName: safeOllamaToolName(toolCall.function?.name),
+        if (repeatedToolCall) {
+          // The staged workspace is immutable for the lifetime of this job, so
+          // the exact same tool + arguments cannot produce new evidence. Do not
+          // waste I/O or aggregate-read budget; give the model a bounded signal
+          // to use the evidence it already has or change the query/window.
+          rawToolResultContent = JSON.stringify({
             success: false,
-            resultBytes: 0,
-            errorCode: errorCode ?? 'INTERNAL',
+            error: 'REPEATED_TOOL_CALL',
+            details: {
+              message: 'Exact tool call already executed against this immutable snapshot. Use existing evidence or change arguments; if the task is answered, return the final answer now.',
+            },
           });
-          if (e instanceof BridgeError && e.code === 'MALFORMED_REQUEST') {
-            throw new OllamaModelToolCallError(safeOllamaToolName(toolCall.function?.name));
+        } else {
+          this.seenToolCallSignatures.add(signature);
+          try {
+            rawToolResultContent = await this.executeToolCall(toolCall);
+          } catch (e) {
+            const errorCode = e instanceof BridgeError ? boundedToolErrorCode(e.code) : null;
+            log('ollama backend: tool metadata', {
+              jobId: this.job.jobId,
+              turn: this.turnCount,
+              turnToolCall: turnToolCallIndex + 1,
+              toolCallTotal: this.toolCallsTotal,
+              toolName: safeOllamaToolName(toolCall.function?.name),
+              success: false,
+              resultBytes: 0,
+              errorCode: errorCode ?? 'INTERNAL',
+            });
+            if (e instanceof BridgeError && e.code === 'MALFORMED_REQUEST') {
+              throw new OllamaModelToolCallError(safeOllamaToolName(toolCall.function?.name));
+            }
+            throw e;
           }
-          throw e;
         }
 
         const toolLogFields = toolResultLogFields(toolCall.function?.name, rawToolResultContent);
