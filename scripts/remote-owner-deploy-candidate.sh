@@ -95,12 +95,39 @@ rollback() {
   trap - EXIT
   if [[ "$rc" -ne 0 ]]; then
     printf '%s\n' '=== DEPLOY ROLLBACK ===' >&2
+    rollback_ok=1
     if [[ "$env_updated" == 1 ]]; then
-      cp "$env_backup" "$RUNTIME_ENV" || true
+      cp "$env_backup" "$RUNTIME_ENV" || rollback_ok=0
     fi
     if [[ "$mutated" == 1 ]]; then
-      GATEWAY_IMAGE="$OLD_GATEWAY_IMAGE" EXECUTOR_IMAGE="$OLD_EXECUTOR_IMAGE" \
-        "${QG[@]}" up -d --no-build --pull never gateway executor >/dev/null 2>&1 || true
+      if ! GATEWAY_IMAGE="$OLD_GATEWAY_IMAGE" EXECUTOR_IMAGE="$OLD_EXECUTOR_IMAGE" \
+        "${QG[@]}" up -d --no-build --pull never gateway executor >/dev/null 2>&1; then
+        rollback_ok=0
+      fi
+
+      rollback_gateway_id="$("${QG[@]}" ps -q gateway 2>/dev/null || true)"
+      rollback_executor_id="$("${QG[@]}" ps -q executor 2>/dev/null || true)"
+      if [[ -z "$rollback_gateway_id" || -z "$rollback_executor_id" ]]; then
+        rollback_ok=0
+      else
+        rollback_healthy=0
+        for _ in $(seq 1 60); do
+          rollback_state="$(docker inspect "$rollback_gateway_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
+          if [[ "$rollback_state" == healthy ]]; then rollback_healthy=1; break; fi
+          sleep 2
+        done
+        [[ "$rollback_healthy" == 1 ]] || rollback_ok=0
+        rollback_gateway_image="$(docker inspect "$rollback_gateway_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
+        rollback_executor_image="$(docker inspect "$rollback_executor_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
+        [[ "$rollback_gateway_image" == "$OLD_GATEWAY_IMAGE" ]] || rollback_ok=0
+        [[ "$rollback_executor_image" == "$OLD_EXECUTOR_IMAGE" ]] || rollback_ok=0
+      fi
+    fi
+
+    if [[ "$rollback_ok" == 1 ]]; then
+      printf '%s\n' 'REMOTE_OWNER_ROLLBACK=PASS' >&2
+    else
+      printf '%s\n' 'REMOTE_OWNER_ROLLBACK=FAIL' >&2
     fi
     printf 'REMOTE_OWNER_DEPLOY=FAIL rollback_attempted=%s\n' "$mutated" >&2
   fi
@@ -174,8 +201,33 @@ finally:
 PY
 env_updated=1
 
-# Re-resolve through the persisted env; only image names are inspected.
-mapfile -t persisted_images < <("${QG[@]}" config --images | sort -u)
+# Verify the persisted file directly. Compose gives ambient shell variables
+# precedence over --env-file, so a stale exported GATEWAY_IMAGE/EXECUTOR_IMAGE
+# must not cause a false persistence failure (or silently override this proof).
+python3 - "$RUNTIME_ENV" "$NEW_GATEWAY_IMAGE" "$NEW_EXECUTOR_IMAGE" <<'PYVERIFY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+expected = {'GATEWAY_IMAGE': sys.argv[2], 'EXECUTOR_IMAGE': sys.argv[3]}
+found = {}
+for raw in path.read_text().splitlines():
+    if '=' not in raw or raw.lstrip().startswith('#'):
+        continue
+    key, value = raw.split('=', 1)
+    if key in expected:
+        found[key] = value
+for key, value in expected.items():
+    if found.get(key) != value:
+        raise SystemExit(f'persisted {key} mismatch')
+PYVERIFY
+
+# Independently verify the Compose graph with the exact persisted selections.
+# Explicit assignments intentionally defeat any stale inherited shell export.
+mapfile -t persisted_images < <(
+  GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE" \
+    "${QG[@]}" config --images | sort -u
+)
 printf '%s\n' "${persisted_images[@]}" | grep -Fxq "$NEW_GATEWAY_IMAGE" || fail 'persisted gateway image selection missing'
 printf '%s\n' "${persisted_images[@]}" | grep -Fxq "$NEW_EXECUTOR_IMAGE" || fail 'persisted executor image selection missing'
 

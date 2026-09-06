@@ -56,6 +56,15 @@ describe('remote owner projects-work hard boundary', () => {
     expect(deploy).toContain('$MAIN_ROOT/config/bridge.yaml');
   });
 
+  it('persisted image verification is immune to stale inherited image exports and rollback is verified', () => {
+    const deploy = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(deploy).toContain("expected = {'GATEWAY_IMAGE': sys.argv[2], 'EXECUTOR_IMAGE': sys.argv[3]}");
+    expect(deploy).toContain('GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE"');
+    expect(deploy).toContain('REMOTE_OWNER_ROLLBACK=PASS');
+    expect(deploy).toContain('rollback_gateway_image');
+    expect(deploy).toContain('rollback_executor_image');
+  });
+
   it('linked-worktree recovery resolves the operator runtime root before composing QuaranGate', () => {
     for (const name of ['remote-owner-start.sh', 'remote-owner-health.sh', 'remote-owner-infra-acceptance.sh']) {
       const script = readFileSync(join(root, 'scripts', name), 'utf8');
