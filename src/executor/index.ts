@@ -10,7 +10,8 @@ import { EXECUTOR_DEFAULTS } from '../shared/types.js';
 import { loadTargetConfig, listTargets, invalidateCache } from './targets.js';
 import { confinedTarget, confinePath, runArgv, runShell } from './execops.js';
 import * as fsops from './fsops.js';
-import { ping } from './docker.js';
+import { inspectContainer, ping } from './docker.js';
+import { controlTarget, readTargetLogs } from './targetControl.js';
 import { loadAgentConfig } from './agentConfig.js';
 import { resolveExecutorStartupPolicy } from './startupPolicy.js';
 import { AgentJobStore } from './agents/jobStore.js';
@@ -125,7 +126,25 @@ app.post('/target/inspect', handle(async (req) => {
   const targets = await listTargets();
   const t = targets.find((x) => x.id === targetId);
   if (!t) throw new BridgeError('UNKNOWN_TARGET', `unknown target: ${targetId}`, 404);
+  if (t.containerId) {
+    const info = await inspectContainer(t.containerId).catch(() => null);
+    if (info?.State.Health?.Status) t.health = info.State.Health.Status;
+  }
   return { target: t };
+}));
+
+app.post('/target/logs', handle(async (req) => {
+  const { targetId, maxBytes } = req.body ?? {};
+  const bounded = Math.min(Math.max(Number(maxBytes ?? 65_536), 1_024), EXECUTOR_DEFAULTS.maxOutputBytes);
+  return readTargetLogs(String(targetId ?? ''), bounded);
+}));
+
+app.post('/target/control', handle(async (req) => {
+  const { targetId, action } = req.body ?? {};
+  if (!['start', 'stop', 'restart'].includes(action)) {
+    throw new BridgeError('MALFORMED_REQUEST', 'action must be start, stop, or restart', 400);
+  }
+  return controlTarget(String(targetId ?? ''), action);
 }));
 
 app.post('/fs/list', handle(async (req) => {

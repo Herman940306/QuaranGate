@@ -10,7 +10,7 @@ const fail = (m) => { console.error('  ✗', m); errors++; };
 const ok = (m) => console.log('  ✓', m);
 
 const validScopes = new Set([
-  'targets:read','files:read','files:write','files:delete','terminal:exec','git:read','process:read',
+  'targets:read','targets:control','targets:logs','files:read','files:write','files:delete','terminal:exec','git:read','process:read',
   'agents:read','agents:dispatch','agents:cancel','agents:apply',
 ]);
 const agentBackendIds = new Set(['kiro','copilot','ollama']);

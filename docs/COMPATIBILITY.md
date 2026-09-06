@@ -81,7 +81,7 @@ The accepted implementation includes:
 - structured tool results;
 - per-principal authorization;
 - OAuth façade for compatible browser clients;
-- 23 current operational QuaranGate tools (14 direct target tools + 9 Agent Control Plane tools).
+- 27 current operational QuaranGate tools (18 direct target tools + 9 Agent Control Plane tools).
 
 The exact protocol revision negotiated by a real client must be verified against the running build rather than inferred from this document.
 

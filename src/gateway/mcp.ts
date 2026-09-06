@@ -77,7 +77,25 @@ const TARGET_INSPECT_SCHEMA = {
   workspace: z.string(),
   image: z.string().optional(),
   status: z.string().optional(),
+  health: z.string().optional(),
   source: z.enum(['manual', 'discovered']),
+} as const;
+
+const TARGET_LOGS_SCHEMA = {
+  target: z.string(),
+  stdout: z.string(),
+  stderr: z.string(),
+  bytes: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+} as const;
+
+const TARGET_CONTROL_SCHEMA = {
+  ok: z.literal(true),
+  target: z.string(),
+  action: z.enum(['start', 'stop', 'restart']),
+  running: z.boolean(),
+  status: z.string(),
+  health: z.string().optional(),
 } as const;
 
 const FILE_STAT_SCHEMA = {
@@ -135,8 +153,35 @@ export function buildServer(): McpServer {
   }, guarded('target_inspect', async ({ target }) => {
     require2('targets:read', target);
     const info = await executor.inspect(target);
-    return { target, result: { id: info.id, running: info.running, workspace: info.workspace, image: info.image, status: info.status, source: info.source } };
+    return { target, result: { id: info.id, running: info.running, workspace: info.workspace, image: info.image, status: info.status, health: info.health, source: info.source } };
   }));
+
+  server.registerTool('target_logs', {
+    title: 'Read bounded target logs',
+    description: 'Read bounded stdout/stderr logs from one explicitly authorized manual target. This never exposes raw Docker selection or host paths.',
+    inputSchema: { target: z.string(), maxBytes: z.number().int().min(1024).max(262_144).optional() },
+    outputSchema: TARGET_LOGS_SCHEMA,
+    annotations: READ,
+  }, guarded('target_logs', async ({ target, maxBytes }) => {
+    require2('targets:logs', target);
+    return { target, result: await executor.targetLogs(target, maxBytes) };
+  }));
+
+  const targetControlTool = (name: 'target_start' | 'target_stop' | 'target_restart', action: 'start' | 'stop' | 'restart', description: string) =>
+    server.registerTool(name, {
+      title: name,
+      description,
+      inputSchema: { target: z.string() },
+      outputSchema: TARGET_CONTROL_SCHEMA,
+      annotations: DESTRUCTIVE,
+    }, guarded(name, async ({ target }) => {
+      require2('targets:control', target);
+      return { target, result: await executor.targetControl(target, action) };
+    }));
+
+  targetControlTool('target_start', 'start', 'Start the existing container for one explicitly authorized manual target. Cannot create containers or change images, mounts, networks, ports, privileges, or Docker options.');
+  targetControlTool('target_stop', 'stop', 'Stop the existing container for one explicitly authorized manual target using a bounded grace period. Cannot select arbitrary containers.');
+  targetControlTool('target_restart', 'restart', 'Restart one currently running explicitly authorized manual target. Refuses stopped targets and cannot alter container configuration.');
 
   server.registerTool('fs_list', {
     title: 'List directory',

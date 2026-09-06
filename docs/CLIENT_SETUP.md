@@ -427,3 +427,18 @@ A cloud/browser MCP client cannot normally reach your machine's loopback address
 ## UI instructions no longer match
 
 Client products evolve quickly. Check the current official client documentation referenced in [Compatibility](COMPATIBILITY.md), then update this guide in a bounded documentation change rather than guessing from an old screenshot.
+
+---
+
+# Remote owner workstation profile
+
+For an owner-operated workstation that must remain usable from ChatGPT while the owner is away, use the remote-owner pattern documented in `docs/REMOTE_OWNER_ORCHESTRATION.md`.
+
+The client principal may be granted the broad `projects-work` target plus ordinary file/terminal scopes. Container logs and lifecycle mutation are separate explicit grants:
+
+```text
+targets:logs       bounded logs for manually registered targets
+targets:control    start / stop / restart existing manually registered targets
+```
+
+Do not solve remote orchestration by mounting `/var/run/docker.sock` into `projects-work`. The Docker socket remains private to the executor; the public MCP request accepts only logical target ids and cannot supply Docker images, mounts, networks, ports, privileges or raw daemon options.

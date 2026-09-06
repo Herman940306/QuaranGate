@@ -1056,3 +1056,100 @@ These rules summarize the runbook:
 10. **Historical evidence stays historical.**
 11. **A model being local does not prove the IDE/build/runtime is private.**
 12. **Only the exact reviewed artifact should be promoted.**
+
+---
+
+# Remote owner workstation operation
+
+The remote-owner pattern is intended for an owner who leaves the workstation running and continues development from ChatGPT or another authenticated remote MCP client.
+
+The trust path is:
+
+```text
+remote authenticated client
+  -> approved HTTPS ingress
+  -> loopback-bound QuaranGate gateway
+  -> private executor
+  -> configured targets / governed agents
+```
+
+The executor remains the only normal QuaranGate service with the Docker socket. Broad work targets such as `projects-work` must not receive `/var/run/docker.sock`.
+
+## Persistent projects-work target
+
+Set the host root explicitly when starting the target:
+
+```bash
+export PROJECTS_ROOT="$HOME/projects"
+docker compose -p projects-work -f projects-work-target/compose.yaml up -d --no-build --pull never
+```
+
+The target uses `restart: unless-stopped`, so Docker can restore it after the Docker daemon returns. The compose file never pulls/builds implicitly and does not expose the Docker socket.
+
+Add `projects-work` as a **manual** entry in `config/bridge.yaml` and grant it only to the owner principal. Grant `targets:control` separately if the owner is permitted to start/stop/restart manually registered targets. Grant `targets:logs` separately if bounded container-log access is required.
+
+## Bounded remote lifecycle controls
+
+The remote control surface is intentionally not Docker CLI passthrough:
+
+```text
+target_logs       bounded stdout/stderr, requires targets:logs
+target_start      existing manual target only
+target_stop       existing manual target only
+target_restart    currently-running manual target only
+```
+
+Mutation requires both:
+
+```text
+target is in the principal target allowlist
+AND
+targets:control scope is present
+```
+
+The executor independently resolves the target from trusted configuration and refuses ambiguity. No lifecycle request can specify an image, bind mount, host path, network, port, privilege, device, capability or arbitrary Docker parameter.
+
+## Owner-logon recovery
+
+`scripts/remote-owner-start.sh` is the bounded WSL recovery entrypoint. It:
+
+- waits up to 120 seconds for the already-installed Docker Engine;
+- performs no image pull or build;
+- starts the existing QuaranGate and `projects-work` compose services;
+- waits for gateway health;
+- proves the work target has no Docker socket;
+- checks local gateway readiness;
+- reports Tailscale Funnel status read-only when the CLI is available.
+
+The Windows helper `scripts/windows/Install-QuaranGateRemoteOwnerAutostart.ps1` installs a Task Scheduler action at owner logon that invokes this WSL recovery script. This is intentionally a **logon recovery** guarantee, not a claim that Docker Desktop can run an interactive-user stack before any Windows user session exists.
+
+## Remote acceptance
+
+After deployment, acceptance should prove all of the following with an owner-authorized client:
+
+```text
+[ ] projects-work visible and running
+[ ] read a project file under ~/projects
+[ ] create/read/delete a disposable file under ~/projects
+[ ] execute a target-confined terminal command
+[ ] inspect an approved target
+[ ] read bounded target logs
+[ ] restart one disposable/approved manual target and verify health afterward
+[ ] client without targets:control is denied lifecycle mutation
+[ ] discovery-only target is denied lifecycle mutation
+[ ] projects-work has no Docker socket
+[ ] target path traversal outside ~/projects remains denied
+[ ] lifecycle API exposes no arbitrary image/mount/network/privileged-container creation
+[ ] gateway remains loopback-bound and executor remains unpublished
+[ ] approved HTTPS ingress still reaches the gateway
+```
+
+Do not use a production datastore or other stateful service as the lifecycle acceptance target merely to demonstrate restart authority; use a disposable or explicitly approved target.
+
+Host-side infrastructure acceptance is available as:
+
+```bash
+./scripts/remote-owner-infra-acceptance.sh
+```
+
+It performs only read/health checks and fails closed if the gateway is not loopback-only, the executor is published, Docker socket ownership drifts away from executor-only, or the projects root bind is broader/different than approved.

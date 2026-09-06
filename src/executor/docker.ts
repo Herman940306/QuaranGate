@@ -41,7 +41,7 @@ export async function listContainers(all = false): Promise<ContainerSummary[]> {
   return dockerJson<ContainerSummary[]>('GET', `/v1.44/containers/json?all=${all ? 1 : 0}`);
 }
 
-export async function inspectContainer(id: string): Promise<{ State: { Running: boolean; Status: string }; Config: { Image: string; Labels: Record<string, string> } }> {
+export async function inspectContainer(id: string): Promise<{ State: { Running: boolean; Status: string; Health?: { Status: string } }; Config: { Image: string; Labels: Record<string, string> } }> {
   return dockerJson('GET', `/v1.44/containers/${encodeURIComponent(id)}/json`);
 }
 
@@ -282,9 +282,14 @@ export async function getContainerLogs(id: string, maxBytes: number): Promise<{ 
   const { stdout, stderr } = demuxDockerStream(raw);
   const total = stdout.length + stderr.length;
   if (total > maxBytes) truncated = true;
+  // One shared public budget across stdout+stderr. Returning maxBytes from each
+  // stream would double the advertised bound. Preserve stdout first (Docker's
+  // primary application stream), then spend the remainder on stderr.
+  const outBytes = Math.min(stdout.length, maxBytes);
+  const errBudget = Math.max(0, maxBytes - outBytes);
   return {
-    stdout: stdout.subarray(0, maxBytes).toString('utf8'),
-    stderr: stderr.subarray(0, maxBytes).toString('utf8'),
+    stdout: stdout.subarray(0, outBytes).toString('utf8'),
+    stderr: stderr.subarray(0, errBudget).toString('utf8'),
     bytes: total,
     truncated,
   };
@@ -292,8 +297,19 @@ export async function getContainerLogs(id: string, maxBytes: number): Promise<{ 
 
 export async function stopContainer(id: string, timeoutSec = 2): Promise<void> {
   const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/stop?t=${timeoutSec}` });
-  await res.body.dump();
-  // 304 (already stopped) / 404 (already gone) are fine.
+  const text = await res.body.text();
+  // 304 (already stopped) / 404 (already gone) are acceptable for idempotent internal cleanup.
+  if (res.statusCode >= 400 && res.statusCode !== 404) {
+    throw new BridgeError('DOCKER_UNAVAILABLE', `container stop failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
+  }
+}
+
+export async function restartContainer(id: string, timeoutSec = 10): Promise<void> {
+  const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/restart?t=${timeoutSec}` });
+  const text = await res.body.text();
+  if (res.statusCode >= 400 && res.statusCode !== 304) {
+    throw new BridgeError('DOCKER_UNAVAILABLE', `container restart failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
+  }
 }
 
 export async function killContainer(id: string, signal = 'SIGKILL'): Promise<void> {

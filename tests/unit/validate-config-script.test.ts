@@ -153,6 +153,19 @@ function expectRejected(mutator: (config: AgentConfig) => void, message: string)
 }
 
 describe('scripts/validate-config.mjs agent schema parity', () => {
+
+  it('accepts the explicit targets:control scope', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'quarangate-validate-control-'));
+    tempDirs.push(dir);
+    const clientsPath = join(dir, 'clients.yaml');
+    const bridgePath = join(dir, 'bridge.yaml');
+    writeFileSync(clientsPath, YAML.stringify({ clients: [{ id: 'owner', keyHash: 'a'.repeat(64), scopes: ['targets:read', 'targets:control', 'targets:logs'], targets: ['demo-target'] }] }));
+    writeFileSync(bridgePath, YAML.stringify({ targets: [{ id: 'demo-target', workspace: '/workspace', containerName: 'demo' }] }));
+    const result = spawnSync(process.execPath, [scriptPath], { cwd: repoRoot, env: { ...process.env, CLIENTS_CONFIG: clientsPath, BRIDGE_CONFIG: bridgePath, AGENTS_CONFIG: '' }, encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(outputOf(result)).not.toContain('unknown scope targets:control');
+    expect(outputOf(result)).not.toContain('unknown scope targets:logs');
+  });
   it('accepts a valid Ollama backend with sensitiveReadGlobs', () => {
     const result = runValidator();
 

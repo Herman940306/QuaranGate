@@ -202,9 +202,13 @@ describe('QuaranGate — integration (live stack)', () => {
       const tools = await vscode.listTools();
       const names = tools.tools.map((t) => t.name).sort();
       expect(names).toContain('targets_list');
+      expect(names).toContain('target_logs');
+      expect(names).toContain('target_start');
+      expect(names).toContain('target_stop');
+      expect(names).toContain('target_restart');
       expect(names).toContain('terminal_exec');
       expect(names).toContain('fs_patch');
-      expect(names.length).toBe(23);
+      expect(names.length).toBe(27);
     });
     it('unknown tool call returns an error result', async () => {
       const res: any = await vscode.callTool({ name: 'does_not_exist', arguments: {} });
@@ -252,6 +256,16 @@ describe('QuaranGate — integration (live stack)', () => {
       const out = await callTool(readonly, 'fs_read', { target: T, path: 'README.md' });
       expect(out.isError).toBe(false);
       expect(out.json.content).toContain('hello from workspace');
+    });
+    it('target lifecycle control requires its own scope', async () => {
+      const out = await callTool(readonly, 'target_restart', { target: T });
+      expect(out.isError).toBe(true);
+      expect(out.json.error).toBe('FORBIDDEN_SCOPE');
+    });
+    it('container logs require their own scope', async () => {
+      const out = await callTool(readonly, 'target_logs', { target: T });
+      expect(out.isError).toBe(true);
+      expect(out.json.error).toBe('FORBIDDEN_SCOPE');
     });
   });
 

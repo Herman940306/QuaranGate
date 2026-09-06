@@ -4,6 +4,8 @@ import YAML from 'yaml';
 
 export type Scope =
   | 'targets:read'
+  | 'targets:control'
+  | 'targets:logs'
   | 'files:read'
   | 'files:write'
   | 'files:delete'
@@ -17,6 +19,8 @@ export type Scope =
 
 export const ALL_SCOPES: Scope[] = [
   'targets:read',
+  'targets:control',
+  'targets:logs',
   'files:read',
   'files:write',
   'files:delete',

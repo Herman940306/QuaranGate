@@ -28,6 +28,10 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 export const executor = {
   listTargets: () => call<{ targets: TargetInfo[] }>('/targets').then((r) => r.targets),
   inspect: (targetId: string) => call<{ target: TargetInfo }>('/target/inspect', { targetId }).then((r) => r.target),
+  targetLogs: (targetId: string, maxBytes?: number) =>
+    call<{ target: string; stdout: string; stderr: string; bytes: number; truncated: boolean }>('/target/logs', { targetId, maxBytes }),
+  targetControl: (targetId: string, action: 'start' | 'stop' | 'restart') =>
+    call<{ ok: true; target: string; action: 'start' | 'stop' | 'restart'; running: boolean; status: string; health?: string }>('/target/control', { targetId, action }),
   fsList: (targetId: string, path: string, maxDepth?: number) =>
     call<{ entries: string[] }>('/fs/list', { targetId, path, maxDepth }).then((r) => r.entries),
   fsStat: (targetId: string, path: string) => call<{ stat: FileStat }>('/fs/stat', { targetId, path }).then((r) => r.stat),

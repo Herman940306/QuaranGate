@@ -146,6 +146,44 @@ export async function resolveTarget(targetId: string): Promise<ResolvedTarget> {
   return { ...t, containerId: t.containerId };
 }
 
+/**
+ * Resolve one manually configured target for bounded lifecycle/log operations.
+ * Unlike resolveTarget(), stopped containers are allowed. Discovery-only targets
+ * are deliberately excluded: mutable lifecycle authority requires an explicit
+ * trusted target registration, not ambient label discovery.
+ */
+export async function resolveTargetForControl(targetId: string): Promise<ResolvedTarget> {
+  const manual = (config.targets ?? []).find((t) => t.id === targetId);
+  if (!manual) {
+    const visible = (await listTargets()).find((t) => t.id === targetId);
+    if (visible) throw new BridgeError('TARGET_UNSUPPORTED', `target ${targetId} is discovery-only; lifecycle control requires a manual target`, 409);
+    throw new BridgeError('UNKNOWN_TARGET', `unknown target: ${targetId}`, 404);
+  }
+
+  const containers = await listContainers(true);
+  const matches = containers.filter((c) => matchManual(manual, c));
+  if (matches.length === 0) {
+    throw new BridgeError('TARGET_OFFLINE', `target ${targetId} has no existing container to control`, 409);
+  }
+  if (matches.length !== 1) {
+    throw new BridgeError('AMBIGUOUS_TARGET', `target ${targetId} matches ${matches.length} containers`, 409);
+  }
+
+  const c = matches[0]!;
+  return {
+    id: manual.id,
+    name: manual.id,
+    source: 'manual',
+    composeProject: manual.composeProject ?? null,
+    composeService: manual.composeService ?? null,
+    workspace: manual.workspace,
+    running: c.State === 'running',
+    image: c.Image,
+    containerId: c.Id,
+    status: c.Status,
+  };
+}
+
 export function invalidateCache(): void {
   cache = null;
 }

@@ -201,6 +201,8 @@ A target operation requires the appropriate scope and an authorized target.
 Examples:
 
 ```text
+targets:control   # explicit lifecycle authority for configured manual targets only
+targets:logs      # explicit bounded container-log read authority
 files:read
 files:write
 files:delete
@@ -210,6 +212,8 @@ process:read
 ```
 
 Target discovery does not grant target authority.
+
+`targets:control` is deliberately separate from `targets:read`. `targets:logs` is also separate because container logs may contain operationally sensitive data. It permits only bounded lifecycle actions (`start`, `stop`, `restart`) against an already existing **manually configured** target. The public request cannot supply a Docker container id/name, image, host mount, network, port, privilege flag, or arbitrary Docker option. Discovery-only targets are not lifecycle-controllable. Raw Docker socket access remains executor-only.
 
 ## Agent Control Plane
 

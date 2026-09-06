@@ -16,10 +16,10 @@ describe('MCP structured tool outputs', () => {
     await vscode?.close();
   });
 
-  it('advertises an object outputSchema for all 23 operational tools', async () => {
+  it('advertises an object outputSchema for all 27 operational tools', async () => {
     // 14 IDE tools + 9 activated Agent Control Plane tools.
     const { tools } = await vscode.listTools();
-    expect(tools).toHaveLength(23);
+    expect(tools).toHaveLength(27);
 
     for (const tool of tools) {
       expect(tool.outputSchema, `${tool.name} missing outputSchema`).toBeTruthy();

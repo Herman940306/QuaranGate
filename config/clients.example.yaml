@@ -27,6 +27,16 @@ clients:
     targets: ["demo"]
     rateLimit: 120
 
+  # HIGH PRIVILEGE REMOTE-OWNER EXAMPLE — lifecycle control is separate from
+  # ordinary target read/write. Keep disabled until explicitly authorized.
+  - id: remote-owner
+    name: Remote Owner (example)
+    keyHash: "<sha256-of-key>"
+    enabled: false
+    scopes: [targets:read, targets:control, targets:logs, files:read, files:write, files:delete, terminal:exec, git:read, process:read]
+    targets: ["projects-work"]
+    rateLimit: 120
+
   - id: vscode
     name: VS Code
     keyHash: "<sha256-of-key>"

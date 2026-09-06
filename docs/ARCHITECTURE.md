@@ -543,13 +543,17 @@ Host/Tailscale administration is outside normal agent authority.
 
 # Current tool surface
 
-The current operational MCP surface contains 23 tools.
+The current operational MCP surface contains 27 tools.
 
-## Direct tools — 14
+## Direct tools — 18
 
 ```text
 targets_list
 target_inspect
+target_logs
+target_start
+target_stop
+target_restart
 fs_list
 fs_stat
 fs_read

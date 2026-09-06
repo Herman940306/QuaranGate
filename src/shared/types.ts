@@ -11,6 +11,7 @@ export interface TargetInfo {
   image?: string;
   containerId?: string;
   status?: string;
+  health?: string;
 }
 
 export interface ExecResult {

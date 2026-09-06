@@ -42,9 +42,9 @@ describe('Agent Control Plane — live integration', () => {
   });
 
   describe('tool surface', () => {
-    it('exposes exactly 23 operational tools, all with object outputSchema', async () => {
+    it('exposes exactly 27 operational tools, all with object outputSchema', async () => {
       const { tools } = await owner.listTools();
-      expect(tools).toHaveLength(23);
+      expect(tools).toHaveLength(27);
       for (const t of tools) {
         expect(t.outputSchema, `${t.name} missing outputSchema`).toBeTruthy();
         expect(t.outputSchema?.type, `${t.name} outputSchema type`).toBe('object');

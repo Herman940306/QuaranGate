@@ -340,3 +340,31 @@ Before treating a new target as accepted, verify:
 ```
 
 A target is an authorization boundary. Treat its Compose/mount configuration with the same care as the MCP permission model.
+
+---
+
+# Remote owner umbrella target
+
+For a single-owner workstation, QuaranGate may expose an explicitly approved projects root through a dedicated manual target such as `projects-work`.
+
+The shipped `projects-work-target/compose.yaml` deliberately separates two authorities:
+
+```text
+/home/<owner>/projects -> /workspace   read/write
+/var/run/docker.sock                  absent
+```
+
+This lets an authorized remote principal inspect and edit any project beneath the approved projects root, run target-confined terminal commands, and use normal repository metadata where host UID/GID permissions allow it. It does **not** make the work target a Docker administrator.
+
+Container lifecycle authority remains in QuaranGate's private executor and is exposed only through bounded target operations:
+
+```text
+target_logs
+target_start
+target_stop
+target_restart
+```
+
+Lifecycle mutation additionally requires the `targets:control` scope. Reading container logs requires the separate `targets:logs` scope because logs may contain operationally sensitive data. These operations accept only a logical `target` id. They cannot accept a Docker container id/name, image, mount, network, port, privileged flag, capability, or arbitrary Docker option. Only manually configured targets are lifecycle-controllable; discovery-only targets are rejected.
+
+This design intentionally supports remote owner orchestration without turning a broad writable project mount into raw Docker-host authority.

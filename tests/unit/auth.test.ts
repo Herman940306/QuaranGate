@@ -66,10 +66,29 @@ describe('api keys + principals', () => {
     expect(() => authenticateKey(keys.b.key)).toThrow(); // disabled, but also distinct id
   });
 
+  it('recognizes targets:control only when explicitly granted', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcpb-control-'));
+    const path = join(dir, 'clients.yaml');
+    writeFileSync(path, `clients:
+  - id: owner
+    name: Owner
+    keyHash: "${'c'.repeat(64)}"
+    enabled: true
+    scopes: [targets:read, targets:control]
+    targets: ["demo"]
+`);
+    loadClients(path);
+    const owner = principalById('owner')!;
+    expect(principalHasScope(owner, 'targets:control')).toBe(true);
+    expect(principalHasScope(owner, 'targets:logs')).toBe(false);
+  });
+
   it('scope + target checks', () => {
     const a = principalById('client-a')!;
     expect(principalHasScope(a, 'files:read')).toBe(true);
     expect(principalHasScope(a, 'files:write')).toBe(false);
+    expect(principalHasScope(a, 'targets:control')).toBe(false);
+    expect(principalHasScope(a, 'targets:logs')).toBe(false);
     expect(principalCanTarget(a, 'demo')).toBe(true);
     expect(principalCanTarget(a, 'other')).toBe(false);
     const b = principalById('client-b')!;

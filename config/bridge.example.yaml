@@ -20,3 +20,11 @@ targets:
   # - id: legacy-app
   #   containerName: my-existing-container
   #   workspace: /srv/app
+
+  # Remote-owner umbrella target (high authority; opt in deliberately).
+  # Its Compose definition requires PROJECTS_ROOT and intentionally has no
+  # Docker socket. Lifecycle control is granted separately in clients.yaml.
+  # - id: projects-work
+  #   composeProject: projects-work
+  #   composeService: work
+  #   workspace: /workspace
