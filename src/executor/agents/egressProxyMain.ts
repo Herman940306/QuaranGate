@@ -9,8 +9,9 @@
  * it launches with `node dist/executor/agents/egressProxyMain.js`.
  *
  * Env:
- *   EGRESS_PROXY_PORT        listen port (default 8080)
- *   EGRESS_PROXY_ALLOWLIST   optional comma-separated EXTRA hosts (trusted)
+ *   EGRESS_PROXY_PORT             listen port (default 8080)
+ *   EGRESS_PROXY_ALLOWLIST        optional comma-separated EXTRA hosts (trusted)
+ *   EGRESS_PROXY_EXACT_ALLOWLIST  optional comma-separated REPLACEMENT allowlist
  *
  * The proxy never sees the Kiro API key, never mounts the project or /jobs, and
  * never receives docker.sock. TLS stays end-to-end (CONNECT passthrough).
@@ -20,8 +21,15 @@ import { EgressProxy } from './egressProxy.js';
 const port = Number(process.env.EGRESS_PROXY_PORT ?? 8080);
 const extra = (process.env.EGRESS_PROXY_ALLOWLIST ?? '')
   .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const exact = (process.env.EGRESS_PROXY_EXACT_ALLOWLIST ?? '')
+  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 
-const proxy = new EgressProxy({ listenHost: '0.0.0.0', listenPort: port, additionalHosts: extra });
+const proxy = new EgressProxy({
+  listenHost: '0.0.0.0',
+  listenPort: port,
+  additionalHosts: exact.length === 0 ? extra : undefined,
+  allowedHosts: exact.length > 0 ? exact : undefined,
+});
 
 proxy.start()
   .then((addr) => {

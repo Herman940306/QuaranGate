@@ -37,6 +37,19 @@ clients:
     targets: ["projects-work"]
     rateLimit: 120
 
+  # GitHub App authority is independent from target and agent grants.
+  # githubAccounts: ["*"] means every account in trusted config/github.yaml,
+  # never an arbitrary GitHub owner. githubProjects governs local direct-push mappings.
+  - id: github-owner-example
+    name: GitHub Owner (example)
+    keyHash: "<sha256-of-key>"
+    enabled: false
+    scopes: [github:read, github:write, github:review]
+    targets: []
+    githubAccounts: ["*"]
+    githubProjects: ["example-project"]
+    rateLimit: 60
+
   - id: vscode
     name: VS Code
     keyHash: "<sha256-of-key>"

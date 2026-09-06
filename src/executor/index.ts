@@ -10,9 +10,12 @@ import { EXECUTOR_DEFAULTS } from '../shared/types.js';
 import { loadTargetConfig, listTargets, invalidateCache } from './targets.js';
 import { confinedTarget, confinePath, runArgv, runShell } from './execops.js';
 import * as fsops from './fsops.js';
-import { inspectContainer, ping } from './docker.js';
+import { inspectContainer, inspectImage, ping } from './docker.js';
 import { controlTarget, readTargetLogs } from './targetControl.js';
-import { loadAgentConfig } from './agentConfig.js';
+import { loadAgentConfig, type AgentControlPlaneConfig } from './agentConfig.js';
+import { loadGitHubConfig } from './githubConfig.js';
+import { GitHubControl } from './githubControl.js';
+import { registerGitHubRoutes } from './githubRoutes.js';
 import { resolveExecutorStartupPolicy } from './startupPolicy.js';
 import { AgentJobStore } from './agents/jobStore.js';
 import { AgentJobEngine, type AgentBackendAdapter, type EvidenceReaderFactory } from './agents/jobEngine.js';
@@ -67,9 +70,15 @@ const EXPLICIT_STAGER_IMAGE = process.env.AGENT_STAGER_IMAGE ?? '';
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? '';
 const OLLAMA_MODEL_QUALIFIER = process.env.OLLAMA_MODEL_QUALIFIER ?? '';
 
+// GitHub App control plane (optional, fail closed when not configured).
+const GITHUB_CONFIG = process.env.GITHUB_CONFIG ?? '/config/github.yaml';
+const GITHUB_GIT_HELPER_IMAGE = process.env.GITHUB_GIT_HELPER_IMAGE ?? '';
+const GITHUB_CONTROL_NETWORK = process.env.GITHUB_CONTROL_NETWORK ?? '';
+
 // Mutable handles assigned inside the startup sequence; used by shutdown().
 let agentEngine: AgentJobEngine | null = null;
 let agentStore: AgentJobStore | null = null;
+let githubControl: GitHubControl | null = null;
 
 // ---------------------------------------------------------------------------
 // Express app — constructed in memory here; does NOT accept requests until
@@ -210,6 +219,7 @@ app.post('/exec/shell', handle(async (req) => {
 }));
 
 registerAgentRoutes(app, handle, () => agentEngine);
+registerGitHubRoutes(app, handle, () => githubControl);
 
 app.post('/exec/argv', handle(async (req) => {
   const { targetId, argv, cwd, timeoutMs, principal } = req.body ?? {};
@@ -244,9 +254,11 @@ app.post('/exec/argv', handle(async (req) => {
 let server: ReturnType<typeof app.listen>;
 
 (async () => {
+  let loadedAgentConfig: AgentControlPlaneConfig | null = null;
   // Steps 1-3: synchronous ACP setup (if agents.yaml exists).
   if (fs.existsSync(AGENTS_CONFIG)) {
     const agentConfig = loadAgentConfig(AGENTS_CONFIG);
+    loadedAgentConfig = agentConfig;
 
     const ollamaBackend = agentConfig.backends.find((b) => b.id === 'ollama');
     const startupPolicy = resolveExecutorStartupPolicy(ollamaBackend?.enabled === true, {
@@ -393,6 +405,45 @@ let server: ReturnType<typeof app.listen>;
 
   } else {
     console.log(JSON.stringify({ level: 'info', msg: 'agent control plane not configured (optional)' }));
+  }
+
+  // GitHub App control plane is separately optional and fail-closed. It reuses
+  // the trusted logical project→hostPath registry from agents.yaml for local
+  // push mappings. Remote repository discovery is separately bounded by trusted
+  // GitHub accounts and gateway githubAccounts grants.
+  if (fs.existsSync(GITHUB_CONFIG)) {
+    if (!loadedAgentConfig) throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GitHub control requires the trusted agent project registry', 503);
+    if (!GITHUB_GIT_HELPER_IMAGE || GITHUB_GIT_HELPER_IMAGE.endsWith(':latest')) {
+      throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GITHUB_GIT_HELPER_IMAGE must be an explicit non-latest image', 503);
+    }
+    if (!GITHUB_CONTROL_NETWORK) throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GITHUB_CONTROL_NETWORK is required', 503);
+    let githubHelperImageId: string;
+    try {
+      githubHelperImageId = (await inspectImage(GITHUB_GIT_HELPER_IMAGE)).Id;
+    } catch {
+      throw new BridgeError('GITHUB_NOT_CONFIGURED', 'GITHUB_GIT_HELPER_IMAGE is not available locally', 503);
+    }
+    const githubConfig = loadGitHubConfig(GITHUB_CONFIG);
+    // Every GitHub project must resolve to an already-trusted local Git project.
+    for (const repo of githubConfig.repositories) {
+      const project = loadedAgentConfig.projects.find((p) => p.id === repo.project);
+      if (!project || !project.gitRequired) {
+        throw new BridgeError('GITHUB_NOT_CONFIGURED', `GitHub project ${repo.project} has no trusted gitRequired agent project`, 503);
+      }
+    }
+    githubControl = new GitHubControl({
+      config: githubConfig,
+      agents: loadedAgentConfig,
+      helperImage: githubHelperImageId,
+      controlNetwork: GITHUB_CONTROL_NETWORK,
+    });
+    const swept = await githubControl.reconcileOrphans();
+    console.log(JSON.stringify({
+      level: 'info', msg: 'github control plane active', accounts: githubConfig.accounts.length, localRepositoryMappings: githubConfig.repositories.length,
+      orphanContainersRemoved: swept.containers, orphanVolumesRemoved: swept.volumes,
+    }));
+  } else {
+    console.log(JSON.stringify({ level: 'info', msg: 'github control plane not configured (optional)' }));
   }
 
   // Step 8: all lifecycle steps complete — executor is now safe to accept requests.

@@ -2,6 +2,11 @@
 import { request } from 'undici';
 import { BridgeError } from '../shared/errors.js';
 import type { ExecResult, FileStat, TargetInfo } from '../shared/types.js';
+import type {
+  GitHubBranchSummary, GitHubChecksSummary, GitHubCommentSummary, GitHubCommitSummary,
+  GitHubIssueDetail, GitHubIssueSummary, GitHubPullFileSummary, GitHubPullReviewCommentSummary,
+  GitHubPullReviewSummary, GitHubPullSummary, GitHubRepoMetadata, GitHubRepositorySummary, GitHubReviewEvent,
+} from '../shared/github.js';
 
 const BASE = process.env.EXECUTOR_URL ?? 'http://executor:8990';
 const TOKEN = process.env.INTERNAL_TOKEN ?? '';
@@ -51,6 +56,27 @@ export const executor = {
     call<ExecResult>('/exec/argv', req),
   reload: () => call<{ ok: true }>('/reload', {}),
   readyz: () => call<{ ok: true }>('/readyz').then(() => true).catch(() => false),
+
+  // GitHub App control plane. Remote reads/PR actions use owner/repository
+  // identifiers that are re-authorized against trusted accounts by the
+  // executor. Direct Git push remains local-project driven.
+  githubRepositories: () => call<{ repositories: GitHubRepositorySummary[] }>('/github/repositories').then((r) => r.repositories),
+  githubRepository: (repository: string) => call<{ repository: GitHubRepoMetadata }>('/github/repository', { repository }).then((r) => r.repository),
+  githubBranches: (repository: string, maxItems?: number) => call<{ branches: GitHubBranchSummary[] }>('/github/branches', { repository, maxItems }).then((r) => r.branches),
+  githubCommits: (repository: string, ref: string, maxItems?: number) => call<{ commits: GitHubCommitSummary[] }>('/github/commits', { repository, ref, maxItems }).then((r) => r.commits),
+  githubPulls: (repository: string, state?: 'open' | 'closed' | 'all', maxItems?: number) => call<{ pulls: GitHubPullSummary[] }>('/github/pulls', { repository, state, maxItems }).then((r) => r.pulls),
+  githubPull: (repository: string, number: number) => call<{ pull: GitHubPullSummary }>('/github/pull', { repository, number }).then((r) => r.pull),
+  githubPullFiles: (repository: string, number: number, maxItems?: number) => call<{ files: GitHubPullFileSummary[] }>('/github/pull/files', { repository, number, maxItems }).then((r) => r.files),
+  githubIssues: (repository: string, state?: 'open' | 'closed' | 'all', maxItems?: number) => call<{ issues: GitHubIssueSummary[] }>('/github/issues', { repository, state, maxItems }).then((r) => r.issues),
+  githubIssue: (repository: string, number: number) => call<{ issue: GitHubIssueDetail }>('/github/issue', { repository, number }).then((r) => r.issue),
+  githubIssueComments: (repository: string, number: number, maxItems?: number) => call<{ comments: GitHubCommentSummary[] }>('/github/issue/comments', { repository, number, maxItems }).then((r) => r.comments),
+  githubPullReviews: (repository: string, number: number, maxItems?: number) => call<{ reviews: GitHubPullReviewSummary[] }>('/github/pull/reviews', { repository, number, maxItems }).then((r) => r.reviews),
+  githubPullReviewComments: (repository: string, number: number, maxItems?: number) => call<{ comments: GitHubPullReviewCommentSummary[] }>('/github/pull/review-comments', { repository, number, maxItems }).then((r) => r.comments),
+  githubChecks: (repository: string, ref: string) => call<{ checks: GitHubChecksSummary }>('/github/checks', { repository, ref }).then((r) => r.checks),
+  githubPush: (project: string, expectedHead: string, remoteBranch: string) => call<{ push: { project: string; remoteBranch: string; sha: string } }>('/github/push', { project, expectedHead, remoteBranch }).then((r) => r.push),
+  githubPullCreate: (repository: string, req: { head: string; base: string; title: string; body?: string; draft?: boolean }) => call<{ pull: GitHubPullSummary }>('/github/pull/create', { repository, ...req }).then((r) => r.pull),
+  githubPullUpdate: (repository: string, req: { number: number; title?: string; body?: string; state?: 'open' | 'closed' }) => call<{ pull: GitHubPullSummary }>('/github/pull/update', { repository, ...req }).then((r) => r.pull),
+  githubPullReview: (repository: string, req: { number: number; event: GitHubReviewEvent; body?: string }) => call<{ review: { id: number; state: string; htmlUrl?: string } }>('/github/pull/review', { repository, ...req }).then((r) => r.review),
 
   // Agent Control Plane (A2). The executor independently re-validates and
   // enforces job ownership; the raw prompt is never returned by these calls.

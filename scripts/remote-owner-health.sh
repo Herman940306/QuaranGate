@@ -37,6 +37,17 @@ if [[ "$ollama_expected" == 1 ]]; then
   QG_FILES+=(-f "$RUNTIME_ROOT/compose.ollama.yaml")
 fi
 
+github_expected=0
+if [[ -f "$RUNTIME_ROOT/config/github.yaml" ]]; then github_expected=1; fi
+if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-broker --format '{{.ID}}' | grep -q .; then github_expected=1; fi
+if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-egress-proxy --format '{{.ID}}' | grep -q .; then github_expected=1; fi
+if [[ "$github_expected" == 1 ]]; then
+  github_overlay="$RUNTIME_ROOT/compose.github.yaml"
+  if [[ ! -f "$github_overlay" && -f "$REPO_ROOT/compose.github.yaml" ]]; then github_overlay="$REPO_ROOT/compose.github.yaml"; fi
+  [[ -f "$github_overlay" ]] || fail 'GitHub control is configured but compose.github.yaml is missing'
+  QG_FILES+=(-f "$github_overlay")
+fi
+
 QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
 PW=(docker compose --env-file "$RUNTIME_ENV" -p projects-work -f "$REPO_ROOT/projects-work-target/compose.yaml")
 
@@ -53,6 +64,14 @@ if [[ "$ollama_expected" == 1 ]]; then
   ollama_id="$("${QG[@]}" ps -q ollama)"
   [[ -n "$ollama_id" ]] || fail 'configured O1 Ollama service missing'
   docker inspect "$ollama_id" --format 'OLLAMA_RUNNING={{.State.Running}} OLLAMA_HEALTH={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} IMAGE={{.Config.Image}}'
+fi
+if [[ "$github_expected" == 1 ]]; then
+  github_id="$("${QG[@]}" ps -q github-broker)"
+  github_proxy_id="$("${QG[@]}" ps -q github-egress-proxy)"
+  [[ -n "$github_id" ]] || fail 'configured GitHub broker service missing'
+  [[ -n "$github_proxy_id" ]] || fail 'configured GitHub egress proxy service missing'
+  docker inspect "$github_id" --format 'GITHUB_BROKER_RUNNING={{.State.Running}} GITHUB_BROKER_HEALTH={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} IMAGE={{.Config.Image}}'
+  docker inspect "$github_proxy_id" --format 'GITHUB_PROXY_RUNNING={{.State.Running}} GITHUB_PROXY_HEALTH={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} IMAGE={{.Config.Image}}'
 fi
 
 printf '%s\n' '=== PROJECTS WORK ==='

@@ -372,3 +372,50 @@ describe('scripts/validate-config.mjs agent schema parity', () => {
     }, 'profile audit: sandbox-write is reserved for writer profiles (implement)');
   });
 });
+
+describe('scripts/validate-config.mjs GitHub trusted-account schema', () => {
+  function runGithubValidator(github: unknown, githubAccounts: string[] = ['*']) {
+    const dir = mkdtempSync(join(tmpdir(), 'quarangate-validate-github-'));
+    tempDirs.push(dir);
+    const clientsPath = join(dir, 'clients.yaml');
+    const bridgePath = join(dir, 'bridge.yaml');
+    const agentsPath = join(dir, 'agents.yaml');
+    const githubPath = join(dir, 'github.yaml');
+    writeFileSync(clientsPath, YAML.stringify({ clients: [{
+      id: 'owner', keyHash: 'a'.repeat(64), scopes: ['github:read', 'github:write', 'github:review'],
+      targets: [], githubAccounts, githubProjects: ['demo'],
+    }] }));
+    writeFileSync(bridgePath, YAML.stringify({ targets: [{ id: 'demo-target', workspace: '/workspace', containerName: 'demo' }] }));
+    writeFileSync(agentsPath, YAML.stringify(baseAgentsConfig()));
+    writeFileSync(githubPath, YAML.stringify(github));
+    return spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      env: { ...process.env, CLIENTS_CONFIG: clientsPath, BRIDGE_CONFIG: bridgePath, AGENTS_CONFIG: agentsPath, GITHUB_CONFIG: githubPath },
+      encoding: 'utf8',
+    });
+  }
+
+  it('accepts account-wide discovery plus an optional local push mapping', () => {
+    const result = runGithubValidator({
+      accounts: [{ owner: 'Herman940306' }, { owner: 'JustAGameZA' }],
+      repositories: [{ project: 'demo', owner: 'Herman940306', repo: 'Demo', protectedBranches: ['main'] }],
+    });
+    expect(result.status).toBe(0);
+    expect(outputOf(result)).toContain('2 trusted account(s), 1 local repository mapping(s)');
+  });
+
+  it('rejects a local mapping whose owner is outside the trusted account registry', () => {
+    const result = runGithubValidator({
+      accounts: [{ owner: 'Herman940306' }],
+      repositories: [{ project: 'demo', owner: 'OtherOwner', repo: 'Demo', protectedBranches: [] }],
+    });
+    expect(result.status).toBe(1);
+    expect(outputOf(result)).toContain('owner OtherOwner is not a trusted account');
+  });
+
+  it('rejects malformed client GitHub account grants', () => {
+    const result = runGithubValidator({ accounts: [{ owner: 'Herman940306' }], repositories: [] }, ['https://github.com/Herman940306']);
+    expect(result.status).toBe(1);
+    expect(outputOf(result)).toContain('invalid GitHub account');
+  });
+});

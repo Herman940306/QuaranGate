@@ -1,0 +1,30 @@
+# Trusted GitHub account registry for QuaranHUB.
+#
+# `accounts` defines the ONLY GitHub account/organization installations that
+# QuaranGate may enumerate or operate on. Install QuaranHUB with "All
+# repositories" on each desired account to make current and future repositories
+# discoverable without editing this file.
+#
+# `repositories` is intentionally narrower: it maps local QuaranGate projects to
+# remote repositories for exact-HEAD direct Git push. Remote read/PR/review
+# operations do not require a local mapping; direct push always does.
+
+accounts:
+  - owner: Herman940306
+
+  # Add an organization only after its owner/admin has installed QuaranHUB
+  # with All repositories and explicitly approved it for this trust registry.
+  # - owner: JustAGameZA
+  # - owner: ZerithZA
+
+repositories:
+  - project: mcp-ide-bridge
+    owner: Herman940306
+    repo: QuaranGate
+    protectedBranches: [main]
+
+  # Example additional local push mapping:
+  # - project: governed-ai-engineering-platform
+  #   owner: Herman940306
+  #   repo: governed-ai-engineering-platform
+  #   protectedBranches: [main]

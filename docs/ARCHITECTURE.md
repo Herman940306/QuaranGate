@@ -543,7 +543,7 @@ Host/Tailscale administration is outside normal agent authority.
 
 # Current tool surface
 
-The current operational MCP surface contains 27 tools.
+The current operational MCP surface contains 44 tools.
 
 ## Direct tools — 18
 
@@ -581,6 +581,30 @@ agent_diff
 agent_apply
 agent_discard
 ```
+
+## GitHub App Control Plane — 17
+
+```text
+github_repositories
+github_repository
+github_branches
+github_commits
+github_pull_requests
+github_pull_request
+github_pull_request_files
+github_issues
+github_issue
+github_issue_comments
+github_pull_request_reviews
+github_pull_request_review_comments
+github_checks
+github_push_branch
+github_pull_request_create
+github_pull_request_update
+github_pull_request_review
+```
+
+This surface is independently authorized through `github:*` scopes, trusted `githubAccounts` for remote repository operations, and trusted `githubProjects` for local exact-HEAD push mappings. Repository discovery comes only from QuaranHUB installations on trusted accounts. There is deliberately no merge or arbitrary GitHub API tool. Credential-bearing GitHub operations are isolated behind the private broker and exact-host egress proxy described in `docs/GITHUB_CONTROL_PLANE.md`.
 
 All public tool contracts are schema-based. Successful operations return structured MCP results and the project's maintained compatibility representation.
 

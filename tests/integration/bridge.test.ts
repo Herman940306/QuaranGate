@@ -206,9 +206,17 @@ describe('QuaranGate — integration (live stack)', () => {
       expect(names).toContain('target_start');
       expect(names).toContain('target_stop');
       expect(names).toContain('target_restart');
+      expect(names).toContain('github_repositories');
+      expect(names).toContain('github_push_branch');
+      expect(names).toContain('github_pull_request_review');
+      expect(names).toContain('github_issues');
+      expect(names).toContain('github_issue_comments');
+      expect(names).toContain('github_pull_request_reviews');
+      expect(names).toContain('github_pull_request_review_comments');
+      expect(names).not.toContain('github_merge');
       expect(names).toContain('terminal_exec');
       expect(names).toContain('fs_patch');
-      expect(names.length).toBe(27);
+      expect(names.length).toBe(44);
     });
     it('unknown tool call returns an error result', async () => {
       const res: any = await vscode.callTool({ name: 'does_not_exist', arguments: {} });
@@ -266,6 +274,17 @@ describe('QuaranGate — integration (live stack)', () => {
       const out = await callTool(readonly, 'target_logs', { target: T });
       expect(out.isError).toBe(true);
       expect(out.json.error).toBe('FORBIDDEN_SCOPE');
+    });
+    it('GitHub control requires its own independent scopes before executor access', async () => {
+      for (const [tool, args] of [
+        ['github_repositories', {}],
+        ['github_push_branch', { project: 'mcp-ide-bridge', expectedHead: 'a'.repeat(40), remoteBranch: 'feature/test' }],
+        ['github_pull_request_review', { repository: 'Herman940306/QuaranGate', number: 1, event: 'COMMENT', body: 'review' }],
+      ] as const) {
+        const out = await callTool(readonly, tool, args);
+        expect(out.isError).toBe(true);
+        expect(out.json.error).toBe('FORBIDDEN_SCOPE');
+      }
     });
   });
 

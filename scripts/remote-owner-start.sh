@@ -28,6 +28,21 @@ if [[ ! -f "$RUNTIME_ENV" && -f "$REPO_ROOT/../../.env" ]]; then
 fi
 [[ -f "$RUNTIME_ENV" ]] || fail 'runtime .env not found'
 
+# Compose gives inherited shell variables higher precedence than --env-file.
+# Production image selection is owned by the persisted runtime .env, so pin
+# gateway/executor from that file explicitly and refuse ambiguous/missing keys.
+# This prevents a stale interactive export from silently rolling the runtime
+# backward or forward during recovery.
+for key in GATEWAY_IMAGE EXECUTOR_IMAGE; do
+  count="$(grep -c "^${key}=" "$RUNTIME_ENV" || true)"
+  [[ "$count" == 1 ]] || fail "runtime .env must contain exactly one ${key}"
+  value="$(sed -n "s/^${key}=//p" "$RUNTIME_ENV")"
+  [[ -n "$value" ]] || fail "runtime .env ${key} is empty"
+  [[ "$value" != *:latest ]] || fail "runtime .env ${key} must not use :latest"
+  export "$key=$value"
+done
+unset key count value
+
 # A linked candidate worktree does not carry ignored runtime config files.
 # Resolve the real operator runtime root separately so Compose always mounts
 # the live config/ directory rather than the candidate's tracked-only config.
@@ -49,6 +64,19 @@ if docker ps -a --filter label=com.docker.compose.project=quarangate --filter la
 if [[ "$ollama_expected" == 1 ]]; then
   [[ -f "$RUNTIME_ROOT/compose.ollama.yaml" ]] || fail 'O1 is configured but compose.ollama.yaml is missing'
   QG_FILES+=(-f "$RUNTIME_ROOT/compose.ollama.yaml")
+fi
+
+# Preserve GitHub App control when its trusted registry exists or the broker
+# already exists. Recovery never invents credentials, mappings, or egress.
+github_expected=0
+if [[ -f "$RUNTIME_ROOT/config/github.yaml" ]]; then github_expected=1; fi
+if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-broker --format '{{.ID}}' | grep -q .; then github_expected=1; fi
+if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-egress-proxy --format '{{.ID}}' | grep -q .; then github_expected=1; fi
+if [[ "$github_expected" == 1 ]]; then
+  github_overlay="$RUNTIME_ROOT/compose.github.yaml"
+  if [[ ! -f "$github_overlay" && -f "$REPO_ROOT/compose.github.yaml" ]]; then github_overlay="$REPO_ROOT/compose.github.yaml"; fi
+  [[ -f "$github_overlay" ]] || fail 'GitHub control is configured but compose.github.yaml is missing'
+  QG_FILES+=(-f "$github_overlay")
 fi
 
 QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")

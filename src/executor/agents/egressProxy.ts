@@ -131,7 +131,11 @@ export function isPrivateAddress(ip: string): boolean {
 /**
  * Validate a CONNECT target hostname. Returns an error message if invalid, or null if OK.
  */
-export function validateConnectTarget(host: string, port: number): string | null {
+export function validateConnectTarget(
+  host: string,
+  port: number,
+  allowedHosts: ReadonlySet<string> | readonly string[] = KIRO_PROVIDER_ALLOWLIST,
+): string | null {
   // Port must be 443.
   if (port !== ALLOWED_PORT) {
     return `port ${port} not allowed; only ${ALLOWED_PORT} is permitted`;
@@ -153,8 +157,10 @@ export function validateConnectTarget(host: string, port: number): string | null
     return 'localhost connections are not allowed';
   }
 
-  // Check allowlist (exact match).
-  if (!KIRO_PROVIDER_ALLOWLIST.includes(lower)) {
+  // Check allowlist (exact match). A caller may provide a stricter dedicated
+  // set (for example the GitHub-only proxy) without changing Kiro defaults.
+  const allowed = Array.from(allowedHosts).includes(lower);
+  if (!allowed) {
     return `host "${lower}" is not in the egress allowlist`;
   }
 
@@ -199,8 +205,10 @@ export interface EgressProxyOptions {
   listenHost?: string;
   /** Listen port. */
   listenPort?: number;
-  /** Additional allowed hosts beyond the default list. */
+  /** Additional allowed hosts beyond the default Kiro list. */
   additionalHosts?: string[];
+  /** Exact replacement allowlist for a dedicated proxy trust domain. */
+  allowedHosts?: string[];
 }
 
 export class EgressProxy {
@@ -210,10 +218,10 @@ export class EgressProxy {
   private closed = false;
 
   constructor(private readonly opts: EgressProxyOptions = {}) {
-    this.allowlist = new Set([
-      ...KIRO_PROVIDER_ALLOWLIST,
-      ...(opts.additionalHosts ?? []),
-    ]);
+    const exact = opts.allowedHosts?.map((h) => h.trim().toLowerCase()).filter(Boolean);
+    this.allowlist = new Set(exact && exact.length > 0
+      ? exact
+      : [...KIRO_PROVIDER_ALLOWLIST, ...(opts.additionalHosts ?? [])]);
   }
 
   /** Start the proxy server. Returns the actual listen address. */
@@ -306,7 +314,7 @@ export class EgressProxy {
 
     // Validate against allowlist and port policy. Log the decision (host + port
     // only — NEVER any Authorization/credential material) for egress audit.
-    const validationError = validateConnectTarget(host, port);
+    const validationError = validateConnectTarget(host, port, this.allowlist);
     if (validationError) {
       this.log('egress denied', { host, port, reason: validationError });
       clientSocket.end(`HTTP/1.1 403 Forbidden\r\nX-Proxy-Error: ${validationError}\r\n\r\n`);

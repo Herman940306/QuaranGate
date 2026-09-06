@@ -72,6 +72,14 @@ describe('egress proxy — CONNECT target validation', () => {
   it('matches case-insensitively', () => {
     expect(validateConnectTarget('RUNTIME.US-EAST-1.KIRO.DEV', 443)).toBeNull();
   });
+
+  it('supports a strict replacement allowlist for a dedicated GitHub trust domain', () => {
+    const githubOnly = new Set(['api.github.com', 'github.com']);
+    expect(validateConnectTarget('api.github.com', 443, githubOnly)).toBeNull();
+    expect(validateConnectTarget('github.com', 443, githubOnly)).toBeNull();
+    expect(validateConnectTarget('runtime.us-east-1.kiro.dev', 443, githubOnly)).toMatch(/not in the egress allowlist/);
+    expect(validateConnectTarget('api.github.com', 80, githubOnly)).toMatch(/not allowed/);
+  });
 });
 
 describe('egress proxy — allowlist contents', () => {

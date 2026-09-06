@@ -1,0 +1,100 @@
+# QuaranGate GitHub App control plane — optional runtime overlay.
+#
+# Security boundary:
+# - gateway never receives GitHub credentials and cannot reach the broker;
+# - executor reaches the broker only on a dedicated INTERNAL network;
+# - broker owns the GitHub App private key, has no Docker socket/project mounts;
+# - broker and push helpers have no direct external route and must use the
+#   GitHub-only CONNECT proxy;
+# - only the proxy joins the external egress network, with exact host allowlist
+#   api.github.com + github.com on port 443.
+
+services:
+  executor:
+    environment:
+      GITHUB_CONFIG: /config/github.yaml
+      GITHUB_BROKER_URL: http://github-broker:8789
+      GITHUB_GIT_HELPER_IMAGE: "${GITHUB_GIT_HELPER_IMAGE:?set an explicit qualified Git helper image}"
+      GITHUB_CONTROL_NETWORK: quarangate-github-control
+    networks:
+      - internal
+      - github-control
+    depends_on:
+      github-broker:
+        condition: service_healthy
+
+  github-broker:
+    image: "${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}"
+    command: ["node", "dist/github-broker/index.js"]
+    environment:
+      GITHUB_BROKER_PORT: "8789"
+      INTERNAL_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
+      GITHUB_APP_CLIENT_ID: "${GITHUB_APP_CLIENT_ID:?set GitHub App client id in .env}"
+      GITHUB_APP_PRIVATE_KEY_PATH: /run/secrets/github-app-private-key
+      GITHUB_CONFIG: /config/github.yaml
+      HTTPS_PROXY: http://github-egress-proxy:8080
+    secrets:
+      - source: github_app_private_key
+        target: github-app-private-key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+    volumes:
+      - ./config/github.yaml:/config/github.yaml:ro
+    tmpfs:
+      - /tmp
+    networks:
+      - github-control
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    restart: unless-stopped
+    mem_limit: 256m
+    pids_limit: 128
+    depends_on:
+      github-egress-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  github-egress-proxy:
+    image: "${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}"
+    command: ["node", "dist/executor/agents/egressProxyMain.js"]
+    environment:
+      EGRESS_PROXY_PORT: "8080"
+      EGRESS_PROXY_EXACT_ALLOWLIST: api.github.com,github.com
+    networks:
+      - github-control
+      - github-egress
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    restart: unless-stopped
+    tmpfs:
+      - /tmp
+    mem_limit: 128m
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=require('net').connect(8080,'127.0.0.1',()=>{s.destroy();process.exit(0)});s.setTimeout(2000,()=>process.exit(1));s.on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+networks:
+  github-control:
+    name: quarangate-github-control
+    internal: true
+  github-egress:
+    name: quarangate-github-egress
+    internal: false
+
+secrets:
+  github_app_private_key:
+    file: ${GITHUB_APP_PRIVATE_KEY_FILE:-/home/herman/.config/quarangate/github-app-private-key.pem}

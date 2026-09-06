@@ -12,6 +12,7 @@ const ok = (m) => console.log('  ✓', m);
 const validScopes = new Set([
   'targets:read','targets:control','targets:logs','files:read','files:write','files:delete','terminal:exec','git:read','process:read',
   'agents:read','agents:dispatch','agents:cancel','agents:apply',
+  'github:read','github:write','github:review',
 ]);
 const agentBackendIds = new Set(['kiro','copilot','ollama']);
 const agentProfileIds = new Set(['audit','plan','implement','review']);
@@ -50,6 +51,12 @@ function checkClients(path) {
     }
     for (const pr of checkStringList(c, 'agentProfiles')) {
       if (pr !== '*' && !agentProfileIds.has(pr)) fail(`client ${c.id}: unknown agent profile ${pr}`);
+    }
+    for (const a of checkStringList(c, 'githubAccounts')) {
+      if (a !== '*' && !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(a)) fail(`client ${c.id}: invalid GitHub account ${a}`);
+    }
+    for (const p of checkStringList(c, 'githubProjects')) {
+      if (p !== '*' && !projectIdRe.test(p)) fail(`client ${c.id}: invalid GitHub project id ${p}`);
     }
   }
   if (!errors) ok(`${(doc.clients ?? []).length} client(s) valid`);
@@ -199,9 +206,55 @@ function checkAgents(path) {
   if (!errors) ok(`agents config valid (${projects.length} project(s), ${backends.length} backend(s))`);
 }
 
+function checkGithub(path, agentsPath) {
+  console.log('github:', path);
+  if (!fs.existsSync(path)) return fail('file missing');
+  const doc = YAML.parse(fs.readFileSync(path, 'utf8'));
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return fail('not a mapping');
+  checkKeys('top-level', doc, new Set(['accounts','repositories']), 'github');
+  const accounts = checkRequiredArray(doc, 'accounts', 'github');
+  const repos = Array.isArray(doc.repositories) ? doc.repositories : [];
+  if (doc.repositories !== undefined && !Array.isArray(doc.repositories)) fail('github: repositories must be a list');
+  const seenAccounts = new Set();
+  const seenProjects = new Set();
+  const ownerRe = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+  const repoRe = /^[A-Za-z0-9._-]{1,100}$/;
+  const branchRe = /^(?!\/)(?!.*\.\.)(?!.*(?:^|\/)\.)(?!.*[~^:?*\[\\\s])(?!.*\/$)(?!.*\.lock(?:\/|$))[A-Za-z0-9._\/-]{1,255}$/;
+  let agentIds = null;
+  if (fs.existsSync(agentsPath)) {
+    const agents = YAML.parse(fs.readFileSync(agentsPath, 'utf8'));
+    agentIds = new Set((agents?.projects ?? []).map((p) => p.id));
+  }
+  if (accounts.length === 0) fail('github: accounts must contain at least one trusted account');
+  if (accounts.length > 64) fail('github: accounts must have at most 64 entries');
+  for (const a of accounts) {
+    checkKeys('account', a, new Set(['owner']), `github account ${a?.owner}`);
+    if (typeof a?.owner !== 'string' || !ownerRe.test(a.owner)) { fail('github: invalid trusted account owner'); continue; }
+    const key = a.owner.toLowerCase();
+    if (seenAccounts.has(key)) fail(`github: duplicate account ${a.owner}`); else seenAccounts.add(key);
+  }
+  if (repos.length > 512) fail('github: repositories must have at most 512 local mappings');
+  for (const r of repos) {
+    checkKeys('repository', r, new Set(['project','owner','repo','protectedBranches']), `github repository ${r.project}`);
+    if (!r.project || !projectIdRe.test(r.project)) fail(`github: invalid project id ${JSON.stringify(r.project)}`);
+    if (seenProjects.has(r.project)) fail(`github: duplicate project ${r.project}`); else seenProjects.add(r.project);
+    if (agentIds && !agentIds.has(r.project)) fail(`github: project ${r.project} is not present in agents registry`);
+    if (typeof r.owner !== 'string' || !ownerRe.test(r.owner)) fail(`github ${r.project}: invalid owner`);
+    else if (!seenAccounts.has(r.owner.toLowerCase())) fail(`github ${r.project}: owner ${r.owner} is not a trusted account`);
+    if (typeof r.repo !== 'string' || !repoRe.test(r.repo)) fail(`github ${r.project}: invalid repository name`);
+    if (!Array.isArray(r.protectedBranches)) fail(`github ${r.project}: protectedBranches must be a list`);
+    else if (r.protectedBranches.length > 128) fail(`github ${r.project}: protectedBranches must have at most 128 entries`);
+    else for (const b of r.protectedBranches) if (typeof b !== 'string' || !branchRe.test(b)) fail(`github ${r.project}: invalid protected branch`);
+  }
+  if (!errors) ok(`github config valid (${accounts.length} trusted account(s), ${repos.length} local repository mapping(s))`);
+}
+
 checkClients(process.env.CLIENTS_CONFIG ?? 'config/clients.yaml');
 checkBridge(process.env.BRIDGE_CONFIG ?? 'config/bridge.yaml');
 const agentsPath = process.env.AGENTS_CONFIG ?? 'config/agents.yaml';
 if (process.env.AGENTS_CONFIG || fs.existsSync(agentsPath)) checkAgents(agentsPath);
 else console.log('agents: config/agents.yaml not present (optional — Agent Dispatch inactive)');
+const githubPath = process.env.GITHUB_CONFIG ?? 'config/github.yaml';
+if (process.env.GITHUB_CONFIG || fs.existsSync(githubPath)) checkGithub(githubPath, agentsPath);
+else console.log('github: config/github.yaml not present (optional — GitHub control inactive)');
 process.exitCode = errors ? 1 : 0;

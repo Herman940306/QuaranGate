@@ -15,7 +15,10 @@ export type Scope =
   | 'agents:read'
   | 'agents:dispatch'
   | 'agents:cancel'
-  | 'agents:apply';
+  | 'agents:apply'
+  | 'github:read'
+  | 'github:write'
+  | 'github:review';
 
 export const ALL_SCOPES: Scope[] = [
   'targets:read',
@@ -31,6 +34,9 @@ export const ALL_SCOPES: Scope[] = [
   'agents:dispatch',
   'agents:cancel',
   'agents:apply',
+  'github:read',
+  'github:write',
+  'github:review',
 ];
 
 export interface Principal {
@@ -51,6 +57,10 @@ export interface Principal {
   projects?: string[]; // logical agent project ids, or ["*"]
   agentBackends?: string[]; // agent backend ids, or ["*"]
   agentProfiles?: string[]; // agent profile ids, or ["*"]
+  /** GitHub remote-account grants. Missing/empty = DENY; "*" = every trusted github.yaml account. */
+  githubAccounts?: string[]; // GitHub owner/account names, or ["*"]
+  /** Local-project grants for exact-HEAD direct push. Missing/empty = DENY. */
+  githubProjects?: string[]; // logical local project ids, or ["*"]
 }
 
 interface ClientsFile {
@@ -134,6 +144,8 @@ export function loadClients(path = process.env.CLIENTS_CONFIG ?? '/config/client
     projects: p.projects ?? [],
     agentBackends: p.agentBackends ?? [],
     agentProfiles: p.agentProfiles ?? [],
+    githubAccounts: p.githubAccounts ?? [],
+    githubProjects: p.githubProjects ?? [],
   }));
   const seen = new Set<string>();
   for (const p of loaded) {
@@ -171,4 +183,14 @@ export function principalCanTarget(p: Principal, targetId: string): boolean {
 
 export function principalHasScope(p: Principal, scope: Scope): boolean {
   return p.scopes.includes(scope);
+}
+
+export function principalCanGithubAccount(p: Principal, owner: string): boolean {
+  const grants = p.githubAccounts ?? [];
+  return grants.includes('*') || grants.some((g) => g.toLowerCase() === owner.toLowerCase());
+}
+
+export function principalCanGithubProject(p: Principal, project: string): boolean {
+  const grants = p.githubProjects ?? [];
+  return grants.includes('*') || grants.includes(project);
 }

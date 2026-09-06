@@ -16,6 +16,7 @@ import {
 } from './config.js';
 import { currentPrincipal } from './context.js';
 import { registerAgentTools } from './agentTools.js';
+import { registerGitHubTools } from './githubTools.js';
 
 function require2(scope: Scope, targetId: string): Principal {
   const p = currentPrincipal();
@@ -124,7 +125,7 @@ const EXEC_RESULT_SCHEMA = {
 export function buildServer(): McpServer {
   const server = new McpServer(
     { name: 'quarangate', version: '0.1.0' },
-    { capabilities: { tools: {} }, instructions: 'Two governed surfaces. IDE tools (files, terminal, git, processes) act on a single explicitly authorized Docker target, named by a `target` id from targets_list. Agent Control Plane tools take no `target`: they dispatch and manage durable agent jobs against configured projects, backends and profiles under separate authorization. Agent work becomes reviewable evidence; applying it to a real project is a distinct guarded call (agent_apply).' },
+    { capabilities: { tools: {} }, instructions: 'Three governed surfaces. IDE tools (files, terminal, git, processes) act on an explicitly authorized Docker target. Agent Control Plane tools dispatch/manage durable jobs against separately granted projects/backends/profiles. GitHub tools discover repositories only through QuaranHUB installations on separately granted trusted accounts; direct Git push additionally requires a trusted local project mapping. Callers never provide remote URLs or credentials, and merge is not exposed. Agent work remains reviewable evidence; applying it to a real project is a distinct guarded call (agent_apply).' },
   );
 
   server.registerTool('targets_list', {
@@ -312,6 +313,11 @@ export function buildServer(): McpServer {
     }
     return { target, result: res };
   }));
+
+  // Governed GitHub App control plane: read/write/review only. There is
+  // deliberately no merge, repository-admin, secret, workflow-write, tag,
+  // release, force-push, delete-ref, or arbitrary-remote tool.
+  registerGitHubTools(server);
 
   // Agent Control Plane: all nine contracts are now registered.
   // A6 activated agent_diff, agent_apply, and agent_discard.
