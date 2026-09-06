@@ -1,6 +1,6 @@
 # QuaranGate Remote Owner Workstation Orchestration
 
-Status: **IMPLEMENTATION CANDIDATE — LIVE DEPLOYMENT / REMOTE ACCEPTANCE PENDING**
+Status: **DEPLOYED / SOURCE PROMOTED — WINDOWS AUTOSTART REMEDIATION IN PROGRESS; FRESH-CLIENT 27-TOOL ACCEPTANCE PENDING**
 
 This document records the owner-approved remote workstation operating model: when the home workstation is powered on and its normal Windows/WSL/Docker session is available, the owner may continue development from an authenticated remote QuaranGate client without giving ordinary work targets raw Docker administration.
 
@@ -96,7 +96,11 @@ The deploy/recovery scripts preserve the O1 composition when it is already confi
 
 `scripts/remote-owner-start.sh` is the WSL recovery entrypoint. It waits for the already-installed Docker Engine, resolves the ignored runtime `.env` without printing it, refuses mutable `:latest` QuaranGate image selections, verifies every configured image exists locally, starts only already-local images with `--no-build --pull never`, starts the normal QuaranGate composition and `projects-work`, waits for gateway health, and then runs the health proof.
 
-`scripts/windows/Install-QuaranGateRemoteOwnerAutostart.ps1` registers this entrypoint at owner logon using a non-elevated scheduled-task principal. This is deliberately not represented as a pre-login/cold-boot guarantee: Docker Desktop normally belongs to the interactive user session and must itself be configured to start with Windows/user logon.
+`scripts/windows/Install-QuaranGateRemoteOwnerAutostart.ps1` registers owner-logon recovery using a non-elevated scheduled-task principal. The task launches a small per-user Windows PowerShell wrapper under `%LOCALAPPDATA%\QuaranGate`; that wrapper records Windows-side start/exit evidence and invokes the tracked Linux `scripts/remote-owner-autostart.sh`, which creates the private WSL-side log and calls `remote-owner-start.sh`. This additional Windows boundary is intentional because direct Task Scheduler → `wsl.exe` execution returned `0xFFFFFFFF` on the qualified workstation even though the identical `wsl.exe` command succeeded interactively. This is deliberately not represented as a pre-login/cold-boot guarantee: Docker Desktop normally belongs to the interactive user session and must itself be configured to start with Windows/user logon.
+
+## Current interaction with GitHub/MCP closeout
+
+Remote-owner orchestration itself is already source-promoted through local `main` `09672d5150075741bb7fdc48f5e9cce1eba07cca`. A later GitHub/MCP closeout candidate (`aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`) also modifies `scripts/remote-owner-start.sh` to preserve the GitHub overlay. The root worktree has separate protected uncommitted remediation on that same path, so the candidate must **not** be blindly promoted over it. This is a source-reconciliation gate, not a reason to weaken runtime recovery or Docker authority boundaries.
 
 ## Ingress boundary
 
@@ -139,4 +143,6 @@ QuaranGate self-deployment remains a distinct infrastructure operation because a
 
 - 2026-09-06 — owner approved broad `~/projects` read/write access for remote continuation.
 - 2026-09-06 — owner clarified that Docker need is bounded container control, not raw Docker-host administration.
-- 2026-09-06 — implementation candidate adds umbrella target, dedicated lifecycle/log scopes, four bounded target tools, recovery/health/acceptance scripts, and documentation/tests. Live deployment and remote acceptance remain pending until host-side build/deploy gates pass.
+- 2026-09-06 — implementation candidate adds umbrella target, dedicated lifecycle/log scopes, four bounded target tools, recovery/health/acceptance scripts, and documentation/tests.
+- 2026-09-06 — live deployment and fast-forward promotion completed at `09672d5150075741bb7fdc48f5e9cce1eba07cca`; infrastructure acceptance passed and the promoted runtime remained O1-preserving and executor-only for Docker authority.
+- 2026-09-06 — first Windows Task Scheduler execution returned `0xFFFFFFFF` before any WSL-side log was created. Remediation replaces the nested scheduled `bash -lc` command with a simple `wsl.exe --exec /bin/bash <tracked-wrapper>` action; the WSL wrapper owns logging and invokes the existing bounded recovery entrypoint.

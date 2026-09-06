@@ -604,7 +604,7 @@ github_pull_request_update
 github_pull_request_review
 ```
 
-This surface is independently authorized through `github:*` scopes, trusted `githubAccounts` for remote repository operations, and trusted `githubProjects` for local exact-HEAD push mappings. Repository discovery comes only from QuaranHUB installations on trusted accounts. There is deliberately no merge or arbitrary GitHub API tool. Credential-bearing GitHub operations are isolated behind the private broker and exact-host egress proxy described in `docs/GITHUB_CONTROL_PLANE.md`.
+This surface is deployed in candidate `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`; source promotion remains human-gated by protected owner work. It is independently authorized through `github:*` scopes, trusted `githubAccounts` for remote repository operations, and trusted `githubProjects` for local exact-HEAD push mappings. Repository discovery comes only from QuaranHUB installations on trusted accounts. There is deliberately no merge or arbitrary GitHub API tool. Credential-bearing GitHub operations are isolated behind the private broker and exact-host egress proxy described in `docs/GITHUB_CONTROL_PLANE.md`.
 
 All public tool contracts are schema-based. Successful operations return structured MCP results and the project's maintained compatibility representation.
 

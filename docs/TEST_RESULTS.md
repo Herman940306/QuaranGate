@@ -5,14 +5,14 @@ This document records **point-in-time verification evidence**.
 Older counts are preserved as historical truth. They are not silently replaced with the newest number. Read the current baseline first, then use the historical sections when investigating when a capability was introduced or accepted.
 
 > [!IMPORTANT]
-> Current accepted local source baseline: `18179696b3ef3ff2192805590027d2e1a43a43d4` (`build: add governed offline npm dependency bundle`). N1 is committed locally but was not pushed, deployed, or used to enable O1 as part of its acceptance. Older counts below remain historical evidence.
+> Current accepted local `main`: `09672d5150075741bb7fdc48f5e9cce1eba07cca`. Current deployed GitHub/MCP closeout candidate: `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`. That candidate passed typecheck, 50/50 unit files / 1878/1878 tests, 16/16 focused GitHub tests, and `git diff --check`. Older checkpoints below remain historical evidence and are not rewritten.
 
 ---
 
 ## Contents
 
-- [Current verified baseline](#current-verified-baseline)
-- [What the current baseline proves](#what-the-current-baseline-proves)
+- [Current verified deployed candidate](#current-verified-deployed-candidate)
+- [What the current deployed candidate proves](#what-the-current-deployed-candidate-proves)
 - [O1/Tini build-remediation evidence](#o1tini-build-remediation-evidence)
 - [Historical milestone — initial bridge verification](#historical-milestone--initial-bridge-verification)
 - [OAuth hardening](#oauth-hardening)
@@ -24,75 +24,61 @@ Older counts are preserved as historical truth. They are not silently replaced w
 
 ---
 
-# Current verified baseline
+# Current verified deployed candidate
 
-Accepted N1 source checkpoint:
-
-```text
-HEAD:
-18179696b3ef3ff2192805590027d2e1a43a43d4
-
-commit:
-build: add governed offline npm dependency bundle
-
-parent:
-6129d3d715e914e1f69d777fddd7a365bd902d44
-
-TypeScript typecheck:
-PASS
-
-Unit test files:
-44 / 44 PASS
-
-Unit tests:
-1693 / 1693 PASS
-
-Source build:
-PASS
-
-No-cache Docker build with pre-provisioned inputs:
-PASS
-
-Docker build network:
-none
-
-Docker image pull during acceptance:
-false
-
-package-lock SHA-256:
-31688b0a46cb5051e069ff049bbafd34752ace10dfb9dac3a60c9a3fef5258e5
-
-Staging after commit:
-empty
-
-Known unrelated untracked:
-.kiro/
-```
-
-N1 committed exactly ten paths:
+Current deployed side-quest checkpoint:
 
 ```text
-.dockerignore
-.env.example
-.gitignore
-Dockerfile
-compose.yaml
-package.json
-build/npm-dependencies.json
-scripts/accept-npm-offline-build.mjs
-scripts/npm-offline-bundle.mjs
-tests/unit/npm-offline-bundle.test.ts
+LOCAL_MAIN:
+09672d5150075741bb7fdc48f5e9cce1eba07cca
+
+DEPLOYED_CANDIDATE:
+aef07f2c46ca53a55e1ee662f3b8cddc73f6857a
+
+TYPECHECK:
+PASS
+
+UNIT FILES:
+50 / 50 PASS
+
+UNIT TESTS:
+1878 / 1878 PASS
+
+FOCUSED GITHUB:
+2 files / 16 tests / 0 failures
+
+GIT DIFF CHECK:
+PASS
+
+LIVE github_checks:
+PASS — Commit statuses only; checkRuns empty; no 422
+
+LIVE github_repositories:
+BLOCKED_HUMAN_GATE — JustAGameZA installation must use All repositories
 ```
 
-No production push, deployment, live-container restart/recreation or O1 enablement was part of the N1 acceptance/commit boundary.
+Docker/local integration evidence ultimately cleared 62 supported tests. Five live-stack suites were **not collected** because the required `KEYS_ENV` scratchpad was absent; they are not counted as passes.
+
+The candidate was deployed successfully and services were healthy. It was not promoted to local `main` because its path set intersects protected uncommitted owner work at `scripts/remote-owner-start.sh`. Remote `main` was not changed.
+
+## Historical checkpoint — N1 governed offline npm build
+
+The N1 checkpoint `18179696b3ef3ff2192805590027d2e1a43a43d4` remains accepted historical evidence: 44/44 unit files, 1693/1693 tests, source build PASS, and no-cache Docker build PASS with network `none`/no pull. N1 did not itself deploy or enable O1.
 
 ---
 
-# What the current baseline proves
+# What the current deployed candidate proves
 
-The N1 baseline proves the source and build system can use a governed external npm dependency bundle without giving the real source build npm network authority.
+The current deployed candidate proves:
 
-Accepted N1 evidence includes:
+- the GitHub App control plane can run behind the isolated broker/egress design;
+- `github_checks` succeeds with Commit statuses only and does not require GitHub Checks permission;
+- the hardened Node 24 Bookworm review/work images provide the required engineering toolchain while the review workspace remains read-only and without a Docker socket;
+- typecheck, unit, focused GitHub and the supported Docker/local integration evidence listed above pass.
+
+It does **not** prove side-quest closeout: `JustAGameZA` discovery remains human-gated by its Selected-repositories installation, source promotion is blocked by protected owner work, five `KEYS_ENV` live-stack suites were not collected, and the full post-remediation O1 live matrix was not rerun as part of this closeout.
+
+Separately, historical N1 evidence includes:
 
 - canonical `package-lock.json` remained byte-for-byte unchanged;
 - lockfile v3 with 221 resolved entries and 220 unique artifact bodies;
@@ -107,7 +93,7 @@ Accepted N1 evidence includes:
 - dependency bundle/cache absent from the runtime image;
 - live gateway/executor anchors unchanged by acceptance.
 
-It does **not** prove:
+The N1 checkpoint did **not** prove:
 
 - a completely empty machine can build with no pre-provisioned artifacts;
 - cross-machine bit-for-bit base-image reproducibility, because the Dockerfile still uses `node:24-alpine` rather than an immutable digest in `FROM`;

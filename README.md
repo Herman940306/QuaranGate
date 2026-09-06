@@ -8,12 +8,13 @@ It is built around a simple rule:
 
 > **AI may investigate, implement, test and review. QuaranGate decides what it can reach, what authority it receives, what evidence it must produce, and what requires a separate approval before live source changes.**
 
-QuaranGate currently provides two implemented execution surfaces:
+QuaranGate currently provides three implemented governed surfaces:
 
-- **Direct target operations** — governed file, terminal, Git and process operations inside explicitly authorized Docker targets.
+- **Direct target operations** — governed file, terminal, Git, process and bounded target-lifecycle operations inside explicitly authorized Docker targets.
 - **Agent Control Plane** — asynchronous coding-agent work in isolated sandboxes, followed by machine-derived review evidence and a separate guarded apply or discard decision.
+- **GitHub App Control Plane** — separately authorized repository discovery/read/write/review through the isolated `QuaranHUB` broker; there is no merge tool or merge scope.
 
-The approved North Star adds a third, separately authorized surface:
+The approved North Star adds a fourth, separately authorized surface:
 
 - **IDE Session Control Plane** — governed communication with an enrolled IDE agent surface bound to an exact IDE instance and workspace/worktree. This remains a design/qualification program, not current production capability.
 
@@ -62,14 +63,21 @@ QuaranGate deliberately separates *implemented*, *qualified* and *planned*. Thes
 
 This distinction matters. A successful spike is not a production adapter. A qualified model is not the same thing as a deployed backend. A completed agent job is not the same thing as an applied source change.
 
-Current accepted local source baseline for this documentation reconciliation:
+Current accepted local `main` source baseline:
 
 ```text
-199c567008d9c8fe047235332ce79dd6a006170b
-feat(o1): close production deployment acceptance
+09672d5150075741bb7fdc48f5e9cce1eba07cca
+fix(remote): verify persisted runtime selection
 ```
 
-At that checkpoint: TypeScript typecheck PASS, **45/45 unit test files**, **1782/1782 unit tests**, normal source build PASS, no-cache Docker build PASS with build networking disabled and no image pull, and O1 production deployment PASS (all services healthy, MCP acceptance 5/6 critical tests, all security boundaries verified).
+Current deployed GitHub/MCP closeout candidate:
+
+```text
+aef07f2c46ca53a55e1ee662f3b8cddc73f6857a
+chore(mcp): harden target toolchain
+```
+
+The deployed candidate passed typecheck, **50/50 unit test files** and **1878/1878 unit tests**, plus **16/16 focused GitHub tests**. The hardened MCP target images are active and retain the read-only/no-Docker-socket boundaries. `github_checks` now succeeds using Commit statuses only and returns an empty compatibility `checkRuns` collection. The side quest is **not closed**: `JustAGameZA` discovery fails closed until the QuaranHUB installation is changed from **Selected repositories** to **All repositories**, and source promotion is separately blocked by the protected dirty-path intersection at `scripts/remote-owner-start.sh`.
 
 ---
 
@@ -151,8 +159,8 @@ These boundaries are intentional and should be read as part of the product, not 
 | Raw Docker API exposed to MCP clients | **Not supported** |
 | Automatic application of agent-generated changes | **Not supported** |
 | Automatic cloud fallback | **Not supported** |
-| GitHub Copilot production backend | **Roadmap — A7** |
-| Session resume/continuity | **Roadmap — A8** |
+| GitHub Copilot production backend | **Future / owner-deferred — A7** (no current subscription/test capability) |
+| Session resume/continuity | **Next active Agent Control Plane gate — A8** |
 | Full production hardening program | **Roadmap — A9** |
 | Production IDE Session Control adapter | **Roadmap / qualification program** |
 | macOS production acceptance | **Not yet verified** |
@@ -499,7 +507,7 @@ mcp-ide-bridge
 not:
 
 ```text
-/home/herman/projects/mcp-ide-bridge
+/home/herman/projects/QuaranGate
 ```
 
 The host path, allowed backends, profiles, resource policy and guarded paths live in trusted configuration.
@@ -512,7 +520,7 @@ See [Targets](docs/TARGETS.md) and [Agent Control Plane](docs/AGENT_CONTROL_PLAN
 
 # Current MCP capabilities
 
-The current operational surface contains **23 tools**: the original direct-operation tools plus all nine Agent Control Plane tools.
+The current deployed MCP surface contains **44 tools**: 18 direct target tools, 9 Agent Control Plane tools, and 17 GitHub App Control Plane tools.
 
 ## Direct target tools
 
@@ -520,6 +528,10 @@ The current operational surface contains **23 tools**: the original direct-opera
 |---|---|---|
 | `targets_list` | read | List targets visible to the principal. |
 | `target_inspect` | read | Inspect authorized target status/workspace/image metadata. |
+| `target_logs` | read | Read bounded logs for an authorized target when separately granted. |
+| `target_start` | control | Start an existing authorized manual target. |
+| `target_stop` | control | Stop an existing authorized manual target. |
+| `target_restart` | control | Restart an existing authorized running manual target. |
 | `fs_list` | read | List workspace content. |
 | `fs_stat` | read | Inspect a workspace path. |
 | `fs_read` | read | Read bounded file content. |
@@ -547,6 +559,30 @@ The current operational surface contains **23 tools**: the original direct-opera
 | `agent_apply` | Promote stored verified evidence under guarded checks. |
 | `agent_discard` | Reject the result without modifying live source. |
 
+## GitHub App Control Plane tools
+
+| Tool | Purpose |
+|---|---|
+| `github_repositories` | Discover repositories exposed by trusted QuaranHUB installations. |
+| `github_repository` | Read bounded repository metadata. |
+| `github_branches` | List bounded branch state. |
+| `github_commits` | Read bounded commit history. |
+| `github_pull_requests` | List pull requests. |
+| `github_pull_request` | Read one pull request. |
+| `github_pull_request_files` | Read bounded PR file metadata. |
+| `github_issues` | List issues. |
+| `github_issue` | Read one issue. |
+| `github_issue_comments` | Read issue comments. |
+| `github_pull_request_reviews` | Read submitted PR reviews. |
+| `github_pull_request_review_comments` | Read review comments. |
+| `github_checks` | Read Commit statuses; compatibility `checkRuns` is intentionally empty. |
+| `github_push_branch` | Push an exact trusted local HEAD to a separately mapped non-protected branch. |
+| `github_pull_request_create` | Create a pull request. |
+| `github_pull_request_update` | Update bounded PR metadata. |
+| `github_pull_request_review` | Submit COMMENT / APPROVE / REQUEST_CHANGES where GitHub permits. |
+
+There is deliberately **no merge tool**, no force-push capability and no arbitrary GitHub API surface. See [GitHub App Control Plane](docs/GITHUB_CONTROL_PLANE.md).
+
 ---
 
 # Local Ollama backend status
@@ -563,11 +599,13 @@ Current accepted model qualification:
 | Gemma 4 12B | deferred | Host Ollama version was too old for qualification; not classified as model failure |
 
 
-**Deployment status:** Production deployment **COMPLETE** (2026-09-04).
+**Current status:** **PRODUCTION DEPLOYED / POST-REMEDIATION LIVE RE-ACCEPTANCE PENDING** (reconciled 2026-09-06).
 
-Deployment commit: `199c567008d9c8fe047235332ce79dd6a006170b`
+Previous deployment revision: `199c567008d9c8fe047235332ce79dd6a006170b` (`fix(o1): enforce explicit startup helper boundary`)
 
-MCP acceptance: 5/6 critical tests PASS. All security boundaries verified. Known limitation: qwen3.5:4b-q4_K_M demonstrates unreliable tool-calling in simple tasks (model behavior, not infrastructure failure).
+Remediated production revision: `92b39ec98c423413c61880cde75b3f9ca4d21c45`; image ID: `sha256:6f56657ddfd87f145de900c52d18fc49bf8135ee777c42650dd28de341903be9`.
+
+The first production gate recorded 5/6 critical checks and exposed missing model-result delivery. R1 fixed result delivery; R2 then proved exact committed-HEAD staging, plan/review inspection and all refusal boundaries but exposed a successful-empty-summary reliability defect. Subsequent accepted-main remediations fail closed on unusable output, disable thinking for the qualified primary path, harden tool contracts/diagnostics, make bounded enumeration portable, and make literal search complete. Those source fixes are included in the current deployed `aef07f2` gateway/executor candidate. A fresh complete O1 live acceptance matrix after this remediation chain is still required before O1 is called production-accepted.
 
 No automatic model fallback and no cloud fallback are part of the approved O1 design.
 
@@ -793,15 +831,15 @@ This is deliberately **not** the same as claiming that a completely empty machin
 | A4 | Kiro ACP read-only backend | ✅ Complete |
 | A5 | Kiro sandbox implementation | ✅ Complete |
 | A6 | Diff / guarded apply / discard + evidence lifecycle | ✅ Complete |
-| A7 | GitHub Copilot backend | ⏭️ Next formal A-gate |
-| A8 | Session continuity | 📋 Not started |
+| A7 | GitHub Copilot backend | ⏸️ Future / owner-deferred; no current subscription/test capability |
+| A8 | Session continuity | ⏭️ Next active Agent Control Plane gate |
 | A9 | Production hardening + complete E2E | 📋 Not started |
 
 ## Parallel current programs
 
 ### O1 — governed Ollama backend
 
-Source implementation and model qualification are complete. The N1 source-build reproducibility remediation is also complete. Controlled O1 container canary/deployment, runtime resource qualification and post-enable MCP acceptance remain separate gates; O1 is not production-enabled by the documentation work.
+Source implementation, model qualification, N1 build reproducibility, and controlled production deployment are complete. The empty-workspace defect and later empty-success/tooling defects have source remediations in accepted `main` and are present in the current deployed candidate. O1 must still not be described as production-accepted until the full post-remediation live matrix is rerun and passes.
 
 ### I0–I6 — IDE Session Control
 

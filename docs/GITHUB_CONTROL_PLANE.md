@@ -1,6 +1,16 @@
 # QuaranGate GitHub App Control Plane
 
-Status: **IMPLEMENTATION CANDIDATE — OWNER-APPROVED READ / WRITE / REVIEW, NO MERGE**
+Status: **DEPLOYED CANDIDATE / LIVE STATUS-READ ACCEPTED / CLOSEOUT HUMAN-GATED — OWNER-APPROVED READ / WRITE / REVIEW, NO MERGE**
+
+## Current live state — 2026-09-06
+
+- Deployed candidate: `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`.
+- `github_checks`: **PASS** against live GitHub using Commit statuses only; no GitHub 422; `checkRuns: []` is expected compatibility output.
+- Trusted accounts loaded by the current runtime: `Herman940306`, `JustAGameZA`.
+- `JustAGameZA` repository discovery: **human-gated** because the QuaranHUB organization installation currently uses **Selected repositories**. The broker correctly fails closed and requires **All repositories** for account-level dynamic discovery. This is an installation repository-access setting, not an App-permission change.
+- Source promotion: blocked because the clean candidate and protected root work both touch `scripts/remote-owner-start.sh`.
+- No merge, force-push, wildcard-repository, Checks-permission or Docker-socket authority was added.
+
 
 ## Purpose
 
@@ -199,13 +209,14 @@ The broker uses App JWT authentication to resolve trusted-account installations 
 
 The owner-selected App name is **QuaranHUB**. Register it as installable on **Any account** so the same App can be installed on the personal account and approved organizations.
 
-The initial live trust registry may contain only the owner's personal account:
+The current live trusted-account registry contains:
 
 ```text
 Herman940306
+JustAGameZA
 ```
 
-Choose **All repositories** for that installation. GitHub then automatically includes repositories created later under the account. Organizations such as `JustAGameZA` or `ZerithZA` are added only after their owner/admin installs QuaranHUB with **All repositories** and the QuaranGate owner explicitly adds that organization to `config/github.yaml`. QuaranGate still fails closed because only accounts listed in trusted `config/github.yaml` and allowed by the client `githubAccounts` grant are usable. An installation on some unrelated third-party account does not become visible merely because the App can be installed there.
+The personal-account installation is usable. The `JustAGameZA` organization is trusted in QuaranGate, but its current QuaranHUB installation uses **Selected repositories**, so account-level discovery intentionally fails closed. Change that installation's repository access to **All repositories** before treating the organization as dynamically discoverable. Organizations such as `ZerithZA` are added only after their owner/admin installs QuaranHUB with **All repositories** and the QuaranGate owner explicitly adds that organization to `config/github.yaml`. QuaranGate still fails closed because only accounts listed in trusted `config/github.yaml` and allowed by the client `githubAccounts` grant are usable. An installation on some unrelated third-party account does not become visible merely because the App can be installed there.
 
 Repository-specific Git push remains more restrictive: a repository must additionally have a trusted local `project` mapping before `github_push_branch` can publish an exact local HEAD.
 

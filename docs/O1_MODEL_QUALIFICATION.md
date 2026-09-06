@@ -2,7 +2,7 @@
 
 This document records the model qualification evidence and the deployment boundary for QuaranGate's governed local Ollama backend.
 
-**Current status:** **R2 PRODUCTION DEPLOYED / POST-ENABLE ACCEPTANCE INCOMPLETE** (2026-09-05).
+**Current status:** **PRODUCTION DEPLOYED / POST-REMEDIATION LIVE RE-ACCEPTANCE PENDING** (reconciled 2026-09-06).
 
 The O1 backend is deliberately **read-only**. It is qualified for bounded audit, planning and review work, not for write/apply authority.
 
@@ -96,7 +96,9 @@ Primary/capacity/alternate model qualification COMPLETE
 Primary model selection                     FROZEN
 Controlled container deployment             COMPLETE (2026-09-04)
 Ollama hardened disposable canary acceptance COMPLETE (O1-C3)
-Production activation                       DEPLOYED; ACCEPTANCE INCOMPLETE
+Production activation                       DEPLOYED
+Post-R2 reliability/tooling source remediation COMPLETE IN ACCEPTED MAIN
+Full post-remediation live acceptance           PENDING
 ```
 
 This distinction must be preserved in README/operations/roadmap language.
@@ -441,8 +443,10 @@ This clears the npm source-build blocker. O1-C1/C2 prepared and qualified the
 model/resource profile; O1-C3 accepted the exact hardened runtime in a
 disposable canary; O1-C4 completed the bounded legacy-identity sanitization.
 Controlled production deployment and deliberate backend enablement subsequently
-completed. Post-enable MCP acceptance remains incomplete after R1 because the
-live O1 read helper received an empty staged workspace.
+completed. R2 closed the empty-workspace defect but exposed a successful-empty-summary
+contract defect. Later accepted-main commits close that defect and harden the O1
+thinking/tool/enumeration/search path. A complete live matrix after the full
+remediation chain remains pending.
 
 ---
 
@@ -586,6 +590,22 @@ before helper startup and repeat the entire live matrix; no successful retry may
 replace these recorded failures.
 
 ---
+
+# Post-R3 accepted-main reliability/tooling remediation
+
+The old R3 section below records the state when the first fail-closed output fix was still an uncommitted candidate. That is no longer the current source state. The following accepted-main commits now form the subsequent remediation chain:
+
+```text
+8bd4ace  fix(o1): fail closed on unusable model output
+dc6db39  fix(o1): disable thinking for reliable final output
+961d181  fix(o1): harden tool contracts and diagnostics
+383dbd6  fix(o1): make bounded enumeration portable
+6b508f7  fix(o1): make literal search complete
+```
+
+These commits are reachable from accepted local `main` `09672d5150075741bb7fdc48f5e9cce1eba07cca` and are included in the currently deployed GitHub/MCP candidate `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`. They preserve O1's read-only authority and do not authorize cloud/model fallback or writer profiles.
+
+This documentation reconciliation does **not** invent a final O1 acceptance result: the full live audit/plan/review/refusal/envelope matrix has not been re-established here after the complete remediation chain. Therefore O1 remains deployed but not fully production-accepted.
 
 # Approval record
 

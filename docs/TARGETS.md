@@ -206,6 +206,12 @@ The current direct execution model generally assumes:
 
 Shell-less/distroless/scratch containers are not normal v1 interactive targets and should fail clearly rather than causing QuaranGate to improvise an unsafe fallback.
 
+## Current project-supplied work/review toolchain
+
+The generic direct-target contract above remains intentionally minimal. Separately, the project-supplied engineering review/work images were hardened on 2026-09-06 to use `node:24-bookworm-slim` rather than Alpine so host-installed glibc-native npm dependencies work predictably through the mounted workspace. The affected images provide Node/npm/npx, Git, Bash, Python 3 and CA certificates.
+
+This tooling change does **not** make the read-only review mount writable and does **not** add a Docker socket. Vitest scripts use `--configLoader native` so a read-only checkout does not require Vite to create `node_modules/.vite-temp`.
+
 ---
 
 # Target lanes shipped with QuaranGate

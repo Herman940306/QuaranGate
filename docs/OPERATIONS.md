@@ -8,7 +8,7 @@ QuaranGate is intentionally conservative about operational authority. A successf
 > The executor holds `/var/run/docker.sock`. Docker socket access is effectively host-level authority. QuaranGate limits that authority by keeping the executor private and exposing only a narrow internal API, but the residual impact of an executor or Docker-daemon compromise is still high. Never publish the executor and never mount the Docker socket into the gateway or an agent runner.
 
 > [!IMPORTANT]
-> Current source/deployment baseline: `a41c4bc6d568dd00bd323d67c342c1f60f587dd6` (`fix(o1): complete staged workspace qualification`). The governed offline build gate passes at 46/46 unit files and 1825/1825 tests. R2 is deployed and committed workspace staging is proven, but post-enable acceptance remains incomplete because 2/3 audit runs returned an empty result summary.
+> Current accepted local `main`: `09672d5150075741bb7fdc48f5e9cce1eba07cca` (`fix(remote): verify persisted runtime selection`). Current deployed gateway/executor candidate: `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`. Candidate qualification: typecheck PASS, 50/50 unit files and 1878/1878 tests PASS, 16/16 focused GitHub tests PASS. Source promotion remains blocked by the protected dirty-path intersection at `scripts/remote-owner-start.sh`.
 
 ---
 
@@ -33,6 +33,23 @@ QuaranGate is intentionally conservative about operational authority. A successf
 - [Backup and recovery](#backup-and-recovery)
 - [Troubleshooting](#troubleshooting)
 - [Operational rules](#operational-rules)
+
+## Current closeout gates — 2026-09-06
+
+The GitHub/MCP side-quest runtime is deployed and healthy, but closeout is intentionally human-gated:
+
+1. `QuaranHUB` on `JustAGameZA` currently uses **Selected repositories**. `github_repositories` therefore fails closed with `GITHUB_NOT_CONFIGURED` until the organization owner changes only the installation repository access to **All repositories**. Do **not** add or change App permissions to fix this.
+2. The clean candidate overlaps protected uncommitted owner work at `scripts/remote-owner-start.sh`; do not fast-forward/cherry-pick over that path until it is deliberately reconciled.
+
+The statuses-only repair is live: `github_checks` succeeds without GitHub Checks permission, reads Commit statuses, and returns `checkRuns: []` for compatibility.
+
+The rebuilt MCP target images use the hardened Node 24 Bookworm toolchain and preserve the read-only/no-Docker-socket boundaries. Current accepted image evidence from the closeout is:
+
+```text
+mcp-bridge-review:latest             sha256:48574f4ea71693dc26b219f5532bc48de7f7ff32d45c3eb46d5b50f36018fd29
+assistant-environment-review:latest  sha256:e189e748ea13046f8734e62ce53b871f40a901809279c693aa58a5e6048f33aa
+assistant-environment-work:latest    sha256:aae07d9f44652e782c5c0051856d7180850faf32d70f0fc19e5230e388d02872
+```
 
 ---
 
@@ -111,7 +128,7 @@ Not currently claimed as verified.
 Canonical project path on the current workstation:
 
 ```text
-/home/herman/projects/mcp-ide-bridge
+/home/herman/projects/QuaranGate
 ```
 
 Run project commands from that repository unless a command explicitly says otherwise.
@@ -119,7 +136,7 @@ Run project commands from that repository unless a command explicitly says other
 Before any mutation, establish the real state:
 
 ```bash
-cd /home/herman/projects/mcp-ide-bridge
+cd /home/herman/projects/QuaranGate
 
 git rev-parse HEAD
 git branch --show-current
@@ -1135,7 +1152,7 @@ If O1 is already configured (trusted `OLLAMA_MODEL_QUALIFIER` present or an exis
 - checks local gateway readiness;
 - reports Tailscale Funnel status read-only when the CLI is available.
 
-The Windows helper `scripts/windows/Install-QuaranGateRemoteOwnerAutostart.ps1` installs a non-elevated Task Scheduler action at owner logon that invokes this WSL recovery script. This is intentionally a **logon recovery** guarantee, not a claim that Docker Desktop can run an interactive-user stack before any Windows user session exists.
+The Windows helper `scripts/windows/Install-QuaranGateRemoteOwnerAutostart.ps1` installs a non-elevated Task Scheduler action at owner logon. The scheduled action launches a per-user Windows PowerShell wrapper under `%LOCALAPPDATA%\QuaranGate`; that wrapper records Windows-side start/exit evidence in `remote-owner-task.log` and invokes `wsl.exe` with an argument array targeting the tracked `scripts/remote-owner-autostart.sh`. The Linux wrapper then creates `~/.local/state/quarangate/remote-owner-autostart.log` and invokes `remote-owner-start.sh`. This extra Windows boundary is required on the qualified workstation because direct Task Scheduler → `wsl.exe` returned `0xFFFFFFFF` even though the identical WSL command succeeded interactively. This is intentionally a **logon recovery** guarantee, not a claim that Docker Desktop can run an interactive-user stack before any Windows user session exists.
 
 ## Remote acceptance
 

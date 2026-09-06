@@ -6,11 +6,13 @@
 
 **Repository:** `Herman940306/QuaranGate`
 
-**Local project path:** `/home/herman/projects/mcp-ide-bridge`
+**Local project path:** `/home/herman/projects/QuaranGate`
 
-**Current accepted local source baseline:** `18179696b3ef3ff2192805590027d2e1a43a43d4` — `build: add governed offline npm dependency bundle`
+**Current accepted local source baseline:** `09672d5150075741bb7fdc48f5e9cce1eba07cca` — `fix(remote): verify persisted runtime selection`
 
-**Documentation reconciliation status:** Finalized against the accepted N1 baseline. Documentation insertion remains a separate uncommitted change until reviewed in the repository.
+**Current deployed runtime candidate:** `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a` — GitHub App Control Plane + statuses-only repair + hardened MCP target toolchain. Deployment and code qualification passed; source promotion is blocked by a protected dirty-path intersection at `scripts/remote-owner-start.sh`.
+
+**Current O1 operational status:** **PRODUCTION DEPLOYED / FULL POST-REMEDIATION LIVE ACCEPTANCE PENDING**. Exact committed workspace staging is proven. Later accepted-main remediations close the successful-empty-summary source contract and harden thinking/tool/enumeration/search behavior; the current deployed candidate contains those fixes. The complete O1 live matrix has not yet been re-proven after the full remediation chain.
 
 > [!IMPORTANT]
 > This document separates **current accepted capability**, **implemented but still awaiting operational acceptance**, **feasibility evidence**, and **North-Star design**. Historical audit records are preserved in `docs/audits/` and are not rewritten to make old state look current.
@@ -253,12 +255,26 @@ A test count, verdict or architectural statement that was true at one checkpoint
 | `agent_discard` | **Available** | Live source untouched |
 | Retained-resource lifecycle | **Available** | Evidence lifecycle governed independently |
 | Governed offline npm source build | **Available** | Lock-scoped bundle; canonical lock; source build network `none` |
-| O1 local Ollama backend | **Implemented — hardened disposable canary accepted; production deployment pending** | Read-only local backend; model frozen |
-| GitHub Copilot backend | **Roadmap** | A7 |
-| Session continuity | **Roadmap** | A8 |
+| O1 local Ollama backend | **Production deployed; full post-remediation acceptance pending** | Read-only local backend; source reliability/tooling fixes deployed, complete live matrix still required |
+| GitHub App Control Plane | **Deployed candidate; closeout human-gated** | 17 tools; no merge; statuses-only checks; `JustAGameZA` requires All repositories; source promotion blocked |
+| GitHub Copilot backend | **Future / owner-deferred** | A7; no current subscription/test capability |
+| Session continuity | **Next active Agent Control Plane gate** | A8 |
 | IDE Session Control | **North Star** | Design/feasibility evidence only |
 
-## 6.2 Deliberately unavailable authority
+## 6.2 GitHub App Control Plane current boundary
+
+The GitHub App Control Plane is implemented and currently deployed from candidate `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`. It adds 17 separately authorized `github:*` tools behind the private `QuaranHUB` broker and exact-host GitHub egress proxy. There is no merge tool or merge scope. Direct push remains restricted to separately mapped local projects and non-protected branches.
+
+Live acceptance on 2026-09-06 proved the statuses-only `github_checks` repair: GitHub Checks permission is not required, Commit statuses are read successfully, `checkRuns: []` is expected compatibility output, and the prior GitHub 422 is gone.
+
+Closeout remains **human-gated** for two reasons:
+
+1. `JustAGameZA` is trusted by QuaranGate, but its QuaranHUB installation uses **Selected repositories**; dynamic account discovery requires the owner/admin to change only repository access to **All repositories**.
+2. candidate source promotion intersects protected uncommitted owner work at `scripts/remote-owner-start.sh`.
+
+These gates do not authorize changing App permissions or weakening source-protection rules.
+
+## 6.3 Deliberately unavailable authority
 
 QuaranGate does not expose:
 
@@ -575,9 +591,9 @@ O1 adds a governed local Ollama backend for bounded read-only audit/plan/review 
 
 ## 12.1 Status
 
-**Source/model qualification is complete. Controlled container deployment and post-deploy acceptance are still pending.**
+**Source/model qualification and controlled deployment are complete. Post-enable production acceptance is incomplete.**
 
-The documentation must not collapse those into the single word “operational”.
+The documentation must not collapse a healthy deployment into an accepted repository-inspection capability.
 
 ## 12.2 Selected model hierarchy
 
@@ -637,7 +653,7 @@ The owner-approved deployment direction uses:
 - offline/controlled model seeding;
 - backend disabled until infrastructure checks pass.
 
-Current-host O1 production profile is owner-approved but not deployed: Ollama
+Current-host O1 production profile is owner-approved and deployed: Ollama
 `0.32.3` (`sha256:ec24bcaa2a810eb74171ce7c517813ef4821ed678988845e8d76cf62467036d4`),
 `qwen3.5:4b-q4_K_M`
 (`2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd`),
@@ -646,6 +662,18 @@ PIDs `256`, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`, and
 `OLLAMA_NO_CLOUD=1`. Portable Compose requires explicit context/GPU/CPU/RAM/PID
 inputs; it does not default to this host profile. Any change requires deployment
 requalification. No automatic model or cloud fallback is authorized.
+
+The first production deployment used source revision
+`199c567008d9c8fe047235332ce79dd6a006170b` and image
+`sha256:3df1d4f6b88d442e363d67ff2c75582c37805482fce3a85c3acf44d85f0d23d5`.
+Its 5/6 live gate exposed that `agent_result` returned generic telemetry instead
+of the model's final answer. R1 deployed revision
+`92b39ec98c423413c61880cde75b3f9ca4d21c45` as image
+`sha256:6f56657ddfd87f145de900c52d18fc49bf8135ee777c42650dd28de341903be9`.
+R1 proves governed model-result delivery, but not production acceptance: all
+three repeated audit jobs missed the required path/value, and plan/review saw an
+empty staged workspace. Implement refusal, sensitive-read refusal and envelope
+enforcement remained correct.
 
 The production design reserves persistent `quarangate-ollama-models` storage
 for model artifacts only and mounts it read-only at `/model-store` with
@@ -924,18 +952,18 @@ Counts change as the project grows.
 
 The documentation should show the current accepted count while preserving older counts as historical milestones.
 
-Current accepted source baseline after N1:
+Current deployed side-quest candidate verification:
 
 ```text
-HEAD: 18179696b3ef3ff2192805590027d2e1a43a43d4
+CANDIDATE: aef07f2c46ca53a55e1ee662f3b8cddc73f6857a
 TypeScript typecheck: PASS
-44 / 44 unit test files PASS
-1693 / 1693 unit tests PASS
-normal source build: PASS
-offline/no-cache Docker build with pre-provisioned inputs: PASS
+50 / 50 unit test files PASS
+1878 / 1878 unit tests PASS
+focused GitHub: 16 / 16 PASS
+git diff --check: PASS
 ```
 
-The immediately preceding Tini-only baseline (`6129d3d`) remains historical evidence at 43 files / 1671 tests.
+Docker/local integration evidence for the closeout ultimately cleared 62 supported tests; five live-stack suites were not collected because their `KEYS_ENV` scratchpad prerequisite was absent and must not be represented as executed. The N1 baseline (`18179696`) remains historical evidence at 44 files / 1693 tests; the Tini-only baseline (`6129d3d`) remains historical evidence at 43 files / 1671 tests.
 
 ## 17.3 Why independent audits matter
 
@@ -983,8 +1011,8 @@ The accepted offline build procedure is recorded in `docs/OPERATIONS.md`. Depend
 | A4 | Kiro ACP read-only | Complete |
 | A5 | Kiro sandbox implementation | Complete |
 | A6 | Diff / apply / discard / retained-resource lifecycle | Complete |
-| A7 | GitHub Copilot backend | Not started |
-| A8 | Session continuity | Not started |
+| A7 | GitHub Copilot backend | Future / owner-deferred; no current subscription/test capability |
+| A8 | Session continuity | Next active Agent Control Plane gate |
 | A9 | Production hardening + full E2E | Not started |
 
 ## 19.2 Parallel local Ollama milestone
@@ -997,8 +1025,8 @@ Current state:
 implementation merged
 model qualification complete
 primary/capacity/alternate frozen
-controlled container deployment pending
-post-deploy acceptance pending
+controlled container deployment complete
+post-remediation source/runtime present; complete live O1 acceptance matrix still pending
 ```
 
 ## 19.3 IDE Session Control program
@@ -1103,7 +1131,8 @@ Unless the owner explicitly reopens them, the following are controlling decision
 - QuaranGate is the canonical product identity.
 - ChatGPT is the primary planning/orchestration collaborator in the intended user workflow.
 - Kiro is an implemented Agent Control Plane worker.
-- GitHub Copilot is the next formal backend target under A7.
+- GitHub Copilot A7 remains future work and is owner-deferred because there is no current subscription/test capability.
+- Session continuity A8 is the next active Agent Control Plane gate.
 - Agent work is sandbox-first.
 - Completing a job never implies automatic live apply.
 - Gateway does not receive Docker socket authority.
@@ -1156,9 +1185,9 @@ Current known limitations/debt include:
 - the Dockerfile still uses the mutable base tag `node:24-alpine`, so cross-machine bit-for-bit base-image reproducibility is not yet proven by source pinning alone;
 - `validateResolvedUrl` could be defense-in-depth hardened against redundant double-slash registry paths even though exact-host validation plus mandatory SHA-512 prevents artifact substitution;
 - O1 hardened disposable container-runtime canary is accepted;
-- O1 production activation remains pending;
-- GitHub Copilot backend A7 not started;
-- session continuity A8 not started;
+- O1 production is deployed and the known staging/empty-result/tool-contract defects have source remediations in current main/runtime, but the full post-remediation live acceptance matrix remains pending;
+- GitHub Copilot backend A7 is future / owner-deferred because there is no current subscription/test capability;
+- session continuity A8 is the next active Agent Control Plane gate;
 - A9 production hardening/E2E not complete;
 - IDE Session Control production adapters not implemented;
 - IDE-host egress/air-gap qualification remains separate and unresolved;
@@ -1224,7 +1253,7 @@ The local Ollama backend was implemented and model-qualified. Its deployment pat
 - Tini C2 local vendoring/provenance;
 - npm N1 lock-scoped dependency bundling and source-build network isolation.
 
-N1 closed at `18179696b3ef3ff2192805590027d2e1a43a43d4` with 44/44 unit test files and 1693/1693 tests, plus an independently rechecked no-cache/network-none Docker build. O1-C3 later accepted the hardened disposable container canary; controlled production deployment and post-enable acceptance remain pending.
+N1 closed at `18179696b3ef3ff2192805590027d2e1a43a43d4` with 44/44 unit test files and 1693/1693 tests, plus an independently rechecked no-cache/network-none Docker build. O1-C3 later accepted the hardened disposable container canary and controlled production deployment completed. R1/R2 exposed result-delivery, staging and successful-empty-result defects; later accepted-main commits remediate those source/tooling paths. Full post-remediation live O1 acceptance remains pending.
 
 This is an example of the project treating deployment evidence as part of the feature rather than stopping at source compilation.
 

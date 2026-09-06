@@ -473,7 +473,7 @@ Kiro is the real implemented Agent Control Plane backend.
 
 A non-Kiro/fake path exists for deterministic testing and must not be described as a production AI backend.
 
-GitHub Copilot remains the next formal backend gate (A7).
+GitHub Copilot A7 remains future/owner-deferred because there is no current subscription/test capability. Session continuity A8 is the next active Agent Control Plane gate.
 
 ---
 
@@ -741,13 +741,11 @@ A generic “ERROR” would throw away useful recovery information.
 
 ## A7 — GitHub Copilot backend
 
-The public contract is already backend-neutral, but Copilot is not a real production worker yet.
-
-A7 must choose the then-current supported programmatic interface based on structured events, cancellation, session behavior, permission control and maintenance/security properties.
+The public contract is already backend-neutral, but Copilot is not a real production worker. This gate is **owner-deferred** until a real subscription/test capability exists. When reopened, A7 must choose the then-current supported programmatic interface based on structured events, cancellation, session behavior, permission control and maintenance/security properties.
 
 ## A8 — Session continuity
 
-The contract can represent session policy, but intentional backend-session resume is not current production behavior.
+A8 is the **next active Agent Control Plane gate**. The contract can represent session policy, but intentional backend-session resume is not current production behavior.
 
 Session memory will not become an authorization mechanism when implemented.
 
@@ -757,7 +755,7 @@ The final production-hardening gate remains open.
 
 ## O1 — governed Ollama backend
 
-O1 is a parallel backend milestone for bounded read-only local-model work. Source/model qualification status is documented separately and should not be confused with A7 or Kiro's current production role.
+O1 is a parallel backend milestone for bounded read-only local-model work. Its production service is deployed and later source reliability/tooling remediations are present in current main/runtime; a fresh complete post-remediation live acceptance matrix is still required. O1 does not renumber A7-A9 and should not be confused with Kiro's current writer role.
 
 ## IDE Session Control
 
