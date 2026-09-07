@@ -209,6 +209,31 @@ describe('parseImageRef — malformed inputs', () => {
   });
 });
 
+describe('parseImageRef — adversarial malformed references', () => {
+  const malformed = [
+    'image:v1:extra',
+    'image::v1',
+    'registry:abc/repo:v1',
+    'registry:0/repo:v1',
+    'registry:65536/repo:v1',
+    `registry:abc/repo@sha256:${'a'.repeat(64)}`,
+    `registry:0/repo@sha256:${'a'.repeat(64)}`,
+    `registry:65536/repo@sha256:${'a'.repeat(64)}`,
+    'https://evil:v1',
+    'http://evil:v1',
+    'repo//image:v1',
+    '/repo:v1',
+    'repo/:v1',
+    `name@@sha256:${'a'.repeat(64)}`,
+    `name@sha256:${'a'.repeat(63)}`,
+    `name@sha256:${'g'.repeat(64)}`,
+  ];
+
+  it.each(malformed)('rejects %j', (raw) => {
+    expect(parseImageRef(raw).kind).toBe('malformed');
+  });
+});
+
 describe('parseImageRef — raw is preserved', () => {
   it('raw field equals the exact input', () => {
     const raw = 'registry:5000/repo:v1';
@@ -355,15 +380,8 @@ describe('parseImageRef — adversarial bypass attempts', () => {
     expect(r.kind).toBe('implicit-latest');
   });
 
-  it('registry:latest/repo — the "registry" has tag "latest" literally in name', () => {
-    // registry:latest is a host with tag "latest", making /repo a separate segment.
-    // Per Docker spec, a "latest" host segment is unusual — but our parser sees
-    // first segment "registry:latest" looks like domain (has colon), so
-    // domainPart="registry:latest", rest="repo" → implicit-latest (no tag in "repo").
-    // The "latest" here is in the domain, not the tag — the image itself has no tag.
-    const r = parseImageRef('registry:latest/repo');
-    // The colon is in the first segment (domain), rest="repo" has no colon.
-    expect(r.kind).toBe('implicit-latest');
+  it('registry:latest/repo → malformed because registry ports must be numeric', () => {
+    expect(parseImageRef('registry:latest/repo').kind).toBe('malformed');
   });
 
   it('"quarangate:latest" → explicit-latest (single component, colon IS tag separator)', () => {

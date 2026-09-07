@@ -2490,7 +2490,7 @@ describe('O1 R2 workspace staging', () => {
       volumeName: 'test-ws-volume',
       baseCommit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     });
-    const disposeSpy = vi.spyOn(RunnerSandbox.prototype, 'disposeWorkspace').mockResolvedValue(undefined);
+    const removeVolumeSpy = vi.spyOn(dockerModule, 'removeVolume').mockResolvedValue(undefined);
 
     vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper123');
     vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
@@ -2508,7 +2508,7 @@ describe('O1 R2 workspace staging', () => {
     await backend.prepare(new AbortController().signal);
     await backend.cleanup();
 
-    expect(disposeSpy).toHaveBeenCalledWith('test-ws-volume');
+    expect(removeVolumeSpy).toHaveBeenCalledExactlyOnceWith('test-ws-volume', true);
   });
 
   it('R2-10: OllamaBackend.validate returns staged baseCommit', async () => {
@@ -2525,6 +2525,9 @@ describe('O1 R2 workspace staging', () => {
 
     vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper123');
     vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'stopContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'removeContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'removeVolume').mockResolvedValue(undefined);
 
     const MockOllamaClass = vi.fn().mockReturnValue({
       chat: vi.fn().mockImplementation(async function* () {
@@ -2635,7 +2638,7 @@ describe('O1 R2 resource lifecycle', () => {
       volumeName: 'staged-create-failure',
       baseCommit: '1111111111111111111111111111111111111111',
     });
-    const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace').mockResolvedValue(undefined);
+    const removeVolumeSpy = vi.spyOn(dockerModule, 'removeVolume').mockResolvedValue(undefined);
     vi.spyOn(dockerModule, 'createContainer').mockRejectedValue(new Error('helper create failed'));
     const startSpy = vi.spyOn(dockerModule, 'startContainer');
     const removeSpy = vi.spyOn(dockerModule, 'removeContainer').mockResolvedValue(undefined);
@@ -2645,7 +2648,7 @@ describe('O1 R2 resource lifecycle', () => {
 
     expect(startSpy).not.toHaveBeenCalled();
     expect(removeSpy).toHaveBeenCalledExactlyOnceWith(ollamaReadHelperContainerName(JOB), true);
-    expect(disposeSpy).toHaveBeenCalledExactlyOnceWith('staged-create-failure');
+    expect(removeVolumeSpy).toHaveBeenCalledExactlyOnceWith('staged-create-failure', true);
     expect(lifecycleState(backend)).toMatchObject({
       helperContainerId: null,
       workspaceVolumeName: null,
@@ -2661,7 +2664,7 @@ describe('O1 R2 resource lifecycle', () => {
       volumeName: 'staged-start-failure',
       baseCommit: '2222222222222222222222222222222222222222',
     });
-    const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace').mockResolvedValue(undefined);
+    const removeVolumeSpy = vi.spyOn(dockerModule, 'removeVolume').mockResolvedValue(undefined);
     vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper-start-failure');
     vi.spyOn(dockerModule, 'startContainer').mockRejectedValue(new Error('helper start failed'));
     const stopSpy = vi.spyOn(dockerModule, 'stopContainer').mockResolvedValue(undefined);
@@ -2671,9 +2674,8 @@ describe('O1 R2 resource lifecycle', () => {
     await expect(backend.prepare(new AbortController().signal)).rejects.toThrow(/helper start failed/);
 
     expect(stopSpy).toHaveBeenCalledExactlyOnceWith('helper-start-failure', 2);
-    expect(removeSpy).toHaveBeenCalledWith('helper-start-failure', true);
-    expect(removeSpy).toHaveBeenCalledWith(ollamaReadHelperContainerName(JOB), true);
-    expect(disposeSpy).toHaveBeenCalledExactlyOnceWith('staged-start-failure');
+    expect(removeSpy).toHaveBeenCalledExactlyOnceWith('helper-start-failure', true);
+    expect(removeVolumeSpy).toHaveBeenCalledExactlyOnceWith('staged-start-failure', true);
     expect(lifecycleState(backend).target).toBeNull();
   });
 
@@ -2689,14 +2691,14 @@ describe('O1 R2 resource lifecycle', () => {
         baseCommit: '3333333333333333333333333333333333333333',
       };
     });
-    const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace').mockResolvedValue(undefined);
+    const removeVolumeSpy = vi.spyOn(dockerModule, 'removeVolume').mockResolvedValue(undefined);
     const createSpy = vi.spyOn(dockerModule, 'createContainer');
     const { backend } = await makeBackend(sandbox);
 
     await expect(backend.prepare(controller.signal)).rejects.toThrow(/cancelled after staging/);
 
     expect(createSpy).not.toHaveBeenCalled();
-    expect(disposeSpy).toHaveBeenCalledExactlyOnceWith('staged-cancelled');
+    expect(removeVolumeSpy).toHaveBeenCalledExactlyOnceWith('staged-cancelled', true);
     expect(lifecycleState(backend).target).toBeNull();
   });
 
@@ -2710,7 +2712,7 @@ describe('O1 R2 resource lifecycle', () => {
       volumeName: 'staged-success',
       baseCommit,
     });
-    const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace').mockResolvedValue(undefined);
+    const removeVolumeSpy = vi.spyOn(dockerModule, 'removeVolume').mockResolvedValue(undefined);
     vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper-success');
     vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
     const stopSpy = vi.spyOn(dockerModule, 'stopContainer').mockResolvedValue(undefined);
@@ -2727,8 +2729,8 @@ describe('O1 R2 resource lifecycle', () => {
       baseCommit,
     });
     expect(stopSpy).toHaveBeenCalledExactlyOnceWith('helper-success', 2);
-    expect(removeSpy).toHaveBeenCalledTimes(2);
-    expect(disposeSpy).toHaveBeenCalledExactlyOnceWith('staged-success');
+    expect(removeSpy).toHaveBeenCalledExactlyOnceWith('helper-success', true);
+    expect(removeVolumeSpy).toHaveBeenCalledExactlyOnceWith('staged-success', true);
     expect(lifecycleState(backend)).toMatchObject({
       helperContainerId: null,
       workspaceVolumeName: null,
@@ -2739,7 +2741,201 @@ describe('O1 R2 resource lifecycle', () => {
 
     await expect(backend.cleanup()).resolves.toBeUndefined();
     expect(stopSpy).toHaveBeenCalledTimes(1);
-    expect(removeSpy).toHaveBeenCalledTimes(2);
-    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+    expect(removeVolumeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('successful validation fails closed if read-helper removal cannot be proven', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+    const sandbox = new RunnerSandbox({ image: 'stager:v1' });
+    vi.spyOn(sandbox, 'stageWorkspace').mockResolvedValue({
+      volumeName: 'staged-helper-cleanup-failure', baseCommit: '5'.repeat(40),
+    });
+    vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper-cleanup-failure');
+    vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'stopContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'removeContainer').mockRejectedValue(new Error('docker remove unavailable'));
+    const removeVolumeSpy = vi.spyOn(dockerModule, 'removeVolume').mockResolvedValue(undefined);
+    const { backend } = await makeBackend(sandbox, 'answer must not become COMPLETED');
+
+    await backend.prepare(new AbortController().signal);
+    await backend.run(new AbortController().signal);
+    await expect(backend.validate(new AbortController().signal))
+      .rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    expect(removeVolumeSpy).toHaveBeenCalledExactlyOnceWith('staged-helper-cleanup-failure', true);
+    expect(lifecycleState(backend).helperContainerId).toBe('helper-cleanup-failure');
+    expect(lifecycleState(backend).workspaceVolumeName).toBeNull();
+  });
+
+  it('successful validation fails closed if workspace-volume removal cannot be proven', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const dockerModule = await import('../../src/executor/docker.js');
+    const sandbox = new RunnerSandbox({ image: 'stager:v1' });
+    vi.spyOn(sandbox, 'stageWorkspace').mockResolvedValue({
+      volumeName: 'staged-volume-cleanup-failure', baseCommit: '6'.repeat(40),
+    });
+    vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper-volume-failure');
+    vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'stopContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'removeContainer').mockResolvedValue(undefined);
+    vi.spyOn(dockerModule, 'removeVolume').mockRejectedValue(new Error('volume remove unavailable'));
+    const { backend } = await makeBackend(sandbox, 'answer must not become COMPLETED');
+
+    await backend.prepare(new AbortController().signal);
+    await backend.run(new AbortController().signal);
+    await expect(backend.validate(new AbortController().signal))
+      .rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    expect(lifecycleState(backend).helperContainerId).toBeNull();
+    expect(lifecycleState(backend).workspaceVolumeName).toBe('staged-volume-cleanup-failure');
+  });
+
+});
+
+describe('O1 final production closeout — provider cancellation transport', () => {
+  function markPrepared(backend: object): void {
+    (backend as unknown as Record<string, unknown>)['target'] = {
+      containerId: 'fake', workspace: '/workspace',
+    };
+  }
+
+  it('aborts actual Ollama fetch before response headers and preserves job reason', async () => {
+    const [{ OllamaBackend }, { Ollama }] = await Promise.all([
+      import('../../src/executor/agents/ollamaBackend.js'),
+      import('ollama'),
+    ]);
+    let capturedSignal: AbortSignal | null = null;
+    let signalCaptured!: () => void;
+    const captured = new Promise<void>((resolve) => { signalCaptured = resolve; });
+    const fakeFetch = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? null;
+      signalCaptured();
+      return new Promise<Response>(() => {});
+    }) as unknown as typeof fetch;
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'stall', hostPath: '/srv', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'm:v1', helperImage: 'h:v1', sandbox: {} as any, sensitiveReadGlobs: [], OllamaClass: Ollama, fetch: fakeFetch },
+    );
+    markPrepared(backend);
+    const controller = new AbortController();
+    const reason = new Error('owner cancelled before headers');
+    const run = backend.run(controller.signal);
+
+    await captured;
+    expect(capturedSignal).not.toBeNull();
+    expect(capturedSignal!.aborted).toBe(false);
+    controller.abort(reason);
+
+    expect(capturedSignal!.aborted).toBe(true);
+    expect(capturedSignal!.reason).toBe(reason);
+    await expect(run).rejects.toBe(reason);
+  });
+
+  it('aborts actual Ollama stream transport after response headers', async () => {
+    const [{ OllamaBackend }, { Ollama }] = await Promise.all([
+      import('../../src/executor/agents/ollamaBackend.js'),
+      import('ollama'),
+    ]);
+    let capturedSignal: AbortSignal | null = null;
+    let bodyController!: ReadableStreamDefaultController<Uint8Array>;
+    const fakeFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? null;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) { bodyController = controller; },
+      });
+      capturedSignal?.addEventListener('abort', () => bodyController.error(capturedSignal?.reason), { once: true });
+      return new Response(body, { status: 200, headers: { 'content-type': 'application/x-ndjson' } });
+    }) as unknown as typeof fetch;
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'stream', hostPath: '/srv', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'm:v1', helperImage: 'h:v1', sandbox: {} as any, sensitiveReadGlobs: [], OllamaClass: Ollama, fetch: fakeFetch },
+    );
+    markPrepared(backend);
+    const controller = new AbortController();
+    const reason = new Error('owner cancelled after headers');
+    const run = backend.run(controller.signal);
+    await vi.waitFor(() => {
+      const client = (backend as unknown as { ollama: { ongoingStreamedRequests: unknown[] } }).ollama;
+      expect(client.ongoingStreamedRequests).toHaveLength(1);
+    });
+
+    controller.abort(reason);
+
+    expect(capturedSignal).not.toBeNull();
+    expect(capturedSignal!.aborted).toBe(true);
+    expect(capturedSignal!.reason).toBe(reason);
+    await expect(run).rejects.toBe(reason);
+  });
+
+  it('isolates actual Ollama transport cancellation between jobs', async () => {
+    const [{ OllamaBackend }, { Ollama }] = await Promise.all([
+      import('../../src/executor/agents/ollamaBackend.js'),
+      import('ollama'),
+    ]);
+    let signalA: AbortSignal | null = null;
+    let signalB: AbortSignal | null = null;
+    let fetchAStarted!: () => void;
+    const fetchAStart = new Promise<void>((resolve) => { fetchAStarted = resolve; });
+    const fetchA = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      signalA = init?.signal ?? null;
+      fetchAStarted();
+      return new Promise<Response>(() => {});
+    }) as unknown as typeof fetch;
+    const fetchB = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      signalB = init?.signal ?? null;
+      return new Response('{"message":{"role":"assistant","content":"ok"},"done":true}\n', {
+        status: 200, headers: { 'content-type': 'application/x-ndjson' },
+      });
+    }) as unknown as typeof fetch;
+    const make = (jobId: string, transport: typeof fetch) => {
+      const backend = new OllamaBackend(
+        { jobId, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv', policy: POLICY },
+        { ollamaHost: 'http://ollama:11434', modelQualifier: 'm:v1', helperImage: 'h:v1', sandbox: {} as any, sensitiveReadGlobs: [], OllamaClass: Ollama, fetch: transport },
+      );
+      markPrepared(backend);
+      return backend;
+    };
+    const backendA = make(JOB, fetchA);
+    const backendB = make(`job_${'b'.repeat(32)}`, fetchB);
+    const controllerA = new AbortController();
+    const runA = backendA.run(controllerA.signal);
+    await fetchAStart;
+    await expect(backendB.run(new AbortController().signal)).resolves.toBeUndefined();
+    const reason = new Error('cancel job A only');
+
+    controllerA.abort(reason);
+
+    await expect(runA).rejects.toBe(reason);
+    expect(signalA!.aborted).toBe(true);
+    expect(signalB).not.toBeNull();
+    expect(signalB!.aborted).toBe(false);
+  });
+
+  it('keeps genuine fetch failure distinct from cancellation', async () => {
+    const [{ OllamaBackend }, { Ollama }] = await Promise.all([
+      import('../../src/executor/agents/ollamaBackend.js'),
+      import('ollama'),
+    ]);
+    const networkFailure = new TypeError('fetch failed');
+    let capturedSignal: AbortSignal | null = null;
+    const fakeFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? null;
+      throw networkFailure;
+    }) as unknown as typeof fetch;
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'network fail', hostPath: '/srv', policy: POLICY },
+      { ollamaHost: 'http://ollama:11434', modelQualifier: 'm:v1', helperImage: 'h:v1', sandbox: {} as any, sensitiveReadGlobs: [], OllamaClass: Ollama, fetch: fakeFetch },
+    );
+    markPrepared(backend);
+    const jobController = new AbortController();
+    let caught: unknown;
+
+    try { await backend.run(jobController.signal); } catch (error) { caught = error; }
+
+    expect(caught).toBe(networkFailure);
+    expect(backend.isAgentFailure(caught)).toBe(true);
+    expect(jobController.signal.aborted).toBe(false);
+    expect(capturedSignal).not.toBeNull();
+    expect(capturedSignal!.aborted).toBe(false);
   });
 });

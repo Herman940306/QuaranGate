@@ -12,7 +12,12 @@
  * 6. All three images validated together (:latest check covers all)
  */
 import { describe, it, expect } from 'vitest';
-import { resolveExecutorStartupPolicy } from '../../src/executor/startupPolicy.js';
+import {
+  isApprovedOllamaLocalHost,
+  isExplicitO1ImageReference,
+  isExplicitOllamaModelQualifier,
+  resolveExecutorStartupPolicy,
+} from '../../src/executor/startupPolicy.js';
 
 describe('O1 startup policy — stager validation', () => {
   // Test 1: Missing stager when Ollama enabled → throws 'AGENT_STAGER_IMAGE is not set'
@@ -321,5 +326,172 @@ describe('O1 startup policy — stager validation', () => {
       expect(policy.ollama.helperImage).toBe('ollama-helper:v1.0.0');
       expect(policy.ollama.stagerImage).toBe('ollama-stager:v1.0.0');
     }
+  });
+});
+
+describe('O1 final production closeout — local endpoint and explicit reference gate', () => {
+  const malformedImageReferences = [
+    ':v1',
+    '::v1',
+    'image::v1',
+    'image:v1:extra',
+    'http://evil:v1',
+    'https://evil:v1',
+    'image',
+    'image:',
+    'image:latest',
+    'image:LATEST',
+    'image:Latest',
+    'image:lAtEsT',
+    '/repo:v1',
+    'registry.internal:5000/repository',
+    'registry.internal:5000/repository:latest',
+    'registry:abc/repo:v1',
+    'registry:0/repo:v1',
+    'registry:65536/repo:v1',
+    `@sha256:${'a'.repeat(64)}`,
+    'image@sha256:',
+    'image@md5:0123456789abcdef',
+    `helper@sha512:${'b'.repeat(128)}`,
+    ' image:v1',
+    'image:v1 ',
+    'image: v1',
+    'image:v1\n',
+    'image:v1\r\n',
+    'image:\0v1',
+    'registry.internal//repository:v1',
+    `image@sha256:${'a'.repeat(63)}`,
+    `image@sha256:${'g'.repeat(64)}`,
+  ];
+
+  const validImageReferences = [
+    'helper:v1',
+    'helper:v1.2.3',
+    'registry.internal:5000/quarangate/helper:v1',
+    'registry.internal/quarangate/helper:v1',
+    `helper@sha256:${'a'.repeat(64)}`,
+  ];
+
+  const malformedModelQualifiers = [
+    ':v1',
+    '::v1',
+    'qwen::v1',
+    'http://evil:v1',
+    'https://evil:v1',
+    'qwen3.5',
+    'qwen3.5:',
+    'qwen3.5:latest',
+    'qwen3.5:LATEST',
+    '/qwen:v1',
+    'namespace//model:v1',
+    ' qwen3.5:4b',
+    'qwen3.5:4b ',
+    'qwen3.5:4 b',
+    'qwen3.5:4b\n',
+    'qwen3.5:4b\0',
+    `qwen3.5@sha256:${'a'.repeat(64)}`,
+  ];
+
+  const validModelQualifiers = [
+    'qwen3.5:4b-q4_K_M',
+    'qwen3.5:4b',
+    'gemma3:4b',
+    'namespace/model:v1',
+  ];
+
+  it.each(malformedImageReferences)('rejects malformed image reference %j', (value) => {
+    expect(isExplicitO1ImageReference(value)).toBe(false);
+  });
+
+  it.each(validImageReferences)('accepts explicit image reference %j', (value) => {
+    expect(isExplicitO1ImageReference(value)).toBe(true);
+  });
+
+  it.each(['image:latest', 'image:LATEST', 'image:Latest', 'image:lAtEsT'])(
+    'rejects latest case-insensitively through startup policy %j',
+    (agentHelperImage) => {
+      expect(() => resolveExecutorStartupPolicy(true, {
+        ollamaHost: 'http://ollama:11434',
+        ollamaModelQualifier: 'qwen3.5:4b-q4_K_M',
+        agentHelperImage,
+        agentStagerImage: 'quarangate-stager:v1',
+      })).toThrow(/latest|explicit non-latest/);
+    },
+  );
+
+  it.each(malformedModelQualifiers)('rejects malformed model qualifier %j', (value) => {
+    expect(isExplicitOllamaModelQualifier(value)).toBe(false);
+  });
+
+  it.each(validModelQualifiers)('accepts explicit model qualifier %j', (value) => {
+    expect(isExplicitOllamaModelQualifier(value)).toBe(true);
+  });
+
+  const refusedOllamaEndpoints = [
+    ' http://ollama:11434',
+    'http://ollama:11434 ',
+    '\thttp://ollama:11434\n',
+    'HTTP://OLLAMA:11434',
+    'http://%6fllama:11434',
+    'http://ollama:011434',
+    'http://ollama:11434/%2e',
+    'http://ollama:11434/%2e%2e',
+    'http://ollama:11434/api',
+    'http://ollama:11434?x=1',
+    'http://ollama:11434#x',
+    'http://user:pass@ollama:11434',
+    'http://localhost:11434',
+    'http://127.0.0.1:11434',
+    'http://ollama:11435',
+    'https://ollama:11434',
+    'https://api.example.com',
+  ];
+
+  it.each(refusedOllamaEndpoints)('rejects non-exact Ollama endpoint %j', (ollamaHost) => {
+    expect(isApprovedOllamaLocalHost(ollamaHost)).toBe(false);
+    expect(() => resolveExecutorStartupPolicy(true, {
+      ollamaHost,
+      ollamaModelQualifier: 'qwen3.5:4b-q4_K_M',
+      agentHelperImage: 'quarangate-helper:v1',
+      agentStagerImage: 'quarangate-stager:v1',
+    })).toThrow(/approved local endpoint/);
+  });
+
+  it('recognizes only the exact approved Ollama endpoint', () => {
+    expect(isApprovedOllamaLocalHost('http://ollama:11434')).toBe(true);
+  });
+
+  it('accepts only the approved local Ollama service endpoint', () => {
+    const policy = resolveExecutorStartupPolicy(true, {
+      ollamaHost: 'http://ollama:11434',
+      ollamaModelQualifier: 'qwen3.5:4b-q4_K_M',
+      agentHelperImage: 'registry.internal:5000/quarangate/helper:v1',
+      agentStagerImage: 'registry.internal:5000/quarangate/stager@sha256:' + 'a'.repeat(64),
+    });
+    expect(policy.ollama).toMatchObject({ enabled: true, host: 'http://ollama:11434' });
+  });
+
+  it('refuses implicit latest image references including registry-port syntax', () => {
+    for (const [agentHelperImage, agentStagerImage] of [
+      ['quarangate-helper', 'quarangate-stager:v1'],
+      ['registry.internal:5000/quarangate/helper', 'quarangate-stager:v1'],
+      ['quarangate-helper:v1', 'registry.internal:5000/quarangate/stager'],
+    ]) {
+      expect(() => resolveExecutorStartupPolicy(true, {
+        ollamaHost: 'http://ollama:11434',
+        ollamaModelQualifier: 'qwen3.5:4b-q4_K_M',
+        agentHelperImage,
+        agentStagerImage,
+      })).toThrow(/explicit non-latest tags or sha256 digests/);
+    }
+  });
+
+  it('refuses implicit-latest model qualifiers', () => {
+    expect(() => resolveExecutorStartupPolicy(true, {
+      ollamaHost: 'http://ollama:11434',
+      ollamaModelQualifier: 'qwen3.5',
+      agentHelperImage: 'quarangate-helper:v1',
+      agentStagerImage: 'quarangate-stager:v1',
+    })).toThrow(/explicit non-latest tag/);
   });
 });

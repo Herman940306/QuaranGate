@@ -30,7 +30,9 @@
  *   port       := /[0-9]+/
  *   tag        := /[\w][\w.-]{0,127}/   (simplified; Docker allows [A-Za-z0-9_.-])
  *   digest     := algorithm ":" hex
- *   algorithm  := "sha256" | "sha512" (extensible but we only allow sha256/sha512)
+ *   algorithm  := "sha256" | "sha512"
+ *   sha256     := exactly 64 lowercase hex chars
+ *   sha512     := exactly 128 lowercase hex chars
  *
  * We do NOT attempt full spec compliance; the goal is to correctly distinguish
  * the domain:port/repo pattern from the repo:tag pattern, and to enforce the
@@ -63,6 +65,10 @@ export interface ParsedImageRef {
 
 /** Allowed digest algorithms. SHA-256 is the only commonly used one in Docker. */
 const ALLOWED_DIGEST_ALGORITHMS = new Set(['sha256', 'sha512']);
+const IMAGE_REPOSITORY_COMPONENT = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+const IMAGE_TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+const IMAGE_REGISTRY_HOST = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+const IPV4_ADDRESS = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
 /**
  * A "domain" component starts with a hostname that contains a dot, starts
@@ -78,9 +84,59 @@ const ALLOWED_DIGEST_ALGORITHMS = new Set(['sha256', 'sha512']);
 function looksLikeDomain(segment: string): boolean {
   return (
     segment.includes('.') ||
-    segment.startsWith('localhost') ||
+    segment === 'localhost' ||
+    segment.startsWith('localhost.') ||
     segment.includes(':')
   );
+}
+
+function isValidRegistryHost(host: string): boolean {
+  return host === 'localhost'
+    || host.startsWith('localhost.')
+    || IMAGE_REGISTRY_HOST.test(host)
+    || IPV4_ADDRESS.test(host);
+}
+
+function isValidRegistryPort(portText: string): boolean {
+  if (!/^[0-9]+$/.test(portText)) {
+    return false;
+  }
+  const port = Number(portText);
+  return Number.isSafeInteger(port) && port >= 1 && port <= 65_535;
+}
+
+function classifyDomainPrefix(segment: string):
+  | { kind: 'domain' }
+  | { kind: 'repository' }
+  | { kind: 'malformed'; reason: string } {
+  if (segment.includes(':')) {
+    if (segment.indexOf(':') !== segment.lastIndexOf(':')) {
+      return { kind: 'malformed', reason: 'invalid registry host:port' };
+    }
+    const [host, portText] = segment.split(':');
+    if (!host || !portText || !isValidRegistryHost(host)) {
+      return { kind: 'malformed', reason: 'invalid registry host:port' };
+    }
+    if (!isValidRegistryPort(portText)) {
+      return { kind: 'malformed', reason: 'invalid registry host:port' };
+    }
+    return { kind: 'domain' };
+  }
+
+  if (segment === 'localhost' || segment.startsWith('localhost.') || segment.includes('.')) {
+    return isValidRegistryHost(segment)
+      ? { kind: 'domain' }
+      : { kind: 'malformed', reason: 'invalid registry host' };
+  }
+
+  return { kind: 'repository' };
+}
+
+function isValidRepositoryPath(path: string): boolean {
+  if (!path || path.startsWith('/') || path.endsWith('/') || path.includes('//')) {
+    return false;
+  }
+  return path.split('/').every((component) => IMAGE_REPOSITORY_COMPONENT.test(component));
 }
 
 /**
@@ -134,11 +190,17 @@ export function parseImageRef(raw: string): ParsedImageRef {
     if (!ALLOWED_DIGEST_ALGORITHMS.has(algorithm)) {
       return { ...base, kind: 'malformed', malformedReason: `unsupported digest algorithm: ${algorithm}` };
     }
-    if (!/^[0-9a-f]{32,}$/.test(hex)) {
-      return { ...base, kind: 'malformed', malformedReason: 'digest hex is not lowercase hexadecimal of sufficient length' };
+    if (!/^[0-9a-f]+$/.test(hex)) {
+      return { ...base, kind: 'malformed', malformedReason: 'digest hex must be lowercase hexadecimal' };
+    }
+    if ((algorithm === 'sha256' && hex.length !== 64) || (algorithm === 'sha512' && hex.length !== 128)) {
+      return { ...base, kind: 'malformed', malformedReason: `digest length must be exactly ${algorithm === 'sha256' ? 64 : 128} hex chars` };
     }
 
-    const { registry, repository } = splitNameParts(namePart);
+    const { registry, repository, malformedReason } = splitNameParts(namePart);
+    if (malformedReason) {
+      return { ...base, kind: 'malformed', malformedReason };
+    }
     return { raw, kind: 'digest', registry, repository, tag: null, digest: digestPart, malformedReason: null };
   }
 
@@ -159,9 +221,23 @@ export function parseImageRef(raw: string): ParsedImageRef {
     rest = trimmed;
   } else {
     const firstSegment = trimmed.slice(0, slashIdx);
+    if (!firstSegment) {
+      return { ...base, kind: 'malformed', malformedReason: 'empty repository path' };
+    }
     if (looksLikeDomain(firstSegment)) {
-      domainPart = firstSegment;
-      rest = trimmed.slice(slashIdx + 1);
+      const prefix = classifyDomainPrefix(firstSegment);
+      if (prefix.kind === 'malformed') {
+        return { ...base, kind: 'malformed', malformedReason: prefix.reason };
+      }
+      if (prefix.kind === 'domain') {
+        domainPart = firstSegment;
+        rest = trimmed.slice(slashIdx + 1);
+        if (!rest || rest.startsWith('/')) {
+          return { ...base, kind: 'malformed', malformedReason: 'empty repository path' };
+        }
+      } else {
+        rest = trimmed;
+      }
     } else {
       rest = trimmed;
     }
@@ -183,7 +259,7 @@ export function parseImageRef(raw: string): ParsedImageRef {
       return { ...base, kind: 'malformed', malformedReason: 'colon at end of image name with no tag value' };
     }
     // Validate tag characters: [A-Za-z0-9_][A-Za-z0-9_.-]*  max 128 chars
-    if (!/^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/.test(tagCandidate) || tagCandidate.length > 128) {
+    if (!IMAGE_TAG.test(tagCandidate)) {
       return { ...base, kind: 'malformed', malformedReason: `invalid tag characters or length: ${tagCandidate.slice(0, 40)}` };
     }
     repoPath = (lastSlash === -1 ? '' : rest.slice(0, lastSlash + 1)) + lastSegment.slice(0, colonInLastSegment);
@@ -196,8 +272,8 @@ export function parseImageRef(raw: string): ParsedImageRef {
     return { ...base, kind: 'malformed', malformedReason: 'empty repository path' };
   }
 
-  // Validate repository path characters (simplified).
-  if (!/^[a-z0-9._/-]+$/.test(repoPath)) {
+  // Validate repository path characters and empty components.
+  if (!isValidRepositoryPath(repoPath)) {
     return { ...base, kind: 'malformed', malformedReason: `invalid characters in repository path: ${repoPath.slice(0, 60)}` };
   }
 
@@ -217,16 +293,36 @@ export function parseImageRef(raw: string): ParsedImageRef {
 }
 
 /** Split a full name (after removing tag/digest) into registry and repository. */
-function splitNameParts(name: string): { registry: string | null; repository: string | null } {
+function splitNameParts(name: string): { registry: string | null; repository: string | null; malformedReason: string | null } {
+  if (!name) {
+    return { registry: null, repository: null, malformedReason: 'empty repository path' };
+  }
   const slashIdx = name.indexOf('/');
   if (slashIdx === -1) {
-    return { registry: null, repository: name };
+    return isValidRepositoryPath(name)
+      ? { registry: null, repository: name, malformedReason: null }
+      : { registry: null, repository: null, malformedReason: `invalid repository path: ${name.slice(0, 60)}` };
   }
   const firstSegment = name.slice(0, slashIdx);
-  if (looksLikeDomain(firstSegment)) {
-    return { registry: firstSegment, repository: name.slice(slashIdx + 1) };
+  if (!firstSegment) {
+    return { registry: null, repository: null, malformedReason: 'empty repository path' };
   }
-  return { registry: null, repository: name };
+  if (looksLikeDomain(firstSegment)) {
+    const prefix = classifyDomainPrefix(firstSegment);
+    if (prefix.kind === 'malformed') {
+      return { registry: null, repository: null, malformedReason: prefix.reason };
+    }
+    if (prefix.kind === 'domain') {
+      const repository = name.slice(slashIdx + 1);
+      if (!isValidRepositoryPath(repository)) {
+        return { registry: null, repository: null, malformedReason: `invalid repository path: ${repository.slice(0, 60)}` };
+      }
+      return { registry: firstSegment, repository, malformedReason: null };
+    }
+  }
+  return isValidRepositoryPath(name)
+    ? { registry: null, repository: name, malformedReason: null }
+    : { registry: null, repository: null, malformedReason: `invalid repository path: ${name.slice(0, 60)}` };
 }
 
 // ---------------------------------------------------------------------------

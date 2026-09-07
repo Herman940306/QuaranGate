@@ -13,14 +13,14 @@
  *   - Canonical path + sensitive-file enforcement on every tool (§13/§14)
  *   - No artifact production (read-only, no B3 canonical artifact)
  */
-import type { Ollama, Message } from 'ollama';
+import type { Ollama, Message, ChatResponse, AbortableAsyncIterator } from 'ollama';
 import { BridgeError } from '../../shared/errors.js';
 import { isWriterProfile, type AgentProfileId, type AgentResourcePolicy } from '../../shared/agents.js';
 import type { AgentBackendAdapter } from './jobEngine.js';
 import type { ConfinedTarget } from '../execops.js';
 import { WORKSPACE_PATH, toRunnerLimits, buildOllamaReadHelperCreateBody, ollamaReadHelperContainerName } from './sandboxSpec.js';
 import {
-  createContainer, startContainer, stopContainer, removeContainer,
+  createContainer, startContainer, stopContainer, removeContainer, removeVolume,
 } from '../docker.js';
 import {
   ollamaReadFile,
@@ -259,6 +259,8 @@ export interface OllamaBackendOptions {
   sandbox: import('./sandboxRunner.js').RunnerSandbox;
   /** Injectable Ollama constructor for testing. */
   OllamaClass: typeof import('ollama').Ollama;
+  /** Injectable base transport; production defaults to global fetch. */
+  fetch?: typeof fetch;
 }
 
 function log(msg: string, fields: Record<string, unknown>): void {
@@ -361,6 +363,7 @@ function toolCallSignature(toolCall: { function?: { name?: unknown; arguments?: 
 
 export class OllamaBackend implements AgentBackendAdapter {
   private readonly ollama: Ollama;
+  private activeJobSignal: AbortSignal | null = null;
   private helperContainerId: string | null = null;
   /** True once helper creation may have allocated a name-addressable resource. */
   private helperCleanupRequired = false;
@@ -386,8 +389,21 @@ export class OllamaBackend implements AgentBackendAdapter {
       );
     }
 
-    // §9: one Ollama client per active job
-    this.ollama = new opts.OllamaClass({ host: opts.ollamaHost });
+    // §9: one Ollama client and transport wrapper per active job. The wrapper
+    // keeps the SDK's request signal while adding QuaranGate job cancellation.
+    const transportFetch = opts.fetch ?? globalThis.fetch;
+    this.ollama = new opts.OllamaClass({
+      host: opts.ollamaHost,
+      fetch: (input, init) => {
+        const jobSignal = this.activeJobSignal;
+        if (!jobSignal) return transportFetch(input, init);
+        const sdkSignal = init?.signal;
+        const signal = sdkSignal && sdkSignal !== jobSignal
+          ? AbortSignal.any([sdkSignal, jobSignal])
+          : jobSignal;
+        return transportFetch(input, { ...(init ?? {}), signal });
+      },
+    });
   }
 
   async prepare(signal: AbortSignal): Promise<void> {
@@ -487,29 +503,70 @@ export class OllamaBackend implements AgentBackendAdapter {
 
       const request = buildOllamaChatRequest(this.opts.modelQualifier, messages);
       this.requireEnvelopeWithinBudget(messages);
-      const stream = await this.ollama.chat(request);
 
-      // Consume the stream
-      for await (const chunk of stream) {
-        this.checkAbort(signal);
-        if (chunk.message.content) {
-          fullContent += chunk.message.content;
-          contentBytes += Buffer.byteLength(chunk.message.content, 'utf8');
+      // The Ollama 0.6.x client exposes abort() on streamed requests and on the
+      // per-client instance. Couple QuaranGate's per-job AbortSignal to that
+      // transport so timeout/cancel cannot leave a stalled provider request
+      // running after the job has failed closed. The client is job-scoped, so
+      // aborting here cannot affect another job.
+      const abortReason = (): Error => signal.reason instanceof Error
+        ? signal.reason
+        : new Error('Ollama job cancelled');
+      let removeAbortListener = () => {};
+      const abortPromise = new Promise<never>((_resolve, reject) => {
+        const onAbort = () => {
+          try { this.ollama.abort(); } catch { /* transport abort is best-effort */ }
+          reject(abortReason());
+        };
+        if (signal.aborted) {
+          onAbort();
+          return;
         }
-        if (chunk.message.thinking) {
-          thinkingBytes += Buffer.byteLength(chunk.message.thinking, 'utf8');
-        }
-        if (chunk.message.tool_calls) {
-          for (const tc of chunk.message.tool_calls) {
-            toolCalls.push(tc as { function: { name: string; arguments: Record<string, unknown> } });
+        signal.addEventListener('abort', onAbort, { once: true });
+        removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+      });
+      let stream: AbortableAsyncIterator<ChatResponse>;
+      try {
+        this.activeJobSignal = signal;
+        const chatPromise = Promise.resolve(this.ollama.chat(request));
+        // If cancellation wins before response headers arrive, abort the
+        // eventual iterator as soon as the client creates it.
+        void chatPromise.then((lateStream) => {
+          if (signal.aborted) {
+            try { lateStream.abort(); } catch { /* already closed */ }
+          }
+        }).catch(() => {});
+        stream = await Promise.race([chatPromise, abortPromise]);
+
+        // Consume the stream
+        for await (const chunk of stream) {
+          this.checkAbort(signal);
+          if (chunk.message.content) {
+            fullContent += chunk.message.content;
+            contentBytes += Buffer.byteLength(chunk.message.content, 'utf8');
+          }
+          if (chunk.message.thinking) {
+            thinkingBytes += Buffer.byteLength(chunk.message.thinking, 'utf8');
+          }
+          if (chunk.message.tool_calls) {
+            for (const tc of chunk.message.tool_calls) {
+              toolCalls.push(tc as { function: { name: string; arguments: Record<string, unknown> } });
+            }
+          }
+          if (chunk.done) {
+            done = true;
+            doneReason = boundedDoneReason(chunk.done_reason);
+            break;
           }
         }
-        if (chunk.done) {
-          done = true;
-          doneReason = boundedDoneReason(chunk.done_reason);
-          break;
-        }
+      } finally {
+        this.activeJobSignal = null;
+        removeAbortListener();
       }
+      // An abort can cause the transport iterator to end cleanly rather than
+      // throw. Preserve the QuaranGate cancellation/timeout cause instead of
+      // misclassifying that end as malformed provider output.
+      this.checkAbort(signal);
 
       log('ollama backend: turn metadata', {
         jobId: this.job.jobId,
@@ -705,37 +762,58 @@ export class OllamaBackend implements AgentBackendAdapter {
   }
 
   async cleanup(): Promise<void> {
-    // Claim and clear owned state before awaiting best-effort disposal. This
-    // makes cleanup idempotent (including overlapping calls) and prevents any
-    // later operation from using a target whose resources are being removed.
+    // Successful O1 completion is permitted only after BOTH disposable
+    // resources are proven removed by Docker's idempotent DELETE primitives.
+    // Keep failed handles so a subsequent engine cleanup/restart can retry.
+    // target is cleared immediately so no later operation can use resources
+    // while cleanup is in progress.
     const helperContainerId = this.helperContainerId;
     const helperCleanupRequired = this.helperCleanupRequired;
     const workspaceVolumeName = this.workspaceVolumeName;
-    this.helperContainerId = null;
-    this.helperCleanupRequired = false;
-    this.workspaceVolumeName = null;
     this.target = null;
 
-    // R2: Always remove BOTH the read-helper container AND the staged workspace volume.
-    if (helperContainerId) {
+    const failures: string[] = [];
+
+    if (helperContainerId || helperCleanupRequired) {
+      const helperRef = helperContainerId ?? ollamaReadHelperContainerName(this.job.jobId);
       log('ollama backend: cleaning up read-helper', { jobId: this.job.jobId });
-      try { await stopContainer(helperContainerId, 2); } catch { /* best-effort */ }
-      try { await removeContainer(helperContainerId, true); } catch { /* best-effort */ }
-    }
-    // Also attempt by name once (defense in depth, including an ambiguous
-    // create failure where Docker did not return a container id).
-    if (helperCleanupRequired) {
-      const helperName = ollamaReadHelperContainerName(this.job.jobId);
-      try { await removeContainer(helperName, true); } catch { /* best-effort */ }
+      if (helperContainerId) {
+        // Stop is advisory before forced removal; removeContainer is the
+        // authoritative cleanup operation and treats 404 as already clean.
+        try { await stopContainer(helperContainerId, 2); } catch { /* force-remove still attempted */ }
+      }
+      try {
+        await removeContainer(helperRef, true);
+        this.helperContainerId = null;
+        this.helperCleanupRequired = false;
+      } catch {
+        failures.push('read-helper');
+      }
     }
 
-    // R2: Dispose the staged workspace volume
     if (workspaceVolumeName) {
       log('ollama backend: cleaning up staged workspace', {
         jobId: this.job.jobId,
         volumeName: workspaceVolumeName,
       });
-      try { await this.opts.sandbox.disposeWorkspace(workspaceVolumeName); } catch { /* best-effort */ }
+      try {
+        // O1 uses the same trusted Docker primitive as RunnerSandbox, but does
+        // not use disposeWorkspace() here because that generic helper is
+        // intentionally best-effort. Production closeout requires strict proof
+        // that an O1 successful job cannot hide a failed volume removal.
+        await removeVolume(workspaceVolumeName, true);
+        this.workspaceVolumeName = null;
+      } catch {
+        failures.push('workspace-volume');
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new BridgeError(
+        'DOCKER_UNAVAILABLE',
+        `Ollama O1 resource cleanup failed for: ${failures.join(', ')}`,
+        502,
+      );
     }
   }
 
