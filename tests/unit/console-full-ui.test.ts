@@ -316,6 +316,185 @@ describe('QuaranGate Console full U1 product contract', () => {
     expect(githubCatalog.filter((tool) => tool.authority === 'read')).toHaveLength(13);
   });
 
+  it('renders authoritative UNKNOWN for exact duplicate preflight without stale visible authority', async () => {
+    const text = app();
+    const renderSecuritySource = text.match(/function renderSecurity\(\) \{[\s\S]*?\n\}\n/)?.[0];
+    const preflightFormSource = text.match(/function preflightForm\(result\) \{[^\n]+\n/)?.[0];
+    const bindPreflightFormSource = text.match(/function bindPreflightForm\(\) \{[^\n]+\n/)?.[0];
+    const controlCenterViewSource = text.match(/async function controlCenterView\(viewName, args = \{\}, \{ silent = true \} = \{\}\) \{[\s\S]*?\n\}\n/)?.[0];
+    const safeCallSource = text.match(/async function safeCall\(name, args, \{ silent = false, throwOnError = false \} = \{\}\) \{[\s\S]*?\n\}\n/)?.[0];
+    expect(renderSecuritySource).toBeTruthy();
+    expect(preflightFormSource).toBeTruthy();
+    expect(bindPreflightFormSource).toBeTruthy();
+    expect(controlCenterViewSource).toBeTruthy();
+    expect(safeCallSource).toBeTruthy();
+
+    const createDeferred = () => {
+      let resolve!: (value: unknown) => void;
+      const promise = new Promise<unknown>((done) => { resolve = done; });
+      return { promise, resolve };
+    };
+
+    const createHarness = (initialMarker = 'PREVIOUS_ALLOW') => {
+      const state = {
+        connected: true,
+        controlCenter: new Map<string, any>([['authority', { preflight: { requestMarker: initialMarker } }]]),
+        controlCenterEpoch: 0,
+        controlCenterRequestVersions: new Map<string, number>(),
+        pending: new Set<string>(),
+        deniedTools: new Map<string, string>(),
+        selectedTarget: '',
+        projects: [] as Array<{ id: string }>,
+        backends: [] as Array<{ id: string }>,
+      };
+      const physicalCalls: Array<{ args: Record<string, any>; deferred: ReturnType<typeof createDeferred> }> = [];
+      const toasts: string[] = [];
+      let submitHandler: ((event: any) => Promise<void>) | undefined;
+      let visible = initialMarker;
+      let renderCount = 0;
+      let primeCount = 0;
+      let toolValue = 'agent_apply';
+      const form = {
+        querySelector: (selector: string) => ({
+          value: selector === '#preflight-tool' ? toolValue : '',
+        }),
+      };
+      const view = {
+        get innerHTML() { return visible; },
+        set innerHTML(value: string) { visible = value; renderCount += 1; },
+        querySelector: (selector: string) => selector === '#preflight-form'
+          ? { addEventListener: (_event: string, handler: (event: any) => Promise<void>) => { submitHandler = handler; } }
+          : null,
+      };
+      class McpClientError extends Error {
+        status?: number;
+        code?: string;
+        constructor(message: string, details: Record<string, any> = {}) { super(message); Object.assign(this, details); }
+      }
+      const context: Record<string, any> = {
+        state,
+        view,
+        McpClientError,
+        client: {
+          callTool: (_name: string, args: Record<string, any>) => {
+            const deferred = createDeferred();
+            physicalCalls.push({ args, deferred });
+            return deferred.promise;
+          },
+        },
+        serverHasTool: (name: string) => name === 'control_center_query',
+        toast: (message: string) => { toasts.push(message); },
+        errorMessage: (error: Error) => error.message,
+        disconnect: () => { state.connected = false; state.controlCenterEpoch += 1; state.controlCenterRequestVersions.clear(); state.controlCenter.clear(); },
+        currentRoute: () => 'security',
+        primeControlCenterViews: () => { primeCount += 1; },
+        keyValuePanel: (value: unknown) => `PANEL:${JSON.stringify(value)}`,
+        loadingBlock: (message: string) => `LOADING:${message}`,
+        escapeAttr: (value: unknown) => String(value ?? ''),
+      };
+      runInNewContext([
+        renderSecuritySource,
+        preflightFormSource,
+        bindPreflightFormSource,
+        controlCenterViewSource,
+        safeCallSource,
+        'globalThis.__bindPreflightForm = bindPreflightForm;',
+      ].join('\n'), context);
+      context.__bindPreflightForm();
+      const submit = () => {
+        if (!submitHandler) throw new Error('preflight submit handler was not bound');
+        return submitHandler({ preventDefault() {}, currentTarget: form });
+      };
+      return {
+        state,
+        physicalCalls,
+        toasts,
+        submit,
+        setTool: (value: string) => { toolValue = value; },
+        visible: () => visible,
+        renderCount: () => renderCount,
+        primeCount: () => primeCount,
+      };
+    };
+
+    // Exact duplicate: second logical request advances the generation but safeCall sends only one physical call.
+    const duplicate = createHarness('PREVIOUS_ALLOW');
+    const first = duplicate.submit();
+    expect(duplicate.physicalCalls).toHaveLength(1);
+    const second = duplicate.submit();
+    await second;
+    expect(duplicate.physicalCalls).toHaveLength(1);
+    expect(duplicate.state.controlCenter.get('authority')).toEqual({ unavailable: true, state: 'UNKNOWN' });
+    expect(duplicate.visible()).toContain('UNKNOWN');
+    expect(duplicate.visible()).not.toContain('PREVIOUS_ALLOW');
+    duplicate.physicalCalls[0].deferred.resolve({ data: { preflight: { requestMarker: 'PREVIOUS_ALLOW' } } });
+    await first;
+    expect(duplicate.state.controlCenter.get('authority')).toEqual({ unavailable: true, state: 'UNKNOWN' });
+    expect(duplicate.visible()).toContain('UNKNOWN');
+    expect(duplicate.visible()).not.toContain('PREVIOUS_ALLOW');
+
+    const duplicateDeny = createHarness('PREVIOUS_DENY');
+    const denyFirst = duplicateDeny.submit();
+    const denySecond = duplicateDeny.submit();
+    await denySecond;
+    expect(duplicateDeny.physicalCalls).toHaveLength(1);
+    expect(duplicateDeny.state.controlCenter.get('authority')).toEqual({ unavailable: true, state: 'UNKNOWN' });
+    expect(duplicateDeny.visible()).toContain('UNKNOWN');
+    expect(duplicateDeny.visible()).not.toContain('PREVIOUS_DENY');
+    duplicateDeny.physicalCalls[0].deferred.resolve({ data: { preflight: { requestMarker: 'PREVIOUS_DENY' } } });
+    await denyFirst;
+    expect(duplicateDeny.state.controlCenter.get('authority')).toEqual({ unavailable: true, state: 'UNKNOWN' });
+    expect(duplicateDeny.visible()).toContain('UNKNOWN');
+    expect(duplicateDeny.visible()).not.toContain('PREVIOUS_DENY');
+
+    // A latest different request that returns no data must visibly own UNKNOWN over an older later success.
+    const latestFailureVisible = createHarness('PREVIOUS_ALLOW');
+    latestFailureVisible.setTool('OLD');
+    const oldSuccess = latestFailureVisible.submit();
+    latestFailureVisible.setTool('NEW');
+    const newestFailure = latestFailureVisible.submit();
+    expect(latestFailureVisible.physicalCalls).toHaveLength(2);
+    latestFailureVisible.physicalCalls[1].deferred.resolve(null);
+    await newestFailure;
+    expect(latestFailureVisible.state.controlCenter.get('authority')).toEqual({ unavailable: true, state: 'UNKNOWN' });
+    expect(latestFailureVisible.visible()).toContain('UNKNOWN');
+    expect(latestFailureVisible.visible()).not.toContain('PREVIOUS_ALLOW');
+    latestFailureVisible.physicalCalls[0].deferred.resolve({ data: { preflight: { requestMarker: 'OLD' } } });
+    await oldSuccess;
+    expect(latestFailureVisible.state.controlCenter.get('authority')).toEqual({ unavailable: true, state: 'UNKNOWN' });
+    expect(latestFailureVisible.visible()).toContain('UNKNOWN');
+    expect(latestFailureVisible.visible()).not.toContain('OLD');
+
+    // A stale OLD completion while a different NEW request is still pending must not render/prime from an absent cache.
+    const pendingNew = createHarness('PREVIOUS_DENY');
+    pendingNew.setTool('OLD');
+    const old = pendingNew.submit();
+    pendingNew.setTool('NEW');
+    const newer = pendingNew.submit();
+    expect(pendingNew.physicalCalls).toHaveLength(2);
+    pendingNew.physicalCalls[0].deferred.resolve({ data: { preflight: { requestMarker: 'OLD' } } });
+    await old;
+    expect(pendingNew.state.controlCenter.has('authority')).toBe(false);
+    expect(pendingNew.renderCount()).toBe(0);
+    expect(pendingNew.primeCount()).toBe(0);
+    pendingNew.physicalCalls[1].deferred.resolve({ data: { preflight: { requestMarker: 'NEW' } } });
+    await newer;
+    expect(pendingNew.state.controlCenter.get('authority').preflight.requestMarker).toBe('NEW');
+    expect(pendingNew.renderCount()).toBe(1);
+    expect(pendingNew.primeCount()).toBe(0);
+    expect(pendingNew.visible()).toContain('NEW');
+    expect(pendingNew.visible()).not.toContain('PREVIOUS_DENY');
+
+    // Source structure binds rendering to authoritative cache presence and renders UNKNOWN explicitly.
+    expect(renderSecuritySource).toContain("const preflight=authority?.preflight ?? (authority?.unavailable ? { unavailable:true, state:authority.state ?? 'UNKNOWN' } : null);");
+    expect(renderSecuritySource).toContain('${preflightForm(preflight)}');
+    expect(bindPreflightFormSource).toContain("await controlCenterView('authority',args,{silent:false});");
+    expect(bindPreflightFormSource).toContain("if(state.controlCenter.has('authority') && currentRoute()==='security') renderSecurity();");
+    expect(bindPreflightFormSource).not.toContain('const data=await controlCenterView');
+    expect(safeCallSource).toContain('if (state.pending.has(key))');
+    expect(safeCallSource).toContain("code: 'DUPLICATE_REQUEST'");
+  });
+
   it('has responsive and accessible operational styling for new surfaces', () => {
     const text = styles();
     expect(text).toContain('.metric-grid');
