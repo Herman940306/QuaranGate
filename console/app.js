@@ -563,7 +563,7 @@ async function runTargetControl(tool, button) {
 function renderFiles() {
   const latest = state.routeResults.get('files');
   const modes = [
-    ['browse', 'Browse'], ['read', 'Read'], ['search', 'Search'], ['write', 'Write'], ['patch', 'Patch'], ['delete', 'Delete'],
+    ['browse', 'Browse'], ['stat', 'Metadata'], ['read', 'Read'], ['search', 'Search'], ['write', 'Write'], ['patch', 'Patch'], ['delete', 'Delete'],
   ];
   view.innerHTML = `
     <div class="view-stack">
@@ -600,6 +600,7 @@ function fileModeForm(mode) {
   const sharedStart = `<form id="file-form" novalidate data-mode="${mode}"><div class="field-grid"><div class="field"><label class="field__label" for="file-target">Target</label>${target}</div>`;
   const sharedEnd = `</div><div id="file-form-error" class="field__error" role="alert"></div><div class="form-actions"><button id="file-submit" class="button ${mode === 'delete' ? 'button--danger-outline' : ''}" type="submit">${fileSubmitLabel(mode)}</button></div></form>`;
   if (mode === 'browse') return `${sharedStart}<div class="field"><label class="field__label" for="file-path">Directory</label><input id="file-path" class="input mono" value="" placeholder="src" spellcheck="false"></div><div class="field"><label class="field__label" for="file-depth">Max depth</label><input id="file-depth" class="input" type="number" min="1" max="5" value="2"></div>${sharedEnd}`;
+  if (mode === 'stat') return `${sharedStart}<div class="field field--full"><label class="field__label" for="file-path">Path</label><input id="file-path" class="input mono" required placeholder="src/gateway/index.ts" spellcheck="false"><div class="field__hint">Returns type, size, mode and modified time.</div></div>${sharedEnd}`;
   if (mode === 'read') return `${sharedStart}<div class="field field--full"><label class="field__label" for="file-path">File path</label><input id="file-path" class="input mono" required placeholder="src/gateway/index.ts" spellcheck="false"></div>${sharedEnd}`;
   if (mode === 'search') return `${sharedStart}<div class="field"><label class="field__label" for="file-path">Root path</label><input id="file-path" class="input mono" placeholder="src" spellcheck="false"></div><div class="field"><label class="field__label" for="file-query">Fixed-string query</label><input id="file-query" class="input" required></div><div class="field"><label class="field__label" for="file-max-results">Max results</label><input id="file-max-results" class="input" type="number" min="1" max="1000" value="100"></div>${sharedEnd}`;
   if (mode === 'write') return `${sharedStart}<div class="field field--full"><label class="field__label" for="file-path">File path</label><input id="file-path" class="input mono" required spellcheck="false"></div><div class="field field--full"><label class="field__label" for="file-content">Content</label><textarea id="file-content" class="textarea" required spellcheck="false"></textarea></div>${sharedEnd}`;
@@ -626,6 +627,7 @@ async function runFileForm(event) {
   let tool;
   let args;
   if (mode === 'browse') { tool = 'fs_list'; args = { target, path, maxDepth: clampInt(form.querySelector('#file-depth')?.value, 1, 5, 2) }; }
+  else if (mode === 'stat') { tool = 'fs_stat'; args = { target, path: path.trim() }; }
   else if (mode === 'read') { tool = 'fs_read'; args = { target, path: path.trim() }; }
   else if (mode === 'search') { tool = 'fs_search'; args = { target, query: form.querySelector('#file-query').value, path, maxResults: clampInt(form.querySelector('#file-max-results')?.value, 1, 1000, 100) }; }
   else if (mode === 'write') { tool = 'fs_write'; args = { target, path: path.trim(), content: form.querySelector('#file-content').value }; }
@@ -1619,7 +1621,7 @@ function jobToolLabel(tool) {
 }
 
 function fileSubmitLabel(mode) {
-  return ({ browse: 'List directory', read: 'Read file', search: 'Search', write: 'Write file', patch: 'Apply exact patch', delete: 'Delete path' })[mode] || 'Run';
+  return ({ browse: 'List directory', stat: 'Read metadata', read: 'Read file', search: 'Search', write: 'Write file', patch: 'Apply exact patch', delete: 'Delete path' })[mode] || 'Run';
 }
 
 function setButtonBusy(button, busy, label) {
