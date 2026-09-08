@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { TOOL_CATALOG } from '../../console/tool-catalog.js';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -197,6 +198,122 @@ describe('QuaranGate Console full U1 product contract', () => {
       'github_commits', 'github_pull_request', 'github_pull_request_files', 'github_issue', 'github_issue_comments',
       'github_pull_request_reviews', 'github_pull_request_review_comments', 'github_checks',
     ]);
+  });
+
+
+  it('enforces per-view latest-request-wins before Control Center state commits', async () => {
+    const text = app();
+    const controlCenterViewSource = text.match(/async function controlCenterView\(viewName, args = \{\}, \{ silent = true \} = \{\}\) \{[\s\S]*?\n\}\n/)?.[0];
+    expect(controlCenterViewSource).toBeTruthy();
+
+    const createDeferred = () => {
+      let resolve!: (value: unknown) => void;
+      const promise = new Promise<unknown>((done) => { resolve = done; });
+      return { promise, resolve };
+    };
+    const createHarness = () => {
+      const state = {
+        connected: true,
+        controlCenter: new Map<string, any>(),
+        controlCenterEpoch: 0,
+        controlCenterRequestVersions: new Map<string, number>(),
+      };
+      const calls: Array<{ view: string; deferred: ReturnType<typeof createDeferred> }> = [];
+      const context: Record<string, any> = {
+        state,
+        serverHasTool: (name: string) => name === 'control_center_query',
+        safeCall: (_name: string, args: { view: string }) => {
+          const deferred = createDeferred();
+          calls.push({ view: args.view, deferred });
+          return deferred.promise;
+        },
+      };
+      runInNewContext(`${controlCenterViewSource}\nglobalThis.__controlCenterView = controlCenterView;`, context);
+      return { state, calls, controlCenterView: context.__controlCenterView as (viewName: string, args?: Record<string, unknown>, options?: { silent?: boolean }) => Promise<any> };
+    };
+
+    // Core B4 proof: NEW may finish first; OLD may finish later; NEW remains authoritative.
+    const latestWins = createHarness();
+    const oldRequest = latestWins.controlCenterView('authority', { tool: 'OLD' });
+    const newRequest = latestWins.controlCenterView('authority', { tool: 'NEW' });
+    latestWins.calls[1].deferred.resolve({ data: { preflight: { requestMarker: 'NEW' } } });
+    await newRequest;
+    expect(latestWins.state.controlCenter.get('authority').preflight.requestMarker).toBe('NEW');
+    latestWins.calls[0].deferred.resolve({ data: { preflight: { requestMarker: 'OLD' } } });
+    await oldRequest;
+    expect(latestWins.state.controlCenter.get('authority').preflight.requestMarker).toBe('NEW');
+    expect(latestWins.state.controlCenter.get('authority').preflight.requestMarker).not.toBe('OLD');
+
+    // Latest failure/UNKNOWN must not be replaced by an older successful response.
+    const latestFailure = createHarness();
+    const olderSuccess = latestFailure.controlCenterView('authority', { tool: 'OLD' });
+    const newerFailure = latestFailure.controlCenterView('authority', { tool: 'NEW' });
+    latestFailure.calls[1].deferred.resolve(null);
+    await newerFailure;
+    expect(latestFailure.state.controlCenter.get('authority')).toEqual({ unavailable: true, state: 'UNKNOWN' });
+    latestFailure.calls[0].deferred.resolve({ data: { preflight: { requestMarker: 'OLD' } } });
+    await olderSuccess;
+    expect(latestFailure.state.controlCenter.get('authority')).toEqual({ unavailable: true, state: 'UNKNOWN' });
+
+    // Lifecycle invalidation prevents a pre-clear response from repopulating Control Center state.
+    const lifecycle = createHarness();
+    const preReset = lifecycle.controlCenterView('authority', { tool: 'OLD' });
+    lifecycle.state.controlCenterEpoch += 1;
+    lifecycle.state.controlCenterRequestVersions.clear();
+    lifecycle.state.controlCenter.clear();
+    lifecycle.calls[0].deferred.resolve({ data: { preflight: { requestMarker: 'OLD' } } });
+    await preReset;
+    expect(lifecycle.state.controlCenter.has('authority')).toBe(false);
+
+    // Per-view generations do not suppress legitimate responses for unrelated views.
+    const independentViews = createHarness();
+    const oldAuthority = independentViews.controlCenterView('authority', { tool: 'OLD' });
+    const statistics = independentViews.controlCenterView('statistics');
+    const newAuthority = independentViews.controlCenterView('authority', { tool: 'NEW' });
+    independentViews.calls[1].deferred.resolve({ data: { marker: 'STATISTICS' } });
+    await statistics;
+    independentViews.calls[2].deferred.resolve({ data: { preflight: { requestMarker: 'NEW' } } });
+    await newAuthority;
+    independentViews.calls[0].deferred.resolve({ data: { preflight: { requestMarker: 'OLD' } } });
+    await oldAuthority;
+    expect(independentViews.state.controlCenter.get('statistics').marker).toBe('STATISTICS');
+    expect(independentViews.state.controlCenter.get('authority').preflight.requestMarker).toBe('NEW');
+
+    const stateSource = text.match(/const state = \{([\s\S]*?)\n\};/)?.[1];
+    expect(stateSource).toContain('controlCenterEpoch: 0');
+    expect(stateSource).toContain('controlCenterRequestVersions: new Map()');
+
+    const versionSetIndex = controlCenterViewSource!.indexOf('state.controlCenterRequestVersions.set(viewName, version);');
+    const safeCallIndex = controlCenterViewSource!.indexOf("await safeCall('control_center_query'");
+    const staleCheckIndex = controlCenterViewSource!.indexOf('state.controlCenterEpoch !== epoch || state.controlCenterRequestVersions.get(viewName) !== version');
+    const firstCommitIndex = controlCenterViewSource!.indexOf('state.controlCenter.set(viewName');
+    expect(versionSetIndex).toBeGreaterThanOrEqual(0);
+    expect(safeCallIndex).toBeGreaterThan(versionSetIndex);
+    expect(staleCheckIndex).toBeGreaterThan(safeCallIndex);
+    expect(firstCommitIndex).toBeGreaterThan(staleCheckIndex);
+    expect(controlCenterViewSource).toContain('if (state.controlCenterEpoch !== epoch || state.controlCenterRequestVersions.get(viewName) !== version) return null;');
+    expect(controlCenterViewSource).toContain('if (result?.data) state.controlCenter.set(viewName, result.data);');
+    expect(controlCenterViewSource).toContain("else if (state.connected) state.controlCenter.set(viewName, { unavailable: true, state: 'UNKNOWN' });");
+
+    const disconnect = text.match(/function disconnect\(\) \{([\s\S]*?)\n\}\n/)?.[1];
+    const refresh = text.match(/async function refreshCurrentRoute\(showToast = false\) \{([\s\S]*?)\n\}\n/)?.[1];
+    expect(disconnect).toContain('state.controlCenterEpoch += 1;');
+    expect(disconnect).toContain('state.controlCenterRequestVersions.clear();');
+    expect(disconnect!.indexOf('state.controlCenterEpoch += 1;')).toBeLessThan(disconnect!.indexOf('state.controlCenter.clear();'));
+    expect(disconnect).toContain('client.clearCredential();');
+    expect(disconnect).toContain('state.connected = false;');
+    expect(disconnect).toContain("location.hash = '#/connect';");
+    expect(refresh).toContain('state.controlCenterEpoch += 1;');
+    expect(refresh).toContain('state.controlCenterRequestVersions.clear();');
+    expect(refresh!.indexOf('state.controlCenterEpoch += 1;')).toBeLessThan(refresh!.indexOf('state.controlCenter.clear();'));
+
+    const preflightHandler = text.match(/function bindPreflightForm\(\) \{([^\n]+)\n/)?.[1];
+    expect(preflightHandler).toContain("controlCenterView('authority',args,{silent:false})");
+    const githubRoute = text.match(/function renderGitHub\(\) \{([\s\S]*?)\n\}\n\nfunction renderModels/)?.[1];
+    expect(githubRoute).toContain('action:()=>safeCall(tool, args, { throwOnError: true })');
+    expect(githubRoute).not.toContain('action:()=>client.callTool(tool,args)');
+    const githubCatalog = TOOL_CATALOG.filter((tool) => tool.category === 'GitHub');
+    expect(githubCatalog.filter((tool) => tool.authority === 'read')).toHaveLength(13);
   });
 
   it('has responsive and accessible operational styling for new surfaces', () => {

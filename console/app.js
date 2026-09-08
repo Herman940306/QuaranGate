@@ -36,6 +36,8 @@ const state = {
   drawerTrigger: null,
   lastDialogTrigger: null,
   controlCenter: new Map(),
+  controlCenterEpoch: 0,
+  controlCenterRequestVersions: new Map(),
   githubRepositories: [],
   githubLoaded: false,
   selectedGithubRepository: '',
@@ -345,6 +347,8 @@ function disconnect() {
   state.jobs.clear();
   state.routeResults.clear();
   state.toolResults.clear();
+  state.controlCenterEpoch += 1;
+  state.controlCenterRequestVersions.clear();
   state.controlCenter.clear();
   state.githubRepositories = [];
   state.githubLoaded = false;
@@ -366,6 +370,8 @@ function disconnect() {
 
 async function refreshCurrentRoute(showToast = false) {
   if (!state.connected) return;
+  state.controlCenterEpoch += 1;
+  state.controlCenterRequestVersions.clear();
   state.controlCenter.clear();
   const button = refreshButton;
   setButtonBusy(button, true, 'Refreshing…');
@@ -1385,7 +1391,11 @@ function serverHasTool(name) {
 
 async function controlCenterView(viewName, args = {}, { silent = true } = {}) {
   if (!serverHasTool('control_center_query')) return null;
+  const epoch = state.controlCenterEpoch;
+  const version = (state.controlCenterRequestVersions.get(viewName) ?? 0) + 1;
+  state.controlCenterRequestVersions.set(viewName, version);
   const result = await safeCall('control_center_query', { view: viewName, limit: 100, sinceMs: 3600000, ...args }, { silent });
+  if (state.controlCenterEpoch !== epoch || state.controlCenterRequestVersions.get(viewName) !== version) return null;
   if (result?.data) state.controlCenter.set(viewName, result.data);
   else if (state.connected) state.controlCenter.set(viewName, { unavailable: true, state: 'UNKNOWN' });
   return result?.data ?? null;
