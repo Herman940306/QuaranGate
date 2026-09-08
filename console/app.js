@@ -1233,7 +1233,7 @@ function renderGitHub() {
     event.preventDefault(); const tool = view.querySelector('#github-write-tool').value; const error = view.querySelector('#github-write-error');
     let args; try { args = JSON.parse(view.querySelector('#github-write-json').value); } catch { error.textContent = 'Arguments must be valid JSON.'; return; }
     error.textContent = ''; const trigger = view.querySelector('#github-write-submit');
-    const result = await openGateDialog({ trigger, title:`Run ${tool}?`, body:'This changes remote GitHub state within the current principal grants. QuaranGate will independently re-authorize the repository/project and operation.', confirmLabel:'Run governed GitHub write', tone:'warning', action:()=>client.callTool(tool,args) });
+    const result = await openGateDialog({ trigger, title:`Run ${tool}?`, body:'This changes remote GitHub state within the current principal grants. QuaranGate will independently re-authorize the repository/project and operation.', confirmLabel:'Run governed GitHub write', tone:'warning', action:()=>safeCall(tool, args, { throwOnError: true }) });
     if (result && result !== true) { state.routeResults.set('github', result); toast(`${tool} completed.`, 'success'); renderGitHub(); }
   });
 }

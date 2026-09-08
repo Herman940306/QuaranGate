@@ -146,8 +146,57 @@ describe('QuaranGate Console full U1 product contract', () => {
     const writeHandler = githubRoute!.match(/view\.querySelector\('#github-write-form'\)\?\.addEventListener\('submit', async \(event\) => \{([\s\S]*?)\n  \}\);/)?.[1];
     expect(writeHandler).toBeTruthy();
     expect(writeHandler).toContain('openGateDialog');
-    expect(writeHandler).toContain('action:()=>client.callTool(tool,args)');
     expect(writeHandler).not.toContain("github-detail-tool");
+  });
+
+  it('routes governed GitHub writes through shared safeCall while preserving 401/403 authentication semantics', () => {
+    const text = app();
+    const githubRoute = text.match(/function renderGitHub\(\) \{([\s\S]*?)\n\}\n\nfunction renderModels/)?.[1];
+    expect(githubRoute).toBeTruthy();
+
+    const writeHandler = githubRoute!.match(/view\.querySelector\('#github-write-form'\)\?\.addEventListener\('submit', async \(event\) => \{([\s\S]*?)\n  \}\);/)?.[1];
+    expect(writeHandler).toBeTruthy();
+    const parseIndex = writeHandler!.indexOf("JSON.parse(view.querySelector('#github-write-json').value)");
+    const gateIndex = writeHandler!.indexOf('openGateDialog({');
+    expect(parseIndex).toBeGreaterThanOrEqual(0);
+    expect(gateIndex).toBeGreaterThan(parseIndex);
+    expect(writeHandler).toContain('openGateDialog');
+    expect(writeHandler).toContain('action:()=>safeCall(tool, args, { throwOnError: true })');
+    expect(writeHandler).not.toContain('client.callTool');
+    expect(writeHandler).toContain("if (result && result !== true) { state.routeResults.set('github', result); toast(`${tool} completed.`, 'success'); renderGitHub(); }");
+
+    const githubCatalog = TOOL_CATALOG.filter((tool) => tool.category === 'GitHub');
+    expect(githubCatalog.filter((tool) => tool.authority !== 'read').map((tool) => tool.name)).toEqual([
+      'github_push_branch', 'github_pull_request_create', 'github_pull_request_update', 'github_pull_request_review',
+    ]);
+
+    const safeCall = text.match(/async function safeCall\(name, args, \{ silent = false, throwOnError = false \} = \{\}\) \{([\s\S]*?)\n\}\n/)?.[1];
+    expect(safeCall).toBeTruthy();
+    const auth401 = safeCall!.match(/if \(err instanceof McpClientError && err\.status === 401\) \{([\s\S]*?)\} else if/)?.[1];
+    expect(auth401).toBeTruthy();
+    expect(auth401).toContain('disconnect();');
+    const auth403 = safeCall!.match(/else if \(err instanceof McpClientError && \(err\.status === 403 \|\| String\(err\.code\)\.startsWith\('FORBIDDEN'\)\)\) \{([\s\S]*?)\} else if/)?.[1];
+    expect(auth403).toBeTruthy();
+    expect(auth403).toContain('state.deniedTools.set(name, errorMessage(err));');
+    expect(auth403).toContain("toast(`${name}: ${errorMessage(err)}`, 'warning')");
+    expect(auth403).not.toContain('disconnect');
+    expect(auth403).not.toContain('clearCredential');
+    expect(safeCall).toContain('if (throwOnError) throw err;');
+
+    const disconnect = text.match(/function disconnect\(\) \{([\s\S]*?)\n\}\n/)?.[1];
+    expect(disconnect).toBeTruthy();
+    expect(disconnect).toContain('client.clearCredential();');
+    expect(disconnect).toContain('state.connected = false;');
+
+    const detailHandler = githubRoute!.match(/view\.querySelector\('#github-detail-form'\)\?\.addEventListener\('submit', async \(event\) => \{([\s\S]*?)\n  \}\);\n  view\.querySelector\('#github-write-form'/)?.[1];
+    expect(detailHandler).toBeTruthy();
+    expect(detailHandler).toContain('const result = await safeCall(tool, args);');
+    expect(detailHandler).not.toContain('client.callTool');
+    const selectorSource = githubRoute!.match(/nativeSelect\('github-detail-tool', \[([\s\S]*?)\], 'github_commits'\)/)?.[1];
+    expect([...selectorSource!.matchAll(/\['(github_[a-z_]+)','([^']+)'\]/g)].map((match) => match[1])).toEqual([
+      'github_commits', 'github_pull_request', 'github_pull_request_files', 'github_issue', 'github_issue_comments',
+      'github_pull_request_reviews', 'github_pull_request_review_comments', 'github_checks',
+    ]);
   });
 
   it('has responsive and accessible operational styling for new surfaces', () => {
