@@ -85,6 +85,71 @@ describe('QuaranGate Console full U1 product contract', () => {
     expect(text).toContain("stat: 'Read metadata'");
   });
 
+  it('exposes every GitHub read contract through bounded purpose-built repository workflows', () => {
+    const text = app();
+    const githubCatalog = TOOL_CATALOG.filter((tool) => tool.category === 'GitHub');
+    const readCatalog = githubCatalog.filter((tool) => tool.authority === 'read').map((tool) => tool.name);
+    const writeCatalog = githubCatalog.filter((tool) => tool.authority !== 'read').map((tool) => tool.name);
+    expect(githubCatalog).toHaveLength(17);
+    expect(readCatalog).toEqual([
+      'github_repositories', 'github_repository', 'github_branches', 'github_commits', 'github_pull_requests', 'github_pull_request',
+      'github_pull_request_files', 'github_issues', 'github_issue', 'github_issue_comments', 'github_pull_request_reviews',
+      'github_pull_request_review_comments', 'github_checks',
+    ]);
+    expect(writeCatalog).toEqual([
+      'github_push_branch', 'github_pull_request_create', 'github_pull_request_update', 'github_pull_request_review',
+    ]);
+
+    const discovery = text.match(/async function loadGitHubRepositories\(\) \{([\s\S]*?)\n\}/)?.[1];
+    expect(discovery).toBeTruthy();
+    expect(discovery).toContain("safeCall('github_repositories', {}, { silent: true })");
+    expect(discovery).toContain('state.githubRepositories');
+
+    const githubRoute = text.match(/function renderGitHub\(\) \{([\s\S]*?)\n\}\n\nfunction renderModels/)?.[1];
+    expect(githubRoute).toBeTruthy();
+    const quickReads = [...githubRoute!.matchAll(/data-github-tool="(github_[a-z_]+)"/g)].map((match) => match[1]);
+    expect(quickReads).toEqual(['github_repository', 'github_branches', 'github_pull_requests', 'github_issues']);
+
+    const selectorSource = githubRoute!.match(/nativeSelect\('github-detail-tool', \[([\s\S]*?)\], 'github_commits'\)/)?.[1];
+    expect(selectorSource).toBeTruthy();
+    const detailReads = [...selectorSource!.matchAll(/\['(github_[a-z_]+)','([^']+)'\]/g)].map((match) => match[1]);
+    expect(detailReads).toEqual([
+      'github_commits', 'github_pull_request', 'github_pull_request_files', 'github_issue', 'github_issue_comments',
+      'github_pull_request_reviews', 'github_pull_request_review_comments', 'github_checks',
+    ]);
+    expect(detailReads.some((name) => writeCatalog.includes(name))).toBe(false);
+    expect(new Set(['github_repositories', ...quickReads, ...detailReads])).toEqual(new Set(readCatalog));
+
+    const detailHandler = githubRoute!.match(/view\.querySelector\('#github-detail-form'\)\?\.addEventListener\('submit', async \(event\) => \{([\s\S]*?)\n  \}\);\n  view\.querySelector\('#github-write-form'/)?.[1];
+    expect(detailHandler).toBeTruthy();
+    expect(detailHandler).toContain("const repository = view.querySelector('#github-repo').value.trim();");
+    expect(detailHandler).toContain("const ref = view.querySelector('#github-detail-ref').value.trim();");
+    expect(detailHandler).toContain("const numberRaw = view.querySelector('#github-detail-number').value.trim();");
+    expect(detailHandler).toContain("clampInt(view.querySelector('#github-detail-max-items').value, 1, 100, 30)");
+    expect(detailHandler).toContain("const refTools = new Set(['github_commits','github_checks']);");
+    expect(detailHandler).toContain("const numberTools = new Set(['github_pull_request','github_pull_request_files','github_issue','github_issue_comments','github_pull_request_reviews','github_pull_request_review_comments']);");
+    expect(detailHandler).toContain("if (refTools.has(tool) && !ref)");
+    expect(detailHandler).toContain("!Number.isInteger(number) || number < 1");
+    expect(detailHandler).toContain("if (tool === 'github_commits') args = { repository, ref, maxItems };");
+    expect(detailHandler).toContain("else if (tool === 'github_checks') args = { repository, ref };");
+    expect(detailHandler).toContain("else if (tool === 'github_pull_request' || tool === 'github_issue') args = { repository, number };");
+    expect(detailHandler).toContain("else if (collectionTools.has(tool)) args = { repository, number, maxItems };");
+    expect(detailHandler).toContain("const collectionTools = new Set(['github_commits','github_pull_request_files','github_issue_comments','github_pull_request_reviews','github_pull_request_review_comments']);");
+    const safeCallIndex = detailHandler!.indexOf('const result = await safeCall(tool, args);');
+    expect(safeCallIndex).toBeGreaterThan(detailHandler!.indexOf("if (refTools.has(tool) && !ref)"));
+    expect(safeCallIndex).toBeGreaterThan(detailHandler!.indexOf('!Number.isInteger(number) || number < 1'));
+    expect(detailHandler).not.toContain('client.callTool');
+    expect(detailHandler).not.toContain('openGateDialog');
+    expect(detailHandler).toContain("state.routeResults.set('github', result)");
+    expect(detailHandler).toContain('renderGitHub();');
+
+    const writeHandler = githubRoute!.match(/view\.querySelector\('#github-write-form'\)\?\.addEventListener\('submit', async \(event\) => \{([\s\S]*?)\n  \}\);/)?.[1];
+    expect(writeHandler).toBeTruthy();
+    expect(writeHandler).toContain('openGateDialog');
+    expect(writeHandler).toContain('action:()=>client.callTool(tool,args)');
+    expect(writeHandler).not.toContain("github-detail-tool");
+  });
+
   it('has responsive and accessible operational styling for new surfaces', () => {
     const text = styles();
     expect(text).toContain('.metric-grid');

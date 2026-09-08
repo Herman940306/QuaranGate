@@ -1193,6 +1193,7 @@ function renderGitHub() {
     <section class="split-grid"><div class="panel"><div class="panel__header"><div class="panel__heading"><h2 class="panel__title">Repository operations</h2><p class="panel__description">Purpose-built read actions plus bounded remote writes. All writes still pass their MCP server policy and confirmation gate.</p></div></div><div class="panel__body">
       <form id="github-quick-form" novalidate><div class="field"><label class="field__label" for="github-repo">Repository</label><input id="github-repo" class="input mono" value="${escapeAttr(selected)}" placeholder="owner/repository"></div><div class="form-actions">
       <button class="button button--outline button--compact" type="button" data-github-tool="github_repository">Metadata</button><button class="button button--outline button--compact" type="button" data-github-tool="github_branches">Branches</button><button class="button button--outline button--compact" type="button" data-github-tool="github_pull_requests">Pull requests</button><button class="button button--outline button--compact" type="button" data-github-tool="github_issues">Issues</button></div></form>
+      <hr class="subtle-rule"><form id="github-detail-form" novalidate><div class="field"><label class="field__label" for="github-detail-tool">Read / detail operation</label>${nativeSelect('github-detail-tool', [['github_commits','Commit history'],['github_pull_request','Pull request detail'],['github_pull_request_files','Pull request files'],['github_issue','Issue detail'],['github_issue_comments','Issue comments'],['github_pull_request_reviews','Pull request reviews'],['github_pull_request_review_comments','Review comments'],['github_checks','Commit statuses']], 'github_commits')}</div><div class="field"><label class="field__label" for="github-detail-ref">Branch or commit</label><input id="github-detail-ref" class="input mono" placeholder="main or commit SHA" spellcheck="false"><div class="field__hint">Required for commit history and commit statuses.</div></div><div class="field"><label class="field__label" for="github-detail-number">Pull request or issue number</label><input id="github-detail-number" class="input" type="number" min="1" step="1" inputmode="numeric"><div class="field__hint">Required for pull request and issue detail operations.</div></div><div class="field"><label class="field__label" for="github-detail-max-items">Max items</label><input id="github-detail-max-items" class="input" type="number" min="1" max="100" value="30"><div class="field__hint">Used only for bounded collection reads; maximum 100.</div></div><div id="github-detail-error" class="field__error" role="alert"></div><div class="form-actions"><button id="github-detail-submit" class="button button--outline" type="submit">Run read</button></div></form>
       <hr class="subtle-rule"><form id="github-write-form" novalidate><div class="field"><label class="field__label" for="github-write-tool">Governed write</label>${nativeSelect('github-write-tool', [['github_pull_request_create','Create pull request'],['github_pull_request_update','Update pull request'],['github_pull_request_review','Submit review'],['github_push_branch','Push exact local HEAD']], 'github_pull_request_create')}</div><div class="field"><label class="field__label" for="github-write-json">Arguments</label><textarea id="github-write-json" class="textarea" spellcheck="false">${escapeHtml(JSON.stringify({ repository:selected, head:'feature/example', base:'main', title:'Review candidate' }, null, 2))}</textarea><div class="field__hint">Tool Lab remains available for all 17 low-level contracts. Merge authority does not exist.</div></div><div class="form-actions"><button id="github-write-submit" class="button button--warning" type="submit">Review governed write</button></div><div id="github-write-error" class="field__error" role="alert"></div></form>
     </div></div><div>${latest ? outputSurface('GitHub result', latest) : outputPlaceholder('Select a repository operation to inspect server-confirmed GitHub state.')}</div></section>
   </div>`;
@@ -1203,6 +1204,31 @@ function renderGitHub() {
     if (tool === 'github_branches' || tool === 'github_pull_requests' || tool === 'github_issues') args.maxItems = 30;
     const result = await safeCall(tool, args); if (result) { state.routeResults.set('github', result); renderGitHub(); }
   }));
+  view.querySelector('#github-detail-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const repository = view.querySelector('#github-repo').value.trim();
+    const tool = view.querySelector('#github-detail-tool').value;
+    const ref = view.querySelector('#github-detail-ref').value.trim();
+    const numberRaw = view.querySelector('#github-detail-number').value.trim();
+    const maxItems = clampInt(view.querySelector('#github-detail-max-items').value, 1, 100, 30);
+    const error = view.querySelector('#github-detail-error');
+    if (!repository) { error.textContent = 'Select a repository first.'; return; }
+    const refTools = new Set(['github_commits','github_checks']);
+    const numberTools = new Set(['github_pull_request','github_pull_request_files','github_issue','github_issue_comments','github_pull_request_reviews','github_pull_request_review_comments']);
+    const collectionTools = new Set(['github_commits','github_pull_request_files','github_issue_comments','github_pull_request_reviews','github_pull_request_review_comments']);
+    if (refTools.has(tool) && !ref) { error.textContent = 'Branch or commit is required.'; return; }
+    const number = Number(numberRaw);
+    if (numberTools.has(tool) && (!numberRaw || !Number.isInteger(number) || number < 1)) { error.textContent = 'Enter a positive whole-number pull request or issue number.'; return; }
+    let args;
+    if (tool === 'github_commits') args = { repository, ref, maxItems };
+    else if (tool === 'github_checks') args = { repository, ref };
+    else if (tool === 'github_pull_request' || tool === 'github_issue') args = { repository, number };
+    else if (collectionTools.has(tool)) args = { repository, number, maxItems };
+    else { error.textContent = 'Choose a supported read operation.'; return; }
+    error.textContent = '';
+    const result = await safeCall(tool, args);
+    if (result) { state.routeResults.set('github', result); renderGitHub(); }
+  });
   view.querySelector('#github-write-form')?.addEventListener('submit', async (event) => {
     event.preventDefault(); const tool = view.querySelector('#github-write-tool').value; const error = view.querySelector('#github-write-error');
     let args; try { args = JSON.parse(view.querySelector('#github-write-json').value); } catch { error.textContent = 'Arguments must be valid JSON.'; return; }
