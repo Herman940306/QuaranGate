@@ -38,6 +38,8 @@ const state = {
   controlCenter: new Map(),
   controlCenterEpoch: 0,
   controlCenterRequestVersions: new Map(),
+  coreDataEpoch: 0,
+  coreDataRequestVersion: 0,
   githubRepositories: [],
   githubLoaded: false,
   selectedGithubRepository: '',
@@ -293,7 +295,8 @@ function renderConnect() {
       connectionLabel.textContent = 'Connected';
       disconnectButton.hidden = false;
       disconnectButton.disabled = false;
-      await loadCoreData();
+      const coreDataCommitted = await loadCoreData();
+      if (!coreDataCommitted) return;
       keyInput.value = '';
       location.hash = '#/overview';
       toast('Connected to QuaranGate.', 'success');
@@ -313,12 +316,15 @@ function renderConnect() {
 }
 
 async function loadCoreData() {
+  const epoch = state.coreDataEpoch;
+  const version = ++state.coreDataRequestVersion;
   const [targets, agents, projects, summary] = await Promise.all([
     safeCall('targets_list', {}, { silent: true }),
     safeCall('agents_list', {}, { silent: true }),
     safeCall('agent_projects', {}, { silent: true }),
     serverHasTool('control_center_query') ? safeCall('control_center_query', { view: 'summary', sinceMs: 3600000 }, { silent: true }) : Promise.resolve(null),
   ]);
+  if (!state.connected || state.coreDataEpoch !== epoch || state.coreDataRequestVersion !== version) return false;
   if (summary?.data) state.controlCenter.set('summary', summary.data);
   state.targets = Array.isArray(targets?.targets) ? targets.targets : [];
   state.backends = Array.isArray(agents?.backends) ? agents.backends : [];
@@ -332,6 +338,7 @@ async function loadCoreData() {
   if (!state.chatConfig.project || !state.projects.some((project) => project.id === state.chatConfig.project)) {
     state.chatConfig.project = state.projects[0]?.id ?? '';
   }
+  return true;
 }
 
 function disconnect() {
@@ -347,6 +354,7 @@ function disconnect() {
   state.jobs.clear();
   state.routeResults.clear();
   state.toolResults.clear();
+  state.coreDataEpoch += 1;
   state.controlCenterEpoch += 1;
   state.controlCenterRequestVersions.clear();
   state.controlCenter.clear();
@@ -370,13 +378,15 @@ function disconnect() {
 
 async function refreshCurrentRoute(showToast = false) {
   if (!state.connected) return;
+  state.coreDataEpoch += 1;
   state.controlCenterEpoch += 1;
   state.controlCenterRequestVersions.clear();
   state.controlCenter.clear();
   const button = refreshButton;
   setButtonBusy(button, true, 'Refreshing…');
   try {
-    await loadCoreData();
+    const coreDataCommitted = await loadCoreData();
+    if (!coreDataCommitted) return;
     renderRoute();
     if (showToast) toast('Console data refreshed.', 'success');
   } catch (err) {
@@ -561,7 +571,8 @@ async function runTargetControl(tool, button) {
   });
   if (confirmed) {
     state.routeResults.set('targets', confirmed);
-    await loadCoreData();
+    const coreDataCommitted = await loadCoreData();
+    if (!coreDataCommitted || currentRoute() !== 'targets') return;
     renderTargets();
   }
 }

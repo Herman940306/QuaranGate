@@ -495,6 +495,256 @@ describe('QuaranGate Console full U1 product contract', () => {
     expect(safeCallSource).toContain("code: 'DUPLICATE_REQUEST'");
   });
 
+  it('invalidates stale core-data loads and suppresses stale lifecycle continuations', async () => {
+    const text = app();
+    const loadCoreDataSource = text.match(/async function loadCoreData\(\) \{[\s\S]*?\n\}\n/)?.[0];
+    const disconnectSource = text.match(/function disconnect\(\) \{[\s\S]*?\n\}\n/)?.[0];
+    const refreshSource = text.match(/async function refreshCurrentRoute\(showToast = false\) \{[\s\S]*?\n\}\n/)?.[0];
+    const targetControlSource = text.match(/async function runTargetControl\(tool, button\) \{[\s\S]*?\n\}\n/)?.[0];
+    const renderConnectSource = text.match(/function renderConnect\(\) \{([\s\S]*?)\n\}\n\nasync function loadCoreData/)?.[1];
+    const connectSubmitBody = renderConnectSource?.match(/form\.addEventListener\('submit', async \(event\) => \{([\s\S]*?)\n  \}\);/)?.[1];
+    expect(loadCoreDataSource).toBeTruthy();
+    expect(disconnectSource).toBeTruthy();
+    expect(refreshSource).toBeTruthy();
+    expect(targetControlSource).toBeTruthy();
+    expect(connectSubmitBody).toBeTruthy();
+
+    const createDeferred = () => {
+      let resolve!: (value: any) => void;
+      const promise = new Promise<any>((done) => { resolve = done; });
+      return { promise, resolve };
+    };
+
+    const createHarness = () => {
+      const state: Record<string, any> = {
+        connected: true,
+        serverTools: [{ name: 'control_center_query' }],
+        targets: [],
+        targetDetails: new Map(),
+        backends: [],
+        projects: [],
+        jobs: new Map(),
+        deniedTools: new Map(),
+        selectedTarget: '',
+        selectedJobId: '',
+        toolResults: new Map(),
+        routeResults: new Map(),
+        pending: new Set(),
+        chatMessages: [],
+        chatJobId: '',
+        chatPollingController: null,
+        chatConfig: { backend: '', project: '', profile: 'audit', resourcePolicy: 'standard' },
+        controlCenter: new Map(),
+        controlCenterEpoch: 0,
+        controlCenterRequestVersions: new Map(),
+        coreDataEpoch: 0,
+        coreDataRequestVersion: 0,
+        githubRepositories: [],
+        githubLoaded: false,
+        selectedGithubRepository: '',
+      };
+      const calls: Array<{ name: string; deferred: ReturnType<typeof createDeferred> }> = [];
+      const toasts: Array<{ message: string; tone?: string }> = [];
+      const busy: any[] = [];
+      let renderRouteCount = 0;
+      let renderTargetsCount = 0;
+      let announced = '';
+      const location = { hash: '#/targets' };
+      const app = { dataset: { connected: 'true' } };
+      const connectionLabel = { textContent: 'Connected' };
+      const disconnectButton = { hidden: false, disabled: false };
+      const refreshButton = {};
+      const client = {
+        clearCredential() {},
+        setCredential(_value: string) {},
+        async listTools() { return [{ name: 'control_center_query' }]; },
+        async callTool(_name: string, _args: any) { return null; },
+      };
+      const safeCall = (name: string) => {
+        const deferred = createDeferred();
+        calls.push({ name, deferred });
+        return deferred.promise;
+      };
+      const context: Record<string, any> = {
+        state,
+        client,
+        app,
+        connectionLabel,
+        disconnectButton,
+        refreshButton,
+        location,
+        safeCall,
+        serverHasTool: (name: string) => name === 'control_center_query' && state.serverTools.some((tool: any) => tool.name === name),
+        announce: (message: string) => { announced = message; },
+        setButtonBusy: (...args: any[]) => { busy.push(args); },
+        renderRoute: () => { renderRouteCount += 1; },
+        renderTargets: () => { renderTargetsCount += 1; },
+        toast: (message: string, tone?: string) => { toasts.push({ message, tone }); },
+        errorMessage: (error: any) => error?.message ?? String(error),
+        currentRoute: () => location.hash.replace(/^#\/?/, '') || 'overview',
+        openGateDialog: async () => ({ ok: true }),
+        capitalize: (value: string) => value,
+        TOOL_CATALOG: [],
+      };
+      runInNewContext([
+        loadCoreDataSource,
+        disconnectSource,
+        refreshSource,
+        targetControlSource,
+        `globalThis.__connectSubmit = async function(event) {${connectSubmitBody}\n};`,
+        'globalThis.__loadCoreData = loadCoreData;',
+        'globalThis.__disconnect = disconnect;',
+        'globalThis.__refreshCurrentRoute = refreshCurrentRoute;',
+        'globalThis.__runTargetControl = runTargetControl;',
+      ].join('\n'), context);
+
+      const resolveLoad = (index: number, marker: string) => {
+        const group = calls.slice(index * 4, index * 4 + 4);
+        expect(group).toHaveLength(4);
+        for (const entry of group) {
+          if (entry.name === 'targets_list') entry.deferred.resolve({ targets: [{ id: `target-${marker}`, running: true }] });
+          else if (entry.name === 'agents_list') entry.deferred.resolve({ backends: [{ id: `backend-${marker}`, available: true }] });
+          else if (entry.name === 'agent_projects') entry.deferred.resolve({ projects: [{ id: `project-${marker}` }] });
+          else if (entry.name === 'control_center_query') entry.deferred.resolve({ data: { marker } });
+          else throw new Error(`unexpected core call ${entry.name}`);
+        }
+      };
+      const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+      return {
+        state, calls, toasts, busy, location, app, connectionLabel, disconnectButton, refreshButton, client,
+        loadCoreData: context.__loadCoreData as () => Promise<boolean>,
+        disconnect: context.__disconnect as () => void,
+        refreshCurrentRoute: context.__refreshCurrentRoute as (showToast?: boolean) => Promise<void>,
+        runTargetControl: context.__runTargetControl as (tool: string, button: any) => Promise<void>,
+        connectSubmit: context.__connectSubmit as (event: any) => Promise<void>,
+        resolveLoad, flush,
+        renderRouteCount: () => renderRouteCount,
+        renderTargetsCount: () => renderTargetsCount,
+        announced: () => announced,
+      };
+    };
+
+    // A pre-disconnect core load must not repopulate cleared browser state.
+    const disconnected = createHarness();
+    const preDisconnect = disconnected.loadCoreData();
+    expect(disconnected.calls).toHaveLength(4);
+    disconnected.disconnect();
+    disconnected.resolveLoad(0, 'A');
+    await preDisconnect;
+    expect(disconnected.state.controlCenter.has('summary')).toBe(false);
+    expect(disconnected.state.targets).toEqual([]);
+    expect(disconnected.state.backends).toEqual([]);
+    expect(disconnected.state.projects).toEqual([]);
+    expect(disconnected.state.selectedTarget).toBe('');
+    expect(disconnected.state.chatConfig.backend).toBe('');
+    expect(disconnected.state.chatConfig.project).toBe('');
+
+    // Principal A cannot overwrite newer Principal B after reconnect.
+    const principal = createHarness();
+    const principalA = principal.loadCoreData();
+    principal.disconnect();
+    principal.state.connected = true;
+    principal.state.serverTools = [{ name: 'control_center_query' }];
+    const principalB = principal.loadCoreData();
+    principal.resolveLoad(1, 'B');
+    expect(await principalB).toBe(true);
+    principal.resolveLoad(0, 'A');
+    expect(await principalA).toBe(false);
+    expect(principal.state.controlCenter.get('summary')).toEqual({ marker: 'B' });
+    expect(principal.state.targets[0].id).toBe('target-B');
+    expect(principal.state.backends[0].id).toBe('backend-B');
+    expect(principal.state.projects[0].id).toBe('project-B');
+
+    // Same-lifecycle latest invocation wins even when OLD resolves last.
+    const latest = createHarness();
+    const oldLoad = latest.loadCoreData();
+    const newLoad = latest.loadCoreData();
+    latest.resolveLoad(1, 'NEW');
+    expect(await newLoad).toBe(true);
+    latest.resolveLoad(0, 'OLD');
+    expect(await oldLoad).toBe(false);
+    expect(latest.state.controlCenter.get('summary')).toEqual({ marker: 'NEW' });
+    expect(latest.state.targets[0].id).toBe('target-NEW');
+
+    // Connect continuation must not claim success after disconnect invalidates its load.
+    const connect = createHarness();
+    connect.state.connected = false;
+    connect.location.hash = '#/connect';
+    const keyInput: any = { value: 'secret', removeAttribute() {}, setAttribute() {}, focus() {} };
+    const error: any = { textContent: '' };
+    const status: any = { textContent: '' };
+    const submit: any = {};
+    Object.assign((connect.connectSubmit as any), {});
+    const connectContext = (connect.connectSubmit as any);
+    // VM globals are referenced by name; expose the form-local bindings through the function context.
+    (connectContext as any);
+    // Re-evaluate only the exact extracted submit body with controlled form bindings.
+    const connectBodyContext: Record<string, any> = {
+      state: connect.state, client: connect.client, app: connect.app, connectionLabel: connect.connectionLabel,
+      disconnectButton: connect.disconnectButton, location: connect.location, loadCoreData: connect.loadCoreData,
+      toast: (message: string, tone?: string) => { connect.toasts.push({ message, tone }); },
+      errorMessage: (e: any) => e?.message ?? String(e), setButtonBusy: () => {}, TOOL_CATALOG: [],
+      keyInput, error, status, submit,
+    };
+    runInNewContext(`globalThis.__submit = async function(event) {${connectSubmitBody}\n};`, connectBodyContext);
+    const connecting = connectBodyContext.__submit({ preventDefault() {} });
+    await connect.flush();
+    expect(connect.calls).toHaveLength(4);
+    connect.disconnect();
+    connect.resolveLoad(0, 'A');
+    await connecting;
+    expect(connect.location.hash).toBe('#/connect');
+    expect(connect.toasts.some((entry) => entry.message === 'Connected to QuaranGate.' && entry.tone === 'success')).toBe(false);
+
+    // Refresh made stale by disconnect cannot render or report a successful refresh.
+    const refresh = createHarness();
+    const refreshing = refresh.refreshCurrentRoute(true);
+    expect(refresh.calls).toHaveLength(4);
+    refresh.disconnect();
+    refresh.resolveLoad(0, 'A');
+    await refreshing;
+    expect(refresh.renderRouteCount()).toBe(0);
+    expect(refresh.toasts.some((entry) => entry.message === 'Console data refreshed.' && entry.tone === 'success')).toBe(false);
+
+    // Target-control continuation must not render after invalidation or after navigation away.
+    const target = createHarness();
+    target.state.selectedTarget = 'target-current';
+    const staleTarget = target.runTargetControl('target_restart', {});
+    await target.flush();
+    expect(target.calls).toHaveLength(4);
+    target.disconnect();
+    target.resolveLoad(0, 'A');
+    await staleTarget;
+    expect(target.renderTargetsCount()).toBe(0);
+
+    const navigated = createHarness();
+    navigated.state.selectedTarget = 'target-current';
+    const away = navigated.runTargetControl('target_restart', {});
+    await navigated.flush();
+    expect(navigated.calls).toHaveLength(4);
+    navigated.location.hash = '#/overview';
+    navigated.resolveLoad(0, 'CURRENT');
+    await away;
+    expect(navigated.renderTargetsCount()).toBe(0);
+
+    // Static structure binds the production implementation to the same lifecycle contract.
+    const stateSource = text.match(/const state = \{([\s\S]*?)\n\};/)?.[1];
+    expect(stateSource).toContain('coreDataEpoch: 0');
+    expect(stateSource).toContain('coreDataRequestVersion: 0');
+    expect(loadCoreDataSource).toContain('const epoch = state.coreDataEpoch;');
+    expect(loadCoreDataSource).toContain('const version = ++state.coreDataRequestVersion;');
+    expect(loadCoreDataSource).toContain('if (!state.connected || state.coreDataEpoch !== epoch || state.coreDataRequestVersion !== version) return false;');
+    expect(loadCoreDataSource).toContain('return true;');
+    expect(disconnectSource).toContain('state.coreDataEpoch += 1;');
+    expect(refreshSource).toContain('state.coreDataEpoch += 1;');
+    expect(refreshSource).toContain('const coreDataCommitted = await loadCoreData();');
+    expect(refreshSource).toContain('if (!coreDataCommitted) return;');
+    expect(targetControlSource).toContain('const coreDataCommitted = await loadCoreData();');
+    expect(targetControlSource).toContain("if (!coreDataCommitted || currentRoute() !== 'targets') return;");
+    expect(connectSubmitBody).toContain('const coreDataCommitted = await loadCoreData();');
+    expect(connectSubmitBody).toContain('if (!coreDataCommitted) return;');
+  });
+
   it('has responsive and accessible operational styling for new surfaces', () => {
     const text = styles();
     expect(text).toContain('.metric-grid');
