@@ -342,6 +342,9 @@ describe('QuaranGate Console full U1 product contract', () => {
         controlCenterEpoch: 0,
         controlCenterRequestVersions: new Map<string, number>(),
         pending: new Set<string>(),
+        pendingRequestOwners: new Map<string, number>(),
+        pendingRequestVersion: 0,
+        connectionEpoch: 0,
         deniedTools: new Map<string, string>(),
         selectedTarget: '',
         projects: [] as Array<{ id: string }>,
@@ -530,6 +533,9 @@ describe('QuaranGate Console full U1 product contract', () => {
         toolResults: new Map(),
         routeResults: new Map(),
         pending: new Set(),
+        pendingRequestOwners: new Map(),
+        pendingRequestVersion: 0,
+        connectionEpoch: 0,
         chatMessages: [],
         chatJobId: '',
         chatPollingController: null,
@@ -539,6 +545,7 @@ describe('QuaranGate Console full U1 product contract', () => {
         controlCenterRequestVersions: new Map(),
         coreDataEpoch: 0,
         coreDataRequestVersion: 0,
+        coreDataActivePromise: null,
         githubRepositories: [],
         githubLoaded: false,
         selectedGithubRepository: '',
@@ -655,14 +662,17 @@ describe('QuaranGate Console full U1 product contract', () => {
     expect(principal.state.backends[0].id).toBe('backend-B');
     expect(principal.state.projects[0].id).toBe('project-B');
 
-    // Same-lifecycle latest invocation wins even when OLD resolves last.
+    // Same-lifecycle overlap: OLD physical work settles stale, then NEW runs a fresh coherent snapshot.
     const latest = createHarness();
     const oldLoad = latest.loadCoreData();
     const newLoad = latest.loadCoreData();
-    latest.resolveLoad(1, 'NEW');
-    expect(await newLoad).toBe(true);
+    expect(latest.calls).toHaveLength(4);
     latest.resolveLoad(0, 'OLD');
     expect(await oldLoad).toBe(false);
+    await latest.flush();
+    expect(latest.calls).toHaveLength(8);
+    latest.resolveLoad(1, 'NEW');
+    expect(await newLoad).toBe(true);
     expect(latest.state.controlCenter.get('summary')).toEqual({ marker: 'NEW' });
     expect(latest.state.targets[0].id).toBe('target-NEW');
 
@@ -743,6 +753,192 @@ describe('QuaranGate Console full U1 product contract', () => {
     expect(targetControlSource).toContain("if (!coreDataCommitted || currentRoute() !== 'targets') return;");
     expect(connectSubmitBody).toContain('const coreDataCommitted = await loadCoreData();');
     expect(connectSubmitBody).toContain('if (!coreDataCommitted) return;');
+  });
+
+  it('coordinates overlapping core-data loads through the real safeCall path', async () => {
+    const text = app();
+    const loadCoreDataSource = text.match(/async function loadCoreData\(\) \{[\s\S]*?\n\}\n/)?.[0];
+    const safeCallSource = text.match(/async function safeCall\(name, args, \{ silent = false, throwOnError = false \} = \{\}\) \{[\s\S]*?\n\}\n/)?.[0];
+    const disconnectSource = text.match(/function disconnect\(\) \{[\s\S]*?\n\}\n/)?.[0];
+    expect(loadCoreDataSource).toBeTruthy();
+    expect(safeCallSource).toBeTruthy();
+    expect(disconnectSource).toBeTruthy();
+
+    const createDeferred = () => {
+      let resolve!: (value: any) => void;
+      let reject!: (reason: any) => void;
+      const promise = new Promise<any>((done, fail) => { resolve = done; reject = fail; });
+      return { promise, resolve, reject };
+    };
+    const state: Record<string, any> = {
+      connected: true,
+      serverTools: [{ name: 'control_center_query' }],
+      targets: [{ id: 'target-PREVIOUS', running: true }],
+      targetDetails: new Map(), backends: [{ id: 'backend-PREVIOUS', available: true }], projects: [{ id: 'project-PREVIOUS' }], jobs: new Map(),
+      deniedTools: new Map(), selectedTarget: 'target-PREVIOUS', selectedJobId: '', toolResults: new Map(), routeResults: new Map(),
+      pending: new Set(), pendingRequestOwners: new Map(), pendingRequestVersion: 0, connectionEpoch: 0,
+      chatMessages: [], chatJobId: '', chatPollingController: null,
+      chatConfig: { backend: 'backend-PREVIOUS', project: 'project-PREVIOUS', profile: 'audit', resourcePolicy: 'standard' },
+      controlCenter: new Map([['summary', { marker: 'PREVIOUS' }]]), controlCenterEpoch: 0, controlCenterRequestVersions: new Map(),
+      coreDataEpoch: 0, coreDataRequestVersion: 0, coreDataActivePromise: null,
+      githubRepositories: [], githubLoaded: false, selectedGithubRepository: '',
+    };
+    const physicalCalls: Array<{ name: string; args: any; deferred: ReturnType<typeof createDeferred> }> = [];
+    class McpClientError extends Error { status?: number; code?: string; constructor(message: string, details: Record<string, any> = {}) { super(message); Object.assign(this, details); } }
+    const client = {
+      clearCredential() {},
+      callTool(name: string, args: any) { const deferred = createDeferred(); physicalCalls.push({ name, args, deferred }); return deferred.promise; },
+    };
+    const context: Record<string, any> = {
+      state, client, McpClientError,
+      serverHasTool: (name: string) => name === 'control_center_query' && state.serverTools.some((tool: any) => tool.name === name),
+      toast: () => {}, errorMessage: (error: any) => error?.message ?? String(error),
+      app: { dataset: { connected: 'true' } }, connectionLabel: { textContent: 'Connected' }, disconnectButton: { hidden: false, disabled: false },
+      location: { hash: '#/overview' }, announce: () => {},
+    };
+    runInNewContext([safeCallSource, loadCoreDataSource, disconnectSource,
+      'globalThis.__loadCoreData = loadCoreData;'].join('\n'), context);
+    const loadCoreData = context.__loadCoreData as () => Promise<boolean>;
+    const flush = async () => { for (let i = 0; i < 8; i += 1) await Promise.resolve(); };
+    const resolveGroup = (start: number, marker: string) => {
+      const group = physicalCalls.slice(start, start + 4);
+      expect(group).toHaveLength(4);
+      for (const entry of group) {
+        if (entry.name === 'targets_list') entry.deferred.resolve({ targets: [{ id: `target-${marker}`, running: true }] });
+        else if (entry.name === 'agents_list') entry.deferred.resolve({ backends: [{ id: `backend-${marker}`, available: true }] });
+        else if (entry.name === 'agent_projects') entry.deferred.resolve({ projects: [{ id: `project-${marker}` }] });
+        else if (entry.name === 'control_center_query') entry.deferred.resolve({ data: { marker } });
+      }
+    };
+
+    const oldLoad = loadCoreData();
+    expect(physicalCalls).toHaveLength(4);
+    let newSettled = false;
+    let newResult: boolean | undefined;
+    const newLoad = loadCoreData().then((value) => { newSettled = true; newResult = value; return value; });
+    await flush();
+
+    // A newer logical load must wait/rerun rather than claim success from duplicate-null safeCall results.
+    expect({
+      newSettled,
+      newResult,
+      physicalCallCount: physicalCalls.length,
+      targets: state.targets.map((entry: any) => entry.id),
+      backends: state.backends.map((entry: any) => entry.id),
+      projects: state.projects.map((entry: any) => entry.id),
+      summary: state.controlCenter.get('summary')?.marker,
+    }).toEqual({
+      newSettled: false,
+      newResult: undefined,
+      physicalCallCount: 4,
+      targets: ['target-PREVIOUS'],
+      backends: ['backend-PREVIOUS'],
+      projects: ['project-PREVIOUS'],
+      summary: 'PREVIOUS',
+    });
+
+    resolveGroup(0, 'OLD');
+    expect(await oldLoad).toBe(false);
+    await flush();
+    expect(physicalCalls).toHaveLength(8);
+    resolveGroup(4, 'NEW');
+    expect(await newLoad).toBe(true);
+    expect(state.controlCenter.get('summary')).toEqual({ marker: 'NEW' });
+    expect(state.targets.map((entry: any) => entry.id)).toEqual(['target-NEW']);
+    expect(state.backends.map((entry: any) => entry.id)).toEqual(['backend-NEW']);
+    expect(state.projects.map((entry: any) => entry.id)).toEqual(['project-NEW']);
+  });
+
+  it('prevents a stale Principal-A 401 from disconnecting a newer Principal-B lifecycle', async () => {
+    const text = app();
+    const loadCoreDataSource = text.match(/async function loadCoreData\(\) \{[\s\S]*?\n\}\n/)?.[0];
+    const safeCallSource = text.match(/async function safeCall\(name, args, \{ silent = false, throwOnError = false \} = \{\}\) \{[\s\S]*?\n\}\n/)?.[0];
+    const disconnectSource = text.match(/function disconnect\(\) \{[\s\S]*?\n\}\n/)?.[0];
+    expect(loadCoreDataSource).toBeTruthy(); expect(safeCallSource).toBeTruthy(); expect(disconnectSource).toBeTruthy();
+    const createDeferred = () => { let resolve!: (value:any)=>void; let reject!: (reason:any)=>void; const promise=new Promise<any>((done,fail)=>{resolve=done;reject=fail;}); return {promise,resolve,reject}; };
+    const state: Record<string, any> = {
+      connected:true, serverTools:[{name:'control_center_query'}], targets:[], targetDetails:new Map(), backends:[], projects:[], jobs:new Map(), deniedTools:new Map(),
+      selectedTarget:'', selectedJobId:'', toolResults:new Map(), routeResults:new Map(), pending:new Set(), pendingRequestOwners:new Map(), pendingRequestVersion:0, connectionEpoch:0,
+      chatMessages:[], chatJobId:'', chatPollingController:null, chatConfig:{backend:'',project:'',profile:'audit',resourcePolicy:'standard'},
+      controlCenter:new Map(), controlCenterEpoch:0, controlCenterRequestVersions:new Map(), coreDataEpoch:0, coreDataRequestVersion:0, coreDataActivePromise:null,
+      githubRepositories:[], githubLoaded:false, selectedGithubRepository:'',
+    };
+    const calls:Array<{name:string; deferred:ReturnType<typeof createDeferred>}> = [];
+    let clearCredentialCount=0;
+    class McpClientError extends Error { status?:number; code?:string; constructor(message:string, details:Record<string,any>={}) { super(message); Object.assign(this,details); } }
+    const client={ clearCredential(){clearCredentialCount+=1;}, callTool(name:string,_args:any){const deferred=createDeferred();calls.push({name,deferred});return deferred.promise;} };
+    const location={hash:'#/overview'};
+    const context:Record<string,any>={ state,client,McpClientError,serverHasTool:(name:string)=>name==='control_center_query'&&state.serverTools.some((tool:any)=>tool.name===name),toast:()=>{},errorMessage:(e:any)=>e?.message??String(e),app:{dataset:{connected:'true'}},connectionLabel:{textContent:'Connected'},disconnectButton:{hidden:false,disabled:false},location,announce:()=>{} };
+    runInNewContext([safeCallSource,loadCoreDataSource,disconnectSource,'globalThis.__loadCoreData=loadCoreData;globalThis.__disconnect=disconnect;'].join('\n'),context);
+    const loadCoreData=context.__loadCoreData as ()=>Promise<boolean>; const disconnect=context.__disconnect as ()=>void;
+    const resolveGroup=(start:number,marker:string)=>{for(const entry of calls.slice(start,start+4)){if(entry.name==='targets_list')entry.deferred.resolve({targets:[{id:`target-${marker}`}]});else if(entry.name==='agents_list')entry.deferred.resolve({backends:[{id:`backend-${marker}`,available:true}]});else if(entry.name==='agent_projects')entry.deferred.resolve({projects:[{id:`project-${marker}`}]});else entry.deferred.resolve({data:{marker}});}};
+
+    const principalA=loadCoreData();
+    expect(calls).toHaveLength(4);
+    disconnect();
+    expect(clearCredentialCount).toBe(1);
+    state.connected=true; state.serverTools=[{name:'control_center_query'}]; location.hash='#/overview';
+    const principalB=loadCoreData();
+    expect(calls).toHaveLength(8);
+    resolveGroup(4,'B');
+    expect(await principalB).toBe(true);
+    expect(state.connected).toBe(true);
+    expect(state.controlCenter.get('summary')).toEqual({marker:'B'});
+
+    calls[0].deferred.reject(new McpClientError('old credential rejected',{status:401,code:'UNAUTHORIZED'}));
+    for (const entry of calls.slice(1,4)) entry.deferred.resolve(entry.name==='agents_list'?{backends:[]}:entry.name==='agent_projects'?{projects:[]}:entry.name==='control_center_query'?{data:{marker:'A'}}:{targets:[]});
+    expect(await principalA).toBe(false);
+    expect(state.connected).toBe(true);
+    expect(clearCredentialCount).toBe(1);
+    expect(location.hash).toBe('#/overview');
+    expect(state.controlCenter.get('summary')).toEqual({marker:'B'});
+    expect(state.targets.map((entry:any)=>entry.id)).toEqual(['target-B']);
+  });
+
+  it('keeps newer same-key pending ownership and denial metadata safe from stale completion', async () => {
+    const text = app();
+    const safeCallSource = text.match(/async function safeCall\(name, args, \{ silent = false, throwOnError = false \} = \{\}\) \{[\s\S]*?\n\}\n/)?.[0];
+    const disconnectSource = text.match(/function disconnect\(\) \{[\s\S]*?\n\}\n/)?.[0];
+    expect(safeCallSource).toBeTruthy(); expect(disconnectSource).toBeTruthy();
+    const createDeferred=()=>{let resolve!:(value:any)=>void;let reject!:(reason:any)=>void;const promise=new Promise<any>((done,fail)=>{resolve=done;reject=fail;});return{promise,resolve,reject};};
+    const state:Record<string,any>={connected:true,serverTools:[],targets:[],targetDetails:new Map(),backends:[],projects:[],jobs:new Map(),deniedTools:new Map(),selectedTarget:'',selectedJobId:'',toolResults:new Map(),routeResults:new Map(),pending:new Set(),pendingRequestOwners:new Map(),pendingRequestVersion:0,connectionEpoch:0,chatMessages:[],chatJobId:'',chatPollingController:null,chatConfig:{backend:'',project:'',profile:'audit',resourcePolicy:'standard'},controlCenter:new Map(),controlCenterEpoch:0,controlCenterRequestVersions:new Map(),coreDataEpoch:0,coreDataRequestVersion:0,coreDataActivePromise:null,githubRepositories:[],githubLoaded:false,selectedGithubRepository:''};
+    const calls:Array<{name:string;deferred:ReturnType<typeof createDeferred>}>=[];
+    class McpClientError extends Error {status?:number;code?:string;constructor(message:string,details:Record<string,any>={}){super(message);Object.assign(this,details);}}
+    const client={clearCredential(){},callTool(name:string,_args:any){const deferred=createDeferred();calls.push({name,deferred});return deferred.promise;}};
+    const context:Record<string,any>={state,client,McpClientError,toast:()=>{},errorMessage:(e:any)=>e?.message??String(e),app:{dataset:{connected:'true'}},connectionLabel:{textContent:'Connected'},disconnectButton:{hidden:false,disabled:false},location:{hash:'#/overview'},announce:()=>{}};
+    runInNewContext([safeCallSource,disconnectSource,'globalThis.__safeCall=safeCall;globalThis.__disconnect=disconnect;'].join('\n'),context);
+    const safeCall=context.__safeCall as (name:string,args:any,opts?:any)=>Promise<any>; const disconnect=context.__disconnect as ()=>void;
+
+    const oldSuccess=safeCall('targets_list',{}, {silent:true});
+    expect(state.pending.has('targets_list:{}')).toBe(true);
+    disconnect(); state.connected=true;
+    state.deniedTools.set('targets_list','B-DENIAL');
+    const newRequest=safeCall('targets_list',{}, {silent:true});
+    expect(calls).toHaveLength(2);
+    expect(state.pending.has('targets_list:{}')).toBe(true);
+    calls[0].deferred.resolve({targets:[{id:'A'}]});
+    await oldSuccess;
+    expect(state.pending.has('targets_list:{}')).toBe(true);
+    expect(state.deniedTools.get('targets_list')).toBe('B-DENIAL');
+
+    const third=safeCall('targets_list',{}, {silent:true});
+    await Promise.resolve();
+    expect(calls).toHaveLength(2);
+    expect(await third).toBeNull();
+    calls[1].deferred.resolve({targets:[{id:'B'}]});
+    await newRequest;
+    expect(state.pending.has('targets_list:{}')).toBe(false);
+
+    const oldForbidden=safeCall('agents_list',{}, {silent:true});
+    disconnect(); state.connected=true;
+    state.deniedTools.set('agents_list','B-CURRENT');
+    const newAgents=safeCall('agents_list',{}, {silent:true});
+    expect(calls).toHaveLength(4);
+    calls[2].deferred.reject(new McpClientError('A forbidden',{status:403,code:'FORBIDDEN_TOOL'}));
+    await oldForbidden;
+    expect(state.deniedTools.get('agents_list')).toBe('B-CURRENT');
+    calls[3].deferred.resolve({backends:[{id:'B'}]});
+    await newAgents;
   });
 
   it('has responsive and accessible operational styling for new surfaces', () => {

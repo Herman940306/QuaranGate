@@ -28,6 +28,9 @@ const state = {
   toolResults: new Map(),
   routeResults: new Map(),
   pending: new Set(),
+  pendingRequestOwners: new Map(),
+  pendingRequestVersion: 0,
+  connectionEpoch: 0,
   chatMessages: [],
   chatJobId: '',
   chatPollingController: null,
@@ -40,6 +43,7 @@ const state = {
   controlCenterRequestVersions: new Map(),
   coreDataEpoch: 0,
   coreDataRequestVersion: 0,
+  coreDataActivePromise: null,
   githubRepositories: [],
   githubLoaded: false,
   selectedGithubRepository: '',
@@ -318,17 +322,32 @@ function renderConnect() {
 async function loadCoreData() {
   const epoch = state.coreDataEpoch;
   const version = ++state.coreDataRequestVersion;
-  const [targets, agents, projects, summary] = await Promise.all([
+  const previousLoad = state.coreDataActivePromise;
+  if (previousLoad) {
+    try { await previousLoad; } catch {}
+    if (!state.connected || state.coreDataEpoch !== epoch || state.coreDataRequestVersion !== version) return false;
+  }
+  const hasSummaryTool = serverHasTool('control_center_query');
+  const snapshotPromise = Promise.all([
     safeCall('targets_list', {}, { silent: true }),
     safeCall('agents_list', {}, { silent: true }),
     safeCall('agent_projects', {}, { silent: true }),
-    serverHasTool('control_center_query') ? safeCall('control_center_query', { view: 'summary', sinceMs: 3600000 }, { silent: true }) : Promise.resolve(null),
+    hasSummaryTool ? safeCall('control_center_query', { view: 'summary', sinceMs: 3600000 }, { silent: true }) : Promise.resolve(null),
   ]);
+  state.coreDataActivePromise = snapshotPromise;
+  let targets, agents, projects, summary;
+  try {
+    [targets, agents, projects, summary] = await snapshotPromise;
+  } finally {
+    if (state.coreDataActivePromise === snapshotPromise) state.coreDataActivePromise = null;
+  }
   if (!state.connected || state.coreDataEpoch !== epoch || state.coreDataRequestVersion !== version) return false;
-  if (summary?.data) state.controlCenter.set('summary', summary.data);
-  state.targets = Array.isArray(targets?.targets) ? targets.targets : [];
-  state.backends = Array.isArray(agents?.backends) ? agents.backends : [];
-  state.projects = Array.isArray(projects?.projects) ? projects.projects : [];
+  if (!targets || !agents || !projects || (hasSummaryTool && !summary?.data)) return false;
+  if (hasSummaryTool) state.controlCenter.set('summary', summary.data);
+  else state.controlCenter.delete('summary');
+  state.targets = Array.isArray(targets.targets) ? targets.targets : [];
+  state.backends = Array.isArray(agents.backends) ? agents.backends : [];
+  state.projects = Array.isArray(projects.projects) ? projects.projects : [];
   if (!state.selectedTarget || !state.targets.some((t) => t.id === state.selectedTarget)) {
     state.selectedTarget = state.targets[0]?.id ?? '';
   }
@@ -354,7 +373,9 @@ function disconnect() {
   state.jobs.clear();
   state.routeResults.clear();
   state.toolResults.clear();
+  state.connectionEpoch += 1;
   state.coreDataEpoch += 1;
+  state.coreDataActivePromise = null;
   state.controlCenterEpoch += 1;
   state.controlCenterRequestVersions.clear();
   state.controlCenter.clear();
@@ -363,6 +384,7 @@ function disconnect() {
   state.selectedGithubRepository = '';
   state.deniedTools.clear();
   state.pending.clear();
+  state.pendingRequestOwners.clear();
   state.selectedTarget = '';
   state.selectedJobId = '';
   state.chatJobId = '';
@@ -1435,25 +1457,36 @@ async function safeCall(name, args, { silent = false, throwOnError = false } = {
     if (!silent) toast(duplicate.message, 'warning');
     return null;
   }
+  const owner = ++state.pendingRequestVersion;
+  const connectionEpoch = state.connectionEpoch;
   state.pending.add(key);
+  state.pendingRequestOwners.set(key, owner);
   try {
     const result = await client.callTool(name, args);
-    state.deniedTools.delete(name);
+    if (state.connectionEpoch === connectionEpoch) state.deniedTools.delete(name);
     return result;
   } catch (err) {
+    const currentLifecycle = state.connectionEpoch === connectionEpoch;
     if (err instanceof McpClientError && err.status === 401) {
-      if (!silent) toast('Authentication is no longer valid. Reconnect to continue.', 'error');
-      disconnect();
+      if (currentLifecycle) {
+        if (!silent) toast('Authentication is no longer valid. Reconnect to continue.', 'error');
+        disconnect();
+      }
     } else if (err instanceof McpClientError && (err.status === 403 || String(err.code).startsWith('FORBIDDEN'))) {
-      state.deniedTools.set(name, errorMessage(err));
-      if (!silent) toast(`${name}: ${errorMessage(err)}`, 'warning');
-    } else if (!silent) {
+      if (currentLifecycle) {
+        state.deniedTools.set(name, errorMessage(err));
+        if (!silent) toast(`${name}: ${errorMessage(err)}`, 'warning');
+      }
+    } else if (currentLifecycle && !silent) {
       toast(`${name}: ${errorMessage(err)}`, 'error');
     }
     if (throwOnError) throw err;
     return null;
   } finally {
-    state.pending.delete(key);
+    if (state.pendingRequestOwners.get(key) === owner) {
+      state.pendingRequestOwners.delete(key);
+      state.pending.delete(key);
+    }
   }
 }
 
