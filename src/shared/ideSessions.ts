@@ -36,6 +36,8 @@ export const IDE_INVOCATION_ORIGINS = ['human', 'machine'] as const;
 export type IdeInvocationOrigin = (typeof IDE_INVOCATION_ORIGINS)[number];
 
 /** QuaranGate-owned opaque identities; none of these are host paths. */
+export const IDE_ENROLLMENT_ID_PATTERN = /^iden_[0-9a-f]{32}$/;
+export const IDE_CONTROLLER_LEASE_ID_PATTERN = /^idectl_[0-9a-f]{32}$/;
 export const IDE_INSTANCE_ID_PATTERN = /^ide_[0-9a-f]{32}$/;
 export const IDE_SESSION_ID_PATTERN = /^ides_[0-9a-f]{32}$/;
 export const IDE_OPERATION_ID_PATTERN = /^ideo_[0-9a-f]{32}$/;
@@ -74,6 +76,14 @@ function assertPattern(value: unknown, pattern: RegExp, field: string): asserts 
   if (typeof value !== 'string' || !pattern.test(value)) {
     throw new IdeSessionContractError('INVALID_IDE_IDENTITY', `${field} is invalid`);
   }
+}
+
+export function assertIdeEnrollmentId(value: unknown): asserts value is string {
+  assertPattern(value, IDE_ENROLLMENT_ID_PATTERN, 'enrollmentId');
+}
+
+export function assertIdeControllerLeaseId(value: unknown): asserts value is string {
+  assertPattern(value, IDE_CONTROLLER_LEASE_ID_PATTERN, 'controllerLeaseId');
 }
 
 export function assertIdeInstanceId(value: unknown): asserts value is string {
