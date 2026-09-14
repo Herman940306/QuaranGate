@@ -14,9 +14,20 @@
  *   prompt_hash remains as durable audit identity.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { randomInt } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { chmodSync, existsSync } from 'node:fs';
 import { BridgeError } from '../../shared/errors.js';
+import {
+  assertLiveWriterLeaseId,
+  assertLiveWriterLogicalId,
+  assertLiveWriterOwner,
+  assertLiveWriterPrincipalId,
+  LIVE_WRITER_LEASE_ID_PATTERN,
+  LIVE_WRITER_LEASE_STATES,
+  LIVE_WRITER_OWNER_KINDS,
+  type LiveWriterLeaseState,
+  type LiveWriterOwnerKind,
+} from '../../shared/liveWriter.js';
 import { AgentSessionStore } from './sessionStore.js';
 import {
   assertAgentJobTransition,
@@ -40,7 +51,7 @@ import {
   type AgentRetentionClass,
 } from '../../shared/agents.js';
 
-export const AGENT_JOB_SCHEMA_VERSION = 7;
+export const AGENT_JOB_SCHEMA_VERSION = 8;
 
 /**
  * Concurrency admission counts EXECUTING jobs only. QUEUED jobs are "active"
@@ -75,6 +86,7 @@ const REQUIRED_SCHEMA_TABLES = [
   'agent_apply_journal',
   'agent_sessions',
   'agent_provider_state',
+  'live_writer_leases',
 ] as const;
 
 /** Required column -> declared SQLite affinity, per table. */
@@ -105,6 +117,7 @@ const REQUIRED_SCHEMA_COLUMNS: Record<string, Record<string, string>> = {
     reason: 'TEXT', started_at: 'TEXT', finished_at: 'TEXT',
     success_evidence: 'TEXT', rollback_evidence: 'TEXT',
     mutated_path_count: 'INTEGER', applier_image: 'TEXT',
+    worktree_id: 'TEXT', writer_lease_id: 'TEXT',
   },
   agent_apply_journal: {
     id: 'INTEGER', attempt_id: 'TEXT', op_index: 'INTEGER', path: 'TEXT',
@@ -124,6 +137,11 @@ const REQUIRED_SCHEMA_COLUMNS: Record<string, Record<string, string>> = {
     last_failure_code: 'TEXT', last_success_at: 'TEXT', cooldown_until: 'TEXT',
     circuit_state: 'TEXT', updated_at: 'TEXT',
   },
+  live_writer_leases: {
+    writer_lease_id: 'TEXT', project_id: 'TEXT', worktree_id: 'TEXT',
+    owner_kind: 'TEXT', owner_id: 'TEXT', principal_id: 'TEXT', state: 'TEXT',
+    acquired_at: 'TEXT', finished_at: 'TEXT', reason: 'TEXT',
+  },
 };
 
 /** Partial unique indexes that ARE the active-attempt exclusion authority. */
@@ -131,6 +149,37 @@ const REQUIRED_SCHEMA_INDEXES = [
   'idx_apply_attempts_active_job',
   'idx_apply_attempts_active_project',
 ] as const;
+
+const LIVE_WRITER_TABLE_SQL = `CREATE TABLE live_writer_leases (
+  writer_lease_id TEXT PRIMARY KEY NOT NULL,
+  project_id TEXT NOT NULL,
+  worktree_id TEXT NOT NULL,
+  owner_kind TEXT NOT NULL CHECK(owner_kind IN ('agent_apply','ide')),
+  owner_id TEXT NOT NULL,
+  principal_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('ACTIVE','RELEASED','UNCERTAIN')),
+  acquired_at TEXT NOT NULL,
+  finished_at TEXT,
+  reason TEXT
+)`;
+
+const LIVE_WRITER_INDEX_DEFINITIONS = {
+  idx_live_writer_one_held_target: {
+    columns: ['project_id', 'worktree_id'],
+    unique: 1,
+    partial: 1,
+    sql: `CREATE UNIQUE INDEX idx_live_writer_one_held_target
+      ON live_writer_leases(project_id, worktree_id)
+      WHERE state IN ('ACTIVE','UNCERTAIN')`,
+  },
+  idx_live_writer_owner_once: {
+    columns: ['owner_kind', 'owner_id'],
+    unique: 1,
+    partial: 0,
+    sql: `CREATE UNIQUE INDEX idx_live_writer_owner_once
+      ON live_writer_leases(owner_kind, owner_id)`,
+  },
+} as const;
 
 export type ProviderCircuitState = 'CLOSED' | 'OPEN';
 
@@ -309,6 +358,31 @@ export interface AgentApplyAttemptRow {
   mutatedPathCount: number | null;
   /** Applier container/image identity, for durable evidence (later batches). */
   applierImage: string | null;
+  /** B8 trusted logical worktree identity. NULL only for pre-B8 historical attempts. */
+  worktreeId: string | null;
+  /** B8 shared live-writer lease. NULL only for pre-B8 historical attempts. */
+  writerLeaseId: string | null;
+}
+
+export interface LiveWriterLeaseRow {
+  writerLeaseId: string;
+  projectId: string;
+  worktreeId: string;
+  ownerKind: LiveWriterOwnerKind;
+  ownerId: string;
+  principalId: string;
+  state: LiveWriterLeaseState;
+  acquiredAt: string;
+  finishedAt: string | null;
+  reason: string | null;
+}
+
+export interface AcquireLiveWriterLeaseInput {
+  projectId: string;
+  worktreeId: string;
+  ownerKind: LiveWriterOwnerKind;
+  ownerId: string;
+  principalId: string;
 }
 
 /**
@@ -324,6 +398,8 @@ export interface AgentApplyAttemptRow {
 export interface NewApplyAttempt {
   attemptId: string;
   jobId: string;
+  /** Trusted project-registry worktree identity; never accepted from MCP input. */
+  worktreeId: string;
 }
 
 export interface ApplyAttemptTransitionExtras {
@@ -483,8 +559,9 @@ export class AgentJobStore {
    *
    * Fail closed instead of repairing or inferring missing historical state.
    */
-  private assertSchemaShape(options: { includeProviderState?: boolean; stampedVersion?: number } = {}): void {
+  private assertSchemaShape(options: { includeProviderState?: boolean; includeLiveWriter?: boolean; stampedVersion?: number } = {}): void {
     const includeProviderState = options.includeProviderState ?? true;
+    const includeLiveWriter = options.includeLiveWriter ?? true;
     const stampedVersion = options.stampedVersion ?? AGENT_JOB_SCHEMA_VERSION;
     const missing: string[] = [];
 
@@ -495,6 +572,7 @@ export class AgentJobStore {
 
     for (const t of REQUIRED_SCHEMA_TABLES) {
       if (!includeProviderState && t === 'agent_provider_state') continue;
+      if (!includeLiveWriter && t === 'live_writer_leases') continue;
       if (!tableExists(t)) missing.push(`table ${t}`);
     }
 
@@ -502,9 +580,11 @@ export class AgentJobStore {
     // missing table is already reported above; do not double-report its columns.
     for (const [table, columns] of Object.entries(REQUIRED_SCHEMA_COLUMNS)) {
       if (!includeProviderState && table === 'agent_provider_state') continue;
+      if (!includeLiveWriter && table === 'live_writer_leases') continue;
       if (!tableExists(table)) continue;
       const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string }[];
       for (const [column, affinity] of Object.entries(columns)) {
+        if (!includeLiveWriter && table === 'agent_apply_attempts' && (column === 'worktree_id' || column === 'writer_lease_id')) continue;
         const got = info.find((c) => c.name === column);
         if (!got) { missing.push(`${table}.${column}`); continue; }
         if (String(got.type).toUpperCase() !== affinity) {
@@ -522,6 +602,31 @@ export class AgentJobStore {
       }
     }
 
+    if (includeLiveWriter && tableExists('live_writer_leases')) {
+      const normalizeSql = (sql: string): string => sql.replace(/\s+/g, ' ').trim().replace(/;$/, '').toLowerCase();
+      const tableSql = this.db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='live_writer_leases'`).get() as { sql: string | null } | undefined;
+      if (!tableSql?.sql || normalizeSql(tableSql.sql) !== normalizeSql(LIVE_WRITER_TABLE_SQL)) {
+        missing.push('table live_writer_leases definition');
+      }
+      const writerFk = (this.db.prepare(`PRAGMA foreign_key_list(agent_apply_attempts)`).all() as Array<{table:string;from:string;to:string}>)
+        .find((row) => row.from === 'writer_lease_id');
+      if (!writerFk || writerFk.table !== 'live_writer_leases' || writerFk.to !== 'writer_lease_id') {
+        missing.push('agent_apply_attempts.writer_lease_id foreign key');
+      }
+      for (const [name, expected] of Object.entries(LIVE_WRITER_INDEX_DEFINITIONS)) {
+        const list = this.db.prepare(`PRAGMA index_list(live_writer_leases)`).all() as Array<{ name: string; unique: number; partial: number }>;
+        const entry = list.find((row) => row.name === name);
+        if (!entry || entry.unique !== expected.unique || entry.partial !== expected.partial) {
+          missing.push(`index ${name} uniqueness/partial shape`); continue;
+        }
+        const cols = (this.db.prepare(`PRAGMA index_info(${name})`).all() as Array<{ seqno: number; name: string }>)
+          .sort((a,b) => a.seqno-b.seqno).map((row) => row.name);
+        if (JSON.stringify(cols) !== JSON.stringify(expected.columns)) { missing.push(`index ${name} columns`); continue; }
+        const stored = this.db.prepare(`SELECT sql FROM sqlite_master WHERE type='index' AND name=?`).get(name) as { sql: string | null } | undefined;
+        if (!stored?.sql || normalizeSql(stored.sql) !== normalizeSql(expected.sql)) missing.push(`index ${name} definition`);
+      }
+    }
+
     if (missing.length > 0) {
       throw new BridgeError(
         'INTERNAL',
@@ -530,8 +635,35 @@ export class AgentJobStore {
         500,
       );
     }
+    if (includeLiveWriter) this.assertLiveWriterCoherence();
     // v6+: verify the session store shape using its own dedicated check.
     this._sessionStore.assertSchemaShape();
+  }
+
+  private assertLiveWriterCoherence(): void {
+    const allLeases=this.db.prepare(`SELECT * FROM live_writer_leases ORDER BY writer_lease_id`).all() as Array<Record<string,unknown>>;
+    for (const raw of allLeases) rowToLiveWriterLease(raw);
+
+    const attempts=this.db.prepare(`SELECT attempt_id,project_id,principal_id,state,worktree_id,writer_lease_id
+      FROM agent_apply_attempts WHERE worktree_id IS NOT NULL OR writer_lease_id IS NOT NULL`).all() as Array<Record<string,unknown>>;
+    for(const row of attempts){
+      const attemptId=String(row.attempt_id), projectId=String(row.project_id), principalId=row.principal_id==null?null:String(row.principal_id);
+      const worktreeId=row.worktree_id==null?null:String(row.worktree_id), writerLeaseId=row.writer_lease_id==null?null:String(row.writer_lease_id);
+      if(!worktreeId||!writerLeaseId||!principalId) throw new BridgeError('INTERNAL',`apply attempt ${attemptId} has incomplete live-writer provenance`,500);
+      const raw=this.db.prepare('SELECT * FROM live_writer_leases WHERE writer_lease_id=?').get(writerLeaseId) as Record<string,unknown>|undefined;
+      if(!raw) throw new BridgeError('INTERNAL',`apply attempt ${attemptId} references missing live-writer lease`,500);
+      const lease=rowToLiveWriterLease(raw);
+      if(lease.ownerKind!=='agent_apply'||lease.ownerId!==attemptId||lease.projectId!==projectId||lease.worktreeId!==worktreeId||lease.principalId!==principalId){
+        throw new BridgeError('INTERNAL',`apply attempt ${attemptId} live-writer binding is inconsistent`,500);
+      }
+      const state=String(row.state) as AgentApplyAttemptState;
+      const expected:LiveWriterLeaseState=(AGENT_APPLY_ATTEMPT_ACTIVE_STATES as readonly string[]).includes(state)?'ACTIVE':state==='UNCERTAIN'?'UNCERTAIN':'RELEASED';
+      if(lease.state!==expected) throw new BridgeError('INTERNAL',`apply attempt ${attemptId} and live-writer states disagree`,500);
+    }
+    const unlinkedAgent=this.db.prepare(`SELECT l.writer_lease_id FROM live_writer_leases l
+      LEFT JOIN agent_apply_attempts a ON a.attempt_id=l.owner_id AND l.owner_kind='agent_apply'
+      WHERE l.owner_kind='agent_apply' AND a.attempt_id IS NULL`).all() as Array<{writer_lease_id:string}>;
+    if(unlinkedAgent.length>0) throw new BridgeError('INTERNAL','agent_apply live-writer lease has no matching apply attempt',500);
   }
 
   /** P3 v7 additive durable provider-admission state. */
@@ -547,6 +679,17 @@ export class AgentJobStore {
         circuit_state        TEXT NOT NULL DEFAULT 'CLOSED',
         updated_at           TEXT NOT NULL
       );
+    `);
+  }
+
+  /** P7 B8 shared live-writer arbitration schema. */
+  private createLiveWriterSchema(): void {
+    this.db.exec(`${LIVE_WRITER_TABLE_SQL};
+      CREATE UNIQUE INDEX idx_live_writer_one_held_target
+        ON live_writer_leases(project_id, worktree_id)
+        WHERE state IN ('ACTIVE','UNCERTAIN');
+      CREATE UNIQUE INDEX idx_live_writer_owner_once
+        ON live_writer_leases(owner_kind, owner_id);
     `);
   }
 
@@ -574,7 +717,20 @@ export class AgentJobStore {
     // (apart from SQLite's normal open/journal bookkeeping); it is never
     // partially repaired or privacy-migrated before the failure is reported.
     if (version === 6) {
-      this.assertSchemaShape({ includeProviderState: false, stampedVersion: 6 });
+      this.assertSchemaShape({ includeProviderState: false, includeLiveWriter: false, stampedVersion: 6 });
+    }
+    if (version === 7) {
+      this.assertSchemaShape({ includeLiveWriter: false, stampedVersion: 7 });
+    }
+    // B8 safety boundary: no historical schema may already contain any v8
+    // live-writer objects or columns. Treat that as an interrupted/out-of-tree
+    // migration and fail before beginning our transaction; never adopt or repair
+    // partial writer authority because doing so could fabricate provenance.
+    if (version < 8) {
+      const partialWriter = this.db.prepare(`SELECT name FROM sqlite_master WHERE name IN ('live_writer_leases','idx_live_writer_one_held_target','idx_live_writer_owner_once') ORDER BY name`).all() as { name: string }[];
+      if (partialWriter.length > 0 || this.columnExists('agent_apply_attempts','worktree_id') || this.columnExists('agent_apply_attempts','writer_lease_id')) {
+        throw new BridgeError('INTERNAL', `agent job DB schema v${version} contains partial v8 live-writer state; refusing automatic repair`, 500);
+      }
     }
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -767,6 +923,18 @@ export class AgentJobStore {
           WHERE status NOT IN ('QUEUED','PREPARING','RUNNING','VALIDATING')
             AND prompt <> ''
         `);
+      }
+      if (version < 8) {
+        // v7 (P3) → v8 (P7 B8): one durable shared live-worktree writer authority.
+        // Historical apply rows retain NULL worktree/lease fields; provenance is
+        // never fabricated from current configuration during migration.
+        this.createLiveWriterSchema();
+        if (!this.columnExists('agent_apply_attempts', 'worktree_id')) {
+          this.db.exec('ALTER TABLE agent_apply_attempts ADD COLUMN worktree_id TEXT');
+        }
+        if (!this.columnExists('agent_apply_attempts', 'writer_lease_id')) {
+          this.db.exec('ALTER TABLE agent_apply_attempts ADD COLUMN writer_lease_id TEXT REFERENCES live_writer_leases(writer_lease_id)');
+        }
       }
       this.db.exec(`PRAGMA user_version=${AGENT_JOB_SCHEMA_VERSION}`);
       this.db.exec('COMMIT');
@@ -1380,6 +1548,122 @@ export class AgentJobStore {
   }
 
   // -------------------------------------------------------------------------
+  // P7 B8: shared live-worktree writer arbitration
+  // -------------------------------------------------------------------------
+
+  getLiveWriterLease(writerLeaseId: string): LiveWriterLeaseRow | undefined {
+    assertLiveWriterLeaseId(writerLeaseId);
+    const row = this.db.prepare('SELECT * FROM live_writer_leases WHERE writer_lease_id=?').get(writerLeaseId) as Record<string, unknown> | undefined;
+    return row ? rowToLiveWriterLease(row) : undefined;
+  }
+
+  acquireLiveWriterLease(input: AcquireLiveWriterLeaseInput): LiveWriterLeaseRow {
+    this.validateLiveWriterInput(input);
+    if (input.ownerKind === 'agent_apply') throw new BridgeError('PRECONDITION_FAILED','agent_apply writer leases must be acquired atomically by startApplyAttempt',409);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const lease = this.acquireLiveWriterLeaseTx(input);
+      this.db.exec('COMMIT');
+      return lease;
+    } catch (e) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw e;
+    }
+  }
+
+  releaseLiveWriterLease(input: AcquireLiveWriterLeaseInput & { writerLeaseId: string; reason?: string }): boolean {
+    this.validateLiveWriterInput(input); assertLiveWriterLeaseId(input.writerLeaseId);
+    if (input.ownerKind === 'agent_apply') throw new BridgeError('PRECONDITION_FAILED','agent_apply writer leases are released only by apply terminalization',409);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const changed = this.finishLiveWriterLeaseTx(input, input.writerLeaseId, 'RELEASED', input.reason ?? 'writer completed safely');
+      this.db.exec('COMMIT');
+      return changed;
+    } catch (e) { try { this.db.exec('ROLLBACK'); } catch {} throw e; }
+  }
+
+  markLiveWriterUncertain(input: AcquireLiveWriterLeaseInput & { writerLeaseId: string; reason: string }): boolean {
+    this.validateLiveWriterInput(input); assertLiveWriterLeaseId(input.writerLeaseId);
+    if (input.ownerKind === 'agent_apply') throw new BridgeError('PRECONDITION_FAILED','agent_apply uncertainty is coupled to project quarantine',409);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const changed = this.finishLiveWriterLeaseTx(input, input.writerLeaseId, 'UNCERTAIN', input.reason);
+      this.db.exec('COMMIT');
+      return changed;
+    } catch (e) { try { this.db.exec('ROLLBACK'); } catch {} throw e; }
+  }
+
+  private validateLiveWriterInput(input: AcquireLiveWriterLeaseInput): void {
+    assertLiveWriterLogicalId(input.projectId, 'projectId');
+    assertLiveWriterLogicalId(input.worktreeId, 'worktreeId');
+    if (!(LIVE_WRITER_OWNER_KINDS as readonly string[]).includes(input.ownerKind)) {
+      throw new BridgeError('MALFORMED_REQUEST', 'invalid live-writer owner kind', 400);
+    }
+    assertLiveWriterOwner(input.ownerKind, input.ownerId);
+    assertLiveWriterPrincipalId(input.principalId);
+  }
+
+  private acquireLiveWriterLeaseTx(input: AcquireLiveWriterLeaseInput): LiveWriterLeaseRow {
+    this.validateLiveWriterInput(input);
+    const projectState = this.db.prepare('SELECT state FROM agent_project_apply_state WHERE project_id=?').get(input.projectId) as { state: string } | undefined;
+    if (projectState?.state === 'QUARANTINED') {
+      throw new BridgeError('PROJECT_QUARANTINED', `project ${input.projectId} is quarantined and cannot accept a live writer`, 409);
+    }
+    const existingOwner = this.db.prepare('SELECT * FROM live_writer_leases WHERE owner_kind=? AND owner_id=?').get(input.ownerKind,input.ownerId) as Record<string,unknown>|undefined;
+    if (existingOwner) {
+      throw new BridgeError('LIVE_WRITER_BINDING_MISMATCH', `live-writer owner ${input.ownerKind}/${input.ownerId} has already been used`, 409);
+    }
+    const writerLeaseId = `wrl_${randomBytes(16).toString('hex')}`;
+    const acquiredAt = nowIso();
+    try {
+      this.db.prepare(`INSERT INTO live_writer_leases
+        (writer_lease_id,project_id,worktree_id,owner_kind,owner_id,principal_id,state,acquired_at)
+        VALUES (?,?,?,?,?,?,'ACTIVE',?)`).run(
+        writerLeaseId,input.projectId,input.worktreeId,input.ownerKind,input.ownerId,input.principalId,acquiredAt,
+      );
+    } catch (e) {
+      if (isUniqueConstraintViolation(e)) {
+        const held = this.db.prepare(`SELECT writer_lease_id,state,owner_kind,owner_id FROM live_writer_leases
+          WHERE project_id=? AND worktree_id=? AND state IN ('ACTIVE','UNCERTAIN')`).get(input.projectId,input.worktreeId) as Record<string,unknown>|undefined;
+        if (held) throw new BridgeError('LIVE_WRITER_BUSY', `live writer already held for ${input.projectId}/${input.worktreeId}`, 409);
+        throw new BridgeError('LIVE_WRITER_BINDING_MISMATCH', 'live-writer owner identity has already been used', 409);
+      }
+      throw e;
+    }
+    return this.getLiveWriterLease(writerLeaseId)!;
+  }
+
+  private requireExactLiveWriterTx(input: AcquireLiveWriterLeaseInput, writerLeaseId: string): LiveWriterLeaseRow {
+    const row = this.db.prepare('SELECT * FROM live_writer_leases WHERE writer_lease_id=?').get(writerLeaseId) as Record<string,unknown>|undefined;
+    if (!row) throw new BridgeError('LIVE_WRITER_BINDING_MISMATCH', 'live-writer lease does not exist', 409);
+    const lease = rowToLiveWriterLease(row);
+    if (lease.projectId!==input.projectId || lease.worktreeId!==input.worktreeId || lease.ownerKind!==input.ownerKind
+      || lease.ownerId!==input.ownerId || lease.principalId!==input.principalId) {
+      throw new BridgeError('LIVE_WRITER_BINDING_MISMATCH', 'live-writer lease binding mismatch', 409);
+    }
+    return lease;
+  }
+
+  private finishLiveWriterLeaseTx(
+    input: AcquireLiveWriterLeaseInput,
+    writerLeaseId: string,
+    to: 'RELEASED'|'UNCERTAIN',
+    reason: string,
+  ): boolean {
+    const lease = this.requireExactLiveWriterTx(input, writerLeaseId);
+    if (lease.state === 'UNCERTAIN') {
+      if (to === 'UNCERTAIN') return false;
+      throw new BridgeError('LIVE_WRITER_UNCERTAIN', 'uncertain live-writer lease cannot be released automatically', 409);
+    }
+    if (lease.state === 'RELEASED') return false;
+    const bounded = reason.slice(0, MAX_APPLY_ATTEMPT_REASON_CHARS);
+    const result = this.db.prepare(`UPDATE live_writer_leases SET state=?,finished_at=?,reason=?
+      WHERE writer_lease_id=? AND state='ACTIVE'`).run(to,nowIso(),bounded,writerLeaseId);
+    if (Number(result.changes)!==1) throw new BridgeError('LIVE_WRITER_BINDING_MISMATCH','live-writer transition lost CAS race',409);
+    return true;
+  }
+
+  // -------------------------------------------------------------------------
   // A6-B1: apply attempts
   // -------------------------------------------------------------------------
 
@@ -1416,69 +1700,72 @@ export class AgentJobStore {
    *   (throws APPLY_ATTEMPT_ACTIVE).
    */
   startApplyAttempt(attempt: NewApplyAttempt): AgentApplyAttemptRow {
+    assertLiveWriterLogicalId(attempt.worktreeId, 'worktreeId');
+    // Production apply attempt IDs are the live-writer owner identity too.
+    assertLiveWriterOwner('agent_apply', attempt.attemptId);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const job = this.db.prepare('SELECT * FROM agent_jobs WHERE job_id = ?').get(attempt.jobId) as Record<string, unknown> | undefined;
-      if (!job) {
-        throw new BridgeError('UNKNOWN_JOB', `job ${attempt.jobId} does not exist`, 404);
-      }
+      if (!job) throw new BridgeError('UNKNOWN_JOB', `job ${attempt.jobId} does not exist`, 404);
       if (String(job.status) !== 'COMPLETED') {
-        throw new BridgeError(
-          'PRECONDITION_FAILED',
-          `job ${attempt.jobId} is ${String(job.status)}, not COMPLETED; apply attempts may only be started for COMPLETED jobs`,
-          409,
-        );
+        throw new BridgeError('PRECONDITION_FAILED', `job ${attempt.jobId} is ${String(job.status)}, not COMPLETED; apply attempts may only be started for COMPLETED jobs`, 409);
       }
       const existingAttempt = this.db.prepare('SELECT 1 FROM agent_apply_attempts WHERE attempt_id = ?').get(attempt.attemptId);
-      if (existingAttempt) {
-        throw new BridgeError('DUPLICATE_ATTEMPT_ID', `apply attempt ${attempt.attemptId} already exists`, 409);
-      }
+      if (existingAttempt) throw new BridgeError('DUPLICATE_ATTEMPT_ID', `apply attempt ${attempt.attemptId} already exists`, 409);
 
-      // Derived, durable provenance — never caller-supplied.
+      // Derived durable provenance. project/principal come only from the job;
+      // worktreeId comes only from trusted Agent project config above this store.
       const projectId = String(job.project);
       const principalId = String(job.principal_id);
+      assertLiveWriterLogicalId(projectId, 'projectId');
+      assertLiveWriterPrincipalId(principalId);
       const baseCommit = (job.base_commit ?? null) as string | null;
       const expectedArtifactHash = (job.artifact_hash ?? null) as string | null;
 
       const proj = this.db.prepare('SELECT state FROM agent_project_apply_state WHERE project_id = ?').get(projectId) as { state: string } | undefined;
-      if (proj?.state === 'QUARANTINED') {
-        throw new BridgeError('PROJECT_QUARANTINED', `project ${projectId} is quarantined and cannot accept new apply attempts`, 409);
-      }
+      if (proj?.state === 'QUARANTINED') throw new BridgeError('PROJECT_QUARANTINED', `project ${projectId} is quarantined and cannot accept new apply attempts`, 409);
 
+      // Preserve A6's more-specific same-apply-lane conflict before asking the
+      // shared B8 arbiter. BEGIN IMMEDIATE makes this check+insert serialized;
+      // the historical partial unique indexes remain a second hard authority.
+      const activeAttempt = this.db.prepare(`SELECT 1 FROM agent_apply_attempts
+        WHERE (job_id=? OR project_id=?) AND state IN (${ACTIVE_ATTEMPT_SQL_LIST}) LIMIT 1`).get(attempt.jobId,projectId);
+      if (activeAttempt) throw new BridgeError('APPLY_ATTEMPT_ACTIVE', `an apply attempt is already active for job ${attempt.jobId} or project ${projectId}`, 409);
+
+      const lease = this.acquireLiveWriterLeaseTx({
+        projectId, worktreeId: attempt.worktreeId, ownerKind: 'agent_apply', ownerId: attempt.attemptId, principalId,
+      });
       try {
-        this.db.prepare(`
-          INSERT INTO agent_apply_attempts
-            (attempt_id, job_id, project_id, principal_id, expected_artifact_hash, base_commit, state, started_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'STARTED', ?)
-        `).run(
-          attempt.attemptId, attempt.jobId, projectId,
-          principalId, expectedArtifactHash, baseCommit,
-          nowIso(),
+        this.db.prepare(`INSERT INTO agent_apply_attempts
+          (attempt_id,job_id,project_id,principal_id,expected_artifact_hash,base_commit,state,started_at,worktree_id,writer_lease_id)
+          VALUES (?,?,?,?,?,?,'STARTED',?,?,?)`).run(
+          attempt.attemptId,attempt.jobId,projectId,principalId,expectedArtifactHash,baseCommit,nowIso(),attempt.worktreeId,lease.writerLeaseId,
         );
       } catch (e) {
-        if (isUniqueConstraintViolation(e)) {
-          throw new BridgeError(
-            'APPLY_ATTEMPT_ACTIVE',
-            `an apply attempt is already active for job ${attempt.jobId} or project ${projectId}`,
-            409,
-          );
-        }
+        if (isUniqueConstraintViolation(e)) throw new BridgeError('APPLY_ATTEMPT_ACTIVE', `an apply attempt is already active for job ${attempt.jobId} or project ${projectId}`, 409);
         throw e;
       }
       this.db.exec('COMMIT');
     } catch (e) {
-      // Any failure ABOVE this point (including a failed COMMIT itself)
-      // means the transaction never durably succeeded, so a ROLLBACK here is
-      // always safe and always the right response.
-      this.db.exec('ROLLBACK');
+      try { this.db.exec('ROLLBACK'); } catch {}
       throw e;
     }
-    // The transaction already committed durably above. This read is
-    // deliberately OUTSIDE the try/catch: if it throws for any reason, the
-    // original error must propagate as-is and must NEVER trigger a ROLLBACK
-    // — there is no open transaction left to roll back, and attempting one
-    // here would mask the read failure behind a spurious SQLite error.
     return this.getApplyAttempt(attempt.attemptId)!;
+  }
+
+  private finishApplyWriterLeaseTx(attemptId: string, to: 'RELEASED'|'UNCERTAIN', reason: string): boolean {
+    const row = this.db.prepare(`SELECT project_id,principal_id,worktree_id,writer_lease_id FROM agent_apply_attempts WHERE attempt_id=?`).get(attemptId) as
+      {project_id:string; principal_id:string|null; worktree_id:string|null; writer_lease_id:string|null}|undefined;
+    if (!row) throw new BridgeError('LIVE_WRITER_BINDING_MISMATCH', `apply attempt ${attemptId} disappeared while settling its writer lease`, 500);
+    // Historical pre-B8 attempts legitimately have neither field. Startup
+    // recovery still quarantines any historical APPLYING attempt before new
+    // writer admission, so no authority is fabricated here.
+    if (row.worktree_id===null && row.writer_lease_id===null) return false;
+    if (row.worktree_id===null || row.writer_lease_id===null || row.principal_id===null) {
+      throw new BridgeError('LIVE_WRITER_BINDING_MISMATCH', `apply attempt ${attemptId} has incomplete B8 writer provenance`, 500);
+    }
+    const input:AcquireLiveWriterLeaseInput={projectId:row.project_id,worktreeId:row.worktree_id,ownerKind:'agent_apply',ownerId:attemptId,principalId:row.principal_id};
+    return this.finishLiveWriterLeaseTx(input,row.writer_lease_id,to,reason);
   }
 
   /**
@@ -1504,24 +1791,28 @@ export class AgentJobStore {
     extras: ApplyAttemptTransitionExtras = {},
   ): boolean {
     if (to === 'VERIFIED_SUCCESS' || to === 'UNCERTAIN') {
-      throw new BridgeError(
-        'INVALID_ATTEMPT_TRANSITION',
-        `apply attempt transition to ${to} must go through its dedicated atomic primitive, not the generic transition`,
-        409,
-      );
+      throw new BridgeError('INVALID_ATTEMPT_TRANSITION', `apply attempt transition to ${to} must go through its dedicated atomic primitive, not the generic transition`, 409);
     }
     assertApplyAttemptTransition(from, to);
+    const safeTerminal = to === 'PRECONDITION_FAILED' || to === 'ARTIFACT_INVALID' || to === 'FAILED_ROLLED_BACK' || to === 'ABORTED_NO_MUTATION';
     const sets: string[] = ['state = ?'];
-    const args: (string | number)[] = [to];
-    if (extras.finishedAt !== undefined) { sets.push('finished_at = ?'); args.push(extras.finishedAt); }
+    const args: (string | number | null)[] = [to];
+    if (safeTerminal && extras.finishedAt === undefined) { sets.push('finished_at = ?'); args.push(nowIso()); }
+    else if (extras.finishedAt !== undefined) { sets.push('finished_at = ?'); args.push(extras.finishedAt); }
     if (extras.reason !== undefined) { sets.push('reason = ?'); args.push(extras.reason.slice(0, MAX_APPLY_ATTEMPT_REASON_CHARS)); }
     if (extras.successEvidence !== undefined) { sets.push('success_evidence = ?'); args.push(extras.successEvidence.slice(0, MAX_APPLY_ATTEMPT_EVIDENCE_CHARS)); }
     if (extras.rollbackEvidence !== undefined) { sets.push('rollback_evidence = ?'); args.push(extras.rollbackEvidence.slice(0, MAX_APPLY_ATTEMPT_EVIDENCE_CHARS)); }
     if (extras.mutatedPathCount !== undefined) { sets.push('mutated_path_count = ?'); args.push(extras.mutatedPathCount); }
     if (extras.applierImage !== undefined) { sets.push('applier_image = ?'); args.push(extras.applierImage); }
     args.push(attemptId, from);
-    const res = this.db.prepare(`UPDATE agent_apply_attempts SET ${sets.join(', ')} WHERE attempt_id = ? AND state = ?`).run(...args);
-    return Number(res.changes) === 1;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const res = this.db.prepare(`UPDATE agent_apply_attempts SET ${sets.join(', ')} WHERE attempt_id = ? AND state = ?`).run(...args);
+      if (Number(res.changes) !== 1) { this.db.exec('ROLLBACK'); return false; }
+      if (safeTerminal) this.finishApplyWriterLeaseTx(attemptId,'RELEASED',extras.reason ?? `apply attempt ended ${to}`);
+      this.db.exec('COMMIT');
+      return true;
+    } catch (e) { try { this.db.exec('ROLLBACK'); } catch {} throw e; }
   }
 
   /**
@@ -1592,6 +1883,7 @@ export class AgentJobStore {
         WHERE job_id = ? AND status = 'COMPLETED'
       `).run(T, T, retainUntil, jobId);
       if (Number(j.changes) !== 1) { this.db.exec('ROLLBACK'); return false; }
+      this.finishApplyWriterLeaseTx(attemptId, 'RELEASED', 'agent_apply verified success');
       this.db.exec('COMMIT');
       return true;
     } catch (e) {
@@ -1855,9 +2147,10 @@ export class AgentJobStore {
    * quarantining is idempotent (a project already QUARANTINED keeps its
    * original cause/timestamp rather than being overwritten).
    */
-  recoverApplyAttempts(reason: string): { abortedNoMutation: string[]; uncertain: string[] } {
+  recoverApplyAttempts(reason: string): { abortedNoMutation: string[]; uncertain: string[]; uncertainWriterLeaseIds: string[] } {
     const abortedNoMutation: string[] = [];
     const uncertain: string[] = [];
+    const uncertainWriterLeaseIds: string[] = [];
     const boundedReason = reason.slice(0, MAX_APPLY_ATTEMPT_REASON_CHARS);
     const now = nowIso();
     this.db.exec('BEGIN IMMEDIATE');
@@ -1870,7 +2163,10 @@ export class AgentJobStore {
           UPDATE agent_apply_attempts SET state = 'ABORTED_NO_MUTATION', finished_at = ?, reason = ?
           WHERE attempt_id = ? AND state IN ('STARTED','VERIFYING')
         `).run(now, boundedReason, row.attempt_id);
-        if (Number(res.changes) === 1) abortedNoMutation.push(row.attempt_id);
+        if (Number(res.changes) === 1) {
+          abortedNoMutation.push(row.attempt_id);
+          this.finishApplyWriterLeaseTx(row.attempt_id, 'RELEASED', boundedReason);
+        }
       }
 
       const applying = this.db.prepare(
@@ -1901,13 +2197,24 @@ export class AgentJobStore {
             quarantine_reason = CASE WHEN agent_project_apply_state.state = 'QUARANTINED'
               THEN agent_project_apply_state.quarantine_reason ELSE excluded.quarantine_reason END
         `).run(row.project_id, now, row.job_id, row.attempt_id, boundedReason);
+        this.finishApplyWriterLeaseTx(row.attempt_id, 'UNCERTAIN', boundedReason);
+      }
+
+      // Any ACTIVE lease not consumed by the coherent apply-attempt recovery
+      // above is fail-closed after process restart. This includes future IDE
+      // writers: no automatic release is allowed when mutation outcome is not
+      // durably proven. UNCERTAIN remains inside the held-target unique index.
+      const orphanWriters=this.db.prepare(`SELECT writer_lease_id FROM live_writer_leases WHERE state='ACTIVE' ORDER BY writer_lease_id`).all() as {writer_lease_id:string}[];
+      for(const row of orphanWriters){
+        const changed=this.db.prepare(`UPDATE live_writer_leases SET state='UNCERTAIN',finished_at=?,reason=? WHERE writer_lease_id=? AND state='ACTIVE'`).run(now,boundedReason,row.writer_lease_id);
+        if(Number(changed.changes)===1) uncertainWriterLeaseIds.push(row.writer_lease_id);
       }
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
     }
-    return { abortedNoMutation, uncertain };
+    return { abortedNoMutation, uncertain, uncertainWriterLeaseIds };
   }
 
   // -------------------------------------------------------------------------
@@ -1975,6 +2282,12 @@ export class AgentJobStore {
     const now = nowIso();
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      const durable = this.db.prepare(`SELECT project_id FROM agent_apply_attempts WHERE attempt_id=? AND job_id=? AND state='APPLYING'`)
+        .get(attemptId, jobId) as { project_id: string } | undefined;
+      if (!durable) { this.db.exec('ROLLBACK'); return false; }
+      if (durable.project_id !== projectId) {
+        throw new BridgeError('LIVE_WRITER_BINDING_MISMATCH', `apply attempt ${attemptId} belongs to project ${durable.project_id}, not ${projectId}`, 409);
+      }
       const res = this.db.prepare(`
         UPDATE agent_apply_attempts
         SET state = 'UNCERTAIN', finished_at = ?, reason = ?
@@ -1998,6 +2311,7 @@ export class AgentJobStore {
             THEN agent_project_apply_state.quarantine_reason ELSE excluded.quarantine_reason END
       `).run(projectId, now, jobId, attemptId, boundedReason);
 
+      this.finishApplyWriterLeaseTx(attemptId, 'UNCERTAIN', boundedReason);
       this.db.exec('COMMIT');
       return true;
     } catch (e) {
@@ -2086,6 +2400,19 @@ function rowToApplyJournal(r: Record<string, unknown>): AgentApplyJournalRow {
   };
 }
 
+function rowToLiveWriterLease(r: Record<string, unknown>): LiveWriterLeaseRow {
+  const writerLeaseId=String(r.writer_lease_id), projectId=String(r.project_id), worktreeId=String(r.worktree_id);
+  const ownerKind=String(r.owner_kind) as LiveWriterOwnerKind, ownerId=String(r.owner_id), principalId=String(r.principal_id);
+  const state=String(r.state) as LiveWriterLeaseState;
+  assertLiveWriterLeaseId(writerLeaseId); assertLiveWriterLogicalId(projectId,'projectId'); assertLiveWriterLogicalId(worktreeId,'worktreeId');
+  if (!(LIVE_WRITER_OWNER_KINDS as readonly string[]).includes(ownerKind)) throw new BridgeError('INTERNAL','live-writer owner kind is invalid',500);
+  assertLiveWriterOwner(ownerKind,ownerId); assertLiveWriterPrincipalId(principalId);
+  if (!(LIVE_WRITER_LEASE_STATES as readonly string[]).includes(state)) throw new BridgeError('INTERNAL','live-writer lease state is invalid',500);
+  const finishedAt=(r.finished_at??null) as string|null;
+  if ((state==='ACTIVE') !== (finishedAt===null)) throw new BridgeError('INTERNAL','live-writer state/timestamp fields are inconsistent',500);
+  return {writerLeaseId,projectId,worktreeId,ownerKind,ownerId,principalId,state,acquiredAt:String(r.acquired_at),finishedAt,reason:(r.reason??null) as string|null};
+}
+
 function rowToApplyAttempt(r: Record<string, unknown>): AgentApplyAttemptRow {
   return {
     attemptId: String(r.attempt_id),
@@ -2102,5 +2429,7 @@ function rowToApplyAttempt(r: Record<string, unknown>): AgentApplyAttemptRow {
     rollbackEvidence: (r.rollback_evidence ?? null) as string | null,
     mutatedPathCount: r.mutated_path_count === null || r.mutated_path_count === undefined ? null : Number(r.mutated_path_count),
     applierImage: (r.applier_image ?? null) as string | null,
+    worktreeId: (r.worktree_id ?? null) as string | null,
+    writerLeaseId: (r.writer_lease_id ?? null) as string | null,
   };
 }

@@ -375,6 +375,7 @@ class FakeApplierIO implements ApplierIO {
 const PROJECT: AgentProjectConfig = {
   id: PROJECT_ID,
   hostPath: '/srv/proj1',
+  worktreeId: 'main',
   gitRequired: true,
   backends: ['kiro'],
   profiles: ['implement'],
@@ -555,7 +556,7 @@ describe('A6-B5 apply engine', () => {
       insertCompletedJob(store);
       publishArtifact(store, artifact);
       // Quarantine the project via the same mechanism restart recovery uses.
-      store.startApplyAttempt({ attemptId: 'att_' + '1'.repeat(32), jobId: JOB_ID });
+      store.startApplyAttempt({ attemptId: 'att_' + '1'.repeat(32), jobId: JOB_ID, worktreeId: 'main' });
       store.transitionApplyAttempt('att_' + '1'.repeat(32), 'STARTED', 'VERIFYING');
       store.transitionApplyAttempt('att_' + '1'.repeat(32), 'VERIFYING', 'APPLYING');
       store.recoverApplyAttempts('simulated crash for quarantine test');
@@ -955,7 +956,7 @@ describe('A6-B5 apply engine', () => {
       insertCompletedJob(store);
       store.transition(JOB_ID, 'VALIDATING', 'COMPLETED');
       const attemptId = 'att_' + '2'.repeat(32);
-      store.startApplyAttempt({ attemptId, jobId: JOB_ID });
+      store.startApplyAttempt({ attemptId, jobId: JOB_ID, worktreeId: 'main' });
       store.transitionApplyAttempt(attemptId, 'STARTED', 'VERIFYING');
       store.transitionApplyAttempt(attemptId, 'VERIFYING', 'APPLYING');
 
@@ -978,7 +979,7 @@ describe('A6-B5 apply engine', () => {
       insertCompletedJob(store);
       store.transition(JOB_ID, 'VALIDATING', 'COMPLETED');
       const attemptId = 'att_' + '2'.repeat(32);
-      store.startApplyAttempt({ attemptId, jobId: JOB_ID });
+      store.startApplyAttempt({ attemptId, jobId: JOB_ID, worktreeId: 'main' });
       store.transitionApplyAttempt(attemptId, 'STARTED', 'VERIFYING');
       store.transitionApplyAttempt(attemptId, 'VERIFYING', 'APPLYING');
       store.markApplyUncertain(attemptId, JOB_ID, PROJECT_ID, 'runtime failure reason');
@@ -996,7 +997,7 @@ describe('A6-B5 apply engine', () => {
       insertCompletedJob(store);
       store.transition(JOB_ID, 'VALIDATING', 'COMPLETED');
       const attemptId = 'att_' + '4'.repeat(32);
-      store.startApplyAttempt({ attemptId, jobId: JOB_ID });
+      store.startApplyAttempt({ attemptId, jobId: JOB_ID, worktreeId: 'main' });
       // still STARTED, not APPLYING
       expect(store.markApplyUncertain(attemptId, JOB_ID, PROJECT_ID, 'reason')).toBe(false);
       expect(store.getProjectApplyState(PROJECT_ID)?.state ?? 'NORMAL').toBe('NORMAL');
@@ -1008,7 +1009,7 @@ describe('A6-B5 apply engine', () => {
       insertCompletedJob(store);
       store.transition(JOB_ID, 'VALIDATING', 'COMPLETED');
       const attemptId = 'att_' + '5'.repeat(32);
-      store.startApplyAttempt({ attemptId, jobId: JOB_ID });
+      store.startApplyAttempt({ attemptId, jobId: JOB_ID, worktreeId: 'main' });
 
       store.insertApplyJournalRow({ attemptId, opIndex: 1, path: 'b.txt', op: 'ADD', beforeExisted: false, beforeContentHash: null, beforeMode: null, createdDirs: ['/project/dir'] });
       store.insertApplyJournalRow({ attemptId, opIndex: 0, path: 'a.txt', op: 'CONTENT_MODIFY', beforeExisted: true, beforeContentHash: 'f'.repeat(64), beforeMode: 0o644, createdDirs: null });
@@ -1027,7 +1028,7 @@ describe('A6-B5 apply engine', () => {
       insertCompletedJob(store);
       store.transition(JOB_ID, 'VALIDATING', 'COMPLETED');
       const attemptId = 'att_' + '6'.repeat(32);
-      store.startApplyAttempt({ attemptId, jobId: JOB_ID });
+      store.startApplyAttempt({ attemptId, jobId: JOB_ID, worktreeId: 'main' });
       store.insertApplyJournalRow({ attemptId, opIndex: 0, path: 'a.txt', op: 'ADD', beforeExisted: false, beforeContentHash: null, beforeMode: null, createdDirs: null });
       expect(() => store.insertApplyJournalRow({ attemptId, opIndex: 0, path: 'a.txt', op: 'ADD', beforeExisted: false, beforeContentHash: null, beforeMode: null, createdDirs: null }))
         .toThrow(BridgeError);
@@ -1039,7 +1040,7 @@ describe('A6-B5 apply engine', () => {
       insertCompletedJob(store);
       store.transition(JOB_ID, 'VALIDATING', 'COMPLETED');
       const attemptId = 'att_' + '7'.repeat(32);
-      store.startApplyAttempt({ attemptId, jobId: JOB_ID });
+      store.startApplyAttempt({ attemptId, jobId: JOB_ID, worktreeId: 'main' });
       store.transitionApplyAttempt(attemptId, 'STARTED', 'VERIFYING');
       store.transitionApplyAttempt(attemptId, 'VERIFYING', 'APPLYING');
 
@@ -1055,7 +1056,7 @@ describe('A6-B5 apply engine', () => {
       insertCompletedJob(store);
       store.transition(JOB_ID, 'VALIDATING', 'COMPLETED');
       const attemptId = 'att_' + '8'.repeat(32);
-      store.startApplyAttempt({ attemptId, jobId: JOB_ID });
+      store.startApplyAttempt({ attemptId, jobId: JOB_ID, worktreeId: 'main' });
 
       const result = store.recoverApplyAttempts('executor restarted before mutation began');
       expect(result.abortedNoMutation).toEqual([attemptId]);
@@ -1718,6 +1719,8 @@ describe('A6-B5 gateway registration', () => {
     for (const bad of [
       { jobId: JOB_ID, patch: 'diff --git a b' },
       { jobId: JOB_ID, hostPath: '/etc' },
+      { jobId: JOB_ID, worktreeId: 'main' },
+      { jobId: JOB_ID, writerLeaseId: `wrl_${'a'.repeat(32)}` },
       { jobId: JOB_ID, image: 'evil:latest' },
       { jobId: JOB_ID, mounts: [] },
       { jobId: JOB_ID, command: ['rm', '-rf', '/'] },

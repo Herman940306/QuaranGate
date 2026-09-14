@@ -51,8 +51,9 @@ function newJob(over: Partial<NewAgentJob> = {}): NewAgentJob {
 function newAttempt(over: Partial<NewApplyAttempt> = {}): NewApplyAttempt {
   seq += 1;
   return {
-    attemptId: `attempt_${seq.toString(16).padStart(32, '0')}`,
+    attemptId: `att_${seq.toString(16).padStart(32, '0')}`,
     jobId: `job_${seq.toString(16).padStart(32, '0')}`,
+    worktreeId: 'main',
     ...over,
   };
 }
@@ -586,9 +587,9 @@ describe('A6-B1 D2: startApplyAttempt derives ALL provenance from the durable jo
     expect(attempt.expectedArtifactHash).toBe('c'.repeat(64));
   });
 
-  it('the API surface accepts only attemptId and jobId — there is no project/principal/baseCommit/artifactHash parameter to restate', () => {
+  it('the internal apply-admission surface accepts trusted worktreeId but no project/principal/baseCommit/artifactHash override', () => {
     const job = completeJob({ project: 'true-project', principalId: 'true-principal' });
-    const attempt = store.startApplyAttempt({ attemptId: 'attempt_' + 'e'.repeat(32), jobId: job.jobId });
+    const attempt = store.startApplyAttempt({ attemptId: 'att_' + 'e'.repeat(32), jobId: job.jobId, worktreeId: 'main' });
     expect(attempt.projectId).toBe('true-project');
     expect(attempt.principalId).toBe('true-principal');
   });
@@ -642,14 +643,14 @@ describe('A6-B1 duplicate attempt id vs active collision classification', () => 
   it('a duplicate attemptId for the SAME job is classified as DUPLICATE_ATTEMPT_ID, not APPLY_ATTEMPT_ACTIVE', () => {
     const job = completeJob({ project: 'dup-id-project' });
     const attempt = store.startApplyAttempt(newAttempt({ jobId: job.jobId }));
-    expect(errCode(() => store.startApplyAttempt({ attemptId: attempt.attemptId, jobId: job.jobId }))).toBe('DUPLICATE_ATTEMPT_ID');
+    expect(errCode(() => store.startApplyAttempt({ attemptId: attempt.attemptId, jobId: job.jobId, worktreeId: 'main' }))).toBe('DUPLICATE_ATTEMPT_ID');
   });
 
   it('a duplicate attemptId reused for a DIFFERENT (unrelated, still-COMPLETED) job is also classified as DUPLICATE_ATTEMPT_ID', () => {
     const jobA = completeJob({ project: 'dup-id-project-a' });
     const jobB = completeJob({ project: 'dup-id-project-b' });
     const attemptA = store.startApplyAttempt(newAttempt({ jobId: jobA.jobId }));
-    expect(errCode(() => store.startApplyAttempt({ attemptId: attemptA.attemptId, jobId: jobB.jobId }))).toBe('DUPLICATE_ATTEMPT_ID');
+    expect(errCode(() => store.startApplyAttempt({ attemptId: attemptA.attemptId, jobId: jobB.jobId, worktreeId: 'main' }))).toBe('DUPLICATE_ATTEMPT_ID');
   });
 
   it('a DIFFERENT attemptId for the same already-active job/project is classified as APPLY_ATTEMPT_ACTIVE, not DUPLICATE_ATTEMPT_ID', () => {

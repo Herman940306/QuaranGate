@@ -380,10 +380,11 @@ function seedJob(store: AgentJobStore, status: AgentJobStatus, art?: BuiltArtifa
   if (status === 'COMPLETED') return;
   if (status === 'DISCARDED') { store.discardJob(JOB_ID); return; }
   if (status === 'APPLIED') {
-    store.startApplyAttempt({ attemptId: 'att1', jobId: JOB_ID });
-    store.transitionApplyAttempt('att1', 'STARTED', 'VERIFYING');
-    store.transitionApplyAttempt('att1', 'VERIFYING', 'APPLYING');
-    store.markApplySuccess('att1', JOB_ID);
+    store.startApplyAttempt({ attemptId: `att_${'1'.repeat(32)}`, jobId: JOB_ID, worktreeId: 'main' });
+    const aid=`att_${'1'.repeat(32)}`;
+    store.transitionApplyAttempt(aid, 'STARTED', 'VERIFYING');
+    store.transitionApplyAttempt(aid, 'VERIFYING', 'APPLYING');
+    store.markApplySuccess(aid, JOB_ID);
     return;
   }
 }

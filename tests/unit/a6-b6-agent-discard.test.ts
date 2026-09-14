@@ -89,7 +89,7 @@ function seedJob(store: AgentJobStore, jobId: string, status: AgentJobStatus, pr
   if (status === 'DISCARDED') { store.discardJob(jobId); return; }
   if (status === 'APPLIED') {
     const attemptId = `att_${randomBytes(16).toString('hex')}`;
-    store.startApplyAttempt({ attemptId, jobId });
+    store.startApplyAttempt({ attemptId, jobId, worktreeId: 'main' });
     store.transitionApplyAttempt(attemptId, 'STARTED', 'VERIFYING');
     store.transitionApplyAttempt(attemptId, 'VERIFYING', 'APPLYING');
     store.markApplySuccess(attemptId, jobId);
@@ -245,7 +245,7 @@ describe('A6-B6 ENGINE: AgentJobEngine.discard()', () => {
     const store = new AgentJobStore(':memory:');
     const jobId = makeJobId();
     seedJob(store, jobId, 'COMPLETED');
-    store.startApplyAttempt({ attemptId: `att_${randomBytes(16).toString('hex')}`, jobId });
+    store.startApplyAttempt({ attemptId: `att_${randomBytes(16).toString('hex')}`, jobId, worktreeId: 'main' });
     const engine = new AgentJobEngine(store, CONFIG);
     expect(await errCode(async () => engine.discard(jobId, PRINCIPAL_ID))).toBe('APPLY_ATTEMPT_ACTIVE');
     expect(store.get(jobId)!.status).toBe('COMPLETED');
@@ -257,7 +257,7 @@ describe('A6-B6 ENGINE: AgentJobEngine.discard()', () => {
     const jobId = makeJobId();
     seedJob(store, jobId, 'COMPLETED');
     const attemptId = `att_${randomBytes(16).toString('hex')}`;
-    store.startApplyAttempt({ attemptId, jobId });
+    store.startApplyAttempt({ attemptId, jobId, worktreeId: 'main' });
     store.transitionApplyAttempt(attemptId, 'STARTED', 'VERIFYING');
     const engine = new AgentJobEngine(store, CONFIG);
     expect(await errCode(async () => engine.discard(jobId, PRINCIPAL_ID))).toBe('APPLY_ATTEMPT_ACTIVE');
@@ -269,7 +269,7 @@ describe('A6-B6 ENGINE: AgentJobEngine.discard()', () => {
     const jobId = makeJobId();
     seedJob(store, jobId, 'COMPLETED');
     const attemptId = `att_${randomBytes(16).toString('hex')}`;
-    store.startApplyAttempt({ attemptId, jobId });
+    store.startApplyAttempt({ attemptId, jobId, worktreeId: 'main' });
     store.transitionApplyAttempt(attemptId, 'STARTED', 'VERIFYING');
     store.transitionApplyAttempt(attemptId, 'VERIFYING', 'APPLYING');
     const engine = new AgentJobEngine(store, CONFIG);
@@ -282,7 +282,7 @@ describe('A6-B6 ENGINE: AgentJobEngine.discard()', () => {
     const jobId = makeJobId();
     seedJob(store, jobId, 'COMPLETED');
     const attemptId = `att_${randomBytes(16).toString('hex')}`;
-    store.startApplyAttempt({ attemptId, jobId });
+    store.startApplyAttempt({ attemptId, jobId, worktreeId: 'main' });
     store.transitionApplyAttempt(attemptId, 'STARTED', 'VERIFYING');
     store.transitionApplyAttempt(attemptId, 'VERIFYING', 'APPLYING');
     store.recoverApplyAttempts('simulated crash');
@@ -333,7 +333,7 @@ describe('A6-B6 lifecycle matrix', () => {
     // (startApplyAttempt) that apply() delegates to — already proven
     // directly at the store level (agent-apply-state.test.ts). Reconfirm
     // via the store primitive apply() itself would call:
-    expect(await errCode(async () => store.startApplyAttempt({ attemptId: `att_${randomBytes(16).toString('hex')}`, jobId }))).toBe('PRECONDITION_FAILED');
+    expect(await errCode(async () => store.startApplyAttempt({ attemptId: `att_${randomBytes(16).toString('hex')}`, jobId, worktreeId: 'main' }))).toBe('PRECONDITION_FAILED');
     store.close();
   });
 
@@ -366,7 +366,7 @@ describe('A6-B6 lifecycle matrix', () => {
     const store = new AgentJobStore(':memory:');
     const jobId = makeJobId();
     seedJob(store, jobId, 'COMPLETED');
-    store.startApplyAttempt({ attemptId: `att_${randomBytes(16).toString('hex')}`, jobId });
+    store.startApplyAttempt({ attemptId: `att_${randomBytes(16).toString('hex')}`, jobId, worktreeId: 'main' });
     const engine = new AgentJobEngine(store, CONFIG);
     expect(await errCode(async () => engine.discard(jobId, PRINCIPAL_ID))).toBe('APPLY_ATTEMPT_ACTIVE');
     store.close();
@@ -377,7 +377,7 @@ describe('A6-B6 lifecycle matrix', () => {
     const jobId = makeJobId();
     seedJob(store, jobId, 'COMPLETED');
     const attemptId = `att_${randomBytes(16).toString('hex')}`;
-    store.startApplyAttempt({ attemptId, jobId });
+    store.startApplyAttempt({ attemptId, jobId, worktreeId: 'main' });
     store.transitionApplyAttempt(attemptId, 'STARTED', 'VERIFYING');
     store.transitionApplyAttempt(attemptId, 'VERIFYING', 'APPLYING');
     store.recoverApplyAttempts('simulated crash');
@@ -435,7 +435,7 @@ describe('A6-B6 restart / durability', () => {
     const jobId = makeJobId();
     seedJob(store, jobId, 'COMPLETED');
     const attemptId = `att_${randomBytes(16).toString('hex')}`;
-    store.startApplyAttempt({ attemptId, jobId });
+    store.startApplyAttempt({ attemptId, jobId, worktreeId: 'main' });
     store.transitionApplyAttempt(attemptId, 'STARTED', 'VERIFYING');
     store.transitionApplyAttempt(attemptId, 'VERIFYING', 'APPLYING');
     const recovered = store.recoverApplyAttempts('executor restarted');

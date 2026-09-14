@@ -92,7 +92,7 @@ function driveToCompleted(cls: 'ephemeral' | 'short' | 'audit' = 'ephemeral', n 
 function driveToAppliedWithRetainUntil(pastTs: string, n = 1): string {
   const jid = driveToCompleted('ephemeral', n);
   const attId = makeAttId(n);
-  store.startApplyAttempt({ attemptId: attId, jobId: jid });
+  store.startApplyAttempt({ attemptId: attId, jobId: jid, worktreeId: 'main' });
   store.transitionApplyAttempt(attId, 'STARTED', 'VERIFYING');
   store.transitionApplyAttempt(attId, 'VERIFYING', 'APPLYING');
   store.markApplySuccess(attId, jid);
@@ -527,7 +527,7 @@ describe('collectExpiredEvidence — quarantine and UNCERTAIN holds', () => {
   it('job with UNCERTAIN apply attempt → retain', async () => {
     const jid = driveToCompleted('ephemeral', 1);
     const attId = makeAttId(1);
-    store.startApplyAttempt({ attemptId: attId, jobId: jid });
+    store.startApplyAttempt({ attemptId: attId, jobId: jid, worktreeId: 'main' });
     store.transitionApplyAttempt(attId, 'STARTED', 'VERIFYING');
     store.transitionApplyAttempt(attId, 'VERIFYING', 'APPLYING');
     store.markApplyUncertain(attId, jid, 'proj', 'test uncertain');
@@ -561,7 +561,7 @@ describe('collectExpiredEvidence — quarantine and UNCERTAIN holds', () => {
   function eligibleJobWithAttemptInState(state: string, n = 1): string {
     const jid = driveToCompleted('ephemeral', n);
     const attId = makeAttId(n);
-    store.startApplyAttempt({ attemptId: attId, jobId: jid });
+    store.startApplyAttempt({ attemptId: attId, jobId: jid, worktreeId: 'main' });
     if (state === 'VERIFYING' || state === 'APPLYING') {
       store.transitionApplyAttempt(attId, 'STARTED', 'VERIFYING');
     }

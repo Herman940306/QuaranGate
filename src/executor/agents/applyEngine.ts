@@ -422,8 +422,11 @@ export async function runApplyAttempt(
   project: AgentProjectConfig,
   resourcePolicy: AgentResourcePolicy,
 ): Promise<ApplyAttemptSuccess> {
+  if (!project.worktreeId) {
+    throw new BridgeError('PRECONDITION_FAILED', `project ${project.id} has no trusted worktreeId; live apply is disabled`, 409);
+  }
   const attemptId = `att_${randomBytes(16).toString('hex')}`;
-  deps.store.startApplyAttempt({ attemptId, jobId: job.jobId });
+  deps.store.startApplyAttempt({ attemptId, jobId: job.jobId, worktreeId: project.worktreeId });
 
   let applierContainerId: string | undefined;
   let controlVolume: string | undefined;

@@ -41,6 +41,7 @@ backends:
 projects:
   - id: example-project
     hostPath: /srv/projects/example-project   # neutral example path
+    worktreeId: example-project
     gitRequired: true
     backends: [kiro]
     profiles: [audit, plan, implement, review]
@@ -54,6 +55,7 @@ projects:
 
   - id: example-docs
     hostPath: /srv/projects/example-docs
+    worktreeId: example-docs
     gitRequired: true
     backends: [kiro, copilot]
     profiles: [audit, plan]              # read-only lanes only
@@ -63,6 +65,7 @@ projects:
   # Example project allowing Ollama O1 read-only analysis
   - id: example-ollama-project
     hostPath: /srv/projects/example-ollama-project
+    worktreeId: example-ollama-project
     gitRequired: true
     backends: [kiro, ollama]
     profiles: [audit, plan, review]      # implement not allowed (no ollama writer)

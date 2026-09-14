@@ -145,17 +145,27 @@ function checkAgents(path) {
     if (!resourcePolicyIds.has(b.defaultResourcePolicy)) fail(`backend ${b.id}: unknown resource policy ${b.defaultResourcePolicy}`);
   }
   for (const p of projects) {
-    checkKeys('project', p, new Set(['id','hostPath','gitRequired','backends','profiles','guardedPaths','sensitiveReadGlobs']), `project ${p.id}`);
+    checkKeys('project', p, new Set(['id','hostPath','worktreeId','gitRequired','backends','profiles','guardedPaths','sensitiveReadGlobs']), `project ${p.id}`);
     if (!p.id || !projectIdRe.test(p.id)) fail(`invalid project id ${JSON.stringify(p.id)}`);
     if (seen.project.has(p.id)) fail(`duplicate project id ${p.id}`); else seen.project.add(p.id);
     if (typeof p.hostPath !== 'string' || p.hostPath.length < 2 || p.hostPath.length > 4096 || !p.hostPath.startsWith('/') || p.hostPath.split('/').includes('..') || p.hostPath.includes('\0')) {
       fail(`project ${p.id}: hostPath must be 2..4096 characters, absolute, without .. segments or NUL`);
+    }
+    if (p.worktreeId !== undefined && (typeof p.worktreeId !== 'string' || !projectIdRe.test(p.worktreeId))) {
+      fail(`project ${p.id}: invalid worktreeId`);
     }
     if (typeof p.gitRequired !== 'boolean') fail(`project ${p.id}: gitRequired must be boolean`);
     checkNonEmptyIdList(p, 'backends', `project ${p.id}`, agentBackendIds, 'backend');
     checkNonEmptyIdList(p, 'profiles', `project ${p.id}`, agentProfileIds, 'profile');
     checkBoundedStringList(p, 'guardedPaths', `project ${p.id}`);
     checkBoundedStringList(p, 'sensitiveReadGlobs', `project ${p.id}`);
+  }
+  const seenHostPaths = new Set();
+  for (const p of projects) {
+    if (typeof p.hostPath === 'string') {
+      if (seenHostPaths.has(p.hostPath)) fail(`duplicate project hostPath ${p.hostPath}`);
+      else seenHostPaths.add(p.hostPath);
+    }
   }
   for (const p of profiles) {
     checkKeys('profile', p, new Set(['id','workspaceAccess','shellPolicy','gitPolicy','networkPolicy','defaultResourcePolicy']), `profile ${p.id}`);

@@ -42,7 +42,7 @@ const mode = (p: string) => statSync(p).mode & 0o777;
 describe('agent job store', () => {
   it('initializes the schema at the expected version', () => {
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(7); // P3: provider admission + terminal prompt purge policy
+    expect(store.schemaVersion).toBe(8); // P7 B8: shared live-writer arbitration
   });
 
   it('creates SQLite files private to the runtime identity (0600, no group/other)', () => {
@@ -372,7 +372,7 @@ describeV5('A6 retention snapshot — APPLIED disposition timestamps', () => {
     s.transition(jid, 'VALIDATING', 'COMPLETED', { completedAt: now });
     // Start + transition an apply attempt through to APPLYING so markApplySuccess works.
     const attId = `att_${'c'.repeat(32)}`;
-    s.startApplyAttempt({ attemptId: attId, jobId: jid });
+    s.startApplyAttempt({ attemptId: attId, jobId: jid, worktreeId: 'main' });
     s.transitionApplyAttempt(attId, 'STARTED', 'VERIFYING');
     s.transitionApplyAttempt(attId, 'VERIFYING', 'APPLYING');
     s.markApplySuccess(attId, jid);
@@ -426,7 +426,7 @@ describeV5('A6 retention snapshot — APPLIED disposition timestamps', () => {
     });
     s.transition(jid, 'VALIDATING', 'COMPLETED', { completedAt: now });
     const attId = `att_${'d'.repeat(32)}`;
-    s.startApplyAttempt({ attemptId: attId, jobId: jid });
+    s.startApplyAttempt({ attemptId: attId, jobId: jid, worktreeId: 'main' });
     s.transitionApplyAttempt(attId, 'STARTED', 'VERIFYING');
     s.transitionApplyAttempt(attId, 'VERIFYING', 'APPLYING');
     // Must fail closed — not produce a valid APPLIED state with fabricated metadata.
@@ -514,7 +514,7 @@ describeV5('A6 retention snapshot — DISCARDED disposition timestamps', () => {
   itV5('existing B6 active-apply exclusion still enforced after v5 changes', () => {
     const jid = driveToCompleted('ephemeral');
     const attId = `att_${'e'.repeat(32)}`;
-    s.startApplyAttempt({ attemptId: attId, jobId: jid });
+    s.startApplyAttempt({ attemptId: attId, jobId: jid, worktreeId: 'main' });
     // Active attempt → discard must be denied.
     expectV5(() => s.discardJob(jid)).toThrow(BridgeError);
     expectV5(s.get(jid)!.status).toBe('COMPLETED');
@@ -523,7 +523,7 @@ describeV5('A6 retention snapshot — DISCARDED disposition timestamps', () => {
   itV5('existing B6 UNCERTAIN exclusion still enforced after v5 changes', () => {
     const jid = driveToCompleted('ephemeral');
     const attId = `att_${'f'.repeat(32)}`;
-    s.startApplyAttempt({ attemptId: attId, jobId: jid });
+    s.startApplyAttempt({ attemptId: attId, jobId: jid, worktreeId: 'main' });
     s.transitionApplyAttempt(attId, 'STARTED', 'VERIFYING');
     s.transitionApplyAttempt(attId, 'VERIFYING', 'APPLYING');
     s.markApplyUncertain(attId, jid, 'example-project', 'test restart');
@@ -556,7 +556,7 @@ describeV5('A6 retention snapshot — markExpired CAS primitive', () => {
     });
     s.transition(jid, 'VALIDATING', 'COMPLETED', { completedAt: now });
     const attId = `att_${'0'.repeat(31)}1`;
-    s.startApplyAttempt({ attemptId: attId, jobId: jid });
+    s.startApplyAttempt({ attemptId: attId, jobId: jid, worktreeId: 'main' });
     s.transitionApplyAttempt(attId, 'STARTED', 'VERIFYING');
     s.transitionApplyAttempt(attId, 'VERIFYING', 'APPLYING');
     s.markApplySuccess(attId, jid);
@@ -586,7 +586,7 @@ describeV5('A6 retention snapshot — markExpired CAS primitive', () => {
     });
     s2.transition(jid, 'VALIDATING', 'COMPLETED', { completedAt: now2 });
     const attId2 = `att_${'1'.repeat(32)}`;
-    s2.startApplyAttempt({ attemptId: attId2, jobId: jid });
+    s2.startApplyAttempt({ attemptId: attId2, jobId: jid, worktreeId: 'main' });
     s2.transitionApplyAttempt(attId2, 'STARTED', 'VERIFYING');
     s2.transitionApplyAttempt(attId2, 'VERIFYING', 'APPLYING');
     s2.markApplySuccess(attId2, jid);
@@ -624,7 +624,7 @@ describeV5('A6 retention snapshot — markExpired CAS primitive', () => {
     });
     s3.transition(jid, 'VALIDATING', 'COMPLETED', { completedAt: now3 });
     const attId3 = `att_${'2'.repeat(32)}`;
-    s3.startApplyAttempt({ attemptId: attId3, jobId: jid });
+    s3.startApplyAttempt({ attemptId: attId3, jobId: jid, worktreeId: 'main' });
     s3.transitionApplyAttempt(attId3, 'STARTED', 'VERIFYING');
     s3.transitionApplyAttempt(attId3, 'VERIFYING', 'APPLYING');
     s3.markApplySuccess(attId3, jid);
@@ -658,7 +658,7 @@ describeV5('A6 retention snapshot — markExpired CAS primitive', () => {
     });
     s4.transition(jid, 'VALIDATING', 'COMPLETED', { completedAt: now4 });
     const attId4 = `att_${'3'.repeat(32)}`;
-    s4.startApplyAttempt({ attemptId: attId4, jobId: jid });
+    s4.startApplyAttempt({ attemptId: attId4, jobId: jid, worktreeId: 'main' });
     s4.transitionApplyAttempt(attId4, 'STARTED', 'VERIFYING');
     s4.transitionApplyAttempt(attId4, 'VERIFYING', 'APPLYING');
     s4.markApplySuccess(attId4, jid);

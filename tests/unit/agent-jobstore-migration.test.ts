@@ -107,7 +107,7 @@ describe('A6-B1 job store migration v2 -> v3', () => {
     const ids = seedV2Db(dbPath, 12);
 
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
 
     for (const id of ids) {
       const got = store.get(id);
@@ -134,7 +134,7 @@ describe('A6-B1 job store migration v2 -> v3', () => {
     const ids = seedV2Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v2 -> v3
     const reopened = new AgentJobStore(dbPath); // v3 -> v6 (forward migration)
-    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -151,7 +151,7 @@ describe('A3 job store migration v1 -> current (v3)', () => {
 
     const store = new AgentJobStore(dbPath); // opening runs migrate() cumulatively (v1 -> v2 -> ... -> v6)
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
 
     for (const id of ids) {
       const got = store.get(id);
@@ -178,7 +178,7 @@ describe('A3 job store migration v1 -> current (v3)', () => {
     const ids = seedV1Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v1 -> v3
     const reopened = new AgentJobStore(dbPath); // v3 → v6 (forward migration)
-    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -217,7 +217,7 @@ describe('A6-B1 artifact metadata columns — fresh v3 schema', () => {
   it('fresh v3 DB contains all nine required artifact metadata columns', () => {
     const store = new AgentJobStore(dbPath);
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -292,7 +292,7 @@ describe('A6-B1 artifact metadata columns — v2→v3 migration', () => {
   it('v2→v3 migration adds all nine artifact metadata columns', () => {
     seedV2Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -403,7 +403,7 @@ describe('A6-B1 artifact metadata columns — v1→v3 migration', () => {
   it('v1→v3 migration adds all nine artifact metadata columns', () => {
     seedV1Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -456,7 +456,7 @@ describe('A6-B1 artifact metadata columns — fresh-v3 and migrated-v3 schema eq
     seedV2Db(p, 2);
     new AgentJobStore(p).close(); // v2→v3
     const reopened = new AgentJobStore(p); // v3→v6 (forward migration)
-    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     reopened.close();
 
     const db = new DatabaseSync(p);
@@ -587,6 +587,65 @@ function seedV4Db(path: string, rows: number): string[] {
 
 const RETENTION_COLUMNS = ['retention_class', 'retention_duration_ms', 'retain_until'] as const;
 
+
+/** Upgrade the hand-built v4 fixture to a genuine historical v6 shape. */
+function upgradeV4FixtureToV6(path: string): void {
+  const db = new DatabaseSync(path);
+  for (const col of RETENTION_COLUMNS) {
+    try {
+      db.exec(`ALTER TABLE agent_jobs ADD COLUMN ${col} ${col === 'retention_duration_ms' ? 'INTEGER' : 'TEXT'}`);
+    } catch { /* already present */ }
+  }
+  db.exec(`
+    CREATE TABLE agent_sessions (
+      session_id          TEXT PRIMARY KEY,
+      principal_id        TEXT NOT NULL,
+      project             TEXT NOT NULL,
+      backend             TEXT NOT NULL,
+      profile             TEXT NOT NULL,
+      provider_session_id TEXT NOT NULL,
+      provider_state_ref  TEXT,
+      state               TEXT NOT NULL DEFAULT 'ACTIVE',
+      created_at          TEXT NOT NULL,
+      last_used_at        TEXT NOT NULL,
+      consumed_by_job_id  TEXT,
+      reserved_by_job_id  TEXT,
+      reserved_at         TEXT,
+      expires_at          TEXT
+    );
+    CREATE INDEX idx_agent_sessions_binding
+      ON agent_sessions(principal_id, project, backend, profile, state);
+    CREATE INDEX idx_agent_sessions_reservation
+      ON agent_sessions(reserved_by_job_id, state);
+    CREATE INDEX idx_agent_sessions_provider_state
+      ON agent_sessions(provider_state_ref, state);
+    PRAGMA user_version=6;
+  `);
+  db.close();
+}
+
+/** Upgrade a genuine historical v6 fixture to a genuine v7 shape. */
+function upgradeV6FixtureToV7(path: string): void {
+  const db = new DatabaseSync(path);
+  db.exec(`
+    CREATE TABLE agent_provider_state (
+      backend              TEXT PRIMARY KEY,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      last_failure_at      TEXT,
+      last_failure_code    TEXT,
+      last_success_at      TEXT,
+      cooldown_until       TEXT,
+      circuit_state        TEXT NOT NULL DEFAULT 'CLOSED',
+      updated_at           TEXT NOT NULL
+    );
+    UPDATE agent_jobs SET prompt = ''
+      WHERE status NOT IN ('QUEUED','PREPARING','RUNNING','VALIDATING')
+        AND prompt <> '';
+    PRAGMA user_version=7;
+  `);
+  db.close();
+}
+
 describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => {
   let dbPath: string;
   beforeEach(() => {
@@ -597,7 +656,7 @@ describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => 
     seedV4Db(dbPath, 5);
     const store = new AgentJobStore(dbPath);
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     store.close();
   });
 
@@ -665,7 +724,7 @@ describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => 
     const ids = seedV4Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v4 → v5
     const reopened = new AgentJobStore(dbPath); // v5 → v6 (A8 migration)
-    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -751,7 +810,7 @@ describe('A6 v4→v5 migration atomicity', () => {
     // Opening should complete the migration cleanly (columnExists guard skips
     // the already-added column and adds the remaining two).
     const store = new AgentJobStore(p);
-    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     store.close();
 
     const db2 = new DatabaseSync(p);
@@ -779,24 +838,23 @@ describe('P3 v6 → v7 raw-prompt minimization migration', () => {
   });
 
   it('scrubs terminal historical prompts but preserves QUEUED prompt needed for restart', () => {
-    const current = new AgentJobStore(dbPath);
+    // Build a genuine v6 fixture instead of downgrading a current v8 DB and
+    // accidentally leaving future-schema objects behind.
+    seedV4Db(dbPath, 0);
+    upgradeV4FixtureToV6(dbPath);
     const queuedId = 'job_' + '1'.repeat(32);
     const terminalId = 'job_' + '2'.repeat(32);
-    const mk = (jobId: string, prompt: string, hash: string) => ({
-      jobId, principalId: 'p', backend: 'kiro', project: 'proj', profile: 'audit',
-      resourcePolicy: 'economy', promptHash: hash, prompt, sessionPolicy: 'new' as const,
-      writer: false, retentionClass: 'ephemeral' as const,
-      retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
-    });
-    current.insert(mk(queuedId, 'restartable queued prompt', '1'.repeat(64)));
-    current.insert(mk(terminalId, 'historical terminal prompt', '2'.repeat(64)));
-    current.close();
-
     const pre = new DatabaseSync(dbPath);
-    pre.prepare(`UPDATE agent_jobs SET status='COMPLETED', completed_at=?, prompt=? WHERE job_id=?`)
-      .run(new Date().toISOString(), 'historical terminal prompt', terminalId);
-    pre.exec('DROP TABLE agent_provider_state');
-    pre.exec('PRAGMA user_version=6');
+    const insert = pre.prepare(`
+      INSERT INTO agent_jobs
+        (job_id, principal_id, backend, project, profile, resource_policy,
+         status, created_at, completed_at, prompt_hash, prompt, session_policy,
+         writer, retention_class, retention_duration_ms)
+      VALUES (?, 'p', 'kiro', 'proj', 'audit', 'economy', ?, ?, ?, ?, ?, 'new', 0, 'ephemeral', ?)
+    `);
+    const now = new Date().toISOString();
+    insert.run(queuedId, 'QUEUED', now, null, '1'.repeat(64), 'restartable queued prompt', AGENT_RETENTION_DURATION_MS.ephemeral);
+    insert.run(terminalId, 'COMPLETED', now, now, '2'.repeat(64), 'historical terminal prompt', AGENT_RETENTION_DURATION_MS.ephemeral);
     pre.close();
 
     const migrated = new AgentJobStore(dbPath);
@@ -808,8 +866,70 @@ describe('P3 v6 → v7 raw-prompt minimization migration', () => {
     expect(terminal.status).toBe('COMPLETED');
     expect(terminal.prompt).toBe('');
     expect(terminal.promptHash).toBe('2'.repeat(64));
-    expect(migrated.schemaVersion).toBe(7);
+    expect(migrated.schemaVersion).toBe(8);
     migrated.close();
+  });
+});
+
+
+describe('P7 B8 v7 → v8 live-writer migration', () => {
+  let dbPath: string;
+  beforeEach(() => {
+    dbPath = join(mkdtempSync(join(tmpdir(), 'qg-migrate-v8-writer-')), 'agents.db');
+  });
+
+  function seedGenuineV7(rows = 2): string[] {
+    const ids = seedV4Db(dbPath, rows);
+    upgradeV4FixtureToV6(dbPath);
+    upgradeV6FixtureToV7(dbPath);
+    return ids;
+  }
+
+  it('migrates a genuine v7 DB to v8 without fabricating historical worktree/lease provenance', () => {
+    const ids = seedGenuineV7(3);
+    const store = new AgentJobStore(dbPath);
+    expect(store.schemaVersion).toBe(8);
+    store.close();
+
+    const db = new DatabaseSync(dbPath);
+    const tables = (db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as {name:string}[]).map(r=>r.name);
+    expect(tables).toContain('live_writer_leases');
+    const cols = (db.prepare('PRAGMA table_info(agent_apply_attempts)').all() as {name:string}[]).map(r=>r.name);
+    expect(cols).toContain('worktree_id');
+    expect(cols).toContain('writer_lease_id');
+    const leaseCount = db.prepare('SELECT COUNT(*) AS n FROM live_writer_leases').get() as {n:number};
+    expect(Number(leaseCount.n)).toBe(0);
+    for (const id of ids) expect(db.prepare('SELECT 1 FROM agent_jobs WHERE job_id=?').get(id)).toBeTruthy();
+    const historical = db.prepare(`SELECT COUNT(*) AS n FROM agent_apply_attempts WHERE worktree_id IS NOT NULL OR writer_lease_id IS NOT NULL`).get() as {n:number};
+    expect(Number(historical.n)).toBe(0);
+    db.close();
+  });
+
+  it('refuses a v7 stamp that already contains the v8 writer table and does not repair or restamp it', () => {
+    seedGenuineV7(1);
+    const db = new DatabaseSync(dbPath);
+    db.exec(`CREATE TABLE live_writer_leases (writer_lease_id TEXT PRIMARY KEY); PRAGMA user_version=7;`);
+    db.close();
+    expect(() => new AgentJobStore(dbPath)).toThrow(/partial v8 live-writer state/);
+    const after = new DatabaseSync(dbPath);
+    expect((after.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(7);
+    const cols = (after.prepare('PRAGMA table_info(live_writer_leases)').all() as {name:string}[]).map(r=>r.name);
+    expect(cols).toEqual(['writer_lease_id']);
+    after.close();
+  });
+
+  it('refuses a v7 stamp with only one v8 apply-attempt column present', () => {
+    seedGenuineV7(1);
+    const db = new DatabaseSync(dbPath);
+    db.exec(`ALTER TABLE agent_apply_attempts ADD COLUMN worktree_id TEXT; PRAGMA user_version=7;`);
+    db.close();
+    expect(() => new AgentJobStore(dbPath)).toThrow(/partial v8 live-writer state/);
+    const after = new DatabaseSync(dbPath);
+    const cols = (after.prepare('PRAGMA table_info(agent_apply_attempts)').all() as {name:string}[]).map(r=>r.name);
+    expect(cols).toContain('worktree_id');
+    expect(cols).not.toContain('writer_lease_id');
+    expect((after.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(7);
+    after.close();
   });
 });
 
@@ -851,7 +971,7 @@ describe('current schema shape validation (stamp is not proof)', () => {
     seedV4Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v4 -> current
     const reopened = new AgentJobStore(dbPath);
-    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
+    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
     reopened.close();
   });
 
@@ -875,6 +995,59 @@ describe('current schema shape validation (stamp is not proof)', () => {
     after.close();
     expect(exists).toBeUndefined();
     expect(uv.user_version).toBe(7);
+  });
+
+  it('current v8 with a weakened live-writer table definition fails closed on reopen', () => {
+    new AgentJobStore(dbPath).close();
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      DROP TABLE live_writer_leases;
+      CREATE TABLE live_writer_leases (
+        writer_lease_id TEXT PRIMARY KEY NOT NULL,
+        project_id TEXT NOT NULL,
+        worktree_id TEXT NOT NULL,
+        owner_kind TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        state TEXT NOT NULL,
+        acquired_at TEXT NOT NULL,
+        finished_at TEXT,
+        reason TEXT
+      );
+      CREATE UNIQUE INDEX idx_live_writer_one_held_target
+        ON live_writer_leases(project_id, worktree_id)
+        WHERE state IN ('ACTIVE','UNCERTAIN');
+      CREATE UNIQUE INDEX idx_live_writer_owner_once
+        ON live_writer_leases(owner_kind, owner_id);
+    `);
+    db.close();
+    expect(() => new AgentJobStore(dbPath)).toThrow(/live_writer_leases definition/);
+  });
+
+  it('current v8 with a weakened same-name held-target index fails closed on reopen', () => {
+    new AgentJobStore(dbPath).close();
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      DROP INDEX idx_live_writer_one_held_target;
+      CREATE UNIQUE INDEX idx_live_writer_one_held_target
+        ON live_writer_leases(project_id, worktree_id)
+        WHERE state = 'ACTIVE';
+    `);
+    db.close();
+    expect(() => new AgentJobStore(dbPath)).toThrow(/idx_live_writer_one_held_target/);
+  });
+
+  it('current v8 rejects a persisted malformed lease row even when SQLite CHECK enforcement was bypassed out-of-band', () => {
+    new AgentJobStore(dbPath).close();
+    const db = new DatabaseSync(dbPath);
+    db.exec('PRAGMA ignore_check_constraints=ON');
+    db.prepare(`INSERT INTO live_writer_leases
+      (writer_lease_id,project_id,worktree_id,owner_kind,owner_id,principal_id,state,acquired_at)
+      VALUES (?,?,?,?,?,?,?,?)`).run(
+        `wrl_${'1'.repeat(32)}`, 'proj', 'main', 'ide', `BAD_OWNER`, 'owner', 'ACTIVE', new Date().toISOString(),
+      );
+    db.close();
+    expect(() => new AgentJobStore(dbPath)).toThrow(BridgeError);
   });
 
   it('the fail-closed error names the missing agent_sessions table', () => {

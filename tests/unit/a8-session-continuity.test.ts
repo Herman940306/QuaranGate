@@ -220,7 +220,7 @@ describe('AgentSessionStore', () => {
   });
 
   it('schema version upgraded to 6', () => {
-    expect(store.schemaVersion).toBe(7);
+    expect(store.schemaVersion).toBe(8);
   });
 });
 
@@ -619,7 +619,7 @@ describe('AgentJobEngine — session continuity dispatch', () => {
     // Job starts at QUEUED regardless of session policy
     expect(job.status).toBe('QUEUED');
     // Cannot apply a QUEUED job
-    expect(() => s2.startApplyAttempt({ attemptId: `att_${randomHex()}`, jobId: job.jobId }))
+    expect(() => s2.startApplyAttempt({ attemptId: `att_${randomHex()}`, jobId: job.jobId, worktreeId: 'main' }))
       .toThrow(BridgeError);
   });
 });
@@ -631,7 +631,7 @@ describe('AgentJobEngine — session continuity dispatch', () => {
 describe('AgentJobStore session-continuity schema compatibility', () => {
   it('A8-S11: current fresh install includes the v6 agent_sessions contract', () => {
     const store = new AgentJobStore(':memory:');
-    expect(store.schemaVersion).toBe(7);
+    expect(store.schemaVersion).toBe(8);
     // session store is accessible
     const ss = store.sessionStore;
     expect(ss).toBeDefined();
@@ -657,7 +657,7 @@ describe('AgentJobStore session-continuity schema compatibility', () => {
 
       // Re-open the same file — session must still be ACTIVE
       const store2 = new AgentJobStore(tmp);
-      expect(store2.schemaVersion).toBe(7);
+      expect(store2.schemaVersion).toBe(8);
       const row = store2.sessionStore.getSession(id);
       expect(row).toBeDefined();
       expect(row!.state).toBe('ACTIVE');

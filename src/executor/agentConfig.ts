@@ -47,6 +47,7 @@ const backendSchema = z.object({
 const projectSchema = z.object({
   id: z.string().regex(AGENT_PROJECT_ID_PATTERN, 'invalid project id'),
   hostPath,
+  worktreeId: z.string().regex(AGENT_PROJECT_ID_PATTERN, 'invalid worktree id').optional(),
   gitRequired: z.boolean(),
   backends: z.array(backendId).nonempty(),
   profiles: z.array(profileId).nonempty(),
@@ -123,6 +124,7 @@ export function validateAgentConfig(raw: unknown): AgentControlPlaneConfig {
 
   requireUnique('backend', cfg.backends.map((b) => b.id));
   requireUnique('project', cfg.projects.map((p) => p.id));
+  requireUnique('project hostPath', cfg.projects.map((p) => p.hostPath));
   requireUnique('profile', cfg.profiles.map((p) => p.id));
   requireUnique('resource policy', cfg.resourcePolicies.map((r) => r.id));
 

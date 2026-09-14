@@ -55,6 +55,22 @@ describe('agent control plane config', () => {
     }
   });
 
+  it('accepts an explicit trusted worktreeId and rejects malformed values', () => {
+    const good = base(); good.projects[0].worktreeId = 'main';
+    expect(validateAgentConfig(good).projects[0]!.worktreeId).toBe('main');
+    for (const id of ['Bad', 'has space', '../main', '', 'a'.repeat(65)]) {
+      const c=base(); c.projects[0].worktreeId=id; expectReject(c, `worktreeId ${JSON.stringify(id)}`);
+    }
+  });
+
+  it('allows the same logical worktreeId in different projects but rejects duplicate trusted hostPath registrations', () => {
+    const c=base();
+    c.projects.push({ ...structuredClone(c.projects[0]), id:'other-project', worktreeId:'main', hostPath:'/srv/projects/other-project' });
+    expect(()=>validateAgentConfig(c)).not.toThrow();
+    c.projects[1].hostPath=c.projects[0].hostPath;
+    expectReject(c,'duplicate hostPath');
+  });
+
   it('rejects relative/traversal/malformed hostPath', () => {
     for (const hp of ['relative/path', './x', '../x', '/srv/../etc', 'C:\\projects', '', '/x\0y']) {
       const c = base();

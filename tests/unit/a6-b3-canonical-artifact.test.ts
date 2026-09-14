@@ -1156,7 +1156,7 @@ describe('Regression', () => {
     store.transition(jobId, 'PREPARING', 'RUNNING');
     store.transition(jobId, 'RUNNING', 'VALIDATING');
     store.transition(jobId, 'VALIDATING', 'COMPLETED', { completedAt: new Date().toISOString(), summary: 'ok', exitCode: 0 });
-    const attempt = store.startApplyAttempt({ attemptId: 'att_1', jobId });
+    const attempt = store.startApplyAttempt({ attemptId: `att_${'1'.repeat(32)}`, jobId, worktreeId: 'main' });
     expect(attempt.state).toBe('STARTED');
     store.close();
   });
