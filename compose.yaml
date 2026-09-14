@@ -149,7 +149,7 @@ networks:
 
 volumes:
   # Gateway OAuth state — hashed tokens only, documented as safe to drop
-  # (docs/OPERATIONS.md). §47.13 DECISION-1 (Option A): recreated under the
+  # (docs/operations/OPERATIONS.md). §47.13 DECISION-1 (Option A): recreated under the
   # QuaranGate identity at cutover; clients re-authorize once. The legacy
   # `mcp-bridge-data` volume is NOT deleted by this change — it is left in place
   # as the rollback anchor until acceptance passes.

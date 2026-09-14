@@ -717,10 +717,10 @@ IDE Session Control does **not** aim to:
 
 ## Related documentation
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — implemented system and North-Star architecture
-- [`SECURITY.md`](SECURITY.md) — current threat model and enforced boundaries
-- [`AGENT_CONTROL_PLANE.md`](AGENT_CONTROL_PLANE.md) — implemented sandbox worker and apply lifecycle
+- [`ARCHITECTURE.md`](../architecture/ARCHITECTURE.md) — implemented system and North-Star architecture
+- [`SECURITY.md`](../security/SECURITY.md) — current threat model and enforced boundaries
+- [`AGENT_CONTROL_PLANE.md`](../backend/AGENT_CONTROL_PLANE.md) — implemented sandbox worker and apply lifecycle
 - [`IDE_CHAT_VSCODE_S1.md`](IDE_CHAT_VSCODE_S1.md) — preserved VS Code feasibility/acceptance evidence
 - [`IDE_SESSION_KIRO_I1.md`](IDE_SESSION_KIRO_I1.md) — preserved Kiro feasibility record
 - [`IDE_SESSION_VSCODE_I2.md`](IDE_SESSION_VSCODE_I2.md) — preserved VS Code/Kiro feasibility record
-- [`../MCP_IDE_BRIDGE_MASTER_PRD.md`](../MCP_IDE_BRIDGE_MASTER_PRD.md) — canonical roadmap and decision history
+- [`../MCP_IDE_BRIDGE_MASTER_PRD.md`](../../MCP_IDE_BRIDGE_MASTER_PRD.md) — canonical roadmap and decision history

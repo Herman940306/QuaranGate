@@ -17,6 +17,7 @@ import {
 import { currentPrincipal } from './context.js';
 import { registerAgentTools } from './agentTools.js';
 import { registerGitHubTools } from './githubTools.js';
+import { registerControlCenterTools } from './controlCenterTools.js';
 
 function require2(scope: Scope, targetId: string): Principal {
   const p = currentPrincipal();
@@ -318,6 +319,10 @@ export function buildServer(): McpServer {
   // deliberately no merge, repository-admin, secret, workflow-write, tag,
   // release, force-push, delete-ref, or arbitrary-remote tool.
   registerGitHubTools(server);
+
+  // U1 Control Center metadata: one bounded read-only query surface. This stays
+  // on the authenticated MCP plane and adds no mutation or Docker authority.
+  registerControlCenterTools(server);
 
   // Agent Control Plane: all nine contracts are now registered.
   // A6 activated agent_diff, agent_apply, and agent_discard.

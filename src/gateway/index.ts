@@ -87,13 +87,13 @@ function authenticate(req: express.Request): Principal {
 
 app.post('/mcp', express.json({ limit: '8mb' }), async (req, res) => {
   const reqId = newReqId();
-  let principal: Principal;
+  let principal: Principal | undefined;
   try {
     principal = authenticate(req);
     checkRate(principal.id, principal.rateLimit);
   } catch (e) {
     const be = asBridgeError(e);
-    audit({ reqId, principal: null, tool: 'mcp:auth', decision: 'deny', code: be.code });
+    audit({ reqId, principal: principal?.id ?? null, tool: 'mcp:auth', decision: 'deny', code: be.code });
     // For 401s, advertise the OAuth resource metadata per MCP auth spec.
     if (be.httpStatus === 401) {
       res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`);
@@ -103,6 +103,7 @@ app.post('/mcp', express.json({ limit: '8mb' }), async (req, res) => {
   }
 
   // Stateless: a fresh server + transport per request, principal bound via ALS.
+  if (!principal) { res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'principal unavailable' }, id: null }); return; }
   const server = buildServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => { transport.close(); server.close(); });

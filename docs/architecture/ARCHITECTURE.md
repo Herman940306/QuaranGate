@@ -543,7 +543,7 @@ Host/Tailscale administration is outside normal agent authority.
 
 # Current tool surface
 
-The current operational MCP surface contains 44 tools.
+The U1 integration MCP surface contains 45 tools: 18 direct target operations, 9 Agent Control Plane operations, 17 GitHub App Control Plane operations, and the bounded read-only `control_center_query` observability contract.
 
 ## Direct tools — 18
 
@@ -604,7 +604,17 @@ github_pull_request_update
 github_pull_request_review
 ```
 
-This surface is deployed in candidate `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`; source promotion remains human-gated by protected owner work. It is independently authorized through `github:*` scopes, trusted `githubAccounts` for remote repository operations, and trusted `githubProjects` for local exact-HEAD push mappings. Repository discovery comes only from QuaranHUB installations on trusted accounts. There is deliberately no merge or arbitrary GitHub API tool. Credential-bearing GitHub operations are isolated behind the private broker and exact-host egress proxy described in `docs/GITHUB_CONTROL_PLANE.md`.
+The 44-tool pre-U1 surface (18 direct + 9 Agent Control Plane + 17 GitHub App tools) was deployed in candidate `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`. The 45th `control_center_query` tool exists only in the current U1 integration candidate and is **not yet deployed or production-promoted**. GitHub authority is independently enforced through `github:*` scopes, trusted `githubAccounts` for remote repository operations, and trusted `githubProjects` for local exact-HEAD push mappings. Repository discovery comes only from QuaranHUB installations on trusted accounts, including Selected-repository installations. There is deliberately no merge or arbitrary GitHub API tool. Credential-bearing GitHub operations are isolated behind the private broker and exact-host egress proxy described in `docs/backend/GITHUB_CONTROL_PLANE.md`.
+
+## Control Center observability — 1
+
+```text
+control_center_query
+```
+
+This is a read-only metadata projection for the authenticated current principal. It reuses the existing MCP authentication/authorization path, requires existing read authority, and exposes bounded views for activity, effective authority/preflight, topology/provenance, egress policy, provider health, incidents, statistics, capability state, resource-lifecycle status and recovery. The gateway retains at most 2,048 metadata audit events for at most 24 hours and query responses are capped at 200 entries. Prompts, tool arguments, file contents, command output, response bodies and credentials are not retained by this read model.
+
+The private executor contributes only bounded runtime health/revision/queue metadata through an internal authenticated route. It does not expose arbitrary Docker selectors, mounts, networks or control options.
 
 All public tool contracts are schema-based. Successful operations return structured MCP results and the project's maintained compatibility representation.
 

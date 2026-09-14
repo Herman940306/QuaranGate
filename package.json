@@ -20,7 +20,8 @@
     "build:offline-acceptance": "node scripts/accept-npm-offline-build.mjs",
     "gen-key": "node scripts/gen-client-key.mjs",
     "revoke-key": "node scripts/revoke-client.mjs",
-    "validate-config": "node scripts/validate-config.mjs"
+    "validate-config": "node scripts/validate-config.mjs",
+    "test:console": "vitest run --configLoader native tests/unit/console-*.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

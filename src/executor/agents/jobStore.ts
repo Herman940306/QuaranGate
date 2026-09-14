@@ -829,9 +829,13 @@ export class AgentJobStore {
     return Number(r.n);
   }
 
-  hasQueued(): boolean {
+  countQueued(): number {
     const r = this.db.prepare(`SELECT COUNT(*) AS n FROM agent_jobs WHERE status = 'QUEUED'`).get() as { n: number };
-    return Number(r.n) > 0;
+    return Number(r.n);
+  }
+
+  hasQueued(): boolean {
+    return this.countQueued() > 0;
   }
 
   /**

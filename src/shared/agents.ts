@@ -4,7 +4,7 @@
  * Typed contracts + pure job state-machine rules for the future governed
  * Agent Dispatch feature. Nothing in this module executes agents, creates
  * jobs, or touches Docker: A2+ implement the runtime against these
- * contracts. See docs/AGENT_CONTROL_PLANE.md and the Master PRD.
+ * contracts. See docs/backend/AGENT_CONTROL_PLANE.md and the Master PRD.
  */
 import { BridgeError } from './errors.js';
 

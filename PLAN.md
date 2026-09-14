@@ -21,7 +21,7 @@ target containers only**. It never grants host access and never modifies existin
 | VS Code: `.vscode/mcp.json` / user `mcp.json`, `"type":"http"`, `url`, headers + `inputs` for secrets | code.visualstudio.com/docs/copilot/customization/mcp-servers | 2026-07-27 |
 | Kiro: `~/.kiro/settings/mcp.json` or workspace `.kiro/settings/mcp.json`, remote `url` + `headers`, streamable-http | kiro.dev/docs/mcp/configuration | 2026-07-27 |
 
-Full citations: `docs/COMPATIBILITY.md`.
+Full citations: `docs/reference/COMPATIBILITY.md`.
 
 ## 3. Architecture (Option B — split security domains)
 
@@ -158,7 +158,7 @@ gateway container has no docker socket and no host mounts; executor API has no "
 
 ## 11. Ingress plan
 
-Local first: gateway published on `127.0.0.1:8787` only. Remote-ingress-ready: `docs/OPERATIONS.md`
+Local first: gateway published on `127.0.0.1:8787` only. Remote-ingress-ready: `docs/operations/OPERATIONS.md`
 documents an inactive `ingress` path (Cloudflare Tunnel / Caddy / Tailscale templates) — **not enabled**;
 enabling requires user approval (STOP condition). Browser clients therefore end at
 `SERVER READY — EXTERNAL/BROWSER VALIDATION REQUIRES USER ACTION`.
@@ -181,7 +181,7 @@ no published ports, mounts: docker.sock + config ro. Bridge-owned networks: `bri
   output-cap/cwd-escape/concurrency, git status/diff/log, protocol (initialize, tools/list, tools/call,
   malformed), isolation proofs (decoy denied, /etc unreachable, host fs unreachable).
 - Protocol validation: MCP Inspector CLI against the running gateway.
-- Adversarial pass (Phase 12) per threat list; results in `docs/TEST_RESULTS.md`.
+- Adversarial pass (Phase 12) per threat list; results in `docs/testing/TEST_RESULTS.md`.
 
 ## 14. Delivery stages & checkpoints
 
@@ -195,7 +195,7 @@ no published ports, mounts: docker.sock + config ro. Bridge-owned networks: `bri
 8. Adversarial security pass → ✅ gate: no actionable failure remains
 9. Docs + final acceptance audit
 
-## 15. Residual risks (summary — full list in docs/SECURITY.md)
+## 15. Residual risks (summary — full list in docs/security/SECURITY.md)
 
 - Executor holds the Docker socket: kernel/daemon 0-days or an executor RCE would be high impact.
   Mitigated by no ingress, internal network, argv-only API, non-root, read-only fs.

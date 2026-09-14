@@ -9,6 +9,26 @@ const app = () => readFileSync(join(root, 'console/app.js'), 'utf8');
 const styles = () => readFileSync(join(root, 'console/styles.css'), 'utf8');
 
 describe('QuaranGate Console full U1 product contract', () => {
+  it('keeps the narrow drawer backdrop hidden until the drawer is actually open', () => {
+    const text = styles();
+    const narrowStart = text.indexOf('@media (max-width: 879px)');
+    const narrowEnd = text.indexOf('@media (max-width: 620px)', narrowStart);
+    expect(narrowStart).toBeGreaterThanOrEqual(0);
+    expect(narrowEnd).toBeGreaterThan(narrowStart);
+
+    const narrow = text.slice(text.indexOf('{', narrowStart) + 1, narrowEnd);
+    const backdropRules = [...narrow.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .map((match) => ({ selector: match[1].trim(), declarations: match[2] }))
+      .filter((rule) => rule.selector.includes('.drawer-backdrop'));
+    const unconditional = backdropRules.find((rule) => rule.selector === '.drawer-backdrop');
+    const visible = backdropRules.find((rule) => rule.selector === '.app-shell[data-drawer-open="true"] .drawer-backdrop:not([hidden])');
+
+    expect(text).toMatch(/\.drawer-backdrop\s*\{\s*display:\s*none;/);
+    expect(unconditional).toBeUndefined();
+    expect(visible).toBeDefined();
+    expect(visible?.declarations).toMatch(/display:\s*block;/);
+  });
+
   it('implements every owner-approved primary route without dead placeholder navigation', () => {
     const text = app();
     for (const route of [
@@ -950,4 +970,30 @@ describe('QuaranGate Console full U1 product contract', () => {
     expect(text).toContain('@media (prefers-reduced-motion: reduce)');
     expect(text).toContain('@media (forced-colors: active)');
   });
+
+  it('keeps workstation navigation hidden by a specificity-safe rule and sidebar metadata above WCAG AA contrast', () => {
+    const text = styles();
+    expect(text).toContain('.nav-item__meta { font: 500 10px/1 var(--qg-font-mono); color: color-mix(in srgb, var(--qg-surface) 52%, transparent); }');
+    expect(text).toMatch(/\.icon-button\.menu-button\s*\{\s*display:\s*none;/);
+
+    const narrowStart = text.indexOf('@media (max-width: 879px)');
+    const narrowEnd = text.indexOf('@media (max-width: 620px)', narrowStart);
+    expect(narrowStart).toBeGreaterThanOrEqual(0);
+    expect(narrowEnd).toBeGreaterThan(narrowStart);
+    const narrow = text.slice(narrowStart, narrowEnd);
+    expect(narrow).toMatch(/\.icon-button\.menu-button\s*\{\s*display:\s*inline-grid;/);
+
+    // #fff at 52% alpha over #202a31 resolves to about #94999c, ~5.08:1 contrast.
+    // Keep a deliberate margin over the 4.5:1 WCAG AA threshold for 10px normal text.
+    const rail = [0x20, 0x2a, 0x31];
+    const mixed = rail.map((channel) => Math.round(channel + (255 - channel) * 0.52));
+    const linear = (channel: number) => {
+      const value = channel / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance = (rgb: number[]) => 0.2126 * linear(rgb[0]) + 0.7152 * linear(rgb[1]) + 0.0722 * linear(rgb[2]);
+    const contrast = (luminance(mixed) + 0.05) / (luminance(rail) + 0.05);
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
+  });
+
 });

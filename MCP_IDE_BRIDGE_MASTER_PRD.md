@@ -721,7 +721,7 @@ The future IDE Session Control Plane allows an authorized client to communicate 
 
 It is **not** a replacement for the Agent Control Plane.
 
-See `docs/IDE_SESSION_CONTROL.md` for the full contract.
+See `docs/ide/IDE_SESSION_CONTROL.md` for the full contract.
 
 ## 13.1 Required targets
 
@@ -981,7 +981,7 @@ This includes:
 
 # 18. Operational model
 
-Detailed procedures live in `docs/OPERATIONS.md`.
+Detailed procedures live in `docs/operations/OPERATIONS.md`.
 
 The high-level operational rules are:
 
@@ -994,7 +994,7 @@ The high-level operational rules are:
 - rollback anchors are retained until acceptance closes;
 - production claims require runtime evidence, not only source tests.
 
-The accepted offline build procedure is recorded in `docs/OPERATIONS.md`. Dependency acquisition and source compilation remain separate trust domains.
+The accepted offline build procedure is recorded in `docs/operations/OPERATIONS.md`. Dependency acquisition and source compilation remain separate trust domains.
 
 ---
 
@@ -1044,9 +1044,9 @@ A8 Session continuity
 
 A7 may remain deferred while there is genuinely no qualification capability, but **A9 is not authorized to close around that absence**. Any future sequencing adjustment remains an owner decision.
 
-U1 design must begin with a fresh forensic audit of the then-current repository and implemented capability surface. The UI must be designed from real accepted functionality, not from stale mockups or this document alone. The owner-approved baseline information architecture is recorded in `docs/CONTROL_CENTER.md`.
+U1 design must begin with a fresh forensic audit of the then-current repository and implemented capability surface. The UI must be designed from real accepted functionality, not from stale mockups or this document alone. The owner-approved baseline information architecture is recorded in `docs/frontend/CONTROL_CENTER.md`.
 
-D1/D2 deployment and lifecycle requirements are recorded in `docs/INSTALLER_PRODUCTIZATION.md`.
+D1/D2 deployment and lifecycle requirements are recorded in `docs/operations/INSTALLER_PRODUCTIZATION.md`.
 
 ## 19.2 Parallel local Ollama milestone
 
@@ -1443,12 +1443,12 @@ The approved intended end-state architecture. It does not imply the capability i
 ## Related documents
 
 - [`README.md`](README.md) — public front door and usage overview
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — current and North-Star architecture
-- [`docs/SECURITY.md`](docs/SECURITY.md) — threat model, controls and residual risk
-- [`docs/AGENT_CONTROL_PLANE.md`](docs/AGENT_CONTROL_PLANE.md) — agent contracts and lifecycle
-- [`docs/IDE_SESSION_CONTROL.md`](docs/IDE_SESSION_CONTROL.md) — future IDE-session authority model
-- [`docs/O1_MODEL_QUALIFICATION.md`](docs/O1_MODEL_QUALIFICATION.md) — local-model evidence and deployment boundary
-- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — operator procedures
-- [`docs/TEST_RESULTS.md`](docs/TEST_RESULTS.md) — current and historical validation record
+- [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) — current and North-Star architecture
+- [`docs/security/SECURITY.md`](docs/security/SECURITY.md) — threat model, controls and residual risk
+- [`docs/backend/AGENT_CONTROL_PLANE.md`](docs/backend/AGENT_CONTROL_PLANE.md) — agent contracts and lifecycle
+- [`docs/ide/IDE_SESSION_CONTROL.md`](docs/ide/IDE_SESSION_CONTROL.md) — future IDE-session authority model
+- [`docs/backend/O1_MODEL_QUALIFICATION.md`](docs/backend/O1_MODEL_QUALIFICATION.md) — local-model evidence and deployment boundary
+- [`docs/operations/OPERATIONS.md`](docs/operations/OPERATIONS.md) — operator procedures
+- [`docs/testing/TEST_RESULTS.md`](docs/testing/TEST_RESULTS.md) — current and historical validation record
 - [`PLAN.md`](PLAN.md) — preserved original implementation plan
 - [`docs/audits/`](docs/audits/) — frozen gate evidence

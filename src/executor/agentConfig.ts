@@ -5,7 +5,7 @@
  * ids resolve to real host paths. It is never populated from MCP input, and
  * hostPath is never accepted through any public schema. Loaded at executor
  * startup when present (src/executor/index.ts). See
- * config/agents.example.yaml and docs/AGENT_CONTROL_PLANE.md.
+ * config/agents.example.yaml and docs/backend/AGENT_CONTROL_PLANE.md.
  */
 import fs from 'node:fs';
 import YAML from 'yaml';

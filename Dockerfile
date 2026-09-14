@@ -36,6 +36,7 @@ FROM node:24-alpine AS runtime
 #   docker build --build-arg GIT_REVISION="$(git rev-parse HEAD)" ...
 ARG GIT_REVISION=unknown
 ARG SOURCE_URL=https://github.com/Herman940306/QuaranGate
+ENV QUARANGATE_BUILD_REVISION="${GIT_REVISION}"
 LABEL org.opencontainers.image.title="QuaranGate" \
       org.opencontainers.image.revision="${GIT_REVISION}" \
       org.opencontainers.image.source="${SOURCE_URL}"
@@ -51,6 +52,7 @@ RUN echo "1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc  /sbi
     && chmod 0700 /data /jobs
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY console ./console
 COPY package.json ./
 USER node
 ENTRYPOINT ["/sbin/tini", "--"]

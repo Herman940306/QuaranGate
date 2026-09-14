@@ -883,7 +883,7 @@ Before adding a real target, verify:
 - principal allowlist;
 - target has only the tools/runtime assumptions QuaranGate expects.
 
-See `docs/TARGETS.md` for the complete target contract.
+See `docs/architecture/TARGETS.md` for the complete target contract.
 
 ---
 
@@ -968,7 +968,7 @@ The N1 checkpoint (`18179696`) remains historical evidence at 44 files / 1693 te
 
 Integration, Docker, destructive apply and credentialed provider tests have additional prerequisites and authority boundaries. Do not run every test merely because it exists.
 
-See `docs/TEST_RESULTS.md` for point-in-time evidence and historical counts.
+See `docs/testing/TEST_RESULTS.md` for point-in-time evidence and historical counts.
 
 ---
 

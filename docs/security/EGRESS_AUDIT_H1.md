@@ -135,7 +135,7 @@ When A7 implements the Copilot backend, this section must document:
 | `quarangate-edge` | No | Gateway public ingress (loopback-bound by default) |
 | `quarangate-internal` | Yes | Gateway ↔ executor private communication (no external route) |
 
-**External Route**: Only `quarangate-edge` can route externally, and it is bound to `127.0.0.1` by default (docs/OPERATIONS.md remote ingress setup required for external access).
+**External Route**: Only `quarangate-edge` can route externally, and it is bound to `127.0.0.1` by default (docs/operations/OPERATIONS.md remote ingress setup required for external access).
 
 ---
 
@@ -144,7 +144,7 @@ When A7 implements the Copilot backend, this section must document:
 **Component**: Remote owner orchestration (optional)<br>
 **Status**: **OWNER_NETWORK_DECISION_REQUIRED** (operator deploys Tailscale separately if needed)
 
-Tailscale is NOT bundled with QuaranGate. Remote owner scenarios (docs/REMOTE_OWNER_ORCHESTRATION.md) document Tailscale as an optional authenticated remote access layer. If the operator deploys it:
+Tailscale is NOT bundled with QuaranGate. Remote owner scenarios (docs/operations/REMOTE_OWNER_ORCHESTRATION.md) document Tailscale as an optional authenticated remote access layer. If the operator deploys it:
 - Tailscale daemon runs on the host (outside QuaranGate containers)
 - Gateway remains bound to `127.0.0.1`; Tailscale reverse-proxies the local port
 

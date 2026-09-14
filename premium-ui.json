@@ -1,0 +1,20 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["console", "src/gateway"],
+  "locale": "en",
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": ["Select/Listbox", "Form", "Scrollbar", "Toast"],
+  "ownership": {
+    "Select/Listbox": "native"
+  },
+  "requiredCommands": ["typecheck", "unit", "console", "build"],
+  "commands": {
+    "typecheck": "npm run typecheck",
+    "unit": "npm test",
+    "console": "npm run test:console",
+    "build": "npm run build"
+  },
+  "evidence": {
+    "failurePaths": "tests/unit/console-mcp-client.test.ts"
+  }
+}

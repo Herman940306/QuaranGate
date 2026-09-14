@@ -1,8 +1,15 @@
 # QuaranGate Control Center — U1 Product Intent
 
-**Status:** Owner-approved pre-production requirement; not implemented.
+**Status:** Owner-approved product intent with an active implementation candidate on `integrate/u1-control-center-full`; independent review, rendered-browser E2E/accessibility qualification and production promotion remain pending.
 
 **Roadmap role:** U1 must close before A9 production hardening begins.
+
+The original intent in this document is preserved as the product baseline. The current implementation-specific specification and manuals are maintained separately:
+
+- [`CONSOLE_PRODUCT_SPECIFICATION.md`](CONSOLE_PRODUCT_SPECIFICATION.md) — current full U1 functional specification, including the accepted observability extensions.
+- [`CONSOLE_FRONTEND_ARCHITECTURE.md`](CONSOLE_FRONTEND_ARCHITECTURE.md) — frontend implementation architecture and security/data-flow model.
+- [`CONSOLE_OPERATIONS_SUPPORT_MANUAL.md`](../user-guides/CONSOLE_OPERATIONS_SUPPORT_MANUAL.md) — operator and support manual.
+- [`MCP_TOOL_REFERENCE.md`](../reference/MCP_TOOL_REFERENCE.md) — complete current MCP function reference and use cases.
 
 ## Product goal
 

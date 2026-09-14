@@ -129,6 +129,31 @@ app.get('/readyz', handle(async () => {
   return { ok: true, code: result.code };
 }));
 
+
+// U1: bounded, secret-free runtime metadata for the authenticated Control Center.
+// This private executor route exposes no Docker identifiers/options and performs no mutation.
+app.get('/control-center/runtime', handle(async () => {
+  const SOCK = process.env.DOCKER_SOCK ?? '/var/run/docker.sock';
+  const readiness = await checkReadiness(SOCK);
+  return {
+    buildRevision: process.env.QUARANGATE_BUILD_REVISION ?? 'unknown',
+    dockerReachable: readiness.ready,
+    dockerAuthority: readiness.ready,
+    readinessCode: readiness.code,
+    agentControlConfigured: agentStore !== null,
+    activeJobs: agentStore?.countActive() ?? 0,
+    queuedJobs: agentStore?.countQueued() ?? 0,
+    ollama: {
+      configured: Boolean(OLLAMA_MODEL_QUALIFIER),
+      endpointState: OLLAMA_HOST === 'http://ollama:11434' ? 'EXACT_LOCAL' : (OLLAMA_HOST ? 'DRIFT' : 'NOT_CONFIGURED'),
+      modelQualifier: OLLAMA_MODEL_QUALIFIER || undefined,
+    },
+    sessionContinuity: 'NOT_QUALIFIED',
+    providerAdmissionControl: 'DEFERRED',
+    ideSessionControl: 'NOT_IMPLEMENTED',
+  };
+}));
+
 app.post('/reload', handle(async () => {
   loadTargetConfig();
   invalidateCache();

@@ -97,7 +97,7 @@ The following files are NEW in H1 and have no A8 counterparts:
 - `tests/unit/h1-scripts-syntax.test.ts`
 
 **Docs**:
-- `docs/EGRESS_AUDIT_H1.md`
+- `docs/security/EGRESS_AUDIT_H1.md`
 
 **Merge Strategy**: Direct addition (no conflicts).
 

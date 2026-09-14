@@ -94,10 +94,10 @@ composition and does not require control of a vendor's private built-in chat.
 
 - `README.md`
 - `MCP_IDE_BRIDGE_MASTER_PRD.md`
-- `docs/AGENT_CONTROL_PLANE.md`
-- `docs/IDE_SESSION_CONTROL.md`
-- `docs/IDE_SESSION_KIRO_I1.md`
-- `docs/IDE_SESSION_VSCODE_I2.md`
+- `docs/backend/AGENT_CONTROL_PLANE.md`
+- `docs/ide/IDE_SESSION_CONTROL.md`
+- `docs/ide/IDE_SESSION_KIRO_I1.md`
+- `docs/ide/IDE_SESSION_VSCODE_I2.md`
 
 No private extension internals, webview inspection, undocumented socket discovery, session database,
 process injection, UI automation, keyboard injection, upgrade, extension installation, provider call,
@@ -592,7 +592,7 @@ identity, operation ownership, audit conventions, and live-writer admission.
 
 ### Ollama O1 conflict assessment
 
-**[LOCAL_CONFIRMED]** Current I1R2 changes only `docs/IDE_CHAT_AGENT_I1R2.md`; conflict with Lane A is
+**[LOCAL_CONFIRMED]** Current I1R2 changes only `docs/ide/IDE_CHAT_AGENT_I1R2.md`; conflict with Lane A is
 none. No Ollama path or shared source was inspected or modified.
 
 **[PROPOSED]** The isolated extension package and `src/**/ideChat/**` namespaces minimize future

@@ -19,7 +19,7 @@ The approved North Star adds a fourth, separately authorized surface:
 - **IDE Session Control Plane** — governed communication with an enrolled IDE agent surface bound to an exact IDE instance and workspace/worktree. This remains a design/qualification program, not current production capability.
 
 > [!WARNING]
-> The private `executor` service holds `/var/run/docker.sock`. Docker socket access is effectively host-level authority. QuaranGate deliberately keeps that authority away from the network-facing gateway, but it remains the system's highest-impact trust boundary. Read [Security](docs/SECURITY.md) before exposing QuaranGate beyond loopback.
+> The private `executor` service holds `/var/run/docker.sock`. Docker socket access is effectively host-level authority. QuaranGate deliberately keeps that authority away from the network-facing gateway, but it remains the system's highest-impact trust boundary. Read [Security](docs/security/SECURITY.md) before exposing QuaranGate beyond loopback.
 
 ---
 
@@ -35,6 +35,7 @@ The approved North Star adds a fourth, separately authorized surface:
 - [Authentication and credential handling](#authentication-and-credential-handling)
 - [Targets, projects and authority](#targets-projects-and-authority)
 - [Current MCP capabilities](#current-mcp-capabilities)
+- [QuaranGate Console](#quarangate-console)
 - [Local Ollama backend status](#local-ollama-backend-status)
 - [IDE Session Control North Star](#ide-session-control-north-star)
 - [Platform support](#platform-support)
@@ -77,7 +78,7 @@ aef07f2c46ca53a55e1ee662f3b8cddc73f6857a
 chore(mcp): harden target toolchain
 ```
 
-The deployed candidate passed typecheck, **50/50 unit test files** and **1878/1878 unit tests**, plus **16/16 focused GitHub tests**. The hardened MCP target images are active and retain the read-only/no-Docker-socket boundaries. `github_checks` now succeeds using Commit statuses only and returns an empty compatibility `checkRuns` collection. The side quest is **not closed**: `JustAGameZA` discovery fails closed until the QuaranHUB installation is changed from **Selected repositories** to **All repositories**, and source promotion is separately blocked by the protected dirty-path intersection at `scripts/remote-owner-start.sh`.
+The deployed candidate passed typecheck, **50/50 unit test files** and **1878/1878 unit tests**, plus **16/16 focused GitHub tests**. The hardened MCP target images are active and retain the read-only/no-Docker-socket boundaries. `github_checks` now succeeds using Commit statuses only and returns an empty compatibility `checkRuns` collection. GitHub live closeout is **not yet complete**: the owner-approved authority model is GitHub App **Selected repositories**, so QuaranGate must discover only repositories granted to each installation/account and must not require or recommend broadening the App to All repositories merely for discovery. Source/runtime promotion remains a separate governed gate.
 
 ---
 
@@ -311,7 +312,7 @@ The gateway is the component that may face an external network. The executor is 
 
 The split does **not** make the executor harmless. An executor RCE or Docker daemon/kernel vulnerability remains high impact. It reduces exposed authority; it does not erase the underlying Docker trust risk.
 
-See [Architecture](docs/ARCHITECTURE.md) for the detailed request flows and trust zones.
+See [Architecture](docs/architecture/ARCHITECTURE.md) for the detailed request flows and trust zones.
 
 ---
 
@@ -431,7 +432,7 @@ Important calls are attributed to a principal, operation and target/job. Sensiti
 
 **Why:** incident investigation and engineering acceptance should not depend on model memory.
 
-See [Security](docs/SECURITY.md) for the complete threat model and residual risks.
+See [Security](docs/security/SECURITY.md) for the complete threat model and residual risks.
 
 ---
 
@@ -514,13 +515,13 @@ The host path, allowed backends, profiles, resource policy and guarded paths liv
 
 **Why:** a remote caller should not be able to invent a new host filesystem mount by changing an MCP argument.
 
-See [Targets](docs/TARGETS.md) and [Agent Control Plane](docs/AGENT_CONTROL_PLANE.md).
+See [Targets](docs/architecture/TARGETS.md) and [Agent Control Plane](docs/backend/AGENT_CONTROL_PLANE.md).
 
 ---
 
 # Current MCP capabilities
 
-The current deployed MCP surface contains **44 tools**: 18 direct target tools, 9 Agent Control Plane tools, and 17 GitHub App Control Plane tools.
+The U1 integration surface contains **45 tools**: 18 direct target tools, 9 Agent Control Plane tools, 17 GitHub App Control Plane tools, and 1 bounded read-only Control Center observability query.
 
 ## Direct target tools
 
@@ -581,7 +582,35 @@ The current deployed MCP surface contains **44 tools**: 18 direct target tools, 
 | `github_pull_request_update` | Update bounded PR metadata. |
 | `github_pull_request_review` | Submit COMMENT / APPROVE / REQUEST_CHANGES where GitHub permits. |
 
-There is deliberately **no merge tool**, no force-push capability and no arbitrary GitHub API surface. See [GitHub App Control Plane](docs/GITHUB_CONTROL_PLANE.md).
+There is deliberately **no merge tool**, no force-push capability and no arbitrary GitHub API surface. See [GitHub App Control Plane](docs/backend/GITHUB_CONTROL_PLANE.md).
+
+## Control Center observability
+
+| Tool | Purpose |
+|---|---|
+| `control_center_query` | Read bounded, metadata-only Control Center views for the current principal: summary, MCP activity, authority/preflight, topology/provenance, egress policy, provider health, incidents, statistics, capability state, resource lifecycle status and recovery state. |
+
+The Control Center read model stores at most 2,048 metadata events in gateway memory for at most 24 hours. It does not retain prompts, tool arguments, file contents, command output, credentials or response bodies.
+
+---
+
+# QuaranGate Console
+
+**QuaranGate Console** is the bundled workstation UI for the same governed QuaranGate control plane. It is served at `/console/` by the existing gateway and adds no extra public port or privileged browser-to-executor path. Consequential actions still use authenticated MCP tools; the new observability surface is itself a read-only MCP tool.
+
+The full U1 navigation now includes Overview, Chat, Projects, Targets, Files, Terminal, Git, Processes, Agents, Jobs, Review & Approvals, IDE Sessions, GitHub, Local AI / Models, Monitoring, Statistics, Security & Access, Audit & Evidence, Recovery & Backups, Settings and Tool Lab.
+
+High-value operational views include MCP traffic metadata, effective-authority/preflight inspection, runtime topology and source/image/runtime drift, egress policy, queue/provider health, session-continuity readiness, evidence lineage, resource lifecycle status, incidents, model/provider qualification, global command search and a compatibility matrix. Where a backend contract is not yet qualified, the Console reports `UNKNOWN`, `NOT_IMPLEMENTED`, `DEFERRED` or `NOT_QUALIFIED` rather than fabricating success.
+
+Browser credentials remain memory-only. The Console never stores API keys in local/session storage, cookies, URLs, IndexedDB, toasts or logs. `COMPLETED` never means `APPLIED`; apply remains a distinct destructive-class server operation.
+
+Default loopback URL:
+
+```text
+http://127.0.0.1:8787/console/
+```
+
+See [Console documentation](docs/frontend/CONSOLE.md), [Frontend Architecture](docs/frontend/CONSOLE_FRONTEND_ARCHITECTURE.md), [U1 Product Specification](docs/frontend/CONSOLE_PRODUCT_SPECIFICATION.md), [Operator & Support Manual](docs/user-guides/CONSOLE_OPERATIONS_SUPPORT_MANUAL.md), and the [MCP Tool Reference](docs/reference/MCP_TOOL_REFERENCE.md).
 
 ---
 
@@ -609,7 +638,7 @@ The first production gate recorded 5/6 critical checks and exposed missing model
 
 No automatic model fallback and no cloud fallback are part of the approved O1 design.
 
-See [O1 Model Qualification](docs/O1_MODEL_QUALIFICATION.md).
+See [O1 Model Qualification](docs/backend/O1_MODEL_QUALIFICATION.md).
 
 ---
 
@@ -648,7 +677,7 @@ Secondary feasibility targets:
 
 A VS Code Chat Participant spike has proven one public-API architecture feasible. That evidence does **not** mean a production adapter exists, and it does not prove Kiro/Cursor integration.
 
-See [IDE Session Control](docs/IDE_SESSION_CONTROL.md) and the frozen S1 qualification record.
+See [IDE Session Control](docs/ide/IDE_SESSION_CONTROL.md) and the frozen S1 qualification record.
 
 ---
 
@@ -732,7 +761,7 @@ docker compose build
 
 If `QUARANGATE_NPM_BUNDLE_PATH` is unset, ordinary runtime Compose commands still parse normally. A source build falls back to the repository `build/` sentinel context and fails closed in the bundle verifier before npm runs.
 
-See [Operations](docs/OPERATIONS.md) for the complete online-bootstrap versus pre-provisioned-offline procedures.
+See [Operations](docs/operations/OPERATIONS.md) for the complete online-bootstrap versus pre-provisioned-offline procedures.
 
 ---
 
@@ -750,7 +779,7 @@ At a high level, a new operator must:
 8. connect an MCP client;
 9. verify target discovery before granting write/agent scopes.
 
-The detailed, copy-pasteable per-platform procedure belongs in [Operations](docs/OPERATIONS.md) and [Client Setup](docs/CLIENT_SETUP.md). Those documents distinguish commands run in WSL/Linux/macOS from browser/client configuration steps.
+The detailed, copy-pasteable per-platform procedure belongs in [Operations](docs/operations/OPERATIONS.md) and [Client Setup](docs/user-guides/CLIENT_SETUP.md). Those documents distinguish commands run in WSL/Linux/macOS from browser/client configuration steps.
 
 ---
 
@@ -853,7 +882,7 @@ A8 -> A7 -> I1-I6 -> U1 -> D1 -> D2 -> A9 -> v1.0
 
 A8 remains the immediate next core gate. A7's current lack of test capability does not authorize skipping it at production closeout.
 
-See [Control Center](docs/CONTROL_CENTER.md) and [Installer Productization](docs/INSTALLER_PRODUCTIZATION.md).
+See [Control Center](docs/frontend/CONTROL_CENTER.md) and [Installer Productization](docs/operations/INSTALLER_PRODUCTIZATION.md).
 
 ## Parallel current programs
 
@@ -872,18 +901,24 @@ Approved North-Star program. VS Code Architecture B feasibility has been proven 
 | Document | Purpose |
 |---|---|
 | [Master PRD](MCP_IDE_BRIDGE_MASTER_PRD.md) | Canonical product decisions, current status, roadmap and decision history. |
-| [Architecture](docs/ARCHITECTURE.md) | Implemented components, trust zones, flows and separate North-Star architecture. |
-| [Security](docs/SECURITY.md) | Security objectives, design decisions, threat model, evidence and residual risks. |
-| [Agent Control Plane](docs/AGENT_CONTROL_PLANE.md) | Exact agent contracts, lifecycle, policy and apply semantics. |
-| [IDE Session Control](docs/IDE_SESSION_CONTROL.md) | Approved I0 authority model and IDE-adapter program. |
-| [Targets](docs/TARGETS.md) | Target discovery, authorization and shipped target lanes. |
-| [Client Setup](docs/CLIENT_SETUP.md) | Client-specific connection/authentication instructions. |
-| [Operations](docs/OPERATIONS.md) | Build, run, validate, credentials, health, backup and troubleshooting. |
-| [Compatibility](docs/COMPATIBILITY.md) | Protocol/client compatibility evidence and external references. |
-| [Test Results](docs/TEST_RESULTS.md) | Current verified baseline followed by historical milestone evidence. |
-| [O1 Model Qualification](docs/O1_MODEL_QUALIFICATION.md) | Ollama model qualification, limitations and activation boundary. |
-| [Control Center](docs/CONTROL_CENTER.md) | Owner-approved U1 nontechnical GUI goals, information architecture and design constraints. |
-| [Installer Productization](docs/INSTALLER_PRODUCTIZATION.md) | Owner-approved D1/D2 click-install, first-run, upgrade, repair, rollback and uninstall requirements. |
+| [Documentation Index](docs/README.md) | Category map for architecture, backend, frontend, IDE, operations, user guides, security, reference, testing and audits. |
+| [Architecture](docs/architecture/ARCHITECTURE.md) | Implemented components, trust zones, flows and separate North-Star architecture. |
+| [Security](docs/security/SECURITY.md) | Security objectives, design decisions, threat model, evidence and residual risks. |
+| [Agent Control Plane](docs/backend/AGENT_CONTROL_PLANE.md) | Exact agent contracts, lifecycle, policy and apply semantics. |
+| [IDE Session Control](docs/ide/IDE_SESSION_CONTROL.md) | Approved I0 authority model and IDE-adapter program. |
+| [Targets](docs/architecture/TARGETS.md) | Target discovery, authorization and shipped target lanes. |
+| [Client Setup](docs/user-guides/CLIENT_SETUP.md) | Client-specific connection/authentication instructions. |
+| [Operations](docs/operations/OPERATIONS.md) | Build, run, validate, credentials, health, backup and troubleshooting. |
+| [Compatibility](docs/reference/COMPATIBILITY.md) | Protocol/client compatibility evidence and external references. |
+| [Test Results](docs/testing/TEST_RESULTS.md) | Current verified baseline followed by historical milestone evidence. |
+| [O1 Model Qualification](docs/backend/O1_MODEL_QUALIFICATION.md) | Ollama model qualification, limitations and activation boundary. |
+| [Control Center](docs/frontend/CONTROL_CENTER.md) | Owner-approved U1 product intent and baseline information architecture. |
+| [Console](docs/frontend/CONSOLE.md) | Current QuaranGate Console implementation overview and security/behavior notes. |
+| [Console Frontend Architecture](docs/frontend/CONSOLE_FRONTEND_ARCHITECTURE.md) | Frontend source architecture, data flow, security, responsive and accessibility contracts. |
+| [Console U1 Product Specification](docs/frontend/CONSOLE_PRODUCT_SPECIFICATION.md) | Full owner-approved U1 functional specification, including monitoring/observability extensions. |
+| [Console Operator & Support Manual](docs/user-guides/CONSOLE_OPERATIONS_SUPPORT_MANUAL.md) | User/operator workflows, troubleshooting, support triage and escalation guidance. |
+| [MCP Tool Reference](docs/reference/MCP_TOOL_REFERENCE.md) | All 45 U1-candidate MCP calls/functions with authority, scopes, inputs and use cases. |
+| [Installer Productization](docs/operations/INSTALLER_PRODUCTIZATION.md) | Owner-approved D1/D2 click-install, first-run, upgrade, repair, rollback and uninstall requirements. |
 | `docs/audits/` | Frozen historical evidence. These records are not rewritten to make old results look current. |
 | [PLAN.md](PLAN.md) | Original executed implementation plan. Historical, not the current roadmap authority. |
 

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#F3F5F5">
+  <title>Connect — QuaranGate Console</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div id="app" class="app-shell" data-connected="false">
+    <aside id="sidebar" class="sidebar" aria-label="Primary navigation">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">
+          <span class="brand-mark__gate"></span>
+          <span class="brand-mark__core"></span>
+        </div>
+        <div>
+          <div class="brand-name">QuaranGate</div>
+          <div class="brand-subtitle">Console</div>
+        </div>
+      </div>
+
+      <div class="authority-legend" aria-label="Authority legend">
+        <span class="authority-dot authority-dot--read"></span><span>Read</span>
+        <span class="authority-dot authority-dot--write"></span><span>Write</span>
+        <span class="authority-dot authority-dot--exec"></span><span>Execution</span>
+        <span class="authority-dot authority-dot--danger"></span><span>Destructive</span>
+      </div>
+
+      <nav id="nav" class="nav-list" aria-label="Console sections"></nav>
+
+      <div class="sidebar-footer">
+        <div class="connection-indicator" id="connection-indicator">
+          <span class="connection-indicator__dot" aria-hidden="true"></span>
+          <span id="connection-label">Not connected</span>
+        </div>
+        <button id="disconnect-button" class="button button--ghost button--sidebar" type="button" hidden disabled>Disconnect</button>
+      </div>
+    </aside>
+
+    <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+
+    <section class="workspace">
+      <header class="topbar">
+        <button id="menu-button" class="icon-button menu-button" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+        <div class="route-heading">
+          <div id="route-eyebrow" class="route-eyebrow">QuaranGate Console</div>
+          <h1 id="route-title">Connect</h1>
+        </div>
+        <div class="topbar-actions">
+          <div id="active-context" class="active-context" hidden></div>
+          <button id="refresh-button" class="button button--outline button--compact" type="button" hidden disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <main id="main-content" class="main-content" tabindex="-1">
+        <section id="route-view" aria-live="polite"></section>
+      </main>
+    </section>
+  </div>
+
+  <div id="dialog-root"></div>
+  <div id="toast-root" class="toast-viewport" aria-live="polite" aria-relevant="additions"></div>
+  <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

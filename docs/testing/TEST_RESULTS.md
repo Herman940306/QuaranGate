@@ -399,4 +399,4 @@ Docker/live integration suites require the relevant target/runtime infrastructur
 
 Do not automatically run credentialed provider tests, destructive apply tests or live deployment acceptance merely because they exist in the repository.
 
-N1 adds deterministic npm-bundle tests and `scripts/accept-npm-offline-build.mjs`. The accepted reproduction procedure is documented in `docs/OPERATIONS.md`. Re-running the complete Docker acceptance still requires the approved external bundle and Docker access; do not substitute a networked install if the bundle is missing.
+N1 adds deterministic npm-bundle tests and `scripts/accept-npm-offline-build.mjs`. The accepted reproduction procedure is documented in `docs/operations/OPERATIONS.md`. Re-running the complete Docker acceptance still requires the approved external bundle and Docker access; do not substitute a networked install if the bundle is missing.

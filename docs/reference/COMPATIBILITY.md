@@ -250,4 +250,4 @@ Verified/rechecked 2026-09-04:
 - VS Code — Add and manage MCP servers: `https://code.visualstudio.com/docs/agent-customization/mcp-servers`
 - Kiro — MCP configuration: `https://kiro.dev/docs/mcp/configuration/`
 
-Historical compatibility evidence belongs in `docs/TEST_RESULTS.md` and frozen audit records; this document describes the current external compatibility picture.
+Historical compatibility evidence belongs in `docs/testing/TEST_RESULTS.md` and frozen audit records; this document describes the current external compatibility picture.

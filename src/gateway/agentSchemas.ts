@@ -3,8 +3,9 @@
  *
  * Strict Zod input/output contracts for the nine agent tools. All nine are
  * registered with buildServer() via registerAgentTools() (see
- * src/gateway/agentTools.ts): the live MCP surface is the 14 IDE tools plus
- * these 9 agent tools (27 total).
+ * src/gateway/agentTools.ts). The current U1 candidate also registers the
+ * direct target, GitHub App and bounded Control Center observability surfaces;
+ * see docs/reference/MCP_TOOL_REFERENCE.md for the complete catalog.
  *
  * Security properties of every public input object:
  * - `.strict()`: unknown properties are rejected, so callers can never

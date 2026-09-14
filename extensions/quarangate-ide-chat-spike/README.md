@@ -66,7 +66,7 @@ limitation or defect; they are not recorded as passes.
 
 The temporary D2 registry-probe command, source, and tests were removed after capture. The provider
 shim and its regression/security tests remain. The detailed evidence and final classification are in
-`../../docs/IDE_CHAT_VSCODE_S1.md`.
+`../../docs/ide/IDE_CHAT_VSCODE_S1.md`.
 
 Build first, then from a WSL shell run:
 

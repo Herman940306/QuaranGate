@@ -56,6 +56,7 @@ export const executor = {
     call<ExecResult>('/exec/argv', req),
   reload: () => call<{ ok: true }>('/reload', {}),
   readyz: () => call<{ ok: true }>('/readyz').then(() => true).catch(() => false),
+  controlCenterRuntime: () => call<ControlCenterRuntimeWire>('/control-center/runtime'),
 
   // GitHub App control plane. Remote reads/PR actions use owner/repository
   // identifiers that are re-authorized against trusted accounts by the
@@ -158,4 +159,23 @@ export interface AgentDiffWire {
   reason?: string | null;
   opCount?: number;
   artifactBytes?: number;
+}
+
+
+export interface ControlCenterRuntimeWire {
+  buildRevision: string;
+  dockerReachable: boolean;
+  dockerAuthority: boolean;
+  readinessCode: string;
+  agentControlConfigured: boolean;
+  activeJobs: number;
+  queuedJobs: number;
+  ollama: {
+    configured: boolean;
+    endpointState: 'EXACT_LOCAL' | 'DRIFT' | 'NOT_CONFIGURED';
+    modelQualifier?: string;
+  };
+  sessionContinuity: 'NOT_QUALIFIED';
+  providerAdmissionControl: 'DEFERRED';
+  ideSessionControl: 'NOT_IMPLEMENTED';
 }
