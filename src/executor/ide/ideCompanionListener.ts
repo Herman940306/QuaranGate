@@ -5,6 +5,13 @@
  * prompts, tools, providers, operations, audits or writer actions.
  */
 import { randomBytes } from 'node:crypto';
+import { IdeCompanionAuthError } from '../../shared/ideCompanionAuth.js';
+import {
+  IDE_COMPANION_OPERATION_MAX_FRAME_BYTES,
+  IdeCompanionOperationProtocolError,
+  parseIdeCompanionOperationControlFrame,
+} from '../../shared/ideCompanionOperations.js';
+import { IdeSessionContractError, type IdeOperationEvent } from '../../shared/ideSessions.js';
 import { existsSync, lstatSync, rmSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import {
@@ -38,6 +45,11 @@ import {
   IdeWorkspaceVerificationError,
   verifyAuthenticatedIdeWorkspace,
 } from './ideWorkspaceAttestation.js';
+import {
+  IdeOperationCoordinator,
+  IdeOperationCoordinatorError,
+  type IdeReviewOperationAdapter,
+} from './ideOperationCoordinator.js';
 
 export const IDE_COMPANION_LISTENER_MAX_CONNECTIONS = 16;
 export const IDE_COMPANION_LISTENER_HANDSHAKE_TIMEOUT_MS = 20_000;
@@ -63,6 +75,10 @@ export interface IdeCompanionListenerOptions {
   nowMs?: () => number;
   /** Trusted test seam; must return exactly 32 fresh random bytes in production. */
   challengeBytes?: () => Buffer;
+  /** B7 source-only adapter seam. Omit to preserve B6 handshake-only behavior. */
+  operationAdapter?: IdeReviewOperationAdapter;
+  /** Trusted test seam for B7 operation runtime bound. */
+  operationMaxRuntimeMs?: number;
 }
 
 interface PendingHandshake {
@@ -81,11 +97,16 @@ interface ConnectionState {
   pending?: PendingHandshake;
   sessionKey?: IdeSessionRegistryKey;
   enrollmentId?: string;
+  controllerLeaseId?: string;
 }
 
 type PublicServerFrame =
   | { version: 1; type: 'challenge'; sessionId: string; connectionGeneration: number; serverChallenge: string; expiresAtMs: number }
   | { version: 1; type: 'ready'; sessionId: string; connectionGeneration: number }
+  | { version: 1; type: 'controller_acquired'; controllerLeaseId: string }
+  | { version: 1; type: 'controller_released' }
+  | { version: 1; type: 'operation_event'; event: IdeOperationEvent }
+  | { version: 1; type: 'cancel_accepted'; operationId: string; result: 'accepted'|'indeterminate' }
   | { version: 1; type: 'error'; code: string };
 
 function currentUid(): number {
@@ -95,8 +116,12 @@ function currentUid(): number {
 
 function publicCode(error: unknown): string {
   if (error instanceof IdeCompanionHandshakeError) return error.code;
+  if (error instanceof IdeCompanionOperationProtocolError) return error.code;
+  if (error instanceof IdeOperationCoordinatorError) return error.code;
+  if (error instanceof IdeCompanionAuthError) return error.code;
   if (error instanceof IdeCompanionRuntimeError) return 'IDE_RUNTIME_DENIED';
   if (error instanceof IdeWorkspaceAttestationError || error instanceof IdeWorkspaceVerificationError) return 'IDE_WORKSPACE_DENIED';
+  if (error instanceof IdeSessionContractError) return 'IDE_OPERATION_DENIED';
   if (error instanceof IdeRegistryStoreError) return 'IDE_SESSION_DENIED';
   return 'INTERNAL';
 }
@@ -132,12 +157,16 @@ export class IdeCompanionListener {
   private readonly enrollmentSockets = new Map<string, Socket>();
   private readonly clock: () => number;
   private readonly challenge: () => Buffer;
+  private readonly operationCoordinator?: IdeOperationCoordinator;
   private started = false;
   private ownsSocketPath = false;
 
   constructor(private readonly opts: IdeCompanionListenerOptions) {
     this.clock = opts.nowMs ?? (() => Date.now());
     this.challenge = opts.challengeBytes ?? (() => randomBytes(32));
+    this.operationCoordinator = opts.operationAdapter === undefined ? undefined : new IdeOperationCoordinator({
+      store: opts.store, runtime: opts.runtime, adapter: opts.operationAdapter, nowMs: opts.nowMs, maxRuntimeMs: opts.operationMaxRuntimeMs,
+    });
     this.server = createServer((socket) => this.accept(socket));
   }
 
@@ -233,17 +262,20 @@ export class IdeCompanionListener {
           this.opts.store.disconnect(state.sessionKey);
         }
       } catch { /* terminal/replaced state already fails closed */ }
+      this.operationCoordinator?.connectionClosed(state.sessionKey.sessionId, state.sessionKey.connectionGeneration);
     }
+    state.controllerLeaseId = undefined;
   }
 
   private onData(socket: Socket, state: ConnectionState, chunk: Buffer): void {
-    if (state.phase === 'READY' || state.phase === 'CLOSED' || state.processing) {
+    if (state.phase === 'CLOSED' || state.processing) {
       writeFrame(socket, { version: 1, type: 'error', code: 'UNEXPECTED_FRAME' });
       socket.end();
       return;
     }
-    if (state.buffer.byteLength + chunk.byteLength > IDE_COMPANION_HANDSHAKE_MAX_FRAME_BYTES + 1) {
-      writeFrame(socket, { version: 1, type: 'error', code: 'IDE_HANDSHAKE_FRAME_SIZE' });
+    const maxFrameBytes = state.phase === 'READY' ? IDE_COMPANION_OPERATION_MAX_FRAME_BYTES : IDE_COMPANION_HANDSHAKE_MAX_FRAME_BYTES;
+    if (state.buffer.byteLength + chunk.byteLength > maxFrameBytes + 1) {
+      writeFrame(socket, { version: 1, type: 'error', code: state.phase === 'READY' ? 'IDE_OPERATION_FRAME_SIZE' : 'IDE_HANDSHAKE_FRAME_SIZE' });
       socket.end();
       return;
     }
@@ -269,6 +301,15 @@ export class IdeCompanionListener {
       }
       if (state.phase === 'ATTEST') {
         this.handleAttest(socket, state, frame);
+        return;
+      }
+      if (state.phase === 'READY') {
+        if(this.operationCoordinator===undefined){
+          writeFrame(socket,{version:1,type:'error',code:'UNEXPECTED_FRAME'});
+          socket.end();
+          return;
+        }
+        this.handleOperationControl(socket, state, frame);
         return;
       }
       throw new IdeCompanionListenerError('IDE_LISTENER_BIND_FAILED', 'unexpected connection phase');
@@ -366,6 +407,35 @@ export class IdeCompanionListener {
     state.pending = undefined;
     socket.setTimeout(0);
     writeFrame(socket, { version: 1, type: 'ready', sessionId: opened.sessionId, connectionGeneration: opened.connectionGeneration });
+  }
+
+  private handleOperationControl(socket: Socket, state: ConnectionState, bytes: Buffer): void {
+    if (this.operationCoordinator === undefined) throw new IdeOperationCoordinatorError('IDE_OPERATION_NOT_CONFIGURED','IDE review operation adapter is not configured');
+    if (state.sessionKey === undefined) throw new IdeRegistryStoreError('IDE_SESSION_NOT_FOUND','IDE ready connection has no session binding');
+    const frame=parseIdeCompanionOperationControlFrame(bytes);
+    if(frame.type==='acquire_controller'){
+      if(state.controllerLeaseId!==undefined)throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','controller already acquired on this connection');
+      const lease=this.opts.store.acquireController(state.sessionKey);
+      state.controllerLeaseId=lease;
+      writeFrame(socket,{version:1,type:'controller_acquired',controllerLeaseId:lease});
+      return;
+    }
+    if(frame.type==='release_controller'){
+      if(state.controllerLeaseId===undefined)throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','this connection does not own a controller lease');
+      this.opts.store.releaseController(state.sessionKey,state.controllerLeaseId);
+      state.controllerLeaseId=undefined;
+      writeFrame(socket,{version:1,type:'controller_released'});
+      return;
+    }
+    if(state.controllerLeaseId===undefined||frame.auth.controllerLeaseId!==state.controllerLeaseId){
+      throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','operation frame does not own this connection controller');
+    }
+    if(frame.type==='start_review'){
+      this.operationCoordinator.startReview(frame.auth,frame.prompt,frame.workspaceAttestation,(event:IdeOperationEvent)=>writeFrame(socket,{version:1,type:'operation_event',event}));
+      return;
+    }
+    const result=this.operationCoordinator.cancel(frame.auth);
+    writeFrame(socket,{version:1,type:'cancel_accepted',operationId:frame.auth.operationId,result});
   }
 
   private assertAttestMatchesChallenge(frame: IdeCompanionAttestFrame, pending: PendingHandshake): void {

@@ -3,11 +3,11 @@
  *
  * Plane B is deliberately separate from the Agent Control Plane database.
  * This store contains no prompt/response bodies, credentials, provider state,
- * host paths, model selections, or writer authority. It persists only trusted
- * logical enrollment identity, connection generations, lifecycle state, and
- * opaque controller-lease identity.
+ * host paths, model selections, or writer authority. It persists trusted
+ * enrollment/session identity plus B7 operation attribution/lifecycle and
+ * metadata-only event audit (message digest + byte count, never message body).
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -15,6 +15,7 @@ import {
   IDE_CONTROLLER_LEASE_ID_PATTERN,
   IDE_REVIEW_BASE_CAPABILITIES,
   IDE_SESSION_STATES,
+  IDE_OPERATION_STATES,
   IdeSessionContractError,
   assertIdeCapability,
   assertIdeConnectionGeneration,
@@ -22,6 +23,7 @@ import {
   assertIdeEnrollmentId,
   assertIdeInstanceId,
   assertIdeOperationId,
+  assertIdeOperationTransition,
   assertIdeLogicalId,
   assertIdePrincipalId,
   assertIdeProduct,
@@ -29,16 +31,21 @@ import {
   assertIdeSessionId,
   assertIdeSessionTransition,
   assertIdeWorkspaceFingerprint,
+  validateIdeOperationEvent,
   type IdeCapability,
+  type IdeOperationEvent,
+  type IdeOperationState,
   type IdeProductId,
   type IdeSessionAuthorityRequest,
   type IdeSessionBinding,
   type IdeSessionState,
 } from '../../shared/ideSessions.js';
 import { IDE_COMPANION_MAX_CLOCK_SKEW_MS, IDE_COMPANION_MAX_LIFETIME_MS } from '../../shared/ideCompanionAuth.js';
+import { IDE_COMPANION_OPERATION_MAX_AUTHENTICATED_PAYLOAD_BYTES } from '../../shared/ideCompanionOperations.js';
 
-export const IDE_REGISTRY_SCHEMA_VERSION = 2;
+export const IDE_REGISTRY_SCHEMA_VERSION = 3;
 export const IDE_MAX_ACTIVE_AUTH_REPLAYS = 4096;
+export const IDE_MAX_OPERATION_EVENTS = 4096;
 
 const B2_ENROLLMENT_CAPABILITIES = new Set<IdeCapability>([
   ...IDE_REVIEW_BASE_CAPABILITIES,
@@ -50,7 +57,11 @@ const LIVE_SESSION_STATES: readonly IdeSessionState[] = [
 ] as const;
 const LIVE_SESSION_SQL = LIVE_SESSION_STATES.map((s) => `'${s}'`).join(',');
 
-const REQUIRED_TABLES = ['ide_enrollments', 'ide_sessions', 'ide_auth_replays'] as const;
+const ACTIVE_OPERATION_STATES: readonly IdeOperationState[] = ['RUNNING', 'CANCELLING'] as const;
+const TERMINAL_OPERATION_STATES: readonly IdeOperationState[] = ['COMPLETED','CANCELLED','FAILED','DISCONNECTED','INDETERMINATE'] as const;
+const ACTIVE_OPERATION_SQL = ACTIVE_OPERATION_STATES.map((s) => `'${s}'`).join(',');
+
+const REQUIRED_TABLES = ['ide_enrollments', 'ide_sessions', 'ide_auth_replays', 'ide_operations', 'ide_operation_events'] as const;
 const REQUIRED_INDEXES = {
   idx_ide_enrollments_one_active_binding: {
     table: 'ide_enrollments',
@@ -71,6 +82,12 @@ const REQUIRED_INDEXES = {
     sql: `CREATE UNIQUE INDEX idx_ide_sessions_controller_lease
           ON ide_sessions(controller_lease_id) WHERE controller_lease_id IS NOT NULL`,
   },
+  idx_ide_operations_one_active_session: {
+    table: 'ide_operations',
+    columns: ['session_id'],
+    sql: `CREATE UNIQUE INDEX idx_ide_operations_one_active_session
+          ON ide_operations(session_id) WHERE state IN (${ACTIVE_OPERATION_SQL})`,
+  },
 } as const;
 const REQUIRED_COLUMNS: Record<string, Record<string, string>> = {
   ide_enrollments: {
@@ -87,12 +104,24 @@ const REQUIRED_COLUMNS: Record<string, Record<string, string>> = {
     nonce_hash: 'TEXT', enrollment_id: 'TEXT', session_id: 'TEXT', connection_generation: 'INTEGER',
     controller_lease_id: 'TEXT', operation_id: 'TEXT', capability: 'TEXT', expires_at_ms: 'INTEGER', claimed_at: 'TEXT',
   },
+  ide_operations: {
+    operation_id: 'TEXT', enrollment_id: 'TEXT', session_id: 'TEXT', connection_generation: 'INTEGER',
+    principal_id: 'TEXT', project_id: 'TEXT', worktree_id: 'TEXT', workspace_fingerprint: 'TEXT', base_revision: 'TEXT',
+    ide_product: 'TEXT', ide_instance_id: 'TEXT', runtime_instance_id: 'TEXT', adapter_id: 'TEXT', adapter_version: 'TEXT',
+    capability: 'TEXT', controller_lease_hash: 'TEXT', payload_sha256: 'TEXT', payload_bytes: 'INTEGER',
+    state: 'TEXT', next_sequence: 'INTEGER', started_at: 'TEXT', updated_at: 'TEXT', finished_at: 'TEXT', cancellation_requested_at: 'TEXT',
+  },
+  ide_operation_events: {
+    operation_id: 'TEXT', sequence: 'INTEGER', event_type: 'TEXT', message_sha256: 'TEXT', message_bytes: 'INTEGER', created_at: 'TEXT',
+  },
 };
 
 const REQUIRED_PRIMARY_KEYS: Record<string, readonly string[]> = {
   ide_enrollments: ['enrollment_id'],
   ide_sessions: ['session_id'],
   ide_auth_replays: ['nonce_hash'],
+  ide_operations: ['operation_id'],
+  ide_operation_events: ['operation_id', 'sequence'],
 };
 
 export type IdeEnrollmentState = 'ACTIVE' | 'REVOKED';
@@ -108,7 +137,12 @@ export type IdeRegistryErrorCode =
   | 'IDE_SESSION_STATE_MISMATCH'
   | 'IDE_CONTROLLER_LEASE_MISMATCH'
   | 'IDE_AUTH_REPLAY'
-  | 'IDE_AUTH_REPLAY_CAPACITY';
+  | 'IDE_AUTH_REPLAY_CAPACITY'
+  | 'IDE_OPERATION_ID_REUSED'
+  | 'IDE_OPERATION_NOT_FOUND'
+  | 'IDE_OPERATION_BINDING_MISMATCH'
+  | 'IDE_OPERATION_STATE_MISMATCH'
+  | 'IDE_OPERATION_EVENT_LIMIT';
 
 export class IdeRegistryStoreError extends Error {
   constructor(public readonly code: IdeRegistryErrorCode, message: string) {
@@ -182,8 +216,57 @@ export interface IdeAuthReplayClaim extends IdeCompanionRegistryRequest {
   nowMs: number;
 }
 
+export interface StartIdeOperationInput extends IdeCompanionRegistryRequest {
+  runtimeInstanceId: string;
+  adapterId: string;
+  adapterVersion: string;
+  payloadSha256: string;
+  payloadBytes: number;
+}
+
+export interface IdeOperationRow {
+  operationId: string;
+  enrollmentId: string;
+  sessionId: string;
+  connectionGeneration: number;
+  principalId: string;
+  projectId: string;
+  worktreeId: string;
+  workspaceFingerprint: string;
+  baseRevision?: string;
+  ideProduct: IdeProductId;
+  ideInstanceId: string;
+  runtimeInstanceId: string;
+  adapterId: string;
+  adapterVersion: string;
+  capability: IdeCapability;
+  controllerLeaseHash: string;
+  payloadSha256: string;
+  payloadBytes: number;
+  state: IdeOperationState;
+  nextSequence: number;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  cancellationRequestedAt: string | null;
+}
+
+export interface IdeOperationAuditRow {
+  operationId: string;
+  sequence: number;
+  eventType: IdeOperationEvent['type'];
+  messageSha256: string | null;
+  messageBytes: number;
+  createdAt: string;
+}
+
 function nowIso(): string { return new Date().toISOString(); }
 function opaqueId(prefix: 'iden_' | 'idectl_'): string { return `${prefix}${randomBytes(16).toString('hex')}`; }
+function sha256(value: string | Buffer): string { return createHash('sha256').update(value).digest('hex'); }
+const RUNTIME_INSTANCE_PATTERN = /^iderun_[0-9a-f]{32}$/;
+const ADAPTER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+const ADAPTER_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 function restrictSqliteFileModes(path: string): void {
   if (path === ':memory:' || path === '') return;
@@ -249,6 +332,35 @@ function exactEnrollmentMismatch(row: IdeEnrollmentRow, key: Omit<IdeEnrollmentK
   return fields.find(([, requested, current]) => requested !== current)?.[0] ?? null;
 }
 
+function validateOperationStartInput(input: StartIdeOperationInput): void {
+  assertIdeEnrollmentId(input.enrollmentId);
+  assertIdeInstanceId(input.ideInstanceId);
+  assertIdeSessionId(input.sessionId);
+  assertIdeConnectionGeneration(input.connectionGeneration);
+  assertIdeControllerLeaseId(input.controllerLeaseId);
+  assertIdeOperationId(input.operationId);
+  assertIdeCapability(input.capability);
+  if (input.capability !== 'request_review') {
+    throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'P7 B7 starts only request_review operations');
+  }
+  if (!RUNTIME_INSTANCE_PATTERN.test(input.runtimeInstanceId)) throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'runtime instance identity is invalid');
+  if (!ADAPTER_ID_PATTERN.test(input.adapterId)) throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'adapter identity is invalid');
+  if (!ADAPTER_VERSION_PATTERN.test(input.adapterVersion)) throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'adapter version is invalid');
+  if (!SHA256_PATTERN.test(input.payloadSha256)) throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'operation payload hash is invalid');
+  if (!Number.isSafeInteger(input.payloadBytes) || input.payloadBytes < 1 || input.payloadBytes > IDE_COMPANION_OPERATION_MAX_AUTHENTICATED_PAYLOAD_BYTES) {
+    throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'operation payload bytes are outside B7 bounds');
+  }
+}
+
+function terminalStateForEvent(type: IdeOperationEvent['type']): IdeOperationState | null {
+  if (type === 'completed') return 'COMPLETED';
+  if (type === 'cancelled') return 'CANCELLED';
+  if (type === 'failed') return 'FAILED';
+  if (type === 'disconnected') return 'DISCONNECTED';
+  if (type === 'indeterminate') return 'INDETERMINATE';
+  return null;
+}
+
 export class IdeSessionStore {
   private readonly db: DatabaseSync;
 
@@ -276,20 +388,35 @@ export class IdeSessionStore {
     }
     if (version === IDE_REGISTRY_SCHEMA_VERSION) { this.assertSchemaShape(); return; }
 
+    if (version === 2) {
+      this.assertSchemaShape({ includeOperations: false, stampedVersion: 2 });
+      const partial = ['ide_operations', 'ide_operation_events', 'idx_ide_operations_one_active_session']
+        .filter((name) => this.db.prepare(`SELECT 1 FROM sqlite_master WHERE name=?`).get(name) !== undefined);
+      if (partial.length > 0) {
+        throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', `IDE registry v2 contains partial v3 operation state: ${partial.join(', ')}`);
+      }
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.createOperationSchema();
+        this.db.exec(`PRAGMA user_version=${IDE_REGISTRY_SCHEMA_VERSION}`);
+        this.db.exec('COMMIT');
+      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+      this.assertSchemaShape();
+      restrictSqliteFileModes(this.path);
+      return;
+    }
+
     if (version === 1) {
-      // B3 v2 is additive. A v1 DB must prove the exact accepted B2 shape
-      // before any replay table/version mutation is attempted. A partially
-      // present v2 replay table/index under a v1 stamp is ambiguous and is
-      // refused rather than repaired.
-      this.assertSchemaShape({ includeReplay: false, stampedVersion: 1 });
-      const replayTable = this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ide_auth_replays'`).get();
-      const replayIndex = this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_ide_auth_replays_expiry'`).get();
-      if (replayTable !== undefined || replayIndex !== undefined) {
-        throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', 'IDE registry v1 contains partial v2 replay state; refusing automatic repair');
+      this.assertSchemaShape({ includeReplay: false, includeOperations: false, stampedVersion: 1 });
+      const unexpected = ['ide_auth_replays', 'idx_ide_auth_replays_expiry', 'ide_operations', 'ide_operation_events', 'idx_ide_operations_one_active_session']
+        .filter((name) => this.db.prepare(`SELECT 1 FROM sqlite_master WHERE name=?`).get(name) !== undefined);
+      if (unexpected.length > 0) {
+        throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', `IDE registry v1 contains partial later-schema state: ${unexpected.join(', ')}`);
       }
       this.db.exec('BEGIN IMMEDIATE');
       try {
         this.createReplaySchema();
+        this.createOperationSchema();
         this.db.exec(`PRAGMA user_version=${IDE_REGISTRY_SCHEMA_VERSION}`);
         this.db.exec('COMMIT');
       } catch (error) { this.db.exec('ROLLBACK'); throw error; }
@@ -333,6 +460,7 @@ export class IdeSessionStore {
           ON ide_sessions(controller_lease_id) WHERE controller_lease_id IS NOT NULL;
       `);
       this.createReplaySchema();
+      this.createOperationSchema();
       this.db.exec(`PRAGMA user_version=${IDE_REGISTRY_SCHEMA_VERSION}`);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
@@ -358,18 +486,63 @@ export class IdeSessionStore {
     `);
   }
 
-  private assertSchemaShape(options: { includeReplay?: boolean; stampedVersion?: number } = {}): void {
+  private createOperationSchema(): void {
+    this.db.exec(`
+      CREATE TABLE ide_operations (
+        operation_id TEXT PRIMARY KEY,
+        enrollment_id TEXT NOT NULL REFERENCES ide_enrollments(enrollment_id),
+        session_id TEXT NOT NULL REFERENCES ide_sessions(session_id),
+        connection_generation INTEGER NOT NULL CHECK(connection_generation >= 1),
+        principal_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        worktree_id TEXT NOT NULL,
+        workspace_fingerprint TEXT NOT NULL,
+        base_revision TEXT,
+        ide_product TEXT NOT NULL,
+        ide_instance_id TEXT NOT NULL,
+        runtime_instance_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
+        adapter_version TEXT NOT NULL,
+        capability TEXT NOT NULL,
+        controller_lease_hash TEXT NOT NULL,
+        payload_sha256 TEXT NOT NULL,
+        payload_bytes INTEGER NOT NULL CHECK(payload_bytes >= 0),
+        state TEXT NOT NULL CHECK(state IN ('RUNNING','CANCELLING','COMPLETED','CANCELLED','FAILED','DISCONNECTED','INDETERMINATE')),
+        next_sequence INTEGER NOT NULL CHECK(next_sequence >= 1),
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        cancellation_requested_at TEXT
+      );
+      CREATE UNIQUE INDEX idx_ide_operations_one_active_session
+        ON ide_operations(session_id) WHERE state IN (${ACTIVE_OPERATION_SQL});
+      CREATE TABLE ide_operation_events (
+        operation_id TEXT NOT NULL REFERENCES ide_operations(operation_id),
+        sequence INTEGER NOT NULL CHECK(sequence >= 0),
+        event_type TEXT NOT NULL,
+        message_sha256 TEXT,
+        message_bytes INTEGER NOT NULL CHECK(message_bytes >= 0),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(operation_id, sequence)
+      );
+    `);
+  }
+
+  private assertSchemaShape(options: { includeReplay?: boolean; includeOperations?: boolean; stampedVersion?: number } = {}): void {
     const includeReplay = options.includeReplay ?? true;
+    const includeOperations = options.includeOperations ?? true;
     const stampedVersion = options.stampedVersion ?? IDE_REGISTRY_SCHEMA_VERSION;
     const missing: string[] = [];
     const tableExists = (name: string): boolean => this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(name) !== undefined;
     const indexExists = (name: string): boolean => this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name=?`).get(name) !== undefined;
     for (const table of REQUIRED_TABLES) {
       if (!includeReplay && table === 'ide_auth_replays') continue;
+      if (!includeOperations && (table === 'ide_operations' || table === 'ide_operation_events')) continue;
       if (!tableExists(table)) missing.push(`table ${table}`);
     }
     for (const [table, columns] of Object.entries(REQUIRED_COLUMNS)) {
       if (!includeReplay && table === 'ide_auth_replays') continue;
+      if (!includeOperations && (table === 'ide_operations' || table === 'ide_operation_events')) continue;
       if (!tableExists(table)) continue;
       const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string; pk: number }[];
       for (const [column, affinity] of Object.entries(columns)) {
@@ -385,6 +558,7 @@ export class IdeSessionStore {
     }
     const normalizeSql = (sql: string): string => sql.replace(/\s+/g, ' ').trim().replace(/;$/, '').toLowerCase();
     for (const [index, expected] of Object.entries(REQUIRED_INDEXES)) {
+      if (!includeOperations && index === 'idx_ide_operations_one_active_session') continue;
       if (!indexExists(index)) { missing.push(`index ${index}`); continue; }
       const indexList = this.db.prepare(`PRAGMA index_list(${expected.table})`).all() as Array<{ name: string; unique: number; partial: number }>;
       const listed = indexList.find((row) => row.name === index);
@@ -414,6 +588,34 @@ export class IdeSessionStore {
     if (missing.length > 0) {
       throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', `IDE registry is stamped schema v${stampedVersion} but incomplete/incompatible: ${missing.join(', ')}`);
     }
+    if(includeOperations)this.assertDurableOperationCoherence();
+  }
+
+  private assertDurableOperationCoherence(): void {
+    const rows=this.db.prepare(`SELECT * FROM ide_operations ORDER BY operation_id`).all() as Record<string,unknown>[];
+    const terminalEvent:Partial<Record<IdeOperationState,IdeOperationEvent['type']>>={COMPLETED:'completed',CANCELLED:'cancelled',FAILED:'failed',DISCONNECTED:'disconnected',INDETERMINATE:'indeterminate'};
+    for(const raw of rows){
+      const op=this.rowToOperation(raw);
+      const events=this.getOperationAudit(op.operationId);
+      if(events.length!==op.nextSequence)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE operation ${op.operationId} audit length/next sequence mismatch`);
+      if(events.length<1||events[0]?.sequence!==0||events[0]?.eventType!=='operation_started')throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE operation ${op.operationId} lacks canonical start event`);
+      for(let i=0;i<events.length;i+=1)if(events[i]?.sequence!==i)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE operation ${op.operationId} audit sequence is not contiguous`);
+      const expectedTerminal=terminalEvent[op.state];
+      const last=events.at(-1)!;
+      if(expectedTerminal!==undefined&&last.eventType!==expectedTerminal)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE operation ${op.operationId} terminal state/event mismatch`);
+      if(expectedTerminal===undefined&&['completed','cancelled','failed','disconnected','indeterminate'].includes(last.eventType))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE active operation ${op.operationId} has terminal audit event`);
+      if(op.state==='CANCELLED'&&op.cancellationRequestedAt===null)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE cancelled operation ${op.operationId} lacks cancellation request attribution`);
+      if(ACTIVE_OPERATION_STATES.includes(op.state)){
+        const sessionRaw=this.db.prepare(`SELECT * FROM ide_sessions WHERE session_id=?`).get(op.sessionId) as Record<string,unknown>|undefined;
+        if(!sessionRaw)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE active operation ${op.operationId} session is missing`);
+        const session=this.rowToSession(sessionRaw);
+        if(session.enrollmentId!==op.enrollmentId||session.connectionGeneration!==op.connectionGeneration||session.state!=='OPERATION_ACTIVE'||session.controllerLeaseId===null||sha256(session.controllerLeaseId)!==op.controllerLeaseHash){
+          throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE active operation ${op.operationId} session/controller binding is incoherent`);
+        }
+        const enrollment=this.requireEnrollment(op.enrollmentId);
+        if(enrollment.currentGeneration!==op.connectionGeneration)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE active operation ${op.operationId} is not current generation`);
+      }
+    }
   }
 
   createEnrollment(input: NewIdeEnrollment): IdeEnrollmentRow {
@@ -442,6 +644,19 @@ export class IdeSessionStore {
     return row ? this.rowToSession(row) : undefined;
   }
 
+
+  getOperation(operationId: string): IdeOperationRow | undefined {
+    assertIdeOperationId(operationId);
+    const row = this.db.prepare(`SELECT * FROM ide_operations WHERE operation_id=?`).get(operationId) as Record<string, unknown>|undefined;
+    return row ? this.rowToOperation(row) : undefined;
+  }
+
+  getOperationAudit(operationId: string): IdeOperationAuditRow[] {
+    assertIdeOperationId(operationId);
+    const rows = this.db.prepare(`SELECT * FROM ide_operation_events WHERE operation_id=? ORDER BY sequence`).all(operationId) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToOperationAudit(row));
+  }
+
   revokeEnrollment(key: IdeEnrollmentKey): boolean {
     validateEnrollmentIdentity(key);
     this.db.exec('BEGIN IMMEDIATE');
@@ -451,6 +666,8 @@ export class IdeSessionStore {
       const now=nowIso();
       const changed=this.db.prepare(`UPDATE ide_enrollments SET state='REVOKED',revoked_at=?,updated_at=? WHERE enrollment_id=? AND state='ACTIVE'`).run(now,now,key.enrollmentId);
       if (Number(changed.changes)!==1) { this.db.exec('ROLLBACK'); return false; }
+      const live=this.db.prepare(`SELECT session_id,connection_generation FROM ide_sessions WHERE enrollment_id=? AND state IN (${LIVE_SESSION_SQL})`).all(key.enrollmentId) as Array<{session_id:string;connection_generation:number}>;
+      for(const row of live)this.terminalizeActiveOperationForSessionTx(row.session_id,Number(row.connection_generation),'disconnected');
       this.db.prepare(`UPDATE ide_sessions SET state='STALE',controller_lease_id=NULL,ended_at=?,updated_at=? WHERE enrollment_id=? AND state IN (${LIVE_SESSION_SQL})`).run(now,now,key.enrollmentId);
       this.db.exec('COMMIT'); return true;
     } catch(error) { try{this.db.exec('ROLLBACK');}catch{} throw error; }
@@ -487,6 +704,8 @@ export class IdeSessionStore {
       const next=enrollment.currentGeneration+1;
       if (!Number.isSafeInteger(next)||next<1) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE connection generation exhausted safe integer range');
       const now=nowIso();
+      const priorLive=this.db.prepare(`SELECT session_id,connection_generation FROM ide_sessions WHERE enrollment_id=? AND state IN (${LIVE_SESSION_SQL})`).all(input.enrollmentId) as Array<{session_id:string;connection_generation:number}>;
+      for(const row of priorLive)this.terminalizeActiveOperationForSessionTx(row.session_id,Number(row.connection_generation),'disconnected');
       this.db.prepare(`UPDATE ide_sessions SET state='STALE',controller_lease_id=NULL,ended_at=?,updated_at=? WHERE enrollment_id=? AND state IN (${LIVE_SESSION_SQL})`).run(now,now,input.enrollmentId);
       const updated=this.db.prepare(`UPDATE ide_enrollments SET current_generation=?,updated_at=? WHERE enrollment_id=? AND state='ACTIVE' AND current_generation=?`).run(next,now,input.enrollmentId,enrollment.currentGeneration);
       if(Number(updated.changes)!==1) throw new IdeRegistryStoreError('IDE_ENROLLMENT_NOT_ACTIVE','IDE enrollment changed while opening session');
@@ -512,22 +731,119 @@ export class IdeSessionStore {
   markOperationActive(key: IdeSessionRegistryKey,leaseId:string): boolean { assertIdeControllerLeaseId(leaseId); return this.transitionExact(key,'CONTROLLER_ACQUIRED','OPERATION_ACTIVE',leaseId); }
   markOperationSettled(key: IdeSessionRegistryKey,leaseId:string): boolean { assertIdeControllerLeaseId(leaseId); return this.transitionExact(key,'OPERATION_ACTIVE','CONTROLLER_ACQUIRED',leaseId); }
 
+
+  /** B7: atomically bind one authenticated review operation to the current controller/session. */
+  startOperation(input: StartIdeOperationInput): IdeOperationRow {
+    validateOperationStartInput(input);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (this.db.prepare(`SELECT 1 FROM ide_operations WHERE operation_id=?`).get(input.operationId)!==undefined) {
+        throw new IdeRegistryStoreError('IDE_OPERATION_ID_REUSED','IDE operation ID has already been used');
+      }
+      const {session,enrollment}=this.requireCompanionContext(input);
+      if(session.state!=='CONTROLLER_ACQUIRED') throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','IDE session is not ready to start an operation');
+      const now=nowIso();
+      const controllerLeaseHash=sha256(input.controllerLeaseId);
+      this.db.prepare(`INSERT INTO ide_operations
+        (operation_id,enrollment_id,session_id,connection_generation,principal_id,project_id,worktree_id,workspace_fingerprint,base_revision,
+         ide_product,ide_instance_id,runtime_instance_id,adapter_id,adapter_version,capability,controller_lease_hash,payload_sha256,payload_bytes,
+         state,next_sequence,started_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'RUNNING',1,?,?)`).run(
+        input.operationId,enrollment.enrollmentId,session.sessionId,session.connectionGeneration,enrollment.principalId,enrollment.projectId,enrollment.worktreeId,
+        enrollment.workspaceFingerprint,enrollment.baseRevision??null,enrollment.ideProduct,enrollment.ideInstanceId,input.runtimeInstanceId,input.adapterId,input.adapterVersion,
+        input.capability,controllerLeaseHash,input.payloadSha256,input.payloadBytes,now,now,
+      );
+      const moved=this.db.prepare(`UPDATE ide_sessions SET state='OPERATION_ACTIVE',updated_at=?
+        WHERE session_id=? AND connection_generation=? AND state='CONTROLLER_ACQUIRED' AND controller_lease_id=?`).run(
+        now,session.sessionId,session.connectionGeneration,input.controllerLeaseId,
+      );
+      if(Number(moved.changes)!==1) throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','IDE operation start lost session CAS race');
+      this.db.prepare(`INSERT INTO ide_operation_events(operation_id,sequence,event_type,message_sha256,message_bytes,created_at)
+        VALUES (?,0,'operation_started',NULL,0,?)`).run(input.operationId,now);
+      this.db.exec('COMMIT');
+    } catch(error){try{this.db.exec('ROLLBACK');}catch{} throw error;}
+    return this.getOperation(input.operationId)!;
+  }
+
+  requestOperationCancellation(request: IdeCompanionRegistryRequest): IdeOperationRow {
+    assertIdeCapability(request.capability);
+    if(request.capability!=='cancel') throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED','operation cancellation requires cancel capability');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const {session}=this.requireCompanionContext(request);
+      if(session.state!=='OPERATION_ACTIVE') throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','IDE session has no active operation');
+      const row=this.db.prepare(`SELECT * FROM ide_operations WHERE operation_id=?`).get(request.operationId) as Record<string,unknown>|undefined;
+      if(!row) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+      const op=this.rowToOperation(row);
+      this.assertOperationRequestBinding(op,request);
+      if(op.state==='CANCELLING'){this.db.exec('COMMIT');return op;}
+      if(op.state!=='RUNNING') throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH',`IDE operation is ${op.state}, not RUNNING`);
+      assertIdeOperationTransition('RUNNING','CANCELLING');
+      const now=nowIso();
+      const changed=this.db.prepare(`UPDATE ide_operations SET state='CANCELLING',cancellation_requested_at=?,updated_at=?
+        WHERE operation_id=? AND state='RUNNING'`).run(now,now,op.operationId);
+      if(Number(changed.changes)!==1) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','IDE operation cancellation lost CAS race');
+      this.db.exec('COMMIT');
+    }catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
+    return this.getOperation(request.operationId)!;
+  }
+
+  /** Persist event metadata before the caller streams the event body. Raw message text is never stored. */
+  appendOperationEvent(event: IdeOperationEvent, controllerLeaseId: string): IdeOperationRow {
+    validateIdeOperationEvent(event);assertIdeControllerLeaseId(controllerLeaseId);
+    if(event.type==='operation_started') throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','operation_started is emitted only by atomic start');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const raw=this.db.prepare(`SELECT * FROM ide_operations WHERE operation_id=?`).get(event.operationId) as Record<string,unknown>|undefined;
+      if(!raw) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+      const op=this.rowToOperation(raw);
+      if(op.sessionId!==event.sessionId||op.connectionGeneration!==event.connectionGeneration) throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','IDE event operation binding mismatch');
+      if(op.controllerLeaseHash!==sha256(controllerLeaseId)) throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','IDE operation controller lease mismatch');
+      if(event.sequence!==op.nextSequence) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','IDE operation event sequence is not the durable next sequence');
+      if(!ACTIVE_OPERATION_STATES.includes(op.state)) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH',`IDE operation is terminal: ${op.state}`);
+      const terminal=terminalStateForEvent(event.type);
+      if(terminal===null && event.sequence>=IDE_MAX_OPERATION_EVENTS-1) throw new IdeRegistryStoreError('IDE_OPERATION_EVENT_LIMIT','IDE operation event limit reached; terminal slot reserved');
+      if(event.sequence>=IDE_MAX_OPERATION_EVENTS) throw new IdeRegistryStoreError('IDE_OPERATION_EVENT_LIMIT','IDE operation event limit reached');
+      if(terminal!==null) assertIdeOperationTransition(op.state,terminal);
+      const now=nowIso();
+      this.insertOperationAuditEventTx(event,now);
+      if(terminal!==null){
+        const changed=this.db.prepare(`UPDATE ide_operations SET state=?,next_sequence=?,finished_at=?,updated_at=? WHERE operation_id=? AND state=? AND next_sequence=?`).run(
+          terminal,event.sequence+1,now,now,op.operationId,op.state,op.nextSequence,
+        );
+        if(Number(changed.changes)!==1) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','IDE terminal event lost CAS race');
+        const session=this.db.prepare(`SELECT state,controller_lease_id FROM ide_sessions WHERE session_id=? AND connection_generation=?`).get(op.sessionId,op.connectionGeneration) as {state:string;controller_lease_id:string|null}|undefined;
+        if(!session||session.state!=='OPERATION_ACTIVE'||session.controller_lease_id!==controllerLeaseId) throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','IDE terminal event cannot settle current session');
+        const settled=this.db.prepare(`UPDATE ide_sessions SET state='CONTROLLER_ACQUIRED',updated_at=? WHERE session_id=? AND connection_generation=? AND state='OPERATION_ACTIVE' AND controller_lease_id=?`).run(now,op.sessionId,op.connectionGeneration,controllerLeaseId);
+        if(Number(settled.changes)!==1) throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','IDE operation settlement lost session CAS race');
+      }else{
+        const changed=this.db.prepare(`UPDATE ide_operations SET next_sequence=?,updated_at=? WHERE operation_id=? AND state=? AND next_sequence=?`).run(event.sequence+1,now,op.operationId,op.state,op.nextSequence);
+        if(Number(changed.changes)!==1) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','IDE event append lost CAS race');
+      }
+      this.db.exec('COMMIT');
+    }catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
+    return this.getOperation(event.operationId)!;
+  }
+
   disconnect(key: IdeSessionRegistryKey): boolean {
     validateSessionKey(key); this.db.exec('BEGIN IMMEDIATE');
     try {
       const {session}=this.requireExactSession(key); assertIdeSessionTransition(session.state,'DISCONNECTED'); const now=nowIso();
+      this.terminalizeActiveOperationForSessionTx(session.sessionId,session.connectionGeneration,'disconnected');
       const res=this.db.prepare(`UPDATE ide_sessions SET state='DISCONNECTED',controller_lease_id=NULL,ended_at=?,updated_at=? WHERE session_id=? AND connection_generation=? AND state=?`).run(now,now,key.sessionId,key.connectionGeneration,session.state);
       if(Number(res.changes)!==1) throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','IDE disconnect lost CAS race');
       this.db.exec('COMMIT'); return true;
     } catch(error) { try{this.db.exec('ROLLBACK');}catch{} throw error; }
   }
 
-  recoverAfterRestart(): {staledSessionIds:string[]} {
+  recoverAfterRestart(): {staledSessionIds:string[];indeterminateOperationIds:string[]} {
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const rows=this.db.prepare(`SELECT session_id FROM ide_sessions WHERE state IN (${LIVE_SESSION_SQL}) ORDER BY session_id`).all() as {session_id:string}[];
+      const rows=this.db.prepare(`SELECT session_id,connection_generation FROM ide_sessions WHERE state IN (${LIVE_SESSION_SQL}) ORDER BY session_id`).all() as Array<{session_id:string;connection_generation:number}>;
+      const indeterminateOperationIds:string[]=[];
+      for(const row of rows){const op=this.terminalizeActiveOperationForSessionTx(row.session_id,Number(row.connection_generation),'indeterminate');if(op)indeterminateOperationIds.push(op);}
       if(rows.length>0){const now=nowIso();this.db.prepare(`UPDATE ide_sessions SET state='STALE',controller_lease_id=NULL,ended_at=?,updated_at=? WHERE state IN (${LIVE_SESSION_SQL})`).run(now,now);}
-      this.db.exec('COMMIT'); return {staledSessionIds:rows.map(r=>r.session_id)};
+      this.db.exec('COMMIT'); return {staledSessionIds:rows.map(r=>r.session_id),indeterminateOperationIds};
     } catch(error){this.db.exec('ROLLBACK');throw error;}
   }
 
@@ -615,6 +931,38 @@ export class IdeSessionStore {
     }
   }
 
+  private assertOperationRequestBinding(op: IdeOperationRow, request: IdeCompanionRegistryRequest): void {
+    if(op.enrollmentId!==request.enrollmentId||op.sessionId!==request.sessionId||op.connectionGeneration!==request.connectionGeneration||op.operationId!==request.operationId){
+      throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','IDE operation request binding mismatch');
+    }
+    if(op.controllerLeaseHash!==sha256(request.controllerLeaseId)) throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','IDE operation controller lease mismatch');
+  }
+
+  private insertOperationAuditEventTx(event: IdeOperationEvent, createdAt: string): void {
+    const messageBytes=event.message===undefined?0:Buffer.byteLength(event.message,'utf8');
+    const messageSha256=event.message===undefined?null:sha256(event.message);
+    this.db.prepare(`INSERT INTO ide_operation_events(operation_id,sequence,event_type,message_sha256,message_bytes,created_at)
+      VALUES (?,?,?,?,?,?)`).run(event.operationId,event.sequence,event.type,messageSha256,messageBytes,createdAt);
+  }
+
+  private terminalizeActiveOperationForSessionTx(sessionId: string, connectionGeneration: number, eventType: 'disconnected'|'indeterminate'): string | null {
+    const raw=this.db.prepare(`SELECT * FROM ide_operations WHERE session_id=? AND connection_generation=? AND state IN (${ACTIVE_OPERATION_SQL})`).get(sessionId,connectionGeneration) as Record<string,unknown>|undefined;
+    if(!raw)return null;
+    const op=this.rowToOperation(raw);
+    const target=terminalStateForEvent(eventType);
+    if(target===null)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','terminal recovery event is invalid');
+    assertIdeOperationTransition(op.state,target);
+    if(op.nextSequence>=IDE_MAX_OPERATION_EVENTS)throw new IdeRegistryStoreError('IDE_OPERATION_EVENT_LIMIT','terminal operation audit slot exhausted');
+    const now=nowIso();
+    const event:IdeOperationEvent={version:1,operationId:op.operationId,sessionId:op.sessionId,connectionGeneration:op.connectionGeneration,origin:'machine',sequence:op.nextSequence,type:eventType};
+    this.insertOperationAuditEventTx(event,now);
+    const changed=this.db.prepare(`UPDATE ide_operations SET state=?,next_sequence=?,finished_at=?,updated_at=? WHERE operation_id=? AND state=? AND next_sequence=?`).run(
+      target,op.nextSequence+1,now,now,op.operationId,op.state,op.nextSequence,
+    );
+    if(Number(changed.changes)!==1)throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','IDE recovery terminalization lost CAS race');
+    return op.operationId;
+  }
+
   private validateReplayClaim(claim: IdeAuthReplayClaim): void {
     assertIdeEnrollmentId(claim.enrollmentId);
     assertIdeInstanceId(claim.ideInstanceId);
@@ -697,4 +1045,35 @@ export class IdeSessionStore {
     const endedAt=row.ended_at==null?null:String(row.ended_at);if((state==='DISCONNECTED'||state==='STALE')!==(endedAt!==null))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE session terminal fields are inconsistent');
     return{sessionId,enrollmentId,connectionGeneration,state,controllerLeaseId,createdAt:String(row.created_at),updatedAt:String(row.updated_at),endedAt};
   }
+
+  private rowToOperation(row: Record<string, unknown>): IdeOperationRow {
+    const operationId=String(row.operation_id),enrollmentId=String(row.enrollment_id),sessionId=String(row.session_id),connectionGeneration=Number(row.connection_generation);
+    const principalId=String(row.principal_id),projectId=String(row.project_id),worktreeId=String(row.worktree_id),workspaceFingerprint=String(row.workspace_fingerprint),baseRevision=row.base_revision==null?undefined:String(row.base_revision);
+    const ideProduct=String(row.ide_product) as IdeProductId,ideInstanceId=String(row.ide_instance_id),runtimeInstanceId=String(row.runtime_instance_id),adapterId=String(row.adapter_id),adapterVersion=String(row.adapter_version),capability=String(row.capability) as IdeCapability;
+    const controllerLeaseHash=String(row.controller_lease_hash),payloadSha256=String(row.payload_sha256),payloadBytes=Number(row.payload_bytes),state=String(row.state) as IdeOperationState,nextSequence=Number(row.next_sequence);
+    assertIdeOperationId(operationId);assertIdeEnrollmentId(enrollmentId);assertIdeSessionId(sessionId);assertIdeConnectionGeneration(connectionGeneration);
+    assertIdePrincipalId(principalId);assertIdeLogicalId(projectId,'projectId');assertIdeLogicalId(worktreeId,'worktreeId');assertIdeWorkspaceFingerprint(workspaceFingerprint);assertBaseRevision(baseRevision);assertIdeProduct(ideProduct);assertIdeInstanceId(ideInstanceId);assertIdeCapability(capability);
+    if(!RUNTIME_INSTANCE_PATTERN.test(runtimeInstanceId)||!ADAPTER_ID_PATTERN.test(adapterId)||!ADAPTER_VERSION_PATTERN.test(adapterVersion))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation runtime attribution is invalid');
+    if(!SHA256_PATTERN.test(controllerLeaseHash)||!SHA256_PATTERN.test(payloadSha256))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation digest field is invalid');
+    if(!Number.isSafeInteger(payloadBytes)||payloadBytes<1||payloadBytes>IDE_COMPANION_OPERATION_MAX_AUTHENTICATED_PAYLOAD_BYTES)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation payload size is invalid');
+    if(!(IDE_OPERATION_STATES as readonly string[]).includes(state)||state==='PENDING')throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation state is invalid');
+    if(!Number.isSafeInteger(nextSequence)||nextSequence<1||nextSequence>IDE_MAX_OPERATION_EVENTS)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation sequence is invalid');
+    const finishedAt=row.finished_at==null?null:String(row.finished_at),cancellationRequestedAt=row.cancellation_requested_at==null?null:String(row.cancellation_requested_at);
+    const terminal=TERMINAL_OPERATION_STATES.includes(state);
+    if(terminal!==(finishedAt!==null))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation terminal fields are inconsistent');
+    if(state==='CANCELLING'&&cancellationRequestedAt===null)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation cancellation fields are inconsistent');
+    return{operationId,enrollmentId,sessionId,connectionGeneration,principalId,projectId,worktreeId,workspaceFingerprint,baseRevision,ideProduct,ideInstanceId,runtimeInstanceId,adapterId,adapterVersion,capability,controllerLeaseHash,payloadSha256,payloadBytes,state,nextSequence,startedAt:String(row.started_at),updatedAt:String(row.updated_at),finishedAt,cancellationRequestedAt};
+  }
+
+  private rowToOperationAudit(row: Record<string, unknown>): IdeOperationAuditRow {
+    const operationId=String(row.operation_id),sequence=Number(row.sequence),eventType=String(row.event_type) as IdeOperationEvent['type'],messageSha256=row.message_sha256==null?null:String(row.message_sha256),messageBytes=Number(row.message_bytes);
+    assertIdeOperationId(operationId);
+    if(!Number.isSafeInteger(sequence)||sequence<0||sequence>=IDE_MAX_OPERATION_EVENTS)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation audit sequence is invalid');
+    if(!['operation_started','assistant_chunk','tool_activity','status','completed','cancelled','failed','disconnected','indeterminate'].includes(eventType))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation audit type is invalid');
+    if(messageSha256!==null&&!SHA256_PATTERN.test(messageSha256))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation audit message digest is invalid');
+    if(!Number.isSafeInteger(messageBytes)||messageBytes<0||messageBytes>8*1024)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation audit message size is invalid');
+    if((messageSha256===null)!==(messageBytes===0))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation audit message metadata is inconsistent');
+    return{operationId,sequence,eventType,messageSha256,messageBytes,createdAt:String(row.created_at)};
+  }
+
 }

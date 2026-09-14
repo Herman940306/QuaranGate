@@ -12,6 +12,9 @@ import {
   type IdeCompanionAttestFrame,
   type IdeCompanionHelloFrame,
 } from '../../src/shared/ideCompanionHandshake.js';
+import { hashIdeCompanionPayload, signIdeCompanionEnvelope } from '../../src/shared/ideCompanionAuth.js';
+import { serializeIdeCompanionOperationControlFrame, serializeIdeCompanionReviewPayload } from '../../src/shared/ideCompanionOperations.js';
+import type { IdeReviewOperationAdapter } from '../../src/executor/ide/ideOperationCoordinator.js';
 import {
   deriveIdeEnvironmentIdentity,
   deriveIdeFilesystemIdentity,
@@ -37,6 +40,7 @@ const nowMs = 1_800_000_000_000;
 const baseRevision = 'a'.repeat(40);
 let fixtureId = 0;
 let store: IdeSessionStore;
+let dbPath: string;
 let runtimeRoot: string;
 let listener: IdeCompanionListener | undefined;
 let sockets: Socket[];
@@ -189,10 +193,52 @@ async function complete(
   return await readLine(started.socket);
 }
 
+
+function signedOperationAuth(
+  ctx: ReturnType<typeof setup>, sessionIdValue: string, generation: number, leaseId: string,
+  operationId: string, capability: 'request_review'|'cancel', payload: string, nonceByte: number,
+) {
+  const material=readIdeCompanionSecret(ctx.runtime).secret;
+  try {
+    return signIdeCompanionEnvelope(material,{
+      version:1,enrollmentId:ctx.enrollment.enrollmentId,ideInstanceId:ctx.enrollment.ideInstanceId,
+      sessionId:sessionIdValue,connectionGeneration:generation,controllerLeaseId:leaseId,operationId,capability,
+      nonce:Buffer.alloc(32,nonceByte).toString('base64url'),issuedAtMs:nowMs,expiresAtMs:nowMs+20_000,
+      payloadSha256:hashIdeCompanionPayload(payload),
+    });
+  } finally { material.fill(0); }
+}
+
+async function readLines(socket: Socket, count: number): Promise<Array<Record<string, unknown>>> {
+  return await new Promise((resolve,reject)=>{
+    let buffer=Buffer.alloc(0); const lines:Array<Record<string,unknown>>=[];
+    const cleanup=():void=>{socket.off('data',onData);socket.off('error',onError);socket.off('close',onClose);};
+    const onError=(error:Error):void=>{cleanup();reject(error);};
+    const onClose=():void=>{if(lines.length>=count){cleanup();resolve(lines);}else{cleanup();reject(new Error(`socket closed after ${lines.length}/${count} frames`));}};
+    const onData=(chunk:Buffer):void=>{
+      buffer=Buffer.concat([buffer,chunk]);
+      while(true){const newline=buffer.indexOf(0x0a);if(newline<0)break;const raw=buffer.subarray(0,newline);buffer=buffer.subarray(newline+1);try{lines.push(JSON.parse(raw.toString('utf8')) as Record<string,unknown>);}catch(error){cleanup();reject(error);return;}if(lines.length>=count){cleanup();resolve(lines);return;}}
+    };
+    socket.on('data',onData);socket.once('error',onError);socket.once('close',onClose);
+  });
+}
+
+async function readyController(
+  ctx: ReturnType<typeof setup>, adapter: IdeReviewOperationAdapter, operationMaxRuntimeMs?: number,
+): Promise<{socket:Socket;sessionId:string;generation:number;leaseId:string}> {
+  listener=new IdeCompanionListener({store,runtime:ctx.runtime,operationAdapter:adapter,operationMaxRuntimeMs,nowMs:()=>nowMs,challengeBytes:()=>Buffer.alloc(32,0x42)});
+  await listener.start();
+  const started=await begin(ctx); const ready=await complete(ctx,started); expect(ready.type).toBe('ready');
+  started.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'acquire_controller'})}\n`);
+  const acquired=await readLine(started.socket); expect(acquired.type).toBe('controller_acquired');
+  return{socket:started.socket,sessionId:started.hello.sessionId,generation:Number(ready.connectionGeneration),leaseId:String(acquired.controllerLeaseId)};
+}
+
 beforeEach(() => {
   fixtureId = 0;
   sockets = [];
-  store = new IdeSessionStore(join(mkdtempSync(join(tmpdir(), 'qg-b6-db-')), 'ide.db'));
+  dbPath = join(mkdtempSync(join(tmpdir(), 'qg-b6-db-')), 'ide.db');
+  store = new IdeSessionStore(dbPath);
   const base = mkdtempSync(join(tmpdir(), 'qg-b6-runtime-')); chmodSync(base, 0o700);
   runtimeRoot = join(base, 'runtime'); mkdirSync(runtimeRoot, { mode: 0o700 }); chmodSync(runtimeRoot, 0o700);
 });
@@ -382,6 +428,125 @@ describe('P7 B6 authenticated AF_UNIX listener foundation', () => {
     expect(await readLine(started.socket)).toMatchObject({ type: 'error', code: 'IDE_HANDSHAKE_TIME_WINDOW' });
     expect(store.getEnrollment(ctx.enrollment.enrollmentId)?.currentGeneration).toBe(0);
     expect(store.getSession(started.hello.sessionId)).toBeUndefined();
+  });
+
+});
+
+describe('P7 B7 governed review operations over authenticated AF_UNIX connection',()=>{
+  const completingAdapter:IdeReviewOperationAdapter={
+    async run(input){
+      input.emit('assistant_chunk','SENSITIVE_RESPONSE_B7');
+      await Promise.resolve();
+      input.emit('status','review-complete');
+    },
+  };
+  const blockingAdapter:IdeReviewOperationAdapter={
+    async run(input){
+      await new Promise<void>((resolve,reject)=>{
+        if(input.signal.aborted){reject(input.signal.reason);return;}
+        input.signal.addEventListener('abort',()=>reject(input.signal.reason),{once:true});
+      });
+    },
+  };
+
+  it('acquires one controller, starts authenticated request_review, streams ordered events and persists metadata only',async()=>{
+    const ctx=setup(); const connection=await readyController(ctx,completingAdapter);
+    const prompt='DO_NOT_PERSIST_PROMPT_B7_7a4f'; const operationId=`ideo_${'6'.repeat(32)}`;
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_review',serializeIdeCompanionReviewPayload(prompt,workspaceAttestation),0x51);
+    const framesPromise=readLines(connection.socket,4);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_review',auth,prompt,workspaceAttestation})}\n`);
+    const frames=await framesPromise;
+    const events=frames.map(frame=>frame.event as Record<string,unknown>);
+    expect(frames.every(frame=>frame.type==='operation_event')).toBe(true);
+    expect(events.map(event=>event.type)).toEqual(['operation_started','assistant_chunk','status','completed']);
+    expect(events.map(event=>event.sequence)).toEqual([0,1,2,3]);
+    expect(events[1]?.message).toBe('SENSITIVE_RESPONSE_B7');
+    expect(store.getOperation(operationId)).toMatchObject({state:'COMPLETED',nextSequence:4,payloadSha256:hashIdeCompanionPayload(serializeIdeCompanionReviewPayload(prompt,workspaceAttestation))});
+    expect(store.getSession(connection.sessionId)?.state).toBe('CONTROLLER_ACQUIRED');
+    expect(store.getOperationAudit(operationId).map(row=>row.eventType)).toEqual(['operation_started','assistant_chunk','status','completed']);
+    for(const path of [dbPath,`${dbPath}-wal`,`${dbPath}-shm`]){
+      if(!existsSync(path))continue; const bytes=readFileSync(path);
+      expect(bytes.includes(Buffer.from(prompt,'utf8'))).toBe(false);
+      expect(bytes.includes(Buffer.from('SENSITIVE_RESPONSE_B7','utf8'))).toBe(false);
+    }
+    const releasePromise=readLine(connection.socket);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'release_controller'})}\n`);
+    expect(await releasePromise).toMatchObject({type:'controller_released'});
+    expect(store.getSession(connection.sessionId)?.state).toBe('AVAILABLE');
+  });
+
+  it('authenticates exact-operation cancellation and cannot convert cancel into completion',async()=>{
+    const ctx=setup(); const connection=await readyController(ctx,blockingAdapter); const operationId=`ideo_${'7'.repeat(32)}`; const prompt='review until cancelled';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const startAuth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_review',serializeIdeCompanionReviewPayload(prompt,workspaceAttestation),0x52);
+    const startedPromise=readLines(connection.socket,1);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_review',auth:startAuth,prompt,workspaceAttestation})}\n`);
+    expect(((await startedPromise)[0]?.event as Record<string,unknown>).type).toBe('operation_started');
+    const cancelAuth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'cancel','',0x53);
+    const terminalPromise=readLines(connection.socket,2);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'cancel_operation',auth:cancelAuth})}\n`);
+    const frames=await terminalPromise;
+    expect(frames.some(frame=>frame.type==='cancel_accepted')).toBe(true);
+    const terminal=frames.find(frame=>frame.type==='operation_event')?.event as Record<string,unknown>;
+    expect(terminal?.type).toBe('cancelled');
+    expect(store.getOperation(operationId)?.state).toBe('CANCELLED');
+    expect(store.getSession(connection.sessionId)?.state).toBe('CONTROLLER_ACQUIRED');
+  });
+
+  it('disconnect during an active adapter turn records DISCONNECTED and aborts the adapter without late CANCELLED/COMPLETED',async()=>{
+    const ctx=setup(); const connection=await readyController(ctx,blockingAdapter); const operationId=`ideo_${'8'.repeat(32)}`; const prompt='review until disconnect';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_review',serializeIdeCompanionReviewPayload(prompt,workspaceAttestation),0x54);
+    const startedPromise=readLines(connection.socket,1);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_review',auth,prompt,workspaceAttestation})}\n`);
+    await startedPromise; connection.socket.destroy(); await new Promise(resolve=>setTimeout(resolve,20));
+    expect(store.getOperation(operationId)?.state).toBe('DISCONNECTED');
+    expect(store.getOperationAudit(operationId).map(row=>row.eventType)).toEqual(['operation_started','disconnected']);
+    expect(store.getSession(connection.sessionId)?.state).toBe('DISCONNECTED');
+  });
+
+  it('runtime ceiling terminalizes an unresponsive adapter INDETERMINATE and returns the session to controlled state',async()=>{
+    const ctx=setup(); const connection=await readyController(ctx,blockingAdapter,20); const operationId=`ideo_${'9'.repeat(32)}`; const prompt='bounded review timeout';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_review',serializeIdeCompanionReviewPayload(prompt,workspaceAttestation),0x55);
+    const framesPromise=readLines(connection.socket,2);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_review',auth,prompt,workspaceAttestation})}\n`);
+    const frames=await framesPromise; const events=frames.map(frame=>frame.event as Record<string,unknown>);
+    expect(events.map(event=>event.type)).toEqual(['operation_started','indeterminate']);
+    expect(store.getOperation(operationId)?.state).toBe('INDETERMINATE');
+    expect(store.getSession(connection.sessionId)?.state).toBe('CONTROLLER_ACQUIRED');
+  });
+
+  it('invalid operation MAC opens no operation and disconnects the controller session fail closed',async()=>{
+    const ctx=setup(); const connection=await readyController(ctx,completingAdapter); const operationId=`ideo_${'a'.repeat(32)}`; const prompt='forged review';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const authenticatedPayload=serializeIdeCompanionReviewPayload(prompt,workspaceAttestation);
+    const bad=signIdeCompanionEnvelope(Buffer.alloc(32,0x7f),{
+      version:1,enrollmentId:ctx.enrollment.enrollmentId,ideInstanceId:ctx.enrollment.ideInstanceId,sessionId:connection.sessionId,
+      connectionGeneration:connection.generation,controllerLeaseId:connection.leaseId,operationId,capability:'request_review',
+      nonce:Buffer.alloc(32,0x56).toString('base64url'),issuedAtMs:nowMs,expiresAtMs:nowMs+20_000,payloadSha256:hashIdeCompanionPayload(authenticatedPayload),
+    });
+    const responsePromise=readLine(connection.socket);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_review',auth:bad,prompt,workspaceAttestation})}\n`);
+    expect(await responsePromise).toMatchObject({type:'error',code:'IDE_COMPANION_AUTH_DENIED'});
+    await new Promise(resolve=>setTimeout(resolve,20));
+    expect(store.getOperation(operationId)).toBeUndefined();
+    expect(store.getSession(connection.sessionId)?.state).toBe('DISCONNECTED');
+  });
+
+  it('denies a MAC-valid review start when fresh per-operation workspace evidence drifts from the enrolled worktree',async()=>{
+    const ctx=setup(); const connection=await readyController(ctx,completingAdapter); const operationId=`ideo_${'b'.repeat(32)}`; const prompt='review wrong workspace';
+    const base=JSON.parse(makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation)) as IdeWorkspaceAttestation;
+    const workspaceAttestation=serializeIdeWorkspaceAttestation({...base,workspace:{...base.workspace,filesystemIdentity:'f'.repeat(64)}});
+    const authenticatedPayload=serializeIdeCompanionReviewPayload(prompt,workspaceAttestation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_review',authenticatedPayload,0x57);
+    const responsePromise=readLine(connection.socket);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_review',auth,prompt,workspaceAttestation})}\n`);
+    expect(await responsePromise).toMatchObject({type:'error',code:'IDE_WORKSPACE_DENIED'});
+    await new Promise(resolve=>setTimeout(resolve,20));
+    expect(store.getOperation(operationId)).toBeUndefined();
+    expect(store.getSession(connection.sessionId)?.state).toBe('DISCONNECTED');
   });
 
 });

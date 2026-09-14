@@ -292,11 +292,11 @@ describe('P7 B3 durable authenticated replay foundation', () => {
     return { e, s, k, lease };
   }
 
-  it('migrates exact B2 v1 state to v2 additively and preserves enrollment/session/controller state', () => {
+  it('migrates exact B2 v1 state through current schema additively and preserves enrollment/session/controller state', () => {
     const {e,s,lease}=controlled(); store.close();
-    const db=new DatabaseSync(dbPath); db.exec('DROP TABLE ide_auth_replays; PRAGMA user_version=1'); db.close();
+    const db=new DatabaseSync(dbPath); db.exec('DROP TABLE ide_operation_events; DROP TABLE ide_operations; DROP TABLE ide_auth_replays; PRAGMA user_version=1'); db.close();
     const reopened=new IdeSessionStore(dbPath);
-    expect(reopened.schemaVersion).toBe(2);
+    expect(reopened.schemaVersion).toBe(IDE_REGISTRY_SCHEMA_VERSION);
     expect(reopened.getEnrollment(e.enrollmentId)?.ideInstanceId).toBe(e.ideInstanceId);
     expect(reopened.getSession(s.sessionId)).toMatchObject({connectionGeneration:1,controllerLeaseId:lease,state:'CONTROLLER_ACQUIRED'});
     const check=new DatabaseSync(dbPath); expect(check.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ide_auth_replays'`).get()).toBeDefined(); check.close();
@@ -305,7 +305,7 @@ describe('P7 B3 durable authenticated replay foundation', () => {
 
   it('refuses malformed v1 before replay migration and leaves the v1 stamp/table absence untouched', () => {
     store.close(); const db=new DatabaseSync(dbPath);
-    db.exec('DROP TABLE ide_auth_replays; DROP TABLE ide_sessions; PRAGMA user_version=1'); db.close();
+    db.exec('DROP TABLE ide_operation_events; DROP TABLE ide_operations; DROP TABLE ide_auth_replays; DROP TABLE ide_sessions; PRAGMA user_version=1'); db.close();
     expect(errorCode(() => new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
     const after=new DatabaseSync(dbPath);
     expect((after.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(1);
@@ -427,5 +427,157 @@ describe('P7 B3 durable authenticated replay foundation', () => {
     const check=new DatabaseSync(dbPath);
     expect((check.prepare('SELECT COUNT(*) AS n FROM ide_auth_replays').get() as {n:number}).n).toBe(IDE_MAX_ACTIVE_AUTH_REPLAYS);
     check.close(); reopened.close();
+  });
+});
+
+describe('P7 B7 durable non-mutating operation lifecycle and audit', () => {
+  function controlled() {
+    const e=store.createEnrollment(enrollment());
+    const s=open(e); const k=sessionKey(s,e); store.markAvailable(k); const lease=store.acquireController(k);
+    return {e,s,k,lease};
+  }
+  function start(over: Partial<Parameters<IdeSessionStore['startOperation']>[0]> = {}) {
+    const ctx=controlled();
+    const payload='review bounded source';
+    const input={
+      enrollmentId:ctx.e.enrollmentId,ideInstanceId:ctx.e.ideInstanceId,sessionId:ctx.s.sessionId,
+      connectionGeneration:ctx.s.connectionGeneration,controllerLeaseId:ctx.lease,
+      operationId:`ideo_${'a'.repeat(32)}`,capability:'request_review' as const,
+      runtimeInstanceId:`iderun_${'b'.repeat(32)}`,adapterId:'quarangate-vscode-companion',adapterVersion:'1.2.3',
+      payloadSha256:hashIdeCompanionPayload(payload),payloadBytes:Buffer.byteLength(payload),...over,
+    };
+    const op=store.startOperation(input);
+    return {...ctx,input,op,payload};
+  }
+
+  it('migrates an exact v2 registry to v3 additively and preserves current controller state', () => {
+    const ctx=controlled(); store.close();
+    const db=new DatabaseSync(dbPath);
+    db.exec('DROP TABLE ide_operation_events; DROP TABLE ide_operations; PRAGMA user_version=2'); db.close();
+    const reopened=new IdeSessionStore(dbPath);
+    expect(reopened.schemaVersion).toBe(IDE_REGISTRY_SCHEMA_VERSION);
+    expect(reopened.getSession(ctx.s.sessionId)).toMatchObject({state:'CONTROLLER_ACQUIRED',controllerLeaseId:ctx.lease});
+    const check=new DatabaseSync(dbPath);
+    expect(check.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ide_operations'`).get()).toBeDefined();
+    expect(check.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ide_operation_events'`).get()).toBeDefined();
+    check.close(); reopened.close();
+  });
+
+  it('refuses partial v3 operation state under a v2 stamp instead of silently repairing it', () => {
+    store.close(); const db=new DatabaseSync(dbPath); db.exec('PRAGMA user_version=2'); db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+    const check=new DatabaseSync(dbPath); expect((check.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(2); check.close();
+  });
+
+  it('atomically starts one review operation, session and metadata-only audit at sequence zero', () => {
+    const ctx=start();
+    expect(ctx.op).toMatchObject({state:'RUNNING',nextSequence:1,principalId:'chatgpt-browser',projectId:'quarangate',worktreeId:'forward',capability:'request_review'});
+    expect(ctx.op.controllerLeaseHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(ctx.op.controllerLeaseHash).not.toBe(ctx.lease);
+    expect(store.getSession(ctx.s.sessionId)?.state).toBe('OPERATION_ACTIVE');
+    expect(store.getOperationAudit(ctx.op.operationId)).toEqual([expect.objectContaining({sequence:0,eventType:'operation_started',messageSha256:null,messageBytes:0})]);
+  });
+
+  it('denies request_implementation at operation start even if an internal caller tries to construct it', () => {
+    const ctx=controlled(); const payload='write';
+    expect(errorCode(()=>store.startOperation({
+      enrollmentId:ctx.e.enrollmentId,ideInstanceId:ctx.e.ideInstanceId,sessionId:ctx.s.sessionId,connectionGeneration:ctx.s.connectionGeneration,
+      controllerLeaseId:ctx.lease,operationId:`ideo_${'c'.repeat(32)}`,capability:'request_implementation',
+      runtimeInstanceId:`iderun_${'d'.repeat(32)}`,adapterId:'quarangate-vscode-companion',adapterVersion:'1.2.3',
+      payloadSha256:hashIdeCompanionPayload(payload),payloadBytes:payload.length,
+    }))).toBe('IDE_REGISTRY_POLICY_DENIED');
+    expect(store.getSession(ctx.s.sessionId)?.state).toBe('CONTROLLER_ACQUIRED');
+  });
+
+  it('persists only event body digest/size, enforces exact sequence, and settles completion atomically', () => {
+    const ctx=start();
+    const first={version:1 as const,operationId:ctx.op.operationId,sessionId:ctx.s.sessionId,connectionGeneration:1,origin:'machine' as const,sequence:1,type:'assistant_chunk' as const,message:'sensitive-response-fragment'};
+    store.appendOperationEvent(first,ctx.lease);
+    expect(errorCode(()=>store.appendOperationEvent({...first,sequence:3},ctx.lease))).toBe('IDE_OPERATION_STATE_MISMATCH');
+    store.appendOperationEvent({...first,sequence:2,type:'status',message:'bounded-status'},ctx.lease);
+    store.appendOperationEvent({...first,sequence:3,type:'completed',message:undefined},ctx.lease);
+    expect(store.getOperation(ctx.op.operationId)).toMatchObject({state:'COMPLETED',nextSequence:4});
+    expect(store.getSession(ctx.s.sessionId)?.state).toBe('CONTROLLER_ACQUIRED');
+    const audit=store.getOperationAudit(ctx.op.operationId);
+    expect(audit[1]).toMatchObject({sequence:1,eventType:'assistant_chunk',messageSha256:hashIdeCompanionPayload('sensitive-response-fragment'),messageBytes:27});
+    const check=new DatabaseSync(dbPath);
+    const opColumns=(check.prepare('PRAGMA table_info(ide_operations)').all() as Array<{name:string}>).map(r=>r.name);
+    const eventColumns=(check.prepare('PRAGMA table_info(ide_operation_events)').all() as Array<{name:string}>).map(r=>r.name);
+    expect(opColumns).not.toContain('prompt'); expect(opColumns).not.toContain('response');
+    expect(eventColumns).not.toContain('message'); expect(eventColumns).toContain('message_sha256');
+    check.close();
+  });
+
+  it('uses operation IDs once forever and does not resurrect a completed operation', () => {
+    const ctx=start();
+    store.appendOperationEvent({version:1,operationId:ctx.op.operationId,sessionId:ctx.s.sessionId,connectionGeneration:1,origin:'machine',sequence:1,type:'completed'},ctx.lease);
+    expect(errorCode(()=>store.startOperation(ctx.input))).toBe('IDE_OPERATION_ID_REUSED');
+    expect(store.getOperation(ctx.op.operationId)?.state).toBe('COMPLETED');
+  });
+
+  it('binds cancellation to exact current operation/session/generation/controller and terminalizes CANCELLED', () => {
+    const ctx=start();
+    const cancel={enrollmentId:ctx.e.enrollmentId,ideInstanceId:ctx.e.ideInstanceId,sessionId:ctx.s.sessionId,connectionGeneration:1,controllerLeaseId:ctx.lease,operationId:ctx.op.operationId,capability:'cancel' as const};
+    expect(store.requestOperationCancellation(cancel).state).toBe('CANCELLING');
+    expect(store.requestOperationCancellation(cancel).state).toBe('CANCELLING');
+    expect(errorCode(()=>store.requestOperationCancellation({...cancel,operationId:`ideo_${'e'.repeat(32)}`}))).toBe('IDE_OPERATION_NOT_FOUND');
+    store.appendOperationEvent({version:1,operationId:ctx.op.operationId,sessionId:ctx.s.sessionId,connectionGeneration:1,origin:'machine',sequence:1,type:'cancelled'},ctx.lease);
+    expect(store.getOperation(ctx.op.operationId)?.state).toBe('CANCELLED');
+    expect(store.getSession(ctx.s.sessionId)?.state).toBe('CONTROLLER_ACQUIRED');
+  });
+
+  it('disconnect durably terminalizes an active operation as DISCONNECTED before clearing controller state', () => {
+    const ctx=start();
+    expect(store.disconnect(ctx.k)).toBe(true);
+    expect(store.getOperation(ctx.op.operationId)?.state).toBe('DISCONNECTED');
+    expect(store.getOperationAudit(ctx.op.operationId).at(-1)).toMatchObject({eventType:'disconnected',sequence:1});
+    expect(store.getSession(ctx.s.sessionId)).toMatchObject({state:'DISCONNECTED',controllerLeaseId:null});
+  });
+
+  it('restart recovery marks active operations INDETERMINATE and sessions STALE without false completion', () => {
+    const ctx=start();
+    const result=store.recoverAfterRestart();
+    expect(result.indeterminateOperationIds).toEqual([ctx.op.operationId]);
+    expect(result.staledSessionIds).toEqual([ctx.s.sessionId]);
+    expect(store.getOperation(ctx.op.operationId)?.state).toBe('INDETERMINATE');
+    expect(store.getOperationAudit(ctx.op.operationId).at(-1)?.eventType).toBe('indeterminate');
+    expect(store.getSession(ctx.s.sessionId)?.state).toBe('STALE');
+  });
+
+  it('authenticated reconnect stales the old generation and records its in-flight operation DISCONNECTED', () => {
+    const ctx=start(); const current=store.getEnrollment(ctx.e.enrollmentId)!;
+    const next=store.openSession({...keyFor(current),sessionId:`ides_${'f'.repeat(32)}`});
+    expect(next.connectionGeneration).toBe(2);
+    expect(store.getOperation(ctx.op.operationId)?.state).toBe('DISCONNECTED');
+    expect(store.getSession(ctx.s.sessionId)?.state).toBe('STALE');
+    expect(store.getOperationAudit(ctx.op.operationId).at(-1)?.eventType).toBe('disconnected');
+  });
+
+  it('fails closed on a falsely stamped current schema missing durable operation audit', () => {
+    store.close(); const db=new DatabaseSync(dbPath); db.exec(`DROP TABLE ide_operation_events; PRAGMA user_version=${IDE_REGISTRY_SCHEMA_VERSION}`); db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+  });
+});
+
+describe('P7 B7 durable operation coherence on reopen',()=>{
+  function activeOperation(){
+    const e=store.createEnrollment(enrollment()); const s=open(e); const k=sessionKey(s,e); store.markAvailable(k); const lease=store.acquireController(k);
+    const payload='coherence-review';
+    const op=store.startOperation({enrollmentId:e.enrollmentId,ideInstanceId:e.ideInstanceId,sessionId:s.sessionId,connectionGeneration:s.connectionGeneration,
+      controllerLeaseId:lease,operationId:`ideo_${'d'.repeat(32)}`,capability:'request_review',runtimeInstanceId:`iderun_${'e'.repeat(32)}`,
+      adapterId:'quarangate-vscode-companion',adapterVersion:'1.2.3',payloadSha256:hashIdeCompanionPayload(payload),payloadBytes:payload.length});
+    return{e,s,k,lease,op};
+  }
+
+  it('rejects an active operation whose session is no longer OPERATION_ACTIVE',()=>{
+    const ctx=activeOperation(); store.close(); const db=new DatabaseSync(dbPath); db.exec('PRAGMA ignore_check_constraints=ON');
+    db.prepare(`UPDATE ide_sessions SET state='CONTROLLER_ACQUIRED' WHERE session_id=?`).run(ctx.s.sessionId); db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+  });
+
+  it('rejects terminal state/event disagreement instead of trusting a forged success row',()=>{
+    const ctx=activeOperation(); store.close(); const db=new DatabaseSync(dbPath);
+    db.prepare(`UPDATE ide_operations SET state='COMPLETED',finished_at='2026-09-14T00:00:00.000Z' WHERE operation_id=?`).run(ctx.op.operationId); db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
   });
 });
