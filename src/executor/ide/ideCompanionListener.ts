@@ -1,8 +1,11 @@
 /**
  * P7 B6 authenticated local Unix-domain companion listener.
  *
- * This listener establishes identity/workspace presence only. It does not run
- * prompts, tools, providers, operations, audits or writer actions.
+ * B6 establishes authenticated local identity/workspace presence. B7 optionally
+ * composes governed review operations. B9.3 may additionally compose the
+ * accepted implementation coordinator only when trusted B8 writer authority
+ * and a mutation adapter are explicitly injected together. The listener is
+ * still not executor-startup or public MCP/HTTP wiring.
  */
 import { randomBytes } from 'node:crypto';
 import { IdeCompanionAuthError } from '../../shared/ideCompanionAuth.js';
@@ -12,6 +15,8 @@ import {
   parseIdeCompanionOperationControlFrame,
 } from '../../shared/ideCompanionOperations.js';
 import { IdeSessionContractError, type IdeOperationEvent } from '../../shared/ideSessions.js';
+import { BridgeError } from '../../shared/errors.js';
+import type { AgentJobStore } from '../agents/jobStore.js';
 import { existsSync, lstatSync, rmSync } from 'node:fs';
 import { createServer, type Server, type Socket } from 'node:net';
 import {
@@ -50,6 +55,11 @@ import {
   IdeOperationCoordinatorError,
   type IdeReviewOperationAdapter,
 } from './ideOperationCoordinator.js';
+import {
+  IdeImplementationCoordinator,
+  IdeImplementationCoordinatorError,
+  type IdeImplementationOperationAdapter,
+} from './ideImplementationCoordinator.js';
 
 export const IDE_COMPANION_LISTENER_MAX_CONNECTIONS = 16;
 export const IDE_COMPANION_LISTENER_HANDSHAKE_TIMEOUT_MS = 20_000;
@@ -59,6 +69,7 @@ export type IdeCompanionListenerErrorCode =
   | 'IDE_LISTENER_UNSUPPORTED_OS'
   | 'IDE_LISTENER_ALREADY_STARTED'
   | 'IDE_LISTENER_SOCKET_EXISTS'
+  | 'IDE_LISTENER_CONFIGURATION_INVALID'
   | 'IDE_LISTENER_BIND_FAILED';
 
 export class IdeCompanionListenerError extends Error {
@@ -77,8 +88,14 @@ export interface IdeCompanionListenerOptions {
   challengeBytes?: () => Buffer;
   /** B7 source-only adapter seam. Omit to preserve B6 handshake-only behavior. */
   operationAdapter?: IdeReviewOperationAdapter;
-  /** Trusted test seam for B7 operation runtime bound. */
+  /** Trusted test seam for B7 review-operation runtime bound. */
   operationMaxRuntimeMs?: number;
+  /** B9.3 opt-in shared B8 writer authority. Must be paired with implementationAdapter. */
+  writerStore?: AgentJobStore;
+  /** B9.3 opt-in backend-neutral mutation adapter. Must be paired with writerStore. */
+  implementationAdapter?: IdeImplementationOperationAdapter;
+  /** Trusted test seam for B9 implementation runtime bound. */
+  implementationMaxRuntimeMs?: number;
 }
 
 interface PendingHandshake {
@@ -118,23 +135,29 @@ function publicCode(error: unknown): string {
   if (error instanceof IdeCompanionHandshakeError) return error.code;
   if (error instanceof IdeCompanionOperationProtocolError) return error.code;
   if (error instanceof IdeOperationCoordinatorError) return error.code;
+  if (error instanceof IdeImplementationCoordinatorError) return error.code;
   if (error instanceof IdeCompanionAuthError) return error.code;
   if (error instanceof IdeCompanionRuntimeError) return 'IDE_RUNTIME_DENIED';
   if (error instanceof IdeWorkspaceAttestationError || error instanceof IdeWorkspaceVerificationError) return 'IDE_WORKSPACE_DENIED';
   if (error instanceof IdeSessionContractError) return 'IDE_OPERATION_DENIED';
+  if (error instanceof BridgeError) {
+    if(error.code==='LIVE_WRITER_BUSY') return 'IDE_WRITER_BUSY';
+    return 'IDE_WRITER_DENIED';
+  }
   if (error instanceof IdeRegistryStoreError) return 'IDE_SESSION_DENIED';
   return 'INTERNAL';
 }
 
-function writeFrame(socket: Socket, frame: PublicServerFrame): void {
-  if (socket.destroyed) return;
+function writeFrame(socket: Socket, frame: PublicServerFrame): boolean {
+  if (socket.destroyed) return false;
   const body = Buffer.from(`${JSON.stringify(frame)}\n`, 'utf8');
   if (body.byteLength > IDE_COMPANION_LISTENER_MAX_WRITE_QUEUE_BYTES
     || socket.writableLength + body.byteLength > IDE_COMPANION_LISTENER_MAX_WRITE_QUEUE_BYTES) {
     socket.destroy();
-    return;
+    return false;
   }
   socket.write(body);
+  return true;
 }
 
 function sessionKey(enrollment: IdeEnrollmentRow, sessionId: string, connectionGeneration: number): IdeSessionRegistryKey {
@@ -158,6 +181,7 @@ export class IdeCompanionListener {
   private readonly clock: () => number;
   private readonly challenge: () => Buffer;
   private readonly operationCoordinator?: IdeOperationCoordinator;
+  private readonly implementationCoordinator?: IdeImplementationCoordinator;
   private started = false;
   private ownsSocketPath = false;
 
@@ -166,6 +190,14 @@ export class IdeCompanionListener {
     this.challenge = opts.challengeBytes ?? (() => randomBytes(32));
     this.operationCoordinator = opts.operationAdapter === undefined ? undefined : new IdeOperationCoordinator({
       store: opts.store, runtime: opts.runtime, adapter: opts.operationAdapter, nowMs: opts.nowMs, maxRuntimeMs: opts.operationMaxRuntimeMs,
+    });
+    const hasWriterStore=opts.writerStore!==undefined;
+    const hasImplementationAdapter=opts.implementationAdapter!==undefined;
+    if(hasWriterStore!==hasImplementationAdapter){
+      throw new IdeCompanionListenerError('IDE_LISTENER_CONFIGURATION_INVALID','implementation writer authority and adapter must be configured together');
+    }
+    this.implementationCoordinator = !hasWriterStore ? undefined : new IdeImplementationCoordinator({
+      store:opts.store,writerStore:opts.writerStore!,runtime:opts.runtime,adapter:opts.implementationAdapter!,nowMs:opts.nowMs,maxRuntimeMs:opts.implementationMaxRuntimeMs,
     });
     this.server = createServer((socket) => this.accept(socket));
   }
@@ -181,6 +213,10 @@ export class IdeCompanionListener {
     if (existsSync(this.opts.runtime.socketPath)) {
       throw new IdeCompanionListenerError('IDE_LISTENER_SOCKET_EXISTS', 'IDE companion socket path already exists');
     }
+    // B9.3 opt-in execution turns listener startup into a recovery boundary.
+    // Do this only after proving the endpoint path is not already occupied and
+    // before accepting any new connection.
+    this.implementationCoordinator?.recoverAfterRestart();
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error): void => reject(new IdeCompanionListenerError('IDE_LISTENER_BIND_FAILED', error.message));
       this.server.once('error', onError);
@@ -255,6 +291,12 @@ export class IdeCompanionListener {
       this.enrollmentSockets.delete(state.enrollmentId);
     }
     if (state.sessionKey !== undefined) {
+      // B9 implementation writers get first chance to retain/block the exact
+      // B8 lease before generic session disconnect terminalizes Plane-B. Any
+      // settlement failure is still fail closed because ACTIVE/UNCERTAIN B8
+      // writer state continues to block competitors.
+      try { this.implementationCoordinator?.connectionClosed(state.sessionKey.sessionId,state.sessionKey.connectionGeneration); }
+      catch { /* unresolved writer remains blocking */ }
       try {
         const row = this.opts.store.getSession(state.sessionKey.sessionId);
         if (row !== undefined && row.connectionGeneration === state.sessionKey.connectionGeneration
@@ -263,6 +305,8 @@ export class IdeCompanionListener {
         }
       } catch { /* terminal/replaced state already fails closed */ }
       this.operationCoordinator?.connectionClosed(state.sessionKey.sessionId, state.sessionKey.connectionGeneration);
+      try { this.implementationCoordinator?.reconcileTerminalWriterSettlements(); }
+      catch { /* unresolved writer remains ACTIVE/UNCERTAIN and therefore blocking */ }
     }
     state.controllerLeaseId = undefined;
   }
@@ -304,7 +348,7 @@ export class IdeCompanionListener {
         return;
       }
       if (state.phase === 'READY') {
-        if(this.operationCoordinator===undefined){
+        if(this.operationCoordinator===undefined&&this.implementationCoordinator===undefined){
           writeFrame(socket,{version:1,type:'error',code:'UNEXPECTED_FRAME'});
           socket.end();
           return;
@@ -410,7 +454,6 @@ export class IdeCompanionListener {
   }
 
   private handleOperationControl(socket: Socket, state: ConnectionState, bytes: Buffer): void {
-    if (this.operationCoordinator === undefined) throw new IdeOperationCoordinatorError('IDE_OPERATION_NOT_CONFIGURED','IDE review operation adapter is not configured');
     if (state.sessionKey === undefined) throw new IdeRegistryStoreError('IDE_SESSION_NOT_FOUND','IDE ready connection has no session binding');
     const frame=parseIdeCompanionOperationControlFrame(bytes);
     if(frame.type==='acquire_controller'){
@@ -431,13 +474,34 @@ export class IdeCompanionListener {
       throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','operation frame does not own this connection controller');
     }
     if(frame.type==='start_review'){
-      this.operationCoordinator.startReview(frame.auth,frame.prompt,frame.workspaceAttestation,(event:IdeOperationEvent)=>writeFrame(socket,{version:1,type:'operation_event',event}));
+      if(this.operationCoordinator===undefined) throw new IdeOperationCoordinatorError('IDE_OPERATION_NOT_CONFIGURED','IDE review operation adapter is not configured');
+      this.operationCoordinator.startReview(frame.auth,frame.prompt,frame.workspaceAttestation,(event:IdeOperationEvent)=>{
+        if(!writeFrame(socket,{version:1,type:'operation_event',event})) throw new IdeOperationCoordinatorError('IDE_OPERATION_SINK_FAILED','IDE review response sink is unavailable');
+      });
       return;
     }
     if(frame.type==='start_implementation'){
-      throw new IdeOperationCoordinatorError('IDE_IMPLEMENTATION_NOT_CONFIGURED','B9 implementation execution is not configured in this source batch');
+      if(this.implementationCoordinator===undefined) throw new IdeImplementationCoordinatorError('IDE_IMPLEMENTATION_NOT_CONFIGURED','IDE implementation execution is not configured');
+      this.implementationCoordinator.startImplementation(frame.auth,frame.prompt,frame.workspaceAttestation,(event:IdeOperationEvent)=>{
+        if(!writeFrame(socket,{version:1,type:'operation_event',event})) throw new IdeImplementationCoordinatorError('IDE_IMPLEMENTATION_SINK_FAILED','IDE implementation response sink is unavailable');
+      });
+      return;
     }
-    const result=this.operationCoordinator.cancel(frame.auth);
+    const target=this.opts.store.getOperation(frame.auth.operationId);
+    let result:'accepted'|'indeterminate';
+    if(target?.capability==='request_implementation'){
+      if(this.implementationCoordinator===undefined) throw new IdeImplementationCoordinatorError('IDE_IMPLEMENTATION_NOT_CONFIGURED','IDE implementation execution is not configured');
+      result=this.implementationCoordinator.cancel(frame.auth);
+    }else if(target?.capability==='request_review'){
+      if(this.operationCoordinator===undefined) throw new IdeOperationCoordinatorError('IDE_OPERATION_NOT_CONFIGURED','IDE review operation adapter is not configured');
+      result=this.operationCoordinator.cancel(frame.auth);
+    }else if(this.operationCoordinator!==undefined){
+      result=this.operationCoordinator.cancel(frame.auth);
+    }else if(this.implementationCoordinator!==undefined){
+      result=this.implementationCoordinator.cancel(frame.auth);
+    }else{
+      throw new IdeOperationCoordinatorError('IDE_OPERATION_NOT_CONFIGURED','IDE operation adapter is not configured');
+    }
     writeFrame(socket,{version:1,type:'cancel_accepted',operationId:frame.auth.operationId,result});
   }
 

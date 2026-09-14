@@ -15,6 +15,11 @@ import {
 import { hashIdeCompanionPayload, signIdeCompanionEnvelope } from '../../src/shared/ideCompanionAuth.js';
 import { serializeIdeCompanionImplementationPayload, serializeIdeCompanionOperationControlFrame, serializeIdeCompanionReviewPayload } from '../../src/shared/ideCompanionOperations.js';
 import type { IdeReviewOperationAdapter } from '../../src/executor/ide/ideOperationCoordinator.js';
+import type { IdeImplementationOperationAdapter } from '../../src/executor/ide/ideImplementationCoordinator.js';
+import { admitIdeImplementation } from '../../src/executor/ide/ideImplementationAdmission.js';
+import { BridgeError } from '../../src/shared/errors.js';
+import { AgentJobStore, type NewAgentJob } from '../../src/executor/agents/jobStore.js';
+import { AGENT_RETENTION_DURATION_MS } from '../../src/shared/agents.js';
 import {
   deriveIdeEnvironmentIdentity,
   deriveIdeFilesystemIdentity,
@@ -44,6 +49,8 @@ let dbPath: string;
 let runtimeRoot: string;
 let listener: IdeCompanionListener | undefined;
 let sockets: Socket[];
+let writerStores: AgentJobStore[];
+let jobSeq = 0;
 
 function physical(over: Partial<IdeWorkspacePhysicalIdentity> = {}): IdeWorkspacePhysicalIdentity {
   const canonicalPath = '/srv/projects/quarangate-forward';
@@ -234,9 +241,36 @@ async function readyController(
   return{socket:started.socket,sessionId:started.hello.sessionId,generation:Number(ready.connectionGeneration),leaseId:String(acquired.controllerLeaseId)};
 }
 
+async function readyImplementation(
+  ctx:ReturnType<typeof setup>, writerStore:AgentJobStore, adapter:IdeImplementationOperationAdapter, implementationMaxRuntimeMs?:number,
+):Promise<{socket:Socket;sessionId:string;generation:number;leaseId:string}>{
+  listener=new IdeCompanionListener({store,runtime:ctx.runtime,writerStore,implementationAdapter:adapter,implementationMaxRuntimeMs,nowMs:()=>nowMs,challengeBytes:()=>Buffer.alloc(32,0x42)});
+  await listener.start();
+  const started=await begin(ctx); const ready=await complete(ctx,started); expect(ready.type).toBe('ready');
+  started.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'acquire_controller'})}\n`);
+  const acquired=await readLine(started.socket); expect(acquired.type).toBe('controller_acquired');
+  return{socket:started.socket,sessionId:started.hello.sessionId,generation:Number(ready.connectionGeneration),leaseId:String(acquired.controllerLeaseId)};
+}
+
+function newWriterStore():AgentJobStore{
+  const value=new AgentJobStore(join(mkdtempSync(join(tmpdir(),'qg-b93-writer-')),'agents.db'));
+  writerStores.push(value);return value;
+}
+
+function completedWriterJob(writerStore:AgentJobStore,project='quarangate',principalId='chatgpt-browser'){
+  jobSeq+=1;const jobId=`job_${jobSeq.toString(16).padStart(32,'0')}`;
+  const input:NewAgentJob={jobId,principalId,backend:'kiro',project,profile:'implement',resourcePolicy:'economy',promptHash:'a'.repeat(64),prompt:'x',sessionPolicy:'new',writer:true,retentionClass:'ephemeral',retentionDurationMs:AGENT_RETENTION_DURATION_MS.ephemeral};
+  writerStore.insert(input);writerStore.transition(jobId,'QUEUED','PREPARING',{startedAt:new Date().toISOString()});writerStore.transition(jobId,'PREPARING','RUNNING');writerStore.transition(jobId,'RUNNING','VALIDATING');writerStore.transition(jobId,'VALIDATING','COMPLETED',{completedAt:new Date().toISOString()});
+  return writerStore.get(jobId)!;
+}
+
+function bridgeCode(fn:()=>unknown):string{
+  try{fn();throw new Error('expected BridgeError');}catch(error){if(error instanceof BridgeError)return error.code;throw error;}
+}
+
 beforeEach(() => {
-  fixtureId = 0;
-  sockets = [];
+  fixtureId=0;jobSeq=0;writerStores=[];
+  sockets=[];
   dbPath = join(mkdtempSync(join(tmpdir(), 'qg-b6-db-')), 'ide.db');
   store = new IdeSessionStore(dbPath);
   const base = mkdtempSync(join(tmpdir(), 'qg-b6-runtime-')); chmodSync(base, 0o700);
@@ -248,6 +282,7 @@ afterEach(async () => {
   if (listener !== undefined) await listener.stop().catch(() => undefined);
   listener = undefined;
   store.close();
+  for(const writerStore of writerStores)writerStore.close();
 });
 
 describe('P7 B6 authenticated AF_UNIX listener foundation', () => {
@@ -562,5 +597,165 @@ describe('P7 B7 governed review operations over authenticated AF_UNIX connection
     expect(store.getOperation(operationId)).toBeUndefined();
     expect(store.getSession(connection.sessionId)?.state).toBe('DISCONNECTED');
   });
+
+});
+
+describe('P7 B9.3 governed implementation operations over authenticated AF_UNIX connection',()=>{
+  const completingImplementation:IdeImplementationOperationAdapter={
+    async run(input){input.emit('status','implementation-complete');return{outcome:'completed'};},
+  };
+  const blockingImplementation:IdeImplementationOperationAdapter={
+    async run(input){
+      return await new Promise((resolve,reject)=>{
+        if(input.signal.aborted){reject(input.signal.reason);return;}
+        input.signal.addEventListener('abort',()=>reject(input.signal.reason),{once:true});
+      });
+    },
+  };
+
+  it('refuses partial implementation configuration before binding any socket',()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore();
+    expect(()=>new IdeCompanionListener({store,runtime:ctx.runtime,writerStore})).toThrow('implementation writer authority and adapter must be configured together');
+    expect(()=>new IdeCompanionListener({store,runtime:ctx.runtime,implementationAdapter:completingImplementation})).toThrow('implementation writer authority and adapter must be configured together');
+    expect(existsSync(ctx.runtime.socketPath)).toBe(false);
+  });
+
+  it('executes a fully authenticated implementation only with opt-in B8+adapter composition and releases the writer after proven completion',async()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore();
+    const connection=await readyImplementation(ctx,writerStore,completingImplementation);
+    const operationId=`ideo_${'d'.repeat(32)}`; const prompt='bounded implementation success';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x61);
+    const framesPromise=readLines(connection.socket,3);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`);
+    const frames=await framesPromise; const events=frames.map(frame=>frame.event as Record<string,unknown>);
+    expect(events.map(event=>event.type)).toEqual(['operation_started','status','completed']);
+    const op=store.getOperation(operationId)!;
+    expect(op).toMatchObject({capability:'request_implementation',state:'COMPLETED',writerSettlement:'RELEASED'});
+    expect(op.mutationStartedAt).not.toBeNull(); expect(op.safeTerminalIntent).toBe('COMPLETED');
+    expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('RELEASED');
+    expect(store.getSession(connection.sessionId)?.state).toBe('CONTROLLER_ACQUIRED');
+  });
+
+  it('real agent_apply writer contention denies IDE implementation before an IDE operation is created',async()=>{
+    const writerStore=newWriterStore(); const job=completedWriterJob(writerStore);
+    const apply=writerStore.startApplyAttempt({attemptId:`att_${'a'.repeat(32)}`,jobId:job.jobId,worktreeId:'forward'});
+    expect(writerStore.getLiveWriterLease(apply.writerLeaseId!)?.state).toBe('ACTIVE');
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']});
+    const connection=await readyImplementation(ctx,writerStore,completingImplementation);
+    const operationId=`ideo_${'e'.repeat(32)}`; const prompt='must lose to agent apply writer';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x62);
+    const responsePromise=readLine(connection.socket);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`);
+    expect(await responsePromise).toMatchObject({type:'error',code:'IDE_WRITER_BUSY'});
+    await new Promise(resolve=>setTimeout(resolve,20));
+    expect(store.getOperation(operationId)).toBeUndefined();
+    expect(writerStore.getLiveWriterLease(apply.writerLeaseId!)?.state).toBe('ACTIVE');
+  });
+
+  it('routes authenticated cancellation to the implementation coordinator and releases only after rollback/no-mutation proof',async()=>{
+    const adapter:IdeImplementationOperationAdapter={run(input){return new Promise(resolve=>input.signal.addEventListener('abort',()=>resolve({outcome:'cancelled_rolled_back'}),{once:true}));}};
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore(); const connection=await readyImplementation(ctx,writerStore,adapter);
+    const operationId=`ideo_${'f'.repeat(32)}`; const prompt='implementation cancel';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const startAuth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x63);
+    const startedPromise=readLines(connection.socket,1); connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth:startAuth,prompt,workspaceAttestation})}\n`); await startedPromise;
+    const cancelAuth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'cancel','',0x64);
+    const resultPromise=readLines(connection.socket,2); connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'cancel_operation',auth:cancelAuth})}\n`);
+    const frames=await resultPromise; expect(frames.some(f=>f.type==='cancel_accepted')).toBe(true);
+    expect((frames.find(f=>f.type==='operation_event')?.event as Record<string,unknown>).type).toBe('cancelled');
+    const op=store.getOperation(operationId)!;expect(op).toMatchObject({state:'CANCELLED',writerSettlement:'RELEASED'});expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('RELEASED');
+  });
+
+  it('settles B8 uncertainty before session disconnect when transport closes during implementation',async()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore(); const connection=await readyImplementation(ctx,writerStore,blockingImplementation);
+    const operationId=`ideo_${'1'.repeat(32)}`; const prompt='disconnect mutation';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x65);
+    const startedPromise=readLines(connection.socket,1); connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`); await startedPromise;
+    const before=store.getOperation(operationId)!; expect(writerStore.getLiveWriterLease(before.writerLeaseId!)?.state).toBe('ACTIVE');
+    connection.socket.destroy(); await new Promise(resolve=>setTimeout(resolve,30));
+    const op=store.getOperation(operationId)!;expect(op).toMatchObject({state:'DISCONNECTED',writerSettlement:'UNCERTAIN'});expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('UNCERTAIN');expect(store.getSession(connection.sessionId)?.state).toBe('DISCONNECTED');
+  });
+
+  it('implementation runtime ceiling becomes INDETERMINATE + UNCERTAIN and never safe success',async()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore(); const connection=await readyImplementation(ctx,writerStore,blockingImplementation,20);
+    const operationId=`ideo_${'2'.repeat(32)}`; const prompt='implementation timeout';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x66);
+    const framesPromise=readLines(connection.socket,2); connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`);
+    const frames=await framesPromise;expect(frames.map(f=>(f.event as Record<string,unknown>).type)).toEqual(['operation_started','indeterminate']);
+    const op=store.getOperation(operationId)!;expect(op).toMatchObject({state:'INDETERMINATE',writerSettlement:'UNCERTAIN'});expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('UNCERTAIN');
+  });
+
+  it('MAC-valid per-operation workspace drift is denied before acquiring a B8 IDE writer',async()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore(); const connection=await readyImplementation(ctx,writerStore,completingImplementation);
+    const operationId=`ideo_${'3'.repeat(32)}`; const prompt='wrong implementation workspace';
+    const base=JSON.parse(makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation)) as IdeWorkspaceAttestation;
+    const workspaceAttestation=serializeIdeWorkspaceAttestation({...base,workspace:{...base.workspace,filesystemIdentity:'f'.repeat(64)}});
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x67);
+    const responsePromise=readLine(connection.socket); connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`);
+    expect(await responsePromise).toMatchObject({type:'error',code:'IDE_WORKSPACE_DENIED'});await new Promise(resolve=>setTimeout(resolve,20));expect(store.getOperation(operationId)).toBeUndefined();
+  });
+
+  it('an active IDE implementation lease blocks agent_apply on the same logical worktree',async()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore();
+    const connection=await readyImplementation(ctx,writerStore,blockingImplementation); const operationId=`ideo_${'4'.repeat(32)}`; const prompt='hold shared writer';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x68);
+    const startedPromise=readLines(connection.socket,1); connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`); await startedPromise;
+    const op=store.getOperation(operationId)!; expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('ACTIVE');
+    const job=completedWriterJob(writerStore); expect(bridgeCode(()=>writerStore.startApplyAttempt({attemptId:`att_${'b'.repeat(32)}`,jobId:job.jobId,worktreeId:'forward'}))).toBe('LIVE_WRITER_BUSY');
+    connection.socket.destroy();await new Promise(resolve=>setTimeout(resolve,25));
+    expect(store.getOperation(operationId)).toMatchObject({state:'DISCONNECTED',writerSettlement:'UNCERTAIN'});
+  });
+
+  it('implementation-configured listener startup reconciles a pre-restart active operation before binding',async()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore();
+    const sid=sessionId('7'); const opened=store.openSession({enrollmentId:ctx.enrollment.enrollmentId,principalId:ctx.enrollment.principalId,projectId:ctx.enrollment.projectId,worktreeId:ctx.enrollment.worktreeId,ideProduct:ctx.enrollment.ideProduct,ideInstanceId:ctx.enrollment.ideInstanceId,workspaceFingerprint:ctx.enrollment.workspaceFingerprint,baseRevision:ctx.enrollment.baseRevision,sessionId:sid});
+    const key={principalId:ctx.enrollment.principalId,projectId:ctx.enrollment.projectId,worktreeId:ctx.enrollment.worktreeId,workspaceFingerprint:ctx.enrollment.workspaceFingerprint,baseRevision:ctx.enrollment.baseRevision,ideProduct:ctx.enrollment.ideProduct,ideInstanceId:ctx.enrollment.ideInstanceId,sessionId:sid,connectionGeneration:opened.connectionGeneration} as const;
+    store.markAvailable(key); const controllerLeaseId=store.acquireController(key); const operationId=`ideo_${'7'.repeat(32)}`; const prompt='pre-restart implementation';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,sid),opened.connectionGeneration); const payload=serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation);
+    const envelope=signedOperationAuth(ctx,sid,opened.connectionGeneration,controllerLeaseId,operationId,'request_implementation',payload,0x69);
+    const admitted=admitIdeImplementation({ideStore:store,writerStore,runtime:ctx.runtime,envelope,prompt,workspaceAttestation,nowMs});
+    store.startImplementationOperation({...admitted,runtimeInstanceId:ctx.runtime.runtimeInstanceId,adapterId:ctx.runtime.adapterId,adapterVersion:ctx.runtime.adapterVersion,payloadSha256:admitted.payloadSha256,payloadBytes:Buffer.byteLength(payload,'utf8'),writerLeaseId:admitted.writerLeaseId});
+    store.markImplementationMutationStarted(operationId,admitted.writerLeaseId,controllerLeaseId);
+    expect(writerStore.getLiveWriterLease(admitted.writerLeaseId)?.state).toBe('ACTIVE');
+    listener=new IdeCompanionListener({store,runtime:ctx.runtime,writerStore,implementationAdapter:completingImplementation,nowMs:()=>nowMs,challengeBytes:()=>Buffer.alloc(32,0x42)}); await listener.start();
+    expect(store.getOperation(operationId)).toMatchObject({state:'INDETERMINATE',writerSettlement:'UNCERTAIN'}); expect(writerStore.getLiveWriterLease(admitted.writerLeaseId)?.state).toBe('UNCERTAIN'); expect(store.getSession(sid)?.state).toBe('STALE'); expect(existsSync(ctx.runtime.socketPath)).toBe(true);
+  });
+
+  it('bounded response backpressure/sink loss cannot become COMPLETED or release the writer',async()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore();
+    const noisy:IdeImplementationOperationAdapter={async run(input){const message='x'.repeat(8_000);for(let i=0;i<200;i++)input.emit('assistant_chunk',message);return{outcome:'completed'};}};
+    const connection=await readyImplementation(ctx,writerStore,noisy); const operationId=`ideo_${'8'.repeat(32)}`; const prompt='force bounded response queue';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation); const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x6a);
+    connection.socket.pause(); connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`); await new Promise(resolve=>setTimeout(resolve,150));
+    const op=store.getOperation(operationId)!; expect(op.state).not.toBe('COMPLETED'); expect(op.writerSettlement).toBe('UNCERTAIN'); expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('UNCERTAIN'); expect(store.getOperationAudit(operationId).some(row=>row.eventType==='completed')).toBe(false);
+  });
+
+  it('rejects a correctly signed implementation frame with a stale/future connection generation before writer admission',async()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore(); const connection=await readyImplementation(ctx,writerStore,completingImplementation);
+    const operationId=`ideo_${'5'.repeat(32)}`; const prompt='generation mismatch';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation+1,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x69);
+    const responsePromise=readLine(connection.socket);connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`);
+    expect(await responsePromise).toMatchObject({type:'error',code:'IDE_SESSION_DENIED'});await new Promise(resolve=>setTimeout(resolve,20));expect(store.getOperation(operationId)).toBeUndefined();
+  });
+
+  it('external enrollment revocation plus socket close reconciles the implementation writer to UNCERTAIN',async()=>{
+    const ctx=setup({capabilities:['request_implementation','cancel','observe_response']}); const writerStore=newWriterStore(); const connection=await readyImplementation(ctx,writerStore,blockingImplementation);
+    const operationId=`ideo_${'6'.repeat(32)}`; const prompt='revoke while mutating';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation),0x6a);
+    const startedPromise=readLines(connection.socket,1);connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`);await startedPromise;
+    const op=store.getOperation(operationId)!;expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('ACTIVE');
+    expect(store.revokeEnrollment({enrollmentId:ctx.enrollment.enrollmentId,principalId:ctx.enrollment.principalId,projectId:ctx.enrollment.projectId,worktreeId:ctx.enrollment.worktreeId,ideProduct:ctx.enrollment.ideProduct,ideInstanceId:ctx.enrollment.ideInstanceId,workspaceFingerprint:ctx.enrollment.workspaceFingerprint,baseRevision:ctx.enrollment.baseRevision})).toBe(true);
+    expect(store.getOperation(operationId)).toMatchObject({state:'DISCONNECTED',writerSettlement:'HELD'});connection.socket.destroy();await new Promise(resolve=>setTimeout(resolve,25));
+    expect(store.getOperation(operationId)).toMatchObject({state:'DISCONNECTED',writerSettlement:'UNCERTAIN'});expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('UNCERTAIN');expect(store.getSession(connection.sessionId)?.state).toBe('STALE');
+  });
+
+
 
 });

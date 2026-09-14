@@ -164,6 +164,16 @@ describe('P7 B9.2 implementation operation + B8 settlement',()=>{
     ctx.coordinator.connectionClosed(ctx.s.sessionId,ctx.s.connectionGeneration);
   });
 
+  it('initial transport sink failure occurs before mutation and durably releases the writer as safe FAILED',()=>{
+    const ctl=controlled();const ctx=fixture(ctl.adapter);
+    expect(()=>ctx.coordinator.startImplementation(ctx.envelope,ctx.prompt,ctx.workspaceAttestation,()=>{throw new Error('injected sink failure');})).toThrow('injected sink failure');
+    expect(ctl.input).toBeUndefined();
+    const op=ideStore.getOperation(ctx.operationId)!;
+    expect(op).toMatchObject({state:'FAILED',writerSettlement:'RELEASED',safeTerminalIntent:'FAILED',mutationStartedAt:null});
+    expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('RELEASED');
+    expect(ideStore.getOperationAudit(ctx.operationId).map(row=>row.eventType)).toEqual(['operation_started','failed']);
+  });
+
   it('adapter input exposes no host path, credential, writer store, or writer lease authority',()=>{
     const ctl=controlled();const ctx=fixture(ctl.adapter);ctx.coordinator.startImplementation(ctx.envelope,ctx.prompt,ctx.workspaceAttestation,()=>{});
     expect(Object.keys(ctl.input!).sort()).toEqual(['connectionGeneration','emit','operationId','prompt','sessionId','signal'].sort());
