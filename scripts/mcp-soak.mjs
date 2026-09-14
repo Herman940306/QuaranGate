@@ -7,6 +7,8 @@
  * protocol success but are never printed.
  */
 import { readFileSync, statSync } from 'node:fs';
+import { isIP } from 'node:net';
+import { Agent } from 'undici';
 
 const url = process.env.MCP_SOAK_URL ?? 'http://127.0.0.1:8787/mcp';
 const bearerFile = process.env.MCP_BEARER_FILE;
@@ -14,13 +16,25 @@ const attempts = positiveInteger('MCP_SOAK_ATTEMPTS', 500);
 const concurrency = positiveInteger('MCP_SOAK_CONCURRENCY', 1);
 const intervalMs = nonnegativeInteger('MCP_SOAK_INTERVAL_MS', 0);
 const timeoutMs = positiveInteger('MCP_SOAK_TIMEOUT_MS', 15_000);
+const resolveIp = process.env.MCP_SOAK_RESOLVE_IP?.trim() || null;
 
 if (!bearerFile) fail('MCP_BEARER_FILE is required');
+if (resolveIp !== null && isIP(resolveIp) === 0) fail('MCP_SOAK_RESOLVE_IP must be a valid IPv4 or IPv6 address');
 const mode = statSync(bearerFile).mode & 0o777;
 if ((mode & 0o077) !== 0) fail('MCP_BEARER_FILE must not be accessible by group or other users');
 const bearer = readFileSync(bearerFile, 'utf8').trim();
 if (!bearer) fail('MCP_BEARER_FILE is empty');
 if (concurrency > 4) fail('MCP_SOAK_CONCURRENCY must be between 1 and 4');
+
+const resolveFamily = resolveIp === null ? 0 : isIP(resolveIp);
+const dispatcher = resolveIp === null ? null : new Agent({
+  connect: {
+    lookup(_hostname, options, callback) {
+      if (options?.all) callback(null, [{ address: resolveIp, family: resolveFamily }]);
+      else callback(null, resolveIp, resolveFamily);
+    },
+  },
+});
 
 const latencies = [];
 const failures = new Map();
@@ -52,8 +66,9 @@ async function one(attempt) {
         },
       }),
       signal: controller.signal,
+      ...(dispatcher !== null ? { dispatcher } : {}),
     });
-    const body = await response.json().catch(() => null);
+    const body = await parseJsonRpcResponse(response);
     const ok = response.status === 200
       && body !== null
       && body.jsonrpc === '2.0'
@@ -77,6 +92,44 @@ function incrementFailure(category) {
   failures.set(category, (failures.get(category) ?? 0) + 1);
 }
 
+async function parseJsonRpcResponse(response) {
+  const text = await response.text();
+  const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+  if (contentType.includes('text/event-stream')) return parseSseJsonRpc(text);
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function parseSseJsonRpc(text) {
+  let dataLines = [];
+  const flush = () => {
+    if (dataLines.length === 0) return null;
+    const candidate = dataLines.join('\n');
+    dataLines = [];
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  };
+
+  for (const line of text.split(/\r?\n/)) {
+    if (line === '') {
+      const parsed = flush();
+      if (parsed !== null) return parsed;
+      continue;
+    }
+    if (!line.startsWith('data:')) continue;
+    let value = line.slice(5);
+    if (value.startsWith(' ')) value = value.slice(1);
+    dataLines.push(value);
+  }
+  return flush();
+}
+
 async function worker() {
   while (true) {
     const attempt = nextAttempt + 1;
@@ -90,12 +143,14 @@ async function worker() {
 }
 
 await Promise.all(Array.from({ length: concurrency }, () => worker()));
+if (dispatcher !== null) await dispatcher.close();
 const durationMs = Number(process.hrtime.bigint() - startedNs) / 1_000_000;
 latencies.sort((a, b) => a - b);
 const summary = {
   startedAt: startedAt.toISOString(),
   completedAt: new Date().toISOString(),
   url: sanitizedUrl(url),
+  resolveIp,
   attempts,
   passes,
   failureCount: attempts - passes,
