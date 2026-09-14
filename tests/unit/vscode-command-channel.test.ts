@@ -19,6 +19,13 @@ import {
 import { connectVsCodeCompanion, type VsCodeCompanionConnection } from '../../src/ide-adapters/vscode/vscodeCompanionConnection.js';
 import { readVsCodeCompanionCredential, type VsCodeCompanionCredential } from '../../src/ide-adapters/vscode/vscodeCompanionCredential.js';
 import { VsCodeCommandChannel } from '../../src/ide-adapters/vscode/vscodeCommandChannel.js';
+import {
+  VsCodeModelAccessController,
+  VsCodePublicApiReviewHandler,
+  type VsCodeCancellationToken,
+  type VsCodeLanguageModelMessage,
+  type VsCodePublicLanguageModelApi,
+} from '../../src/ide-adapters/vscode/vscodePublicApiModelExecution.js';
 
 const nowMs=1_800_000_000_000;
 const baseRevision='a'.repeat(40);
@@ -78,6 +85,36 @@ describe('P7 I2.2 QuaranGate-origin VS Code command/event transport',()=>{
     expect(runs).toBe(1);
     expect(store.getOperation(operationId)).toMatchObject({state:'COMPLETED',capability:'request_review'});
     expect(events).toEqual(['operation_started','status','completed']);
+  });
+
+  it('executes the supported public-API review model only after exact I2.2 authorization is durably admitted by B7',async()=>{
+    let selected=0;let sends=0;let cancelled=false;
+    const token:VsCodeCancellationToken={get isCancellationRequested(){return cancelled;}};
+    const model={
+      vendor:'approved-vendor',id:'approved-model',family:'approved-family',version:'2026-09',name:'Approved Model',maxInputTokens:4096,
+      countTokens:async()=>5,
+      sendRequest:async()=>{sends+=1;return{text:(async function*(){yield 'public-api-review';})()};},
+    };
+    const api:VsCodePublicLanguageModelApi={
+      selectChatModels:async()=>{selected+=1;return[model];},
+      canSendRequest:()=>true,
+      createUserMessage:(prompt)=>({prompt} as unknown as VsCodeLanguageModelMessage),
+      createCancellationTokenSource:()=>({token,cancel:()=>{cancelled=true;},dispose:()=>undefined}),
+    };
+    const access=new VsCodeModelAccessController(api,{vendor:model.vendor,id:model.id,family:model.family,version:model.version});
+    expect(await access.prepareFromUserGesture()).toMatchObject({state:'MODEL_ACCESS_ALLOWED'});
+    const publicApiHandler=new VsCodePublicApiReviewHandler({api,access:access.remoteAccess()});
+    const ctx=await ready(['request_review','cancel','observe_response'],{review:publicApiHandler});
+    const operationId=`ideo_${'a'.repeat(32)}`;const prompt='review through supported public api';
+    const authorization=await ctx.remote.authorizeOperation({operationId,controllerLeaseId:ctx.controllerLeaseId,capability:'request_review',prompt});
+    expect(selected).toBe(1);expect(sends).toBe(0);expect(store.getOperation(operationId)).toBeUndefined();
+    const events:string[]=[];
+    const coordinator=new IdeOperationCoordinator({store,runtime:ctx.runtime,adapter:ctx.remote.reviewAdapter(),nowMs:()=>nowMs});
+    coordinator.startReview(authorization.auth,prompt,authorization.workspaceAttestation,(event)=>events.push(event.type));
+    await waitFor(()=>store.getOperation(operationId)?.state==='COMPLETED');
+    expect(sends).toBe(1);
+    expect(events).toEqual(['operation_started','assistant_chunk','completed']);
+    expect(store.getOperation(operationId)).toMatchObject({state:'COMPLETED',capability:'request_review'});
   });
 
   it('admits implementation through accepted B9/B8 before remote execution and releases exact writer only after safe completion',async()=>{
