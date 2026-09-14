@@ -478,6 +478,25 @@ describe('P7 B7 durable non-mutating operation lifecycle and audit', () => {
     expect(store.getOperationAudit(ctx.op.operationId)).toEqual([expect.objectContaining({sequence:0,eventType:'operation_started',messageSha256:null,messageBytes:0})]);
   });
 
+  it('serializes competing valid starts under one controller so exactly one operation can become active', () => {
+    const ctx=controlled(); const payload='first review';
+    const base={
+      enrollmentId:ctx.e.enrollmentId,ideInstanceId:ctx.e.ideInstanceId,sessionId:ctx.s.sessionId,connectionGeneration:ctx.s.connectionGeneration,
+      controllerLeaseId:ctx.lease,capability:'request_review' as const,runtimeInstanceId:`iderun_${'b'.repeat(32)}`,
+      adapterId:'quarangate-vscode-companion',adapterVersion:'1.2.3',payloadSha256:hashIdeCompanionPayload(payload),payloadBytes:payload.length,
+    };
+    const first=store.startOperation({...base,operationId:`ideo_${'1'.repeat(32)}`});
+    expect(first.state).toBe('RUNNING');
+    // A distinct SQLite handle models the second serialized BEGIN IMMEDIATE winner attempt.
+    // It must observe OPERATION_ACTIVE and cannot admit a second valid operation under the same controller lease.
+    const competing=new IdeSessionStore(dbPath);
+    expect(errorCode(()=>competing.startOperation({...base,operationId:`ideo_${'2'.repeat(32)}`}))).toBe('IDE_SESSION_STATE_MISMATCH');
+    expect(competing.getOperation(`ideo_${'2'.repeat(32)}`)).toBeUndefined();
+    expect(competing.getOperation(first.operationId)?.state).toBe('RUNNING');
+    expect(competing.getSession(ctx.s.sessionId)?.state).toBe('OPERATION_ACTIVE');
+    competing.close();
+  });
+
   it('denies request_implementation at operation start even if an internal caller tries to construct it', () => {
     const ctx=controlled(); const payload='write';
     expect(errorCode(()=>store.startOperation({

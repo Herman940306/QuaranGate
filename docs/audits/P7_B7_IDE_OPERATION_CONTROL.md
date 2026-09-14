@@ -130,7 +130,7 @@ Additional B7-focused evidence includes:
 - real AF_UNIX B6/B7 listener suite: 22/22 PASS;
 - coordinator failure seams: 3/3 PASS.
 
-Final candidate validation on these source bytes: full root unit **2427/2427 PASS across 78/78 files**; typecheck PASS; build PASS; diff-check PASS; console catalog **4/4 PASS**. Static source-graph inspection found no executor-startup/public-tool reference to the B7 listener/coordinator; the public MCP surface remains unchanged.
+Final candidate validation on these source bytes: full root unit **2428/2428 PASS across 78/78 files**; typecheck PASS; build PASS; diff-check PASS; console catalog **4/4 PASS**. Static source-graph inspection found no executor-startup/public-tool reference to the B7 listener/coordinator; the public MCP surface remains unchanged.
 
 ## Explicit non-claims / residual gates
 
@@ -149,3 +149,7 @@ B7 does **not** claim:
 - a final retention policy for historical operation metadata.
 
 The next authority-sensitive gate must be shared live-writer arbitration across all real-worktree mutation lanes. IDE implementation authority must remain impossible until that separately reviewed gate is accepted.
+
+## R1 concurrency clarification
+
+B7 admission is serialized twice at the durable boundary. `startOperation` executes under SQLite `BEGIN IMMEDIATE`, then requires the exact current session to still be `CONTROLLER_ACQUIRED` with the exact raw controller lease before transitioning it to `OPERATION_ACTIVE`. Schema v3 also carries the partial unique index `idx_ide_operations_one_active_session`, which permits only one `RUNNING`/`CANCELLING` operation per session. A competing otherwise-valid start therefore cannot create a second active operation: after SQLite writer serialization it observes `OPERATION_ACTIVE` (or loses the session CAS) and the entire second transaction rolls back. A direct two-store regression pins this property. No external Redis/process lock is relied on for this Plane-B invariant.
