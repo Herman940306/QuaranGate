@@ -225,6 +225,11 @@ export function assertTrustedIdeCompanionRuntimeRoot(runtimeRoot: string): void 
   assertCanonicalOwnerOnlyDirectory(runtimeRoot, 'IDE_RUNTIME_ROOT_INVALID');
 }
 
+/** Validate one trusted runtime reference without reading or exposing its secret. */
+export function assertIdeCompanionRuntimeRef(ref: IdeCompanionRuntimeRef): void {
+  assertRuntimeRef(ref);
+}
+
 function assertRuntimeRef(ref: IdeCompanionRuntimeRef): void {
   assertTrustedIdeCompanionRuntimeRoot(ref.runtimeRoot);
   validateRuntimeInstanceId(ref.runtimeInstanceId);
