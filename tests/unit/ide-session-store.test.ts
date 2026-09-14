@@ -11,9 +11,18 @@ import {
   type IdeSessionAuthorityRequest,
 } from '../../src/shared/ideSessions.js';
 import {
+  hashIdeCompanionNonce,
+  hashIdeCompanionPayload,
+  parseIdeCompanionAuthFrame,
+  signIdeCompanionEnvelope,
+  verifyIdeCompanionEnvelope,
+} from '../../src/shared/ideCompanionAuth.js';
+import {
+  IDE_MAX_ACTIVE_AUTH_REPLAYS,
   IDE_REGISTRY_SCHEMA_VERSION,
   IdeRegistryStoreError,
   IdeSessionStore,
+  type IdeAuthReplayClaim,
   type IdeEnrollmentKey,
   type IdeSessionRegistryKey,
   type NewIdeEnrollment,
@@ -52,13 +61,35 @@ function open(e: ReturnType<IdeSessionStore['createEnrollment']>, sessionId = `i
 }
 function mode(path: string): number { return statSync(path).mode & 0o777; }
 
+function companionRequest(
+  e: ReturnType<IdeSessionStore['createEnrollment']>,
+  s: ReturnType<IdeSessionStore['openSession']>,
+  lease: string,
+  over: Partial<IdeAuthReplayClaim> = {},
+): IdeAuthReplayClaim {
+  const nowMs = 1_800_000_000_000;
+  return {
+    enrollmentId: e.enrollmentId,
+    ideInstanceId: e.ideInstanceId,
+    sessionId: s.sessionId,
+    connectionGeneration: s.connectionGeneration,
+    controllerLeaseId: lease,
+    operationId: `ideo_${'5'.repeat(32)}`,
+    capability: 'request_review',
+    nonceHash: '6'.repeat(64),
+    nowMs,
+    expiresAtMs: nowMs + 20_000,
+    ...over,
+  };
+}
+
 beforeEach(() => {
   dbPath = join(mkdtempSync(join(tmpdir(), 'qg-ide-registry-')), 'ide.db');
   store = new IdeSessionStore(dbPath);
 });
 
 describe('P7 B2 IDE registry schema and privacy', () => {
-  it('creates a dedicated v1 schema with private SQLite files', () => {
+  it('creates the current dedicated schema with private SQLite files', () => {
     expect(store.schemaVersion).toBe(IDE_REGISTRY_SCHEMA_VERSION);
     const e = store.createEnrollment(enrollment()); open(e);
     expect(mode(dbPath)).toBe(0o600);
@@ -75,11 +106,11 @@ describe('P7 B2 IDE registry schema and privacy', () => {
   it('fails closed on a future schema version and never downgrades it', () => {
     store.close(); const db = new DatabaseSync(dbPath); db.exec(`PRAGMA user_version=${IDE_REGISTRY_SCHEMA_VERSION + 1}`); db.close();
     expect(errorCode(() => new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
-    const after = new DatabaseSync(dbPath); expect((after.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(2); after.close();
+    const after = new DatabaseSync(dbPath); expect((after.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(IDE_REGISTRY_SCHEMA_VERSION + 1); after.close();
   });
 
   it('fails closed on a falsely stamped current DB and does not repair it', () => {
-    store.close(); const db = new DatabaseSync(dbPath); db.exec('DROP TABLE ide_sessions; PRAGMA user_version=1'); db.close();
+    store.close(); const db = new DatabaseSync(dbPath); db.exec(`DROP TABLE ide_sessions; PRAGMA user_version=${IDE_REGISTRY_SCHEMA_VERSION}`); db.close();
     expect(errorCode(() => new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
     const after = new DatabaseSync(dbPath); expect(after.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ide_sessions'`).get()).toBeUndefined(); after.close();
   });
@@ -232,5 +263,151 @@ describe('P7 B2 restart recovery', () => {
     const db=new DatabaseSync(dbPath); db.exec('PRAGMA ignore_check_constraints=ON');
     db.prepare(`UPDATE ide_sessions SET state='CONTROLLER_ACQUIRED',controller_lease_id=NULL WHERE session_id=?`).run(s.sessionId); db.close();
     const reopened=new IdeSessionStore(dbPath); expect(errorCode(() => reopened.getSession(s.sessionId))).toBe('IDE_REGISTRY_SCHEMA'); reopened.close();
+  });
+});
+
+
+describe('P7 B3 durable authenticated replay foundation', () => {
+  function controlled() {
+    const e=store.createEnrollment(enrollment());
+    const s=open(e); const k=sessionKey(s,e); store.markAvailable(k); const lease=store.acquireController(k);
+    return { e, s, k, lease };
+  }
+
+  it('migrates exact B2 v1 state to v2 additively and preserves enrollment/session/controller state', () => {
+    const {e,s,lease}=controlled(); store.close();
+    const db=new DatabaseSync(dbPath); db.exec('DROP TABLE ide_auth_replays; PRAGMA user_version=1'); db.close();
+    const reopened=new IdeSessionStore(dbPath);
+    expect(reopened.schemaVersion).toBe(2);
+    expect(reopened.getEnrollment(e.enrollmentId)?.ideInstanceId).toBe(e.ideInstanceId);
+    expect(reopened.getSession(s.sessionId)).toMatchObject({connectionGeneration:1,controllerLeaseId:lease,state:'CONTROLLER_ACQUIRED'});
+    const check=new DatabaseSync(dbPath); expect(check.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ide_auth_replays'`).get()).toBeDefined(); check.close();
+    reopened.close();
+  });
+
+  it('refuses malformed v1 before replay migration and leaves the v1 stamp/table absence untouched', () => {
+    store.close(); const db=new DatabaseSync(dbPath);
+    db.exec('DROP TABLE ide_auth_replays; DROP TABLE ide_sessions; PRAGMA user_version=1'); db.close();
+    expect(errorCode(() => new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+    const after=new DatabaseSync(dbPath);
+    expect((after.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(1);
+    expect(after.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ide_auth_replays'`).get()).toBeUndefined();
+    after.close();
+  });
+
+  it('refuses partial v2 replay state under a v1 stamp instead of silently repairing it', () => {
+    store.close(); const db=new DatabaseSync(dbPath); db.exec('PRAGMA user_version=1'); db.close();
+    expect(errorCode(() => new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+    const after=new DatabaseSync(dbPath); expect((after.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(1); after.close();
+  });
+
+  it('persists nonce replay denial across store reopen for the authenticated validity window', () => {
+    const {e,s,lease}=controlled(); const claim=companionRequest(e,s,lease); store.claimAuthReplay(claim); store.close();
+    const reopened=new IdeSessionStore(dbPath);
+    expect(errorCode(() => reopened.claimAuthReplay(claim))).toBe('IDE_AUTH_REPLAY');
+    reopened.close();
+  });
+
+  it('binds replay claims to exact enrollment/instance/session/generation/controller/capability', () => {
+    const {e,s,lease}=controlled(); const claim=companionRequest(e,s,lease);
+    expect(errorCode(() => store.claimAuthReplay({...claim,ideInstanceId:`ide_${'9'.repeat(32)}`}))).toBe('IDE_ENROLLMENT_BINDING_MISMATCH');
+    expect(errorCode(() => store.claimAuthReplay({...claim,connectionGeneration:claim.connectionGeneration+1}))).toBe('IDE_SESSION_BINDING_MISMATCH');
+    expect(errorCode(() => store.claimAuthReplay({...claim,controllerLeaseId:`idectl_${'9'.repeat(32)}`}))).toBe('IDE_CONTROLLER_LEASE_MISMATCH');
+    expect(errorCode(() => store.claimAuthReplay({...claim,capability:'request_implementation'}))).toBe('IDE_REGISTRY_POLICY_DENIED');
+    expect(() => store.claimAuthReplay(claim)).not.toThrow();
+  });
+
+  it('derives companion authority from trusted enrollment rather than caller project/worktree fields', () => {
+    const {e,s,lease}=controlled(); const req=companionRequest(e,s,lease);
+    expect(() => store.assertCompanionAuthority(req)).not.toThrow();
+    expect(errorCode(() => store.assertCompanionAuthority({...req,ideInstanceId:`ide_${'9'.repeat(32)}`}))).toBe('IDE_ENROLLMENT_BINDING_MISMATCH');
+    expect(errorCode(() => store.assertCompanionAuthority({...req,capability:'request_implementation'}))).toBe('IDE_REGISTRY_POLICY_DENIED');
+    store.markOperationActive(sessionKey(s,e),lease);
+    expect(() => store.assertCompanionAuthority({...req,capability:'cancel'})).not.toThrow();
+  });
+
+  it('prunes expired replay rows before claiming and permits safe nonce reuse only after old validity ended', () => {
+    const {e,s,lease}=controlled(); const first=companionRequest(e,s,lease,{expiresAtMs:1_800_000_001_000});
+    store.claimAuthReplay(first);
+    const later=companionRequest(e,s,lease,{nowMs:1_800_000_002_000,expiresAtMs:1_800_000_010_000,operationId:`ideo_${'7'.repeat(32)}`});
+    expect(() => store.claimAuthReplay(later)).not.toThrow();
+  });
+
+  it('rejects replay expiry outside the authenticated B3 time envelope before persistence', () => {
+    const {e,s,lease}=controlled(); const base=companionRequest(e,s,lease);
+    expect(errorCode(() => store.claimAuthReplay({...base,expiresAtMs:base.nowMs}))).toBe('IDE_REGISTRY_POLICY_DENIED');
+    expect(errorCode(() => store.claimAuthReplay({...base,expiresAtMs:base.nowMs+40_000}))).toBe('IDE_REGISTRY_POLICY_DENIED');
+  });
+
+  it('fails closed specifically when replay nonce primary-key authority is removed', () => {
+    store.close(); const db=new DatabaseSync(dbPath);
+    db.exec(`ALTER TABLE ide_auth_replays RENAME TO bad_replays;
+      CREATE TABLE ide_auth_replays (
+        nonce_hash TEXT NOT NULL, enrollment_id TEXT NOT NULL, session_id TEXT NOT NULL,
+        connection_generation INTEGER NOT NULL, controller_lease_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL, capability TEXT NOT NULL, expires_at_ms INTEGER NOT NULL, claimed_at TEXT NOT NULL
+      );
+      DROP TABLE bad_replays;
+      CREATE INDEX idx_ide_auth_replays_expiry
+        ON ide_auth_replays(enrollment_id, connection_generation, expires_at_ms);`);
+    db.close();
+    let message='';
+    try { new IdeSessionStore(dbPath); } catch (error) {
+      if (error instanceof IdeRegistryStoreError) message=error.message;
+    }
+    expect(message).toContain('ide_auth_replays primary key is incompatible');
+  });
+
+
+  it('flows signed request through parse/MAC/payload verification, durable replay claim and trusted B1/B2 authority', () => {
+    const {e,s,lease}=controlled();
+    const body=Buffer.from('review this bounded request','utf8');
+    const issuedAtMs=1_800_000_000_000;
+    const nonce='C'.repeat(43);
+    const signed=signIdeCompanionEnvelope(Buffer.alloc(32,0x73),{
+      version:1,
+      enrollmentId:e.enrollmentId,
+      ideInstanceId:e.ideInstanceId,
+      sessionId:s.sessionId,
+      connectionGeneration:s.connectionGeneration,
+      controllerLeaseId:lease,
+      operationId:`ideo_${'8'.repeat(32)}`,
+      capability:'request_review',
+      nonce,
+      issuedAtMs,
+      expiresAtMs:issuedAtMs+20_000,
+      payloadSha256:hashIdeCompanionPayload(body),
+    });
+    const parsed=parseIdeCompanionAuthFrame(JSON.stringify(signed));
+    const verified=verifyIdeCompanionEnvelope({envelope:parsed,secret:Buffer.alloc(32,0x73),payload:body,nowMs:issuedAtMs+1_000});
+    const claim={
+      enrollmentId:verified.enrollmentId, ideInstanceId:verified.ideInstanceId,
+      sessionId:verified.sessionId, connectionGeneration:verified.connectionGeneration,
+      controllerLeaseId:verified.controllerLeaseId, operationId:verified.operationId,
+      capability:verified.capability, nonceHash:hashIdeCompanionNonce(verified.nonce),
+      nowMs:issuedAtMs+1_000, expiresAtMs:verified.expiresAtMs,
+    } as const;
+    expect(() => store.claimAuthReplay(claim)).not.toThrow();
+    expect(() => store.assertCompanionAuthority(verified)).not.toThrow();
+    expect(errorCode(() => store.claimAuthReplay(claim))).toBe('IDE_AUTH_REPLAY');
+  });
+
+  it('fails closed at the durable per-generation replay-capacity bound without evicting live entries', () => {
+    const {e,s,lease}=controlled(); const base=companionRequest(e,s,lease,{nonceHash:'f'.repeat(64)});
+    store.close();
+    const db=new DatabaseSync(dbPath); db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
+    const insert=db.prepare(`INSERT INTO ide_auth_replays
+      (nonce_hash,enrollment_id,session_id,connection_generation,controller_lease_id,operation_id,capability,expires_at_ms,claimed_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`);
+    for(let i=0;i<IDE_MAX_ACTIVE_AUTH_REPLAYS;i+=1){
+      insert.run(i.toString(16).padStart(64,'0'),e.enrollmentId,s.sessionId,s.connectionGeneration,lease,
+        `ideo_${(i%16).toString(16).repeat(32)}`,'request_review',base.expiresAtMs,'2026-09-14T00:00:00.000Z');
+    }
+    db.exec('COMMIT'); db.close();
+    const reopened=new IdeSessionStore(dbPath);
+    expect(errorCode(() => reopened.claimAuthReplay(base))).toBe('IDE_AUTH_REPLAY_CAPACITY');
+    const check=new DatabaseSync(dbPath);
+    expect((check.prepare('SELECT COUNT(*) AS n FROM ide_auth_replays').get() as {n:number}).n).toBe(IDE_MAX_ACTIVE_AUTH_REPLAYS);
+    check.close(); reopened.close();
   });
 });

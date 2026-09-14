@@ -21,6 +21,7 @@ import {
   assertIdeControllerLeaseId,
   assertIdeEnrollmentId,
   assertIdeInstanceId,
+  assertIdeOperationId,
   assertIdeLogicalId,
   assertIdePrincipalId,
   assertIdeProduct,
@@ -34,8 +35,10 @@ import {
   type IdeSessionBinding,
   type IdeSessionState,
 } from '../../shared/ideSessions.js';
+import { IDE_COMPANION_MAX_CLOCK_SKEW_MS, IDE_COMPANION_MAX_LIFETIME_MS } from '../../shared/ideCompanionAuth.js';
 
-export const IDE_REGISTRY_SCHEMA_VERSION = 1;
+export const IDE_REGISTRY_SCHEMA_VERSION = 2;
+export const IDE_MAX_ACTIVE_AUTH_REPLAYS = 4096;
 
 const B2_ENROLLMENT_CAPABILITIES = new Set<IdeCapability>([
   ...IDE_REVIEW_BASE_CAPABILITIES,
@@ -47,7 +50,7 @@ const LIVE_SESSION_STATES: readonly IdeSessionState[] = [
 ] as const;
 const LIVE_SESSION_SQL = LIVE_SESSION_STATES.map((s) => `'${s}'`).join(',');
 
-const REQUIRED_TABLES = ['ide_enrollments', 'ide_sessions'] as const;
+const REQUIRED_TABLES = ['ide_enrollments', 'ide_sessions', 'ide_auth_replays'] as const;
 const REQUIRED_INDEXES = {
   idx_ide_enrollments_one_active_binding: {
     table: 'ide_enrollments',
@@ -80,6 +83,16 @@ const REQUIRED_COLUMNS: Record<string, Record<string, string>> = {
     session_id: 'TEXT', enrollment_id: 'TEXT', connection_generation: 'INTEGER',
     state: 'TEXT', controller_lease_id: 'TEXT', created_at: 'TEXT', updated_at: 'TEXT', ended_at: 'TEXT',
   },
+  ide_auth_replays: {
+    nonce_hash: 'TEXT', enrollment_id: 'TEXT', session_id: 'TEXT', connection_generation: 'INTEGER',
+    controller_lease_id: 'TEXT', operation_id: 'TEXT', capability: 'TEXT', expires_at_ms: 'INTEGER', claimed_at: 'TEXT',
+  },
+};
+
+const REQUIRED_PRIMARY_KEYS: Record<string, readonly string[]> = {
+  ide_enrollments: ['enrollment_id'],
+  ide_sessions: ['session_id'],
+  ide_auth_replays: ['nonce_hash'],
 };
 
 export type IdeEnrollmentState = 'ACTIVE' | 'REVOKED';
@@ -93,7 +106,9 @@ export type IdeRegistryErrorCode =
   | 'IDE_SESSION_ID_REUSED'
   | 'IDE_SESSION_BINDING_MISMATCH'
   | 'IDE_SESSION_STATE_MISMATCH'
-  | 'IDE_CONTROLLER_LEASE_MISMATCH';
+  | 'IDE_CONTROLLER_LEASE_MISMATCH'
+  | 'IDE_AUTH_REPLAY'
+  | 'IDE_AUTH_REPLAY_CAPACITY';
 
 export class IdeRegistryStoreError extends Error {
   constructor(public readonly code: IdeRegistryErrorCode, message: string) {
@@ -149,6 +164,22 @@ export interface IdeSessionRegistryRow {
   createdAt: string;
   updatedAt: string;
   endedAt: string | null;
+}
+
+export interface IdeCompanionRegistryRequest {
+  enrollmentId: string;
+  ideInstanceId: string;
+  sessionId: string;
+  connectionGeneration: number;
+  controllerLeaseId: string;
+  operationId: string;
+  capability: IdeCapability;
+}
+
+export interface IdeAuthReplayClaim extends IdeCompanionRegistryRequest {
+  nonceHash: string;
+  expiresAtMs: number;
+  nowMs: number;
 }
 
 function nowIso(): string { return new Date().toISOString(); }
@@ -244,6 +275,29 @@ export class IdeSessionStore {
       throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', `IDE registry schema v${version} is newer than supported v${IDE_REGISTRY_SCHEMA_VERSION}`);
     }
     if (version === IDE_REGISTRY_SCHEMA_VERSION) { this.assertSchemaShape(); return; }
+
+    if (version === 1) {
+      // B3 v2 is additive. A v1 DB must prove the exact accepted B2 shape
+      // before any replay table/version mutation is attempted. A partially
+      // present v2 replay table/index under a v1 stamp is ambiguous and is
+      // refused rather than repaired.
+      this.assertSchemaShape({ includeReplay: false, stampedVersion: 1 });
+      const replayTable = this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='ide_auth_replays'`).get();
+      const replayIndex = this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_ide_auth_replays_expiry'`).get();
+      if (replayTable !== undefined || replayIndex !== undefined) {
+        throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', 'IDE registry v1 contains partial v2 replay state; refusing automatic repair');
+      }
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.createReplaySchema();
+        this.db.exec(`PRAGMA user_version=${IDE_REGISTRY_SCHEMA_VERSION}`);
+        this.db.exec('COMMIT');
+      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+      this.assertSchemaShape();
+      restrictSqliteFileModes(this.path);
+      return;
+    }
+
     if (version !== 0) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', `unsupported IDE registry schema v${version}`);
 
     const existing = this.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all() as { name: string }[];
@@ -277,26 +331,56 @@ export class IdeSessionStore {
           ON ide_sessions(enrollment_id) WHERE state IN (${LIVE_SESSION_SQL});
         CREATE UNIQUE INDEX idx_ide_sessions_controller_lease
           ON ide_sessions(controller_lease_id) WHERE controller_lease_id IS NOT NULL;
-        PRAGMA user_version=${IDE_REGISTRY_SCHEMA_VERSION};
       `);
+      this.createReplaySchema();
+      this.db.exec(`PRAGMA user_version=${IDE_REGISTRY_SCHEMA_VERSION}`);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     this.assertSchemaShape();
     restrictSqliteFileModes(this.path);
   }
 
-  private assertSchemaShape(): void {
+  private createReplaySchema(): void {
+    this.db.exec(`
+      CREATE TABLE ide_auth_replays (
+        nonce_hash TEXT NOT NULL PRIMARY KEY,
+        enrollment_id TEXT NOT NULL REFERENCES ide_enrollments(enrollment_id),
+        session_id TEXT NOT NULL REFERENCES ide_sessions(session_id),
+        connection_generation INTEGER NOT NULL CHECK(connection_generation >= 1),
+        controller_lease_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        capability TEXT NOT NULL,
+        expires_at_ms INTEGER NOT NULL,
+        claimed_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_ide_auth_replays_expiry
+        ON ide_auth_replays(enrollment_id, connection_generation, expires_at_ms);
+    `);
+  }
+
+  private assertSchemaShape(options: { includeReplay?: boolean; stampedVersion?: number } = {}): void {
+    const includeReplay = options.includeReplay ?? true;
+    const stampedVersion = options.stampedVersion ?? IDE_REGISTRY_SCHEMA_VERSION;
     const missing: string[] = [];
     const tableExists = (name: string): boolean => this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(name) !== undefined;
     const indexExists = (name: string): boolean => this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name=?`).get(name) !== undefined;
-    for (const table of REQUIRED_TABLES) if (!tableExists(table)) missing.push(`table ${table}`);
+    for (const table of REQUIRED_TABLES) {
+      if (!includeReplay && table === 'ide_auth_replays') continue;
+      if (!tableExists(table)) missing.push(`table ${table}`);
+    }
     for (const [table, columns] of Object.entries(REQUIRED_COLUMNS)) {
+      if (!includeReplay && table === 'ide_auth_replays') continue;
       if (!tableExists(table)) continue;
-      const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string }[];
+      const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string; pk: number }[];
       for (const [column, affinity] of Object.entries(columns)) {
         const got = info.find((c) => c.name === column);
         if (!got) missing.push(`${table}.${column}`);
         else if (String(got.type).toUpperCase() !== affinity) missing.push(`${table}.${column} has type ${String(got.type)}, expected ${affinity}`);
+      }
+      const expectedPk = REQUIRED_PRIMARY_KEYS[table];
+      if (expectedPk) {
+        const gotPk = info.filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
+        if (JSON.stringify(gotPk) !== JSON.stringify(expectedPk)) missing.push(`${table} primary key is incompatible`);
       }
     }
     const normalizeSql = (sql: string): string => sql.replace(/\s+/g, ' ').trim().replace(/;$/, '').toLowerCase();
@@ -315,12 +399,20 @@ export class IdeSessionStore {
         continue;
       }
       const stored = this.db.prepare(`SELECT sql FROM sqlite_master WHERE type='index' AND name=?`).get(index) as { sql: string | null } | undefined;
-      if (!stored?.sql || normalizeSql(stored.sql) !== normalizeSql(expected.sql)) {
-        missing.push(`index ${index} definition is incompatible`);
+      if (!stored?.sql || normalizeSql(stored.sql) !== normalizeSql(expected.sql)) missing.push(`index ${index} definition is incompatible`);
+    }
+    if (includeReplay) {
+      if (!indexExists('idx_ide_auth_replays_expiry')) missing.push('index idx_ide_auth_replays_expiry');
+      else {
+        const columns = (this.db.prepare(`PRAGMA index_info(idx_ide_auth_replays_expiry)`).all() as Array<{ seqno: number; name: string }>)
+          .sort((a, b) => a.seqno - b.seqno).map((row) => row.name);
+        if (JSON.stringify(columns) !== JSON.stringify(['enrollment_id', 'connection_generation', 'expires_at_ms'])) {
+          missing.push('index idx_ide_auth_replays_expiry columns are incompatible');
+        }
       }
     }
     if (missing.length > 0) {
-      throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', `IDE registry is stamped schema v${IDE_REGISTRY_SCHEMA_VERSION} but incomplete/incompatible: ${missing.join(', ')}`);
+      throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', `IDE registry is stamped schema v${stampedVersion} but incomplete/incompatible: ${missing.join(', ')}`);
     }
   }
 
@@ -426,6 +518,124 @@ export class IdeSessionStore {
     if(session.controllerLeaseId!==leaseId) throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','IDE controller lease does not match current session');
     const binding:IdeSessionBinding={principalId:enrollment.principalId,projectId:enrollment.projectId,worktreeId:enrollment.worktreeId,workspaceFingerprint:enrollment.workspaceFingerprint,baseRevision:enrollment.baseRevision,ideProduct:enrollment.ideProduct,ideInstanceId:enrollment.ideInstanceId,sessionId:session.sessionId,connectionGeneration:session.connectionGeneration,capabilities:enrollment.capabilities,sessionState:session.state,controllerLease:'acquired',writerLease:'none'};
     assertIdeSessionAuthority(binding,request);
+  }
+
+
+  /**
+   * Companion-facing authority derivation. The machine frame supplies only
+   * opaque enrolled/session identities; project/worktree/workspace authority
+   * is re-derived from the durable trusted enrollment, never restated by the
+   * caller. B3 still supplies writerLease=none through the B1 contract.
+   */
+  assertCompanionAuthority(request: IdeCompanionRegistryRequest): void {
+    const { session, enrollment } = this.requireCompanionContext(request);
+    const authority: IdeSessionAuthorityRequest = {
+      principalId: enrollment.principalId,
+      projectId: enrollment.projectId,
+      worktreeId: enrollment.worktreeId,
+      workspaceFingerprint: enrollment.workspaceFingerprint,
+      baseRevision: enrollment.baseRevision,
+      ideProduct: enrollment.ideProduct,
+      ideInstanceId: enrollment.ideInstanceId,
+      sessionId: session.sessionId,
+      connectionGeneration: session.connectionGeneration,
+      capability: request.capability,
+    };
+    const binding: IdeSessionBinding = {
+      principalId: enrollment.principalId,
+      projectId: enrollment.projectId,
+      worktreeId: enrollment.worktreeId,
+      workspaceFingerprint: enrollment.workspaceFingerprint,
+      baseRevision: enrollment.baseRevision,
+      ideProduct: enrollment.ideProduct,
+      ideInstanceId: enrollment.ideInstanceId,
+      sessionId: session.sessionId,
+      connectionGeneration: session.connectionGeneration,
+      capabilities: enrollment.capabilities,
+      sessionState: session.state,
+      controllerLease: 'acquired',
+      writerLease: 'none',
+    };
+    assertIdeSessionAuthority(binding, authority);
+  }
+
+  /**
+   * Atomically claim one already-authenticated B3 nonce digest. Raw nonce,
+   * secret, MAC and payload bytes are never persisted. Replay state survives
+   * executor/store restart for the complete authenticated validity window.
+   */
+  claimAuthReplay(claim: IdeAuthReplayClaim): void {
+    this.validateReplayClaim(claim);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.requireCompanionContext(claim);
+      this.db.prepare(`DELETE FROM ide_auth_replays WHERE expires_at_ms <= ?`).run(claim.nowMs);
+      const existing = this.db.prepare(`SELECT 1 FROM ide_auth_replays WHERE nonce_hash=?`).get(claim.nonceHash);
+      if (existing !== undefined) throw new IdeRegistryStoreError('IDE_AUTH_REPLAY', 'companion request nonce was already used');
+      const count = this.db.prepare(`SELECT COUNT(*) AS n FROM ide_auth_replays WHERE enrollment_id=? AND connection_generation=? AND expires_at_ms>?`)
+        .get(claim.enrollmentId, claim.connectionGeneration, claim.nowMs) as { n: number };
+      if (Number(count.n) >= IDE_MAX_ACTIVE_AUTH_REPLAYS) {
+        throw new IdeRegistryStoreError('IDE_AUTH_REPLAY_CAPACITY', 'companion replay capacity reached');
+      }
+      this.db.prepare(`INSERT INTO ide_auth_replays
+        (nonce_hash,enrollment_id,session_id,connection_generation,controller_lease_id,operation_id,capability,expires_at_ms,claimed_at)
+        VALUES (?,?,?,?,?,?,?,?,?)`).run(
+        claim.nonceHash, claim.enrollmentId, claim.sessionId, claim.connectionGeneration,
+        claim.controllerLeaseId, claim.operationId, claim.capability, claim.expiresAtMs, nowIso(),
+      );
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      if (!(error instanceof IdeRegistryStoreError)) {
+        const found = this.db.prepare(`SELECT 1 FROM ide_auth_replays WHERE nonce_hash=?`).get(claim.nonceHash);
+        if (found !== undefined) throw new IdeRegistryStoreError('IDE_AUTH_REPLAY', 'companion request nonce was already used');
+      }
+      throw error;
+    }
+  }
+
+  private validateReplayClaim(claim: IdeAuthReplayClaim): void {
+    assertIdeEnrollmentId(claim.enrollmentId);
+    assertIdeInstanceId(claim.ideInstanceId);
+    assertIdeSessionId(claim.sessionId);
+    assertIdeConnectionGeneration(claim.connectionGeneration);
+    assertIdeControllerLeaseId(claim.controllerLeaseId);
+    assertIdeOperationId(claim.operationId);
+    assertIdeCapability(claim.capability);
+    if (!B2_ENROLLMENT_CAPABILITIES.has(claim.capability)) {
+      throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'companion capability is outside read-only IDE policy');
+    }
+    if (!/^[0-9a-f]{64}$/.test(claim.nonceHash)) {
+      throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'companion nonce digest is invalid');
+    }
+    if (!Number.isSafeInteger(claim.nowMs) || claim.nowMs < 0 || !Number.isSafeInteger(claim.expiresAtMs)) {
+      throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'companion replay time is invalid');
+    }
+    const remainingMs = claim.expiresAtMs - claim.nowMs;
+    if (remainingMs <= 0 || remainingMs > IDE_COMPANION_MAX_LIFETIME_MS + IDE_COMPANION_MAX_CLOCK_SKEW_MS) {
+      throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'companion replay expiry is outside the accepted window');
+    }
+  }
+
+  private requireCompanionContext(request: IdeCompanionRegistryRequest): { session: IdeSessionRegistryRow; enrollment: IdeEnrollmentRow } {
+    assertIdeEnrollmentId(request.enrollmentId);
+    assertIdeInstanceId(request.ideInstanceId);
+    assertIdeSessionId(request.sessionId);
+    assertIdeConnectionGeneration(request.connectionGeneration);
+    assertIdeControllerLeaseId(request.controllerLeaseId);
+    assertIdeOperationId(request.operationId);
+    assertIdeCapability(request.capability);
+    const enrollment = this.requireEnrollment(request.enrollmentId);
+    if (enrollment.state !== 'ACTIVE') throw new IdeRegistryStoreError('IDE_ENROLLMENT_NOT_ACTIVE', 'IDE enrollment is not active');
+    if (enrollment.ideInstanceId !== request.ideInstanceId) throw new IdeRegistryStoreError('IDE_ENROLLMENT_BINDING_MISMATCH', 'IDE companion instance mismatch');
+    if (!enrollment.capabilities.includes(request.capability)) throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'IDE companion capability is not enrolled');
+    const session = this.getSession(request.sessionId);
+    if (!session) throw new IdeRegistryStoreError('IDE_SESSION_NOT_FOUND', 'IDE session not found');
+    if (session.enrollmentId !== enrollment.enrollmentId || session.connectionGeneration !== request.connectionGeneration || session.connectionGeneration !== enrollment.currentGeneration) {
+      throw new IdeRegistryStoreError('IDE_SESSION_BINDING_MISMATCH', 'IDE companion session binding is stale or mismatched');
+    }
+    if (session.controllerLeaseId !== request.controllerLeaseId) throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH', 'IDE companion controller lease mismatch');
+    return { session, enrollment };
   }
 
   private transitionExact(key:IdeSessionRegistryKey,from:IdeSessionState,to:IdeSessionState,leaseId:string|null,clear=false):boolean {
