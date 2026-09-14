@@ -15,6 +15,11 @@ import {
   parseIdeCompanionOperationControlFrame,
 } from '../../shared/ideCompanionOperations.js';
 import { IdeSessionContractError, type IdeOperationEvent } from '../../shared/ideSessions.js';
+import {
+  IDE_REMOTE_TRANSPORT_MAX_FRAME_BYTES,
+  serializeIdeRemoteServerFrame,
+  type IdeRemoteServerFrame,
+} from '../../shared/ideCompanionRemoteTransport.js';
 import { BridgeError } from '../../shared/errors.js';
 import type { AgentJobStore } from '../agents/jobStore.js';
 import { existsSync, lstatSync, rmSync } from 'node:fs';
@@ -60,6 +65,7 @@ import {
   IdeImplementationCoordinatorError,
   type IdeImplementationOperationAdapter,
 } from './ideImplementationCoordinator.js';
+import { IdeCompanionRemoteChannel } from './ideCompanionRemoteChannel.js';
 
 export const IDE_COMPANION_LISTENER_MAX_CONNECTIONS = 16;
 export const IDE_COMPANION_LISTENER_HANDSHAKE_TIMEOUT_MS = 20_000;
@@ -96,6 +102,8 @@ export interface IdeCompanionListenerOptions {
   implementationAdapter?: IdeImplementationOperationAdapter;
   /** Trusted test seam for B9 implementation runtime bound. */
   implementationMaxRuntimeMs?: number;
+  /** I2.2 source-only QuaranGate-origin transport mode. Mutually exclusive with client-origin operation adapters. */
+  remoteChannelReady?: (channel: IdeCompanionRemoteChannel) => void;
 }
 
 interface PendingHandshake {
@@ -115,6 +123,7 @@ interface ConnectionState {
   sessionKey?: IdeSessionRegistryKey;
   enrollmentId?: string;
   controllerLeaseId?: string;
+  remoteChannel?: IdeCompanionRemoteChannel;
 }
 
 type PublicServerFrame =
@@ -160,6 +169,23 @@ function writeFrame(socket: Socket, frame: PublicServerFrame): boolean {
   return true;
 }
 
+function writeRemoteFrame(socket: Socket, frame: IdeRemoteServerFrame): boolean {
+  if (socket.destroyed) return false;
+  try {
+    const body = Buffer.from(`${serializeIdeRemoteServerFrame(frame)}\n`, 'utf8');
+    if (body.byteLength > IDE_COMPANION_LISTENER_MAX_WRITE_QUEUE_BYTES
+      || socket.writableLength + body.byteLength > IDE_COMPANION_LISTENER_MAX_WRITE_QUEUE_BYTES) {
+      socket.destroy();
+      return false;
+    }
+    socket.write(body);
+    return true;
+  } catch {
+    socket.destroy();
+    return false;
+  }
+}
+
 function sessionKey(enrollment: IdeEnrollmentRow, sessionId: string, connectionGeneration: number): IdeSessionRegistryKey {
   return {
     principalId: enrollment.principalId,
@@ -195,6 +221,10 @@ export class IdeCompanionListener {
     const hasImplementationAdapter=opts.implementationAdapter!==undefined;
     if(hasWriterStore!==hasImplementationAdapter){
       throw new IdeCompanionListenerError('IDE_LISTENER_CONFIGURATION_INVALID','implementation writer authority and adapter must be configured together');
+    }
+    const hasClientOriginAdapters = opts.operationAdapter !== undefined || hasWriterStore || hasImplementationAdapter;
+    if (opts.remoteChannelReady !== undefined && hasClientOriginAdapters) {
+      throw new IdeCompanionListenerError('IDE_LISTENER_CONFIGURATION_INVALID','QuaranGate-origin remote mode cannot share one socket with client-origin operation adapters');
     }
     this.implementationCoordinator = !hasWriterStore ? undefined : new IdeImplementationCoordinator({
       store:opts.store,writerStore:opts.writerStore!,runtime:opts.runtime,adapter:opts.implementationAdapter!,nowMs:opts.nowMs,maxRuntimeMs:opts.implementationMaxRuntimeMs,
@@ -290,6 +320,8 @@ export class IdeCompanionListener {
     if (state.enrollmentId !== undefined && this.enrollmentSockets.get(state.enrollmentId) === socket) {
       this.enrollmentSockets.delete(state.enrollmentId);
     }
+    state.remoteChannel?.connectionClosed();
+    state.remoteChannel = undefined;
     if (state.sessionKey !== undefined) {
       // B9 implementation writers get first chance to retain/block the exact
       // B8 lease before generic session disconnect terminalizes Plane-B. Any
@@ -312,12 +344,18 @@ export class IdeCompanionListener {
   }
 
   private onData(socket: Socket, state: ConnectionState, chunk: Buffer): void {
+    if (state.phase === 'READY' && state.remoteChannel !== undefined) {
+      this.onRemoteData(socket, state, chunk);
+      return;
+    }
     if (state.phase === 'CLOSED' || state.processing) {
       writeFrame(socket, { version: 1, type: 'error', code: 'UNEXPECTED_FRAME' });
       socket.end();
       return;
     }
-    const maxFrameBytes = state.phase === 'READY' ? IDE_COMPANION_OPERATION_MAX_FRAME_BYTES : IDE_COMPANION_HANDSHAKE_MAX_FRAME_BYTES;
+    const maxFrameBytes = state.phase === 'READY'
+      ? (state.remoteChannel === undefined ? IDE_COMPANION_OPERATION_MAX_FRAME_BYTES : IDE_REMOTE_TRANSPORT_MAX_FRAME_BYTES)
+      : IDE_COMPANION_HANDSHAKE_MAX_FRAME_BYTES;
     if (state.buffer.byteLength + chunk.byteLength > maxFrameBytes + 1) {
       writeFrame(socket, { version: 1, type: 'error', code: state.phase === 'READY' ? 'IDE_OPERATION_FRAME_SIZE' : 'IDE_HANDSHAKE_FRAME_SIZE' });
       socket.end();
@@ -337,6 +375,32 @@ export class IdeCompanionListener {
     void this.handleFrame(socket, state, frame).finally(() => { state.processing = false; });
   }
 
+  private onRemoteData(socket: Socket, state: ConnectionState, chunk: Buffer): void {
+    const channel = state.remoteChannel;
+    if (channel === undefined || state.phase !== 'READY') { socket.destroy(); return; }
+    if (state.buffer.byteLength + chunk.byteLength > IDE_REMOTE_TRANSPORT_MAX_FRAME_BYTES * 2) {
+      socket.destroy();
+      return;
+    }
+    state.buffer = Buffer.concat([state.buffer, chunk]);
+    for (;;) {
+      const newline = state.buffer.indexOf(0x0a);
+      if (newline < 0) {
+        if (state.buffer.byteLength > IDE_REMOTE_TRANSPORT_MAX_FRAME_BYTES) socket.destroy();
+        return;
+      }
+      if (newline < 1 || newline > IDE_REMOTE_TRANSPORT_MAX_FRAME_BYTES) {
+        socket.destroy();
+        return;
+      }
+      const frame = Buffer.from(state.buffer.subarray(0, newline));
+      state.buffer = state.buffer.subarray(newline + 1);
+      try { channel.handleClientFrame(frame); }
+      catch { socket.destroy(); return; }
+      if (socket.destroyed || state.phase !== 'READY') return;
+    }
+  }
+
   private async handleFrame(socket: Socket, state: ConnectionState, frame: Buffer): Promise<void> {
     try {
       if (state.phase === 'HELLO') {
@@ -348,6 +412,10 @@ export class IdeCompanionListener {
         return;
       }
       if (state.phase === 'READY') {
+        if (state.remoteChannel !== undefined) {
+          state.remoteChannel.handleClientFrame(frame);
+          return;
+        }
         if(this.operationCoordinator===undefined&&this.implementationCoordinator===undefined){
           writeFrame(socket,{version:1,type:'error',code:'UNEXPECTED_FRAME'});
           socket.end();
@@ -450,7 +518,27 @@ export class IdeCompanionListener {
     state.phase = 'READY';
     state.pending = undefined;
     socket.setTimeout(0);
+    if (this.opts.remoteChannelReady !== undefined) {
+      state.remoteChannel = new IdeCompanionRemoteChannel({
+        sessionId: opened.sessionId,
+        connectionGeneration: opened.connectionGeneration,
+        send: (remoteFrame) => writeRemoteFrame(socket, remoteFrame),
+        close: () => socket.destroy(),
+        isOperationAdmitted: (operationId, capability) => {
+          const operation = this.opts.store.getOperation(operationId);
+          return operation !== undefined
+            && operation.sessionId === opened.sessionId
+            && operation.connectionGeneration === opened.connectionGeneration
+            && operation.capability === capability
+            && (operation.state === 'RUNNING' || operation.state === 'CANCELLING');
+        },
+      });
+    }
     writeFrame(socket, { version: 1, type: 'ready', sessionId: opened.sessionId, connectionGeneration: opened.connectionGeneration });
+    if (state.remoteChannel !== undefined) {
+      try { this.opts.remoteChannelReady?.(state.remoteChannel); }
+      catch { socket.destroy(); }
+    }
   }
 
   private handleOperationControl(socket: Socket, state: ConnectionState, bytes: Buffer): void {
