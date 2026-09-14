@@ -61,9 +61,11 @@ The evidence layer never maps an absent or blocked live observation into `PASS`.
 `vscode-qualification-evidence.mjs`:
 
 - emits canonical JSON evidence with a manifest SHA-256;
-- bounds string, array, object-key, and nesting sizes;
+- revalidates qualification-step schemas at manifest construction even for direct library callers;
+- bounds string, array, object-key, nesting, and runtime-probe input sizes;
 - redacts credential/secret/auth/token/prompt/raw-response/editor/file-content fields;
 - records exact step status and timestamp;
+- records exact source HEAD plus clean/dirty worktree state without dumping path names;
 - accepts only bounded symbolic error classifications rather than arbitrary raw provider error text;
 - writes evidence with mode `0600` and exclusive-create semantics when an output file is requested.
 
@@ -184,8 +186,8 @@ The qualification-infrastructure candidate was validated without executing live 
 
 ### Focused qualification infrastructure
 
-- `tests/integration/p7-i2-vscode-qualification.test.ts`: **14/14 PASS** across 1 file.
-- The tests prove result-class separation, bounded/redacted evidence, symbolic-only error classification, immutable source attribution, fixture confinement, disposable-target refusal for valuable repository paths, root-symlink/alias refusal, deterministic workspace identity/drift detection, honest WSL classification, `NOT_RUN` handling for absent live evidence, derived runtime-probe classification, and malformed-input fail-close behavior.
+- `tests/integration/p7-i2-vscode-qualification.test.ts`: **17/17 PASS** across 1 file.
+- The tests prove result-class separation, bounded/redacted evidence, prototype-safe object sanitization, symbolic-only error classification, direct-caller schema revalidation, immutable source attribution with clean/dirty worktree evidence, bounded runtime-probe input, fixture confinement, disposable-target refusal for valuable repository paths, root-symlink/alias refusal, deterministic workspace identity/drift detection, honest WSL classification, `NOT_RUN` handling for absent live evidence, derived runtime-probe classification, and malformed-input fail-close behavior.
 
 ### Existing I2/public-model regression
 
@@ -214,6 +216,19 @@ Two earlier validation attempts were not counted as product failures:
 2. running the entire unit corpus directly from the isolated qualification worktree with an external Vitest binary could not resolve several package dependencies because this isolated lane intentionally has no local `node_modules`.
 
 The final ext-backed validation mirror removed both methodology/environment mismatches without changing candidate source bytes or repository dependencies.
+
+### Compatibility against the newer accepted forward slice
+
+While this isolated qualification lane remained based on accepted source `f1432e63a7ff2e315fbc0738a26c81b818bd4904`, Agent A advanced the separately owned forward product line to accepted source `f0ec7d91055a10f87abb7322ba3fda7bfc76e6e5`. The seven qualification/evidence paths were overlaid onto a temporary ext-backed copy of that newer accepted forward source without rebasing, merging, or mutating either Git worktree.
+
+Compatibility results against `f0ec7d91055a10f87abb7322ba3fda7bfc76e6e5` plus the qualification candidate bytes:
+
+- typecheck: **PASS**
+- build: **PASS**
+- canonical unit corpus: **2578/2578 PASS across 89/89 files**
+- path overlap with Agent A's `f1432e63..f0ec7d9` product delta: **NONE**
+
+This is compatibility evidence only. It does not rewrite this lane's ancestry and does not constitute integration into the forward branch.
 
 ### Qualification CLI dry run
 

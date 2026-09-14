@@ -56,7 +56,7 @@ export function sanitizeEvidence(value, depth = 0, key = '') {
   }
 
   if (typeof value === 'object') {
-    const out = {};
+    const out = Object.create(null);
     for (const [rawKey, item] of Object.entries(value).slice(0, MAX_EVIDENCE_OBJECT_KEYS)) {
       const safeKey = sanitizeKey(rawKey);
       out[safeKey] = sanitizeEvidence(item, depth + 1, rawKey);
@@ -108,9 +108,9 @@ export function createEvidenceManifest({ sourceCommit, runId, steps, environment
     throw new TypeError('runId is invalid');
   }
   if (!Array.isArray(steps) || steps.length < 1 || steps.length > 256) throw new TypeError('steps must contain 1..256 entries');
+  const normalizedSteps = steps.map((step) => createQualificationStep(step));
   const ids = new Set();
-  for (const step of steps) {
-    if (!step || typeof step !== 'object' || !STEP_ID.test(step.id)) throw new TypeError('invalid step');
+  for (const step of normalizedSteps) {
     if (ids.has(step.id)) throw new TypeError(`duplicate step id: ${step.id}`);
     ids.add(step.id);
   }
@@ -123,7 +123,7 @@ export function createEvidenceManifest({ sourceCommit, runId, steps, environment
     runId: truncateUtf8(runId, 128),
     generatedAt: created,
     environment: sanitizeEvidence(environment),
-    steps: steps.map((step) => sanitizeEvidence(step)),
+    steps: normalizedSteps.map((step) => sanitizeEvidence(step)),
   };
   const body = canonicalJson(manifest);
   return Object.freeze({

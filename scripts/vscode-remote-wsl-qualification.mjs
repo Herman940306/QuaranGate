@@ -19,6 +19,7 @@ export const REPOSITORY_ROOT = path.resolve(SCRIPT_DIR, '..');
 export const QUALIFICATION_FIXTURE_ROOT = path.join(REPOSITORY_ROOT, 'tests', 'fixtures', 'vscode-qualification');
 export const MAX_WORKSPACE_FILES = 256;
 export const MAX_WORKSPACE_BYTES = 4 * 1024 * 1024;
+export const MAX_RUNTIME_PROBE_BYTES = 64 * 1024;
 
 const SHA1 = /^[0-9a-f]{40}$/u;
 
@@ -297,12 +298,20 @@ function runCapture(command, args, options = {}) {
   });
 }
 
-async function currentGitHead(root) {
-  const result = await runCapture('git', ['rev-parse', 'HEAD'], { cwd: root });
-  if (result.code !== 0) throw new Error('could not resolve qualification source commit');
-  const sha = result.stdout.trim();
-  if (!SHA1.test(sha)) throw new Error('qualification source commit is malformed');
-  return sha;
+async function currentGitState(root) {
+  const headResult = await runCapture('git', ['rev-parse', 'HEAD'], { cwd: root });
+  if (headResult.code !== 0) throw new Error('could not resolve qualification source commit');
+  const head = headResult.stdout.trim();
+  if (!SHA1.test(head)) throw new Error('qualification source commit is malformed');
+
+  const statusResult = await runCapture('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: root });
+  if (statusResult.code !== 0) throw new Error('could not resolve qualification source worktree state');
+  const statusEntries = statusResult.stdout.split(/\r?\n/u).filter((line) => line.length > 0);
+  return Object.freeze({
+    head,
+    clean: statusEntries.length === 0,
+    statusEntryCount: statusEntries.length,
+  });
 }
 
 function parseArgs(argv) {
@@ -327,14 +336,23 @@ function parseArgs(argv) {
   };
 }
 
-async function readJson(filePath) {
-  return JSON.parse(await fs.readFile(path.resolve(filePath), 'utf8'));
+export async function readRuntimeProbeJson(filePath) {
+  const resolved = path.resolve(filePath);
+  const info = await fs.lstat(resolved);
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error('runtime probe must be a regular non-symlink file');
+  if (info.size > MAX_RUNTIME_PROBE_BYTES) throw new Error('runtime probe exceeds qualification byte bound');
+  const raw = await fs.readFile(resolved, 'utf8');
+  if (Buffer.byteLength(raw, 'utf8') > MAX_RUNTIME_PROBE_BYTES) throw new Error('runtime probe exceeds qualification byte bound');
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('runtime probe must be a JSON object');
+  return parsed;
 }
 
 export async function buildQualificationEvidence(options = {}) {
-  const expectedSource = options.sourceCommit ?? await currentGitHead(REPOSITORY_ROOT);
+  const sourceState = await currentGitState(REPOSITORY_ROOT);
+  const expectedSource = options.sourceCommit ?? sourceState.head;
   if (!SHA1.test(expectedSource)) throw new Error('expected source commit must be a 40-character lowercase Git SHA');
-  const actualSource = await currentGitHead(REPOSITORY_ROOT);
+  const actualSource = sourceState.head;
   const fixtureSeed = assertReadOnlyFixtureSeed(options.fixtureSeed ?? path.join(QUALIFICATION_FIXTURE_ROOT, 'workspace-seed'));
   const fixtureIdentity = await computeWorkspaceIdentity(fixtureSeed);
   const wsl = classifyWslEnvironment(options.environment ?? undefined);
@@ -342,9 +360,14 @@ export async function buildQualificationEvidence(options = {}) {
   const steps = [
     createQualificationStep({
       id: 'source.commit',
-      result: actualSource === expectedSource ? 'PASS' : 'FAIL',
+      result: actualSource === expectedSource && sourceState.clean ? 'PASS' : 'FAIL',
       observedAt,
-      detail: { expectedSource, actualSource },
+      detail: {
+        expectedSource,
+        actualSource,
+        clean: sourceState.clean,
+        statusEntryCount: sourceState.statusEntryCount,
+      },
     }),
     createQualificationStep({ id: 'environment.wsl', result: wsl.result, observedAt, detail: wsl.detail }),
     createQualificationStep({
@@ -375,7 +398,7 @@ export async function buildQualificationEvidence(options = {}) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const runtimeProbe = args.runtimeProbe ? await readJson(args.runtimeProbe) : null;
+  const runtimeProbe = args.runtimeProbe ? await readRuntimeProbeJson(args.runtimeProbe) : null;
   const manifest = await buildQualificationEvidence({
     sourceCommit: args.sourceCommit,
     fixtureSeed: args.fixtureSeed,

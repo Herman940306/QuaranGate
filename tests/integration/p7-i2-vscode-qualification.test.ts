@@ -9,6 +9,7 @@ import {
   sanitizeEvidence,
 } from '../../scripts/vscode-qualification-evidence.mjs';
 import {
+  MAX_RUNTIME_PROBE_BYTES,
   QUALIFICATION_FIXTURE_ROOT,
   assertReadOnlyFixtureSeed,
   assertSafeDisposableWorkspace,
@@ -16,6 +17,7 @@ import {
   classifyWslEnvironment,
   computeWorkspaceIdentity,
   evaluateRuntimeProbe,
+  readRuntimeProbeJson,
 } from '../../scripts/vscode-remote-wsl-qualification.mjs';
 
 const SOURCE = 'f1432e63a7ff2e315fbc0738a26c81b818bd4904';
@@ -49,6 +51,14 @@ describe('P7 I2 VS Code qualification infrastructure', () => {
     expect(Buffer.byteLength(String(sanitized.note), 'utf8')).toBeLessThanOrEqual(2048);
   });
 
+  it('sanitizes object evidence into a null-prototype container', () => {
+    const input = JSON.parse('{"__proto__":{"polluted":true},"safe":1}');
+    const sanitized = sanitizeEvidence(input) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(sanitized)).toBeNull();
+    expect(sanitized.safe).toBe(1);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
   it('records immutable source identity and rejects duplicate step ids', () => {
     const step = createQualificationStep({
       id: 'source.commit', result: 'PASS', observedAt: '2026-09-14T00:00:00.000Z',
@@ -62,6 +72,14 @@ describe('P7 I2 VS Code qualification infrastructure', () => {
     expect(manifest.sourceCommit).toBe(SOURCE);
     expect(manifest.manifestSha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(() => createEvidenceManifest({ sourceCommit: SOURCE, runId: 'dup', steps: [step, step] })).toThrow(/duplicate step/u);
+  });
+
+  it('revalidates direct manifest step inputs instead of trusting caller-supplied result values', () => {
+    expect(() => createEvidenceManifest({
+      sourceCommit: SOURCE,
+      runId: 'invalid-direct-step',
+      steps: [{ id: 'direct.invalid', result: 'MAYBE', observedAt: '2026-09-14T00:00:00.000Z' }],
+    })).toThrow(/invalid qualification result/u);
   });
 
   it('accepts only fixture seeds under the authorized fixture convention', () => {
@@ -106,6 +124,17 @@ describe('P7 I2 VS Code qualification infrastructure', () => {
     expect(classifyWslEnvironment({ env: {}, release: '6.8.0-generic' }).result).toBe('BLOCKED_ENVIRONMENT');
   });
 
+  it('bounds runtime-probe JSON input and refuses oversized evidence input', async () => {
+    const temp = await mkdtemp(path.join(os.tmpdir(), 'quarangate-vscode-qualification-'));
+    const valid = path.join(temp, 'runtime-probe.json');
+    await writeFile(valid, JSON.stringify({ modelAccess: { state: 'CONSENT_REQUIRED' } }), 'utf8');
+    await expect(readRuntimeProbeJson(valid)).resolves.toMatchObject({ modelAccess: { state: 'CONSENT_REQUIRED' } });
+
+    const oversized = path.join(temp, 'oversized-probe.json');
+    await writeFile(oversized, JSON.stringify({ padding: 'x'.repeat(MAX_RUNTIME_PROBE_BYTES + 1) }), 'utf8');
+    await expect(readRuntimeProbeJson(oversized)).rejects.toThrow(/byte bound/u);
+  });
+
   it('keeps absent live runtime probes explicitly NOT_RUN', () => {
     const steps = evaluateRuntimeProbe(null);
     expect(steps.length).toBeGreaterThan(5);
@@ -131,7 +160,9 @@ describe('P7 I2 VS Code qualification infrastructure', () => {
     });
     expect(manifest.sourceCommit).toMatch(/^[0-9a-f]{40}$/u);
     expect(manifest.environment).toMatchObject({ liveQualificationExecuted: false });
-    expect(manifest.steps.find((step) => step.id === 'source.commit')?.result).toBe('PASS');
+    const sourceStep = manifest.steps.find((step) => step.id === 'source.commit');
+    expect(sourceStep?.detail).toMatchObject({ clean: expect.any(Boolean), statusEntryCount: expect.any(Number) });
+    expect(sourceStep?.result).toBe(sourceStep?.detail.clean ? 'PASS' : 'FAIL');
     expect(manifest.steps.find((step) => step.id === 'environment.wsl')?.result).toBe('BLOCKED_ENVIRONMENT');
     expect(manifest.steps.find((step) => step.id === 'review.execution')?.result).toBe('NOT_RUN');
   });
