@@ -24,6 +24,7 @@ import {
   createIdeCompanionRuntime,
   hardenAndVerifyIdeCompanionSocket,
   readIdeCompanionSecret,
+  recoverIdeCompanionRuntime,
   revokeIdeCompanionSecret,
   rotateIdeCompanionSecret,
   type IdeCompanionRuntimeRef,
@@ -142,6 +143,29 @@ describe('P7 B4 trusted runtime root and identity', () => {
       adapterVersion: '1.2.3',
     }))).toBe('IDE_RUNTIME_PATH_UNSAFE');
     expect(readdirSync(longRoot)).toEqual([]);
+  });
+
+  it('can provision and recover one exact trusted durable runtime identity without scanning', () => {
+    const runtimeInstanceId = `iderun_${'7'.repeat(32)}`;
+    const created = runtime({ runtimeInstanceId });
+    expect(created.runtimeInstanceId).toBe(runtimeInstanceId);
+    const recovered = recoverIdeCompanionRuntime({
+      runtimeRoot: root,
+      runtimeInstanceId,
+      enrollmentId,
+      ideInstanceId,
+      ideProduct: 'vscode',
+      adapterVersion: '1.2.3',
+    });
+    expect(recovered).toEqual(created);
+    expect(code(() => recoverIdeCompanionRuntime({
+      runtimeRoot: root,
+      runtimeInstanceId,
+      enrollmentId,
+      ideInstanceId: `ide_${'8'.repeat(32)}`,
+      ideProduct: 'vscode',
+      adapterVersion: '1.2.3',
+    }))).toBe('IDE_RUNTIME_CREDENTIAL_INVALID');
   });
 
   it('produces independent opaque runtime ids and independent 256-bit secrets', () => {

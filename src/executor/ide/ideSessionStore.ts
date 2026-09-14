@@ -182,6 +182,11 @@ export interface IdeEnrollmentRow extends NewIdeEnrollment {
   revokedAt: string | null;
 }
 
+export interface ReconciledIdeEnrollment {
+  enrollment: IdeEnrollmentRow;
+  created: boolean;
+}
+
 export interface IdeEnrollmentKey {
   enrollmentId: string;
   principalId: string;
@@ -720,6 +725,37 @@ export class IdeSessionStore {
       input.workspaceFingerprint,input.baseRevision??null,JSON.stringify(capabilities),now,now,
     );
     return this.getEnrollment(enrollmentId)!;
+  }
+
+  /**
+   * Reconcile one explicit trusted enrollment without silently re-enrolling a
+   * revoked or drifted binding. Ordinary restart returns the existing exact
+   * ACTIVE row; only a binding never seen before may allocate a new enrollment.
+   */
+  reconcileEnrollment(input: NewIdeEnrollment): ReconciledIdeEnrollment {
+    validateEnrollmentIdentity(input);
+    const capabilities = canonicalCapabilities(input.capabilities);
+    const rows = this.db.prepare(`SELECT * FROM ide_enrollments
+      WHERE principal_id=? AND project_id=? AND worktree_id=? AND ide_product=? AND ide_instance_id=?
+      ORDER BY created_at,enrollment_id`).all(
+      input.principalId,input.projectId,input.worktreeId,input.ideProduct,input.ideInstanceId,
+    ) as Record<string,unknown>[];
+    const existing = rows.map((row)=>this.rowToEnrollment(row));
+    const active = existing.filter((row)=>row.state==='ACTIVE');
+    if (active.length > 1) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','multiple active IDE enrollments exist for one trusted binding');
+    if (active.length === 1) {
+      const row=active[0]!;
+      const mismatch=exactEnrollmentMismatch(row,input);
+      if(mismatch) throw new IdeRegistryStoreError('IDE_ENROLLMENT_BINDING_MISMATCH',`trusted enrollment drift: ${mismatch}`);
+      if(JSON.stringify(row.capabilities)!==JSON.stringify(capabilities)) {
+        throw new IdeRegistryStoreError('IDE_ENROLLMENT_BINDING_MISMATCH','trusted enrollment capabilities drifted');
+      }
+      return { enrollment: row, created: false };
+    }
+    if (existing.length > 0) {
+      throw new IdeRegistryStoreError('IDE_ENROLLMENT_NOT_ACTIVE','revoked IDE enrollment requires an explicit new IDE instance binding');
+    }
+    return { enrollment: this.createEnrollment({ ...input, capabilities }), created: true };
   }
 
   getEnrollment(enrollmentId: string): IdeEnrollmentRow | undefined {

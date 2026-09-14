@@ -154,6 +154,18 @@ describe('P7 B2 trusted enrollment', () => {
     expect(errorCode(() => store.createEnrollment(enrollment({ capabilities: ['prompt', 'other' as IdeCapability] })))).toBe('IDE_CAPABILITY_DENIED');
   });
 
+  it('reconciles exact trusted enrollment idempotently and fails closed on drift/revocation', () => {
+    const input = enrollment({ capabilities: ['prompt', 'cancel', 'observe_response', 'request_review'] });
+    const first = store.reconcileEnrollment(input);
+    expect(first.created).toBe(true);
+    const second = store.reconcileEnrollment(input);
+    expect(second.created).toBe(false);
+    expect(second.enrollment.enrollmentId).toBe(first.enrollment.enrollmentId);
+    expect(() => store.reconcileEnrollment({ ...input, workspaceFingerprint: 'f'.repeat(64) })).toThrow(/drift/i);
+    expect(store.revokeEnrollment(first.enrollment)).toBe(true);
+    expect(() => store.reconcileEnrollment(input)).toThrow(/revoked.*explicit new IDE instance/i);
+  });
+
   it('enforces one ACTIVE enrollment per exact binding but permits a different worktree', () => {
     store.createEnrollment(enrollment()); expect(() => store.createEnrollment(enrollment())).toThrow();
     expect(() => store.createEnrollment(enrollment({ worktreeId: 'review' }))).not.toThrow();

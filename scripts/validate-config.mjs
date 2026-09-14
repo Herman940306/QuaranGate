@@ -259,6 +259,49 @@ function checkGithub(path, agentsPath) {
   if (!errors) ok(`github config valid (${accounts.length} trusted account(s), ${repos.length} local repository mapping(s))`);
 }
 
+
+function checkIdeSessions(path) {
+  console.log('ide-sessions:', path);
+  if (!fs.existsSync(path)) return fail('file missing');
+  const doc = YAML.parse(fs.readFileSync(path, 'utf8'));
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return fail('ide-sessions: not a mapping');
+  checkKeys('top-level', doc, new Set(['version','enrollments']), 'ide-sessions');
+  if (doc.version !== 1) fail('ide-sessions: version must be 1');
+  const enrollments = checkRequiredArray(doc, 'enrollments', 'ide-sessions');
+  if (enrollments.length < 1 || enrollments.length > 16) fail('ide-sessions: enrollments must contain 1..16 entries');
+  const principalRe = /^[A-Za-z0-9._-]{1,128}$/;
+  const logicalRe = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+  const instanceRe = /^ide_[0-9a-f]{32}$/;
+  const runtimeRe = /^iderun_[0-9a-f]{32}$/;
+  const fingerprintRe = /^[0-9a-f]{64}$/;
+  const revisionRe = /^[0-9a-f]{40}$/;
+  const semverRe = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+  const exactCaps = ['prompt','cancel','observe_response','request_review'];
+  const seenBindings = new Set();
+  const seenRuntimes = new Set();
+  for (const e of enrollments) {
+    const ctx = `ide enrollment ${e?.ideInstanceId ?? '?'}`;
+    if (!e || typeof e !== 'object' || Array.isArray(e)) { fail(`${ctx}: must be a mapping`); continue; }
+    checkKeys('enrollment', e, new Set(['principalId','projectId','worktreeId','ideProduct','ideInstanceId','workspaceFingerprint','baseRevision','capabilities','adapterVersion','runtimeInstanceId']), ctx);
+    if (typeof e.principalId !== 'string' || !principalRe.test(e.principalId)) fail(`${ctx}: invalid principalId`);
+    if (typeof e.projectId !== 'string' || !logicalRe.test(e.projectId)) fail(`${ctx}: invalid projectId`);
+    if (typeof e.worktreeId !== 'string' || !logicalRe.test(e.worktreeId)) fail(`${ctx}: invalid worktreeId`);
+    if (e.ideProduct !== 'vscode') fail(`${ctx}: ideProduct must be vscode for current I2 source`);
+    if (typeof e.ideInstanceId !== 'string' || !instanceRe.test(e.ideInstanceId)) fail(`${ctx}: invalid ideInstanceId`);
+    if (typeof e.workspaceFingerprint !== 'string' || !fingerprintRe.test(e.workspaceFingerprint)) fail(`${ctx}: invalid workspaceFingerprint`);
+    if (e.baseRevision !== undefined && (typeof e.baseRevision !== 'string' || !revisionRe.test(e.baseRevision))) fail(`${ctx}: invalid baseRevision`);
+    if (!Array.isArray(e.capabilities) || e.capabilities.length !== exactCaps.length || exactCaps.some((cap) => !e.capabilities.includes(cap)) || new Set(e.capabilities).size !== e.capabilities.length) {
+      fail(`${ctx}: capabilities must equal the review-only base capability set`);
+    }
+    if (typeof e.adapterVersion !== 'string' || e.adapterVersion.length > 64 || !semverRe.test(e.adapterVersion)) fail(`${ctx}: invalid adapterVersion`);
+    if (typeof e.runtimeInstanceId !== 'string' || !runtimeRe.test(e.runtimeInstanceId)) fail(`${ctx}: invalid runtimeInstanceId`);
+    const binding = [e.principalId,e.projectId,e.worktreeId,e.ideProduct,e.ideInstanceId].join('\0');
+    if (seenBindings.has(binding)) fail(`${ctx}: duplicate enrollment binding`); else seenBindings.add(binding);
+    if (seenRuntimes.has(e.runtimeInstanceId)) fail(`${ctx}: duplicate runtimeInstanceId`); else seenRuntimes.add(e.runtimeInstanceId);
+  }
+  if (!errors) ok(`ide-sessions config valid (${enrollments.length} enrollment(s))`);
+}
+
 checkClients(process.env.CLIENTS_CONFIG ?? 'config/clients.yaml');
 checkBridge(process.env.BRIDGE_CONFIG ?? 'config/bridge.yaml');
 const agentsPath = process.env.AGENTS_CONFIG ?? 'config/agents.yaml';
@@ -267,4 +310,7 @@ else console.log('agents: config/agents.yaml not present (optional — Agent Dis
 const githubPath = process.env.GITHUB_CONFIG ?? 'config/github.yaml';
 if (process.env.GITHUB_CONFIG || fs.existsSync(githubPath)) checkGithub(githubPath, agentsPath);
 else console.log('github: config/github.yaml not present (optional — GitHub control inactive)');
+const ideSessionsPath = process.env.IDE_SESSIONS_CONFIG ?? 'config/ide-sessions.yaml';
+if (process.env.IDE_SESSIONS_CONFIG || fs.existsSync(ideSessionsPath)) checkIdeSessions(ideSessionsPath);
+else console.log('ide-sessions: config/ide-sessions.yaml not present (optional — IDE Session Control inactive)');
 process.exitCode = errors ? 1 : 0;

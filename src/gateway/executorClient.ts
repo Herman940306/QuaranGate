@@ -189,5 +189,5 @@ export interface ControlCenterRuntimeWire {
   };
   sessionContinuity: 'NOT_QUALIFIED';
   providerAdmissionControl: 'DEFERRED';
-  ideSessionControl: 'NOT_IMPLEMENTED';
+  ideSessionControl: 'NOT_CONFIGURED' | 'AVAILABLE_NOT_LIVE_QUALIFIED' | 'FAILED';
 }

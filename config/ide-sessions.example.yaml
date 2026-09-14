@@ -1,0 +1,29 @@
+# Trusted Plane-B IDE Session Control registry.
+# Copy to config/ide-sessions.yaml only when explicitly enabling the optional
+# compose.ide.yaml overlay. This file is executor-owned trusted configuration;
+# no public/MCP request may populate or override it.
+version: 1
+
+enrollments:
+  - principalId: chatgpt-browser
+    projectId: quarangate
+    worktreeId: forward
+    ideProduct: vscode
+    # Stable, non-secret QuaranGate identity generated once by the owner/setup
+    # process. Do not reuse it for a different IDE installation.
+    ideInstanceId: ide_11111111111111111111111111111111
+    # Exact trusted B5 fingerprint of the explicitly enrolled workspace.
+    workspaceFingerprint: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    # Exact Git base revision when this enrollment is Git-bound.
+    baseRevision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    # Current source gate is review-only. Any broader capability is rejected.
+    capabilities:
+      - prompt
+      - cancel
+      - observe_response
+      - request_review
+    # Must exactly match the installed QuaranGate VS Code extension build.
+    adapterVersion: 0.1.0
+    # Stable, non-secret runtime identity. The executor creates this exact
+    # directory on first start and recovers only this exact directory later.
+    runtimeInstanceId: iderun_22222222222222222222222222222222

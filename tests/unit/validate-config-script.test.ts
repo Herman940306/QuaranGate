@@ -419,3 +419,54 @@ describe('scripts/validate-config.mjs GitHub trusted-account schema', () => {
     expect(outputOf(result)).toContain('invalid GitHub account');
   });
 });
+
+describe('scripts/validate-config.mjs IDE Session Control schema parity', () => {
+  function runIdeValidator(mutator?: (config: any) => void) {
+    const dir = mkdtempSync(join(tmpdir(), 'quarangate-validate-ide-'));
+    tempDirs.push(dir);
+    const clientsPath = join(dir, 'clients.yaml');
+    const bridgePath = join(dir, 'bridge.yaml');
+    const idePath = join(dir, 'ide-sessions.yaml');
+    writeFileSync(clientsPath, YAML.stringify({ clients: [{ id: 'owner', keyHash: 'a'.repeat(64), scopes: ['targets:read'], targets: ['demo'] }] }));
+    writeFileSync(bridgePath, YAML.stringify({ targets: [{ id: 'demo', workspace: '/workspace', containerName: 'demo' }] }));
+    const config = {
+      version: 1,
+      enrollments: [{
+        principalId: 'owner', projectId: 'project', worktreeId: 'forward', ideProduct: 'vscode',
+        ideInstanceId: `ide_${'1'.repeat(32)}`, workspaceFingerprint: 'a'.repeat(64), baseRevision: 'b'.repeat(40),
+        capabilities: ['prompt', 'cancel', 'observe_response', 'request_review'], adapterVersion: '0.1.0',
+        runtimeInstanceId: `iderun_${'2'.repeat(32)}`,
+      }],
+    };
+    mutator?.(config);
+    writeFileSync(idePath, YAML.stringify(config));
+    return spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      env: { ...process.env, CLIENTS_CONFIG: clientsPath, BRIDGE_CONFIG: bridgePath, AGENTS_CONFIG: '', GITHUB_CONFIG: '', IDE_SESSIONS_CONFIG: idePath },
+      encoding: 'utf8',
+    });
+  }
+
+  it('accepts a strict review-only IDE enrollment config', () => {
+    const result = runIdeValidator();
+    expect(result.status).toBe(0);
+    expect(outputOf(result)).toContain('ide-sessions config valid (1 enrollment(s))');
+  });
+
+  it('rejects unknown keys and implementation capability', () => {
+    let result = runIdeValidator((config) => { config.enrollments[0].extra = true; });
+    expect(result.status).toBe(1);
+    expect(outputOf(result)).toContain('unknown enrollment key extra');
+    result = runIdeValidator((config) => { config.enrollments[0].capabilities = ['request_review', 'request_implementation']; });
+    expect(result.status).toBe(1);
+    expect(outputOf(result)).toContain('capabilities must equal the review-only base capability set');
+  });
+
+  it('rejects duplicate runtime identities', () => {
+    const result = runIdeValidator((config) => {
+      config.enrollments.push({ ...config.enrollments[0], ideInstanceId: `ide_${'3'.repeat(32)}` });
+    });
+    expect(result.status).toBe(1);
+    expect(outputOf(result)).toContain('duplicate runtimeInstanceId');
+  });
+});

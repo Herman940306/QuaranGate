@@ -32,6 +32,11 @@ import { createDockerApplierIO } from './agents/applyEngine.js';
 import { runStartupEvidenceLifecycle } from './agents/evidenceCollector.js';
 import type { AgentJobRow } from './agents/jobStore.js';
 import type { AgentResourcePolicy } from '../shared/agents.js';
+import {
+  startIdeCompanionProduction,
+  type IdeCompanionProductionRuntime,
+  type IdeSessionControlRuntimeState,
+} from './ide/ideCompanionProduction.js';
 
 const PORT = Number(process.env.EXECUTOR_PORT ?? 8990);
 const TOKEN = process.env.INTERNAL_TOKEN ?? '';
@@ -77,10 +82,20 @@ const GITHUB_CONFIG = process.env.GITHUB_CONFIG ?? '/config/github.yaml';
 const GITHUB_GIT_HELPER_IMAGE = process.env.GITHUB_GIT_HELPER_IMAGE ?? '';
 const GITHUB_CONTROL_NETWORK = process.env.GITHUB_CONTROL_NETWORK ?? '';
 
+// Plane-B IDE Session Control is optional and independently trusted. The main
+// Compose file does not expose a runtime namespace. compose.ide.yaml sets all
+// three values together and bind-mounts IDE_RUNTIME_ROOT at the same absolute
+// WSL/container pathname. None are caller-selectable.
+const IDE_SESSIONS_CONFIG = process.env.IDE_SESSIONS_CONFIG ?? '/config/ide-sessions.yaml';
+const IDE_SESSIONS_DB = process.env.IDE_SESSIONS_DB ?? '/jobs/ide-sessions.db';
+const IDE_RUNTIME_ROOT = process.env.IDE_RUNTIME_ROOT ?? '';
+
 // Mutable handles assigned inside the startup sequence; used by shutdown().
 let agentEngine: AgentJobEngine | null = null;
 let agentStore: AgentJobStore | null = null;
 let githubControl: GitHubControl | null = null;
+let ideCompanionRuntime: IdeCompanionProductionRuntime | null = null;
+let ideSessionControlState: IdeSessionControlRuntimeState = 'NOT_CONFIGURED';
 
 // ---------------------------------------------------------------------------
 // Express app — constructed in memory here; does NOT accept requests until
@@ -150,7 +165,7 @@ app.get('/control-center/runtime', handle(async () => {
     },
     sessionContinuity: 'NOT_QUALIFIED',
     providerAdmissionControl: 'DEFERRED',
-    ideSessionControl: 'NOT_IMPLEMENTED',
+    ideSessionControl: ideSessionControlState,
   };
 }));
 
@@ -488,6 +503,21 @@ let server: ReturnType<typeof app.listen>;
     console.log(JSON.stringify({ level: 'info', msg: 'github control plane not configured (optional)' }));
   }
 
+  // Plane-B startup is an additional fail-closed startup barrier. When the
+  // dedicated trusted config is absent it remains NOT_CONFIGURED. When present,
+  // durable recovery/enrollment/runtime provisioning and every Unix listener
+  // must complete before the HTTP executor can become externally reachable.
+  ideCompanionRuntime = await startIdeCompanionProduction({
+    configPath: IDE_SESSIONS_CONFIG,
+    databasePath: IDE_SESSIONS_DB,
+    runtimeRoot: IDE_RUNTIME_ROOT,
+  });
+  ideSessionControlState = ideCompanionRuntime.state;
+  console.log(JSON.stringify({
+    level: 'info', msg: 'ide session control startup', state: ideSessionControlState,
+    enrollmentCount: ideCompanionRuntime.bootstrapBindings.length,
+  }));
+
   // Step 8: all lifecycle steps complete — executor is now safe to accept requests.
   // P3: only after the socket binds successfully may recovered QUEUED work run.
   // If listen fails, no provider work is restarted.
@@ -504,11 +534,21 @@ let server: ReturnType<typeof app.listen>;
   process.exit(1);
 });
 
-function shutdown() {
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const hardExit = setTimeout(() => process.exit(0), 5000);
+  hardExit.unref();
+  try {
+    // Plane-B listener shutdown owns its ordering: stop accepting/reconcile
+    // channels, remove only owned sockets, then close the IDE session store.
+    await ideCompanionRuntime?.stop();
+  } catch { /* bounded fail-safe shutdown continues */ }
   agentEngine?.shutdown();
   try { agentStore?.close(); } catch { /* best effort */ }
-  server?.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
+  if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+  process.exit(0);
 }
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on('SIGTERM', () => { void shutdown(); });
+process.on('SIGINT', () => { void shutdown(); });

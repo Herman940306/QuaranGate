@@ -83,6 +83,8 @@ export interface NewIdeCompanionRuntime {
   ideProduct: IdeProductId;
   /** Trusted exact adapter build version. Compatibility admission is later. */
   adapterVersion: string;
+  /** Trusted durable provisioning identity. Omit only for ephemeral/test allocation. */
+  runtimeInstanceId?: string;
 }
 
 export interface IdeCompanionRuntimeRef {
@@ -132,7 +134,7 @@ interface RevokedRuntimeCredential {
 
 type RuntimeCredential = ActiveRuntimeCredential | RevokedRuntimeCredential;
 
-const SEMVER_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+export const IDE_COMPANION_ADAPTER_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const ACTIVE_KEYS = [
   'adapterId', 'adapterVersion', 'enrollmentId', 'ideInstanceId', 'ideProduct',
@@ -152,7 +154,7 @@ function currentUid(): number {
 }
 
 function validateAdapterVersion(value: unknown): asserts value is string {
-  if (typeof value !== 'string' || value.length > 64 || !SEMVER_PATTERN.test(value)) {
+  if (typeof value !== 'string' || value.length > 64 || !IDE_COMPANION_ADAPTER_VERSION_PATTERN.test(value)) {
     throw new IdeCompanionRuntimeError('IDE_RUNTIME_CREDENTIAL_INVALID', 'adapterVersion is invalid');
   }
 }
@@ -471,7 +473,8 @@ export function createIdeCompanionRuntime(input: NewIdeCompanionRuntime): IdeCom
   }
   validateAdapterVersion(input.adapterVersion);
 
-  const runtimeInstanceId = `iderun_${randomBytes(16).toString('hex')}`;
+  const runtimeInstanceId = input.runtimeInstanceId ?? `iderun_${randomBytes(16).toString('hex')}`;
+  validateRuntimeInstanceId(runtimeInstanceId);
   const directory = join(input.runtimeRoot, runtimeInstanceId);
   const credentialPath = join(directory, IDE_COMPANION_RUNTIME_CREDENTIAL_BASENAME);
   const socketPath = join(directory, IDE_COMPANION_RUNTIME_SOCKET_BASENAME);
@@ -516,6 +519,43 @@ export function createIdeCompanionRuntime(input: NewIdeCompanionRuntime): IdeCom
     try { rmSync(directory, { recursive: true, force: true }); } catch { /* best effort only for freshly allocated dir */ }
     throw error;
   }
+}
+
+/**
+ * Recover one exact durable runtime selected by trusted provisioning state.
+ * This performs no directory scan or "newest" selection: the caller must
+ * provide the exact runtimeInstanceId that was durably provisioned.
+ */
+export function recoverIdeCompanionRuntime(input: NewIdeCompanionRuntime & { runtimeInstanceId: string }): IdeCompanionRuntimeRef {
+  assertTrustedIdeCompanionRuntimeRoot(input.runtimeRoot);
+  try {
+    assertIdeEnrollmentId(input.enrollmentId);
+    assertIdeInstanceId(input.ideInstanceId);
+    assertIdeProduct(input.ideProduct);
+  } catch {
+    throw new IdeCompanionRuntimeError('IDE_RUNTIME_CREDENTIAL_INVALID', 'runtime enrollment/IDE identity is invalid');
+  }
+  validateAdapterVersion(input.adapterVersion);
+  validateRuntimeInstanceId(input.runtimeInstanceId);
+  const directory = join(input.runtimeRoot, input.runtimeInstanceId);
+  const ref: IdeCompanionRuntimeRef = {
+    runtimeRoot: input.runtimeRoot,
+    runtimeInstanceId: input.runtimeInstanceId,
+    directory,
+    credentialPath: join(directory, IDE_COMPANION_RUNTIME_CREDENTIAL_BASENAME),
+    socketPath: join(directory, IDE_COMPANION_RUNTIME_SOCKET_BASENAME),
+    enrollmentId: input.enrollmentId,
+    ideInstanceId: input.ideInstanceId,
+    ideProduct: input.ideProduct,
+    adapterId: expectedAdapterId(input.ideProduct),
+    adapterVersion: input.adapterVersion,
+  };
+  assertRuntimeRef(ref);
+  const record = parseCredential(ref);
+  if (record.state !== 'ACTIVE') {
+    throw new IdeCompanionRuntimeError('IDE_RUNTIME_CREDENTIAL_REVOKED', 'runtime credential is revoked');
+  }
+  return ref;
 }
 
 /** Re-read and revalidate on every use so rotation/revocation takes effect immediately. */

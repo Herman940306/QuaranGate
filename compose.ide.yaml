@@ -1,0 +1,24 @@
+# Optional Plane-B IDE Session Control overlay.
+#
+# The Remote-WSL extension host and the executor MUST see the same absolute
+# canonical runtime pathname. This overlay therefore bind-mounts one
+# operator-created owner-only WSL directory to the exact same absolute path in
+# the executor. Docker is forbidden from auto-creating the source path.
+#
+# Precondition (owner/install step):
+#   QUARANGATE_IDE_RUNTIME_ROOT must name an existing canonical non-symlink
+#   directory owned by the same numeric Unix uid used by the VS Code Remote-WSL
+#   extension host and the executor runtime user, mode exactly 0700.
+services:
+  executor:
+    environment:
+      IDE_SESSIONS_CONFIG: "/config/ide-sessions.yaml"
+      IDE_SESSIONS_DB: "/jobs/ide-sessions.db"
+      IDE_RUNTIME_ROOT: "${QUARANGATE_IDE_RUNTIME_ROOT:?set QUARANGATE_IDE_RUNTIME_ROOT to an existing owner-only WSL directory}"
+    volumes:
+      - type: bind
+        source: "${QUARANGATE_IDE_RUNTIME_ROOT:?set QUARANGATE_IDE_RUNTIME_ROOT to an existing owner-only WSL directory}"
+        target: "${QUARANGATE_IDE_RUNTIME_ROOT:?set QUARANGATE_IDE_RUNTIME_ROOT to an existing owner-only WSL directory}"
+        read_only: false
+        bind:
+          create_host_path: false
