@@ -15,6 +15,7 @@ import { checkRate } from './ratelimit.js';
 import { buildServer } from './mcp.js';
 import { executor } from './executorClient.js';
 import { audit, newReqId } from './audit.js';
+import { mountRequestTelemetry, requestTelemetryId } from './requestTelemetry.js';
 
 const PORT = Number(process.env.BRIDGE_PORT ?? 8787);
 const PUBLIC_URL = (process.env.BRIDGE_PUBLIC_URL ?? `http://127.0.0.1:${PORT}`).replace(/\/+$/, '');
@@ -47,6 +48,7 @@ try {
 
 const app = express();
 app.disable('x-powered-by');
+mountRequestTelemetry(app);
 
 // Liveness only: the process is running. Never depends on config or executor.
 app.get('/healthz', (_req, res) => { res.json({ ok: true }); });
@@ -86,7 +88,7 @@ function authenticate(req: express.Request): Principal {
 }
 
 app.post('/mcp', express.json({ limit: '8mb' }), async (req, res) => {
-  const reqId = newReqId();
+  const reqId = requestTelemetryId(res) ?? newReqId();
   let principal: Principal | undefined;
   try {
     principal = authenticate(req);
@@ -125,7 +127,16 @@ app.get('/mcp', (_req, res) => res.status(405).json({ jsonrpc: '2.0', error: { c
 app.delete('/mcp', (_req, res) => res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method Not Allowed' }, id: null }));
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(JSON.stringify({ level: 'info', msg: 'gateway listening', port: PORT, publicUrl: PUBLIC_URL }));
+  console.log(JSON.stringify({
+    level: 'info',
+    msg: 'gateway listening',
+    port: PORT,
+    publicUrl: PUBLIC_URL,
+    pid: process.pid,
+    processStartedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+    nodeVersion: process.version,
+    buildRevision: process.env.QUARANGATE_BUILD_REVISION ?? 'unknown',
+  }));
 });
 
 function shutdown() { server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 5000).unref(); }

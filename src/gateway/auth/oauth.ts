@@ -16,6 +16,7 @@ import path from 'node:path';
 import express from 'express';
 import { authenticateKey } from './apikeys.js';
 import type { Principal } from '../config.js';
+import { setRequestTelemetryOutcome } from '../requestTelemetry.js';
 
 const DATA_DIR = process.env.DATA_DIR ?? '/data';
 const TOKENS_FILE = path.join(DATA_DIR, 'oauth-tokens.json');
@@ -248,11 +249,13 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
       redirectUris.length > 20 ||
       !redirectUris.every((uri: unknown): uri is string => typeof uri === 'string' && isValidRedirectUri(uri))
     ) {
+      setRequestTelemetryOutcome(res, 'oauth_invalid_redirect_uri');
       res.status(400).json({ error: 'invalid_redirect_uri' });
       return;
     }
 
     if (req.body?.token_endpoint_auth_method && req.body.token_endpoint_auth_method !== 'none') {
+      setRequestTelemetryOutcome(res, 'oauth_invalid_client_metadata');
       res.status(400).json({ error: 'invalid_client_metadata', error_description: 'only public clients are supported' });
       return;
     }
@@ -260,6 +263,7 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
     const grantTypes = Array.isArray(req.body?.grant_types) ? req.body.grant_types : ['authorization_code', 'refresh_token'];
     const responseTypes = Array.isArray(req.body?.response_types) ? req.body.response_types : ['code'];
     if (grantTypes.some((grant: unknown) => grant !== 'authorization_code' && grant !== 'refresh_token') || responseTypes.some((type: unknown) => type !== 'code')) {
+      setRequestTelemetryOutcome(res, 'oauth_invalid_client_metadata');
       res.status(400).json({ error: 'invalid_client_metadata' });
       return;
     }
@@ -273,6 +277,7 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
     }
     if (Object.keys(clients).length >= MAX_REGISTERED_CLIENTS) {
       saveJson(CLIENTS_FILE, clients);
+      setRequestTelemetryOutcome(res, 'oauth_registration_capacity');
       res.status(503).json({ error: 'temporarily_unavailable', error_description: 'client registration capacity reached' });
       return;
     }
@@ -320,6 +325,7 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
       requestedCanonical !== resource ||
       scope === null
     ) {
+      setRequestTelemetryOutcome(res, 'oauth_authorize_invalid_request');
       res.status(400).send('invalid_request');
       return;
     }
@@ -370,6 +376,7 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
       requestedCanonical !== resource ||
       scope === null
     ) {
+      setRequestTelemetryOutcome(res, 'oauth_authorize_invalid_request');
       res.status(400).send('invalid_request');
       return;
     }
@@ -379,6 +386,7 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
       principal = authenticateKey(apikey);
     } catch {
       secureHtml(res);
+      setRequestTelemetryOutcome(res, 'oauth_authorize_invalid_api_key');
       res.status(401).type('html').send('<p>Invalid API key. Go back and try again.</p>');
       return;
     }
@@ -409,6 +417,7 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
       const rec = codes.get(body.code ?? '');
       if (!rec || Date.now() > rec.expiresAt) {
         if (body.code) codes.delete(body.code);
+        setRequestTelemetryOutcome(res, 'oauth_code_missing_or_expired');
         res.status(400).json({ error: 'invalid_grant' });
         return;
       }
@@ -426,6 +435,7 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
       // Authorization codes are single-use even after a failed redemption attempt.
       codes.delete(body.code!);
       if (!valid) {
+        setRequestTelemetryOutcome(res, 'oauth_code_binding_or_pkce_mismatch');
         res.status(400).json({ error: 'invalid_grant' });
         return;
       }
@@ -439,13 +449,28 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
       const refreshHash = hash(body.refresh_token ?? '');
       const rec = tokens[refreshHash];
       const requestedCanonical = canonicalResource(body.resource ?? '');
-      if (
-        !rec ||
-        !rec.refresh ||
-        Date.now() > rec.expiresAt ||
-        body.client_id !== rec.clientId ||
-        requestedCanonical !== rec.resource
-      ) {
+      if (!rec) {
+        setRequestTelemetryOutcome(res, 'oauth_refresh_token_missing');
+        res.status(400).json({ error: 'invalid_grant' });
+        return;
+      }
+      if (!rec.refresh) {
+        setRequestTelemetryOutcome(res, 'oauth_refresh_token_wrong_type');
+        res.status(400).json({ error: 'invalid_grant' });
+        return;
+      }
+      if (Date.now() > rec.expiresAt) {
+        setRequestTelemetryOutcome(res, 'oauth_refresh_token_expired');
+        res.status(400).json({ error: 'invalid_grant' });
+        return;
+      }
+      if (body.client_id !== rec.clientId) {
+        setRequestTelemetryOutcome(res, 'oauth_refresh_client_mismatch');
+        res.status(400).json({ error: 'invalid_grant' });
+        return;
+      }
+      if (requestedCanonical !== rec.resource) {
+        setRequestTelemetryOutcome(res, 'oauth_refresh_resource_mismatch');
         res.status(400).json({ error: 'invalid_grant' });
         return;
       }
@@ -457,6 +482,7 @@ export function mountOAuth(app: express.Express, publicUrl: string): void {
       return;
     }
 
+    setRequestTelemetryOutcome(res, 'oauth_unsupported_grant_type');
     res.status(400).json({ error: 'unsupported_grant_type' });
   });
 }
