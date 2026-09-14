@@ -21,8 +21,23 @@ No runtime fix is deployed. `CONNECTOR_STABILITY` and
 | Soak-client tests | VERIFIED NOW: 2/2 PASS against a local protocol stub, including mode-0644 credential-file rejection and no bearer disclosure |
 | Script syntax/runtime checks | VERIFIED NOW: Bash syntax, ShellCheck, Node syntax and end-to-end read-only diagnostic exit 0 |
 | Independent review | UNVERIFIED / OPEN |
-| Immutable commit | UNVERIFIED / OPEN |
+| Immutable commits | VERIFIED NOW: isolated `774622b...` / `250ec6d...`; authoritative `6bbfdab...` / `3d4dbb3...` |
 | Deployment | UNVERIFIED / OPEN |
+
+## Authoritative Integration Validation
+
+- isolated candidate commits: `774622bcdbb0dd4ce7a70f25b37bd3b30a23e80d`
+  and `250ec6da41799346820559669c608e9e867a9b17`;
+- authoritative cherry-picks: `6bbfdab40f36b678366954c099b255db43758d9f`
+  and `3d4dbb3a3df40b3d292e025cbe9beedbf09b5fb2`;
+- integration parent: P3 `fa13327a0fc9380cabf05c593e69d4aaeba102e2`;
+- path-overlap check: zero paths shared between P3 and the incident range;
+- combined forward validation: 65/65 test files and 2,248/2,248 tests PASS,
+  typecheck PASS, build PASS, Bash/Node/ShellCheck/diff checks PASS;
+- tracked status and staging: empty; ordinary `node_modules` remains untracked.
+
+This is source acceptance only. The live gateway still runs `5d375bd...`, so
+request telemetry, runtime soak and connector stability remain UNVERIFIED / OPEN.
 
 ## Pre-Fix Runtime Controls
 

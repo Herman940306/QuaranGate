@@ -45,8 +45,10 @@ All times are SAST (`UTC+02:00`) unless explicitly suffixed `Z`.
 | 2026-09-14 06:04:34 | Current gateway container started | VERIFIED NOW |
 | approximately 2026-09-14 06:26 | Five external tiny probes: four PASS, fifth ChatGPT account/connector HTTP 400 before command execution; exact seconds unavailable | ACCEPTED EVIDENCE |
 | 2026-09-14 06:31:22 | Local readiness 200; public HTTP/1.1 and HTTP/2 readiness 200; TLS verification 0; gateway healthy, restart 0, no OOM; no matching Tailscale proxy error | VERIFIED NOW, but later than approximate failure time |
-| 2026-09-14 06:52 | Final full unit suite, including telemetry, OAuth outcome and soak-client tests: 65 files / 2,230 tests PASS | VERIFIED NOW |
 | 2026-09-14 06:45 | Diagnostic script completed against Wolf; local/public controls remained healthy | VERIFIED NOW |
+| 2026-09-14 06:52 | Final isolated-candidate unit suite, including telemetry, OAuth outcome and soak-client tests: 65 files / 2,230 tests PASS | VERIFIED NOW |
+| 2026-09-14 06:56 | Enhanced diagnostic passed H1/H2 readiness through all three public Funnel relay A records | VERIFIED NOW |
+| 2026-09-14 07:01 | Windows/WSL audit: no power, resume, Hyper-V, WSL, network, Docker or time-service event in 05:45–06:45 SAST window | VERIFIED NOW |
 
 ## Known Facts
 
@@ -82,6 +84,11 @@ All times are SAST (`UTC+02:00`) unless explicitly suffixed `Z`.
   saturation.
 - Certificate verification succeeds; leaf SAN is
   `wolf.taildc680e.ts.net`, valid 2026-07-27 through 2026-10-25.
+- Windows 11 Pro `10.0.26200` last booted `2026-09-09T05:58:33.5+02:00`.
+  Ubuntu 24.04 and Docker Desktop WSL2 distributions were running at inspection.
+  Windows Tailscale service was running; Docker Desktop's Windows service was
+  stopped while its WSL distribution and Linux container runtime remained
+  active. No relevant lifecycle event occurred in the one-hour incident window.
 
 ## Request Path
 
@@ -242,3 +249,31 @@ change Funnel, TLS, credentials or ACLs as rollback.
   diagnostic output was metadata-only.
 - NEXT: Complete exact patch review and freeze an immutable candidate before a
   governed deployment/correlation decision.
+
+### BATCH_ID: MCP-INCIDENT-R3-INTEGRATION-AND-LIFECYCLE
+
+- OBJECTIVE: Integrate the immutable candidate without disturbing concurrent
+  P3 owner work, strengthen the Funnel control, and test Windows/WSL lifecycle
+  hypotheses.
+- PRE_STATE: P3 completed as clean forward commit `fa13327...` based on the same
+  `5d375bd...` ancestor; its 17 paths were disjoint from all 12 incident paths.
+- COMMANDS: Cherry-picked isolated commits `774622b...` and `250ec6d...` as
+  forward commits `6bbfdab...` and `3d4dbb3...`; ran the full combined source
+  gate; queried public DNS and each Funnel relay; read bounded Windows event
+  metadata for 05:45–06:45 SAST.
+- OBSERVATIONS: Integration was conflict-free. Public and tailnet DNS paths are
+  distinct. No Windows/WSL/power/network lifecycle event correlated with the
+  approximate failure window.
+- EVIDENCE: Forward `3d4dbb3...`; 65 test files / 2,248 tests PASS; typecheck,
+  build and script checks PASS; six relay-pinned readiness requests PASS; no
+  relevant Windows event in the bounded window.
+- HYPOTHESIS: H5/H17 are unsupported for the approximate window. H13/H14/H18
+  still require deployed request-arrival telemetry.
+- RESULT: VERIFIED NOW for source integration and current relay/lifecycle
+  controls; connector failure classification remains UNVERIFIED / OPEN.
+- MUTATIONS: Two reviewed commits integrated into the authoritative forward
+  branch. No runtime, network, credential or owner-host configuration changed.
+- SECURITY_IMPACT: No authority widening; forward staging empty and only the
+  ordinary untracked `node_modules` residual remains.
+- NEXT: Do not retarget/deploy until the owner explicitly decides whether the
+  new P3 commit may ship together with this incident telemetry.
