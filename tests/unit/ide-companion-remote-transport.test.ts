@@ -37,6 +37,10 @@ describe('P7 I2.2 direction-separated remote transport protocol',()=>{
     expect(parseIdeRemoteServerFrame(serializeIdeRemoteServerFrame(e))).toEqual(e);
     const c:IdeRemoteServerFrame={version:1,type:'cancel_operation',sessionId,connectionGeneration:7,commandSequence:3,operationId};
     expect(parseIdeRemoteServerFrame(serializeIdeRemoteServerFrame(c))).toEqual(c);
+    const event:IdeRemoteServerFrame={version:1,type:'review_intent_event',sessionId,connectionGeneration:7,commandSequence:4,intentSequence:1,event:{version:1,operationId,sessionId,connectionGeneration:7,origin:'machine',sequence:0,type:'operation_started'}};
+    expect(parseIdeRemoteServerFrame(serializeIdeRemoteServerFrame(event))).toEqual(event);
+    const rejected:IdeRemoteServerFrame={version:1,type:'review_intent_rejected',sessionId,connectionGeneration:7,commandSequence:5,intentSequence:2,reason:'ADMISSION_DENIED'};
+    expect(parseIdeRemoteServerFrame(serializeIdeRemoteServerFrame(rejected))).toEqual(rejected);
   });
   it('round-trips canonical authorization/event/result/cancel-ack client frames',()=>{
     const ready:IdeRemoteClientFrame={version:1,type:'transport_ready',sessionId,connectionGeneration:7};expect(parseIdeRemoteClientFrame(serializeIdeRemoteClientFrame(ready))).toEqual(ready);
@@ -49,6 +53,10 @@ describe('P7 I2.2 direction-separated remote transport protocol',()=>{
     expect(parseIdeRemoteClientFrame(serializeIdeRemoteClientFrame(ir))).toEqual(ir);
     const ack:IdeRemoteClientFrame={version:1,type:'cancel_ack',sessionId,connectionGeneration:7,commandSequence:3,operationId};
     expect(parseIdeRemoteClientFrame(serializeIdeRemoteClientFrame(ack))).toEqual(ack);
+    const intent:IdeRemoteClientFrame={version:1,type:'review_intent',sessionId,connectionGeneration:7,intentSequence:1,prompt:'review from participant'};
+    expect(parseIdeRemoteClientFrame(serializeIdeRemoteClientFrame(intent))).toEqual(intent);
+    const cancelIntent:IdeRemoteClientFrame={version:1,type:'review_intent_cancel',sessionId,connectionGeneration:7,intentSequence:1};
+    expect(parseIdeRemoteClientFrame(serializeIdeRemoteClientFrame(cancelIntent))).toEqual(cancelIntent);
   });
   it('rejects noncanonical key order and unknown fields in both directions',()=>{
     const text=serializeIdeRemoteServerFrame(server());const parsed=JSON.parse(text) as Record<string,unknown>;
@@ -70,6 +78,14 @@ describe('P7 I2.2 direction-separated remote transport protocol',()=>{
     expect(code(()=>serializeIdeRemoteClientFrame(ev))).toBe('IDE_REMOTE_INVALID_SCHEMA');
     expect(code(()=>parseIdeRemoteServerFrame('x'.repeat(IDE_REMOTE_TRANSPORT_MAX_FRAME_BYTES+1)))).toBe('IDE_REMOTE_FRAME_SIZE');
   });
+
+  it('bounds non-authoritative user review intent and validates durable mirrored event binding',()=>{
+    const tooLarge:IdeRemoteClientFrame={version:1,type:'review_intent',sessionId,connectionGeneration:7,intentSequence:1,prompt:'x'.repeat(16*1024+1)};
+    expect(code(()=>serializeIdeRemoteClientFrame(tooLarge))).toBe('IDE_REMOTE_INVALID_SCHEMA');
+    const mirrored:IdeRemoteServerFrame={version:1,type:'review_intent_event',sessionId,connectionGeneration:7,commandSequence:1,intentSequence:1,event:{version:1,operationId,sessionId,connectionGeneration:8,origin:'machine',sequence:0,type:'operation_started'}};
+    expect(code(()=>serializeIdeRemoteServerFrame(mirrored))).toBe('IDE_REMOTE_INVALID_SCHEMA');
+  });
+
   it('rejects invalid nested auth instead of treating a structurally shaped object as authority',()=>{
     const row=JSON.parse(serializeIdeRemoteClientFrame(client())) as Record<string,unknown>;
     row.auth={...(row.auth as Record<string,unknown>),mac:'0'.repeat(63)};

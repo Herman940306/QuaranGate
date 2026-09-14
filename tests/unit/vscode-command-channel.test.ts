@@ -63,6 +63,33 @@ async function ready(capabilities:('request_review'|'request_implementation'|'ca
   return{enrollment,runtime,remote,workspace,controllerLeaseId};
 }
 
+
+async function readyUserReview(
+  review: ConstructorParameters<typeof VsCodeCommandChannel>[0]['reviewHandler'],
+  options: { collectWorkspace?:()=>Promise<IdeWorkspacePhysicalIdentity>; operationIdByte?:number } = {},
+):Promise<{enrollment:NonNullable<ReturnType<IdeSessionStore['getEnrollment']>>;runtime:ReturnType<typeof createIdeCompanionRuntime>;workspace:IdeWorkspacePhysicalIdentity;sessionKey:ReturnType<typeof sessionKey>}>{
+  const workspace=physical();
+  const enrollment=store.createEnrollment({principalId:'chatgpt-browser',projectId:'quarangate',worktreeId:'forward',ideProduct:'vscode',ideInstanceId:`ide_${'e'.repeat(32)}`,workspaceFingerprint:deriveIdeWorkspaceFingerprint({projectId:'quarangate',worktreeId:'forward',workspace}),baseRevision,capabilities:['request_review','cancel','observe_response']});
+  const runtime=createIdeCompanionRuntime({runtimeRoot,enrollmentId:enrollment.enrollmentId,ideInstanceId:enrollment.ideInstanceId,ideProduct:'vscode',adapterVersion:'1.2.3'});
+  listener=new IdeCompanionListener({
+    store,runtime,nowMs:()=>nowMs,challengeBytes:()=>Buffer.alloc(32,0x42),
+    userReviewIntents:true,
+    userReviewIntentOperationIdBytes:(size)=>Buffer.alloc(size,options.operationIdByte??0x77),
+  });
+  await listener.start();
+  const credential=readVsCodeCompanionCredential(runtime.credentialPath,'1.2.3');
+  const credentialBinding=binding(credential);
+  connection=await connectVsCodeCompanion({credential,workspace,nowMs:()=>nowMs,randomBytes:(size)=>Buffer.alloc(size,size===16?0x61:0x62)});
+  clientChannel=new VsCodeCommandChannel({
+    connection,credentialBinding,
+    collectWorkspace:options.collectWorkspace??(async()=>workspace),
+    reviewHandler:review,
+    nowMs:()=>nowMs,randomBytes:(size)=>Buffer.alloc(size,0x55),
+  });
+  clientChannel.start();
+  return{enrollment,runtime,workspace,sessionKey:sessionKey(enrollment,connection.sessionId,connection.connectionGeneration)};
+}
+
 beforeEach(()=>{
   store=new IdeSessionStore(join(mkdtempSync(join(tmpdir(),'qg-i22-ide-')),'ide.db'));
   writerStore=new AgentJobStore(join(mkdtempSync(join(tmpdir(),'qg-i22-writer-')),'agents.db'));
@@ -115,6 +142,115 @@ describe('P7 I2.2 QuaranGate-origin VS Code command/event transport',()=>{
     expect(sends).toBe(1);
     expect(events).toEqual(['operation_started','assistant_chunk','completed']);
     expect(store.getOperation(operationId)).toMatchObject({state:'COMPLETED',capability:'request_review'});
+  });
+
+
+  it('turns a user review intent into a QuaranGate-created B7 operation and sends the model only after durable admission starts',async()=>{
+    let sends=0;let selected=0;let releaseWorkspace!:()=>void;let sawWorkspace!:()=>void;
+    const workspaceGate=new Promise<void>((resolve)=>{releaseWorkspace=resolve;});
+    const workspaceStarted=new Promise<void>((resolve)=>{sawWorkspace=resolve;});
+    const token:VsCodeCancellationToken={isCancellationRequested:false};
+    const model={
+      vendor:'approved-vendor',id:'approved-model',family:'approved-family',version:'2026-09',name:'Approved Model',maxInputTokens:4096,
+      countTokens:async()=>5,
+      sendRequest:async()=>{sends+=1;return{text:(async function*(){yield 'governed-user-review';})()};},
+    };
+    const api:VsCodePublicLanguageModelApi={
+      selectChatModels:async()=>{selected+=1;return[model];},canSendRequest:()=>true,
+      createUserMessage:(prompt)=>({prompt} as unknown as VsCodeLanguageModelMessage),
+      createCancellationTokenSource:()=>({token,cancel:()=>undefined,dispose:()=>undefined}),
+    };
+    const access=new VsCodeModelAccessController(api,{vendor:model.vendor,id:model.id,family:model.family,version:model.version});
+    await access.prepareFromUserGesture();
+    const handler=new VsCodePublicApiReviewHandler({api,access:access.remoteAccess()});
+    const workspace=physical();
+    const ctx=await readyUserReview(handler,{collectWorkspace:async()=>{sawWorkspace();await workspaceGate;return workspace;},operationIdByte:0x77});
+    const output:string[]=[];
+    const pending=clientChannel!.requestUserReview({prompt:'review user intent through B7',signal:new AbortController().signal,emit:(_type,message)=>output.push(message)});
+    await workspaceStarted;
+    const operationId=`ideo_${'77'.repeat(16)}`;
+    expect(selected).toBe(1);
+    expect(sends).toBe(0);
+    expect(store.getOperation(operationId)).toBeUndefined();
+    releaseWorkspace();
+    await expect(pending).resolves.toEqual({operationId,terminalState:'COMPLETED'});
+    expect(sends).toBe(1);
+    expect(output).toEqual(['governed-user-review']);
+    expect(store.getOperation(operationId)).toMatchObject({state:'COMPLETED',capability:'request_review',projectId:'quarangate',worktreeId:'forward'});
+    expect(store.getSession(ctx.sessionKey.sessionId)).toMatchObject({state:'AVAILABLE',controllerLeaseId:null});
+  });
+
+  it('cancels a user review intent before B7 admission without creating a durable operation or sending the model',async()=>{
+    let sends=0;let releaseWorkspace!:()=>void;let sawWorkspace!:()=>void;
+    const workspaceGate=new Promise<void>((resolve)=>{releaseWorkspace=resolve;});
+    const workspaceStarted=new Promise<void>((resolve)=>{sawWorkspace=resolve;});
+    const model={vendor:'approved-vendor',id:'approved-model',family:'approved-family',version:'2026-09',name:'Approved Model',maxInputTokens:4096,countTokens:async()=>5,sendRequest:async()=>{sends+=1;return{text:(async function*(){yield 'never';})()};}};
+    const api:VsCodePublicLanguageModelApi={selectChatModels:async()=>[model],canSendRequest:()=>true,createUserMessage:(prompt)=>({prompt} as unknown as VsCodeLanguageModelMessage),createCancellationTokenSource:()=>({token:{isCancellationRequested:false},cancel:()=>undefined,dispose:()=>undefined})};
+    const access=new VsCodeModelAccessController(api,{vendor:model.vendor,id:model.id,family:model.family,version:model.version});await access.prepareFromUserGesture();
+    const handler=new VsCodePublicApiReviewHandler({api,access:access.remoteAccess()});
+    const workspace=physical();const ctx=await readyUserReview(handler,{collectWorkspace:async()=>{sawWorkspace();await workspaceGate;return workspace;},operationIdByte:0x78});
+    const abort=new AbortController();
+    const pending=clientChannel!.requestUserReview({prompt:'cancel before admission',signal:abort.signal,emit:()=>{}});
+    await workspaceStarted;abort.abort();releaseWorkspace();
+    await expect(pending).rejects.toMatchObject({code:'VSCODE_REMOTE_REVIEW_REJECTED'});
+    expect(sends).toBe(0);
+    expect(store.getOperation(`ideo_${'78'.repeat(16)}`)).toBeUndefined();
+    await waitFor(()=>store.getSession(ctx.sessionKey.sessionId)?.state==='AVAILABLE');
+  });
+
+  it('rejects user review admission on fresh workspace drift and never sends the model',async()=>{
+    let sends=0;
+    const model={vendor:'approved-vendor',id:'approved-model',family:'approved-family',version:'2026-09',name:'Approved Model',maxInputTokens:4096,countTokens:async()=>5,sendRequest:async()=>{sends+=1;return{text:(async function*(){yield 'never';})()};}};
+    const api:VsCodePublicLanguageModelApi={selectChatModels:async()=>[model],canSendRequest:()=>true,createUserMessage:(prompt)=>({prompt} as unknown as VsCodeLanguageModelMessage),createCancellationTokenSource:()=>({token:{isCancellationRequested:false},cancel:()=>undefined,dispose:()=>undefined})};
+    const access=new VsCodeModelAccessController(api,{vendor:model.vendor,id:model.id,family:model.family,version:model.version});await access.prepareFromUserGesture();
+    const handler=new VsCodePublicApiReviewHandler({api,access:access.remoteAccess()});
+    const trusted=physical();const drifted={...trusted,filesystemIdentity:'f'.repeat(64)};
+    const ctx=await readyUserReview(handler,{collectWorkspace:async()=>drifted,operationIdByte:0x79});
+    const pending=clientChannel!.requestUserReview({prompt:'reject drift',signal:new AbortController().signal,emit:()=>{}});
+    await expect(pending).rejects.toMatchObject({code:'VSCODE_REMOTE_REVIEW_REJECTED'});
+    expect(sends).toBe(0);
+    expect(store.getOperation(`ideo_${'79'.repeat(16)}`)).toBeUndefined();
+    await waitFor(()=>store.getSession(ctx.sessionKey.sessionId)?.state==='AVAILABLE');
+  });
+
+  it('rejects user review admission when the authenticated session already has a controller and never sends the model',async()=>{
+    let sends=0;
+    const model={vendor:'approved-vendor',id:'approved-model',family:'approved-family',version:'2026-09',name:'Approved Model',maxInputTokens:4096,countTokens:async()=>5,sendRequest:async()=>{sends+=1;return{text:(async function*(){yield 'never';})()};}};
+    const api:VsCodePublicLanguageModelApi={selectChatModels:async()=>[model],canSendRequest:()=>true,createUserMessage:(prompt)=>({prompt} as unknown as VsCodeLanguageModelMessage),createCancellationTokenSource:()=>({token:{isCancellationRequested:false},cancel:()=>undefined,dispose:()=>undefined})};
+    const access=new VsCodeModelAccessController(api,{vendor:model.vendor,id:model.id,family:model.family,version:model.version});await access.prepareFromUserGesture();
+    const ctx=await readyUserReview(new VsCodePublicApiReviewHandler({api,access:access.remoteAccess()}),{operationIdByte:0x7a});
+    const outsideLease=store.acquireController(ctx.sessionKey);
+    const pending=clientChannel!.requestUserReview({prompt:'controller conflict',signal:new AbortController().signal,emit:()=>{}});
+    await expect(pending).rejects.toMatchObject({code:'VSCODE_REMOTE_REVIEW_REJECTED'});
+    expect(sends).toBe(0);expect(store.getOperation(`ideo_${'7a'.repeat(16)}`)).toBeUndefined();
+    store.releaseController(ctx.sessionKey,outsideLease);
+  });
+
+  it('cancels exactly the admitted user review during model streaming and emits no late completion',async()=>{
+    let sends=0;let cancelled=false;let release!:()=>void;
+    const gate=new Promise<void>((resolve)=>{release=resolve;});
+    const token:VsCodeCancellationToken={get isCancellationRequested(){return cancelled;}};
+    const model={vendor:'approved-vendor',id:'approved-model',family:'approved-family',version:'2026-09',name:'Approved Model',maxInputTokens:4096,countTokens:async()=>5,sendRequest:async()=>{sends+=1;return{text:(async function*(){yield 'before-cancel';await gate;if(!cancelled)yield 'late';})()};}};
+    const api:VsCodePublicLanguageModelApi={selectChatModels:async()=>[model],canSendRequest:()=>true,createUserMessage:(prompt)=>({prompt} as unknown as VsCodeLanguageModelMessage),createCancellationTokenSource:()=>({token,cancel:()=>{cancelled=true;release();},dispose:()=>undefined})};
+    const access=new VsCodeModelAccessController(api,{vendor:model.vendor,id:model.id,family:model.family,version:model.version});await access.prepareFromUserGesture();
+    const ctx=await readyUserReview(new VsCodePublicApiReviewHandler({api,access:access.remoteAccess()}),{operationIdByte:0x7b});
+    const abort=new AbortController();const output:string[]=[];
+    const pending=clientChannel!.requestUserReview({prompt:'cancel exact governed review',signal:abort.signal,emit:(_type,message)=>{output.push(message);if(message==='before-cancel')abort.abort();}});
+    await expect(pending).resolves.toEqual({operationId:`ideo_${'7b'.repeat(16)}`,terminalState:'CANCELLED'});
+    expect(sends).toBe(1);expect(cancelled).toBe(true);expect(output).toEqual(['before-cancel']);
+    expect(store.getOperation(`ideo_${'7b'.repeat(16)}`)?.state).toBe('CANCELLED');
+    await waitFor(()=>store.getSession(ctx.sessionKey.sessionId)?.state==='AVAILABLE');
+  });
+
+  it('rejects a user review on a closed/stale authenticated channel before admission and never sends the model',async()=>{
+    let sends=0;
+    const handler={run:async()=>{sends+=1;}};
+    await readyUserReview(handler,{operationIdByte:0x7c});
+    const stale=clientChannel!;
+    stale.stop();clientChannel=undefined;connection=undefined;
+    await expect(stale.requestUserReview({prompt:'stale generation',signal:new AbortController().signal,emit:()=>{}})).rejects.toMatchObject({code:'VSCODE_REMOTE_CHANNEL_CLOSED'});
+    expect(sends).toBe(0);
+    expect(store.getOperation(`ideo_${'7c'.repeat(16)}`)).toBeUndefined();
   });
 
   it('admits implementation through accepted B9/B8 before remote execution and releases exact writer only after safe completion',async()=>{

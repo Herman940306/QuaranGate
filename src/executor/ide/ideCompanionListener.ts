@@ -66,6 +66,7 @@ import {
   type IdeImplementationOperationAdapter,
 } from './ideImplementationCoordinator.js';
 import { IdeCompanionRemoteChannel } from './ideCompanionRemoteChannel.js';
+import { IdeCompanionUserReviewIntentCoordinator } from './ideCompanionUserReviewIntent.js';
 
 export const IDE_COMPANION_LISTENER_MAX_CONNECTIONS = 16;
 export const IDE_COMPANION_LISTENER_HANDSHAKE_TIMEOUT_MS = 20_000;
@@ -104,6 +105,10 @@ export interface IdeCompanionListenerOptions {
   implementationMaxRuntimeMs?: number;
   /** I2.2 source-only QuaranGate-origin transport mode. Mutually exclusive with client-origin operation adapters. */
   remoteChannelReady?: (channel: IdeCompanionRemoteChannel) => void;
+  /** Enable the trusted QuaranGate-side bridge for non-authoritative user review intents on the I2.2 connection. */
+  userReviewIntents?: boolean;
+  /** Trusted deterministic test seam for QuaranGate-owned operation IDs created by the review-intent bridge. */
+  userReviewIntentOperationIdBytes?: (size: number) => Buffer;
 }
 
 interface PendingHandshake {
@@ -124,6 +129,7 @@ interface ConnectionState {
   enrollmentId?: string;
   controllerLeaseId?: string;
   remoteChannel?: IdeCompanionRemoteChannel;
+  userReviewIntent?: IdeCompanionUserReviewIntentCoordinator;
 }
 
 type PublicServerFrame =
@@ -208,6 +214,7 @@ export class IdeCompanionListener {
   private readonly challenge: () => Buffer;
   private readonly operationCoordinator?: IdeOperationCoordinator;
   private readonly implementationCoordinator?: IdeImplementationCoordinator;
+  private readonly remoteMode: boolean;
   private started = false;
   private ownsSocketPath = false;
 
@@ -223,7 +230,8 @@ export class IdeCompanionListener {
       throw new IdeCompanionListenerError('IDE_LISTENER_CONFIGURATION_INVALID','implementation writer authority and adapter must be configured together');
     }
     const hasClientOriginAdapters = opts.operationAdapter !== undefined || hasWriterStore || hasImplementationAdapter;
-    if (opts.remoteChannelReady !== undefined && hasClientOriginAdapters) {
+    this.remoteMode = opts.remoteChannelReady !== undefined || opts.userReviewIntents === true;
+    if (this.remoteMode && hasClientOriginAdapters) {
       throw new IdeCompanionListenerError('IDE_LISTENER_CONFIGURATION_INVALID','QuaranGate-origin remote mode cannot share one socket with client-origin operation adapters');
     }
     this.implementationCoordinator = !hasWriterStore ? undefined : new IdeImplementationCoordinator({
@@ -339,7 +347,9 @@ export class IdeCompanionListener {
       this.operationCoordinator?.connectionClosed(state.sessionKey.sessionId, state.sessionKey.connectionGeneration);
       try { this.implementationCoordinator?.reconcileTerminalWriterSettlements(); }
       catch { /* unresolved writer remains ACTIVE/UNCERTAIN and therefore blocking */ }
+      state.userReviewIntent?.connectionClosed();
     }
+    state.userReviewIntent = undefined;
     state.controllerLeaseId = undefined;
   }
 
@@ -518,8 +528,9 @@ export class IdeCompanionListener {
     state.phase = 'READY';
     state.pending = undefined;
     socket.setTimeout(0);
-    if (this.opts.remoteChannelReady !== undefined) {
-      state.remoteChannel = new IdeCompanionRemoteChannel({
+    if (this.remoteMode) {
+      let userReviewIntent: IdeCompanionUserReviewIntentCoordinator | undefined;
+      const remote = new IdeCompanionRemoteChannel({
         sessionId: opened.sessionId,
         connectionGeneration: opened.connectionGeneration,
         send: (remoteFrame) => writeRemoteFrame(socket, remoteFrame),
@@ -532,7 +543,22 @@ export class IdeCompanionListener {
             && operation.capability === capability
             && (operation.state === 'RUNNING' || operation.state === 'CANCELLING');
         },
+        onReviewIntent: this.opts.userReviewIntents === true ? (frame) => userReviewIntent?.accept(frame) : undefined,
+        onReviewIntentCancel: this.opts.userReviewIntents === true ? (frame) => userReviewIntent?.cancel(frame) : undefined,
       });
+      if (this.opts.userReviewIntents === true) {
+        userReviewIntent = new IdeCompanionUserReviewIntentCoordinator({
+          store: this.opts.store,
+          runtime: this.opts.runtime,
+          sessionKey: state.sessionKey,
+          remote,
+          operationIdBytes: this.opts.userReviewIntentOperationIdBytes,
+          nowMs: this.opts.nowMs,
+          operationMaxRuntimeMs: this.opts.operationMaxRuntimeMs,
+        });
+        state.userReviewIntent = userReviewIntent;
+      }
+      state.remoteChannel = remote;
     }
     writeFrame(socket, { version: 1, type: 'ready', sessionId: opened.sessionId, connectionGeneration: opened.connectionGeneration });
     if (state.remoteChannel !== undefined) {

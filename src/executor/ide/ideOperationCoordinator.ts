@@ -181,6 +181,37 @@ export class IdeOperationCoordinator {
     return 'accepted';
   }
 
+  /**
+   * Trusted QuaranGate-origin cancellation for a user review intent that has
+   * already become an exact B7 operation. The caller supplies only the
+   * server-held operation/controller identities; enrollment/session fields are
+   * re-derived from the durable operation row and the existing store binding
+   * checks remain authoritative. No companion-provided operation identity is
+   * accepted by this method.
+   */
+  cancelTrusted(operationId: string, controllerLeaseId: string): 'accepted' | 'indeterminate' {
+    const active = this.active.get(operationId);
+    const operation = this.opts.store.getOperation(operationId);
+    if (operation === undefined || operation.capability !== 'request_review') {
+      throw new IdeOperationCoordinatorError('IDE_OPERATION_NOT_FOUND', 'trusted review cancellation target is unavailable');
+    }
+    if (active === undefined || active.controllerLeaseId !== controllerLeaseId
+      || active.sessionId !== operation.sessionId || active.connectionGeneration !== operation.connectionGeneration) {
+      return 'indeterminate';
+    }
+    this.opts.store.requestOperationCancellation({
+      enrollmentId: operation.enrollmentId,
+      ideInstanceId: operation.ideInstanceId,
+      sessionId: operation.sessionId,
+      connectionGeneration: operation.connectionGeneration,
+      controllerLeaseId,
+      operationId,
+      capability: 'cancel',
+    });
+    active.controller.abort(new Error('trusted QuaranGate review intent cancelled'));
+    return 'accepted';
+  }
+
   connectionClosed(sessionId: string, connectionGeneration: number): void {
     for (const active of this.active.values()) {
       if (active.sessionId === sessionId && active.connectionGeneration === connectionGeneration) {

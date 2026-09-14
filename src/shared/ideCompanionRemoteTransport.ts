@@ -13,6 +13,8 @@ import {
 import { IDE_COMPANION_OPERATION_MAX_PROMPT_BYTES } from './ideCompanionOperations.js';
 import {
   MAX_IDE_EVENT_MESSAGE_BYTES,
+  validateIdeOperationEvent,
+  type IdeOperationEvent,
   assertIdeConnectionGeneration,
   assertIdeControllerLeaseId,
   assertIdeOperationId,
@@ -40,6 +42,14 @@ export const IDE_REMOTE_IMPLEMENTATION_OUTCOMES = [
 export type IdeRemoteImplementationOutcome = (typeof IDE_REMOTE_IMPLEMENTATION_OUTCOMES)[number];
 
 export type IdeRemoteOperationCapability = 'request_review' | 'request_implementation';
+
+export const IDE_REMOTE_REVIEW_INTENT_REJECTIONS = [
+  'BRIDGE_UNAVAILABLE',
+  'BUSY',
+  'CANCELLED',
+  'ADMISSION_DENIED',
+] as const;
+export type IdeRemoteReviewIntentRejection = (typeof IDE_REMOTE_REVIEW_INTENT_REJECTIONS)[number];
 
 export interface IdeRemoteAuthorizeOperationCommand {
   version: typeof IDE_REMOTE_TRANSPORT_VERSION;
@@ -72,10 +82,32 @@ export interface IdeRemoteCancelOperationCommand {
   operationId: string;
 }
 
+export interface IdeRemoteReviewIntentEventFrame {
+  version: typeof IDE_REMOTE_TRANSPORT_VERSION;
+  type: 'review_intent_event';
+  sessionId: string;
+  connectionGeneration: number;
+  commandSequence: number;
+  intentSequence: number;
+  event: IdeOperationEvent;
+}
+
+export interface IdeRemoteReviewIntentRejectedFrame {
+  version: typeof IDE_REMOTE_TRANSPORT_VERSION;
+  type: 'review_intent_rejected';
+  sessionId: string;
+  connectionGeneration: number;
+  commandSequence: number;
+  intentSequence: number;
+  reason: IdeRemoteReviewIntentRejection;
+}
+
 export type IdeRemoteServerFrame =
   | IdeRemoteAuthorizeOperationCommand
   | IdeRemoteExecuteOperationCommand
-  | IdeRemoteCancelOperationCommand;
+  | IdeRemoteCancelOperationCommand
+  | IdeRemoteReviewIntentEventFrame
+  | IdeRemoteReviewIntentRejectedFrame;
 
 export interface IdeRemoteTransportReadyFrame {
   version: typeof IDE_REMOTE_TRANSPORT_VERSION;
@@ -135,13 +167,32 @@ export interface IdeRemoteCancelAcknowledgedFrame {
   operationId: string;
 }
 
+export interface IdeRemoteReviewIntentFrame {
+  version: typeof IDE_REMOTE_TRANSPORT_VERSION;
+  type: 'review_intent';
+  sessionId: string;
+  connectionGeneration: number;
+  intentSequence: number;
+  prompt: string;
+}
+
+export interface IdeRemoteReviewIntentCancelFrame {
+  version: typeof IDE_REMOTE_TRANSPORT_VERSION;
+  type: 'review_intent_cancel';
+  sessionId: string;
+  connectionGeneration: number;
+  intentSequence: number;
+}
+
 export type IdeRemoteClientFrame =
   | IdeRemoteTransportReadyFrame
   | IdeRemoteOperationAuthorizedFrame
   | IdeRemoteAdapterEventFrame
   | IdeRemoteReviewResultFrame
   | IdeRemoteImplementationResultFrame
-  | IdeRemoteCancelAcknowledgedFrame;
+  | IdeRemoteCancelAcknowledgedFrame
+  | IdeRemoteReviewIntentFrame
+  | IdeRemoteReviewIntentCancelFrame;
 
 export type IdeRemoteTransportErrorCode =
   | 'IDE_REMOTE_FRAME_SIZE'
@@ -168,6 +219,12 @@ const SERVER_EXECUTE_KEYS = [
 const SERVER_CANCEL_KEYS = [
   'commandSequence', 'connectionGeneration', 'operationId', 'sessionId', 'type', 'version',
 ] as const;
+const SERVER_REVIEW_INTENT_EVENT_KEYS = [
+  'commandSequence', 'connectionGeneration', 'event', 'intentSequence', 'sessionId', 'type', 'version',
+] as const;
+const SERVER_REVIEW_INTENT_REJECTED_KEYS = [
+  'commandSequence', 'connectionGeneration', 'intentSequence', 'reason', 'sessionId', 'type', 'version',
+] as const;
 const CLIENT_READY_KEYS = ['connectionGeneration', 'sessionId', 'type', 'version'] as const;
 const CLIENT_AUTHORIZED_KEYS = [
   'auth', 'commandSequence', 'connectionGeneration', 'operationId', 'sessionId', 'type', 'version', 'workspaceAttestation',
@@ -186,6 +243,12 @@ const CLIENT_IMPLEMENTATION_RESULT_KEYS = [
 ] as const;
 const CLIENT_CANCEL_ACK_KEYS = [
   'commandSequence', 'connectionGeneration', 'operationId', 'sessionId', 'type', 'version',
+] as const;
+const CLIENT_REVIEW_INTENT_KEYS = [
+  'connectionGeneration', 'intentSequence', 'prompt', 'sessionId', 'type', 'version',
+] as const;
+const CLIENT_REVIEW_INTENT_CANCEL_KEYS = [
+  'connectionGeneration', 'intentSequence', 'sessionId', 'type', 'version',
 ] as const;
 
 function fail(code: IdeRemoteTransportErrorCode, message: string): never {
@@ -279,6 +342,30 @@ function commonOperation(value: Record<string, unknown>): void {
   catch { fail('IDE_REMOTE_INVALID_SCHEMA', 'remote transport operation identity is invalid'); }
 }
 function validateServerFrame(value: Record<string, unknown>): IdeRemoteServerFrame {
+  if (value.type === 'review_intent_event') {
+    exactKeys(value, SERVER_REVIEW_INTENT_EVENT_KEYS);
+    commonSession(value);
+    safePositive(value.commandSequence, 'commandSequence');
+    safePositive(value.intentSequence, 'intentSequence');
+    if (!isRecord(value.event)) fail('IDE_REMOTE_INVALID_SCHEMA', 'review intent event is invalid');
+    try { validateIdeOperationEvent(value.event as unknown as IdeOperationEvent); }
+    catch { fail('IDE_REMOTE_INVALID_SCHEMA', 'review intent operation event is invalid'); }
+    const event=value.event as unknown as IdeOperationEvent;
+    if (event.sessionId !== value.sessionId || event.connectionGeneration !== value.connectionGeneration) {
+      fail('IDE_REMOTE_INVALID_SCHEMA', 'review intent event binding is invalid');
+    }
+    return value as unknown as IdeRemoteReviewIntentEventFrame;
+  }
+  if (value.type === 'review_intent_rejected') {
+    exactKeys(value, SERVER_REVIEW_INTENT_REJECTED_KEYS);
+    commonSession(value);
+    safePositive(value.commandSequence, 'commandSequence');
+    safePositive(value.intentSequence, 'intentSequence');
+    if (!(IDE_REMOTE_REVIEW_INTENT_REJECTIONS as readonly unknown[]).includes(value.reason)) {
+      fail('IDE_REMOTE_INVALID_SCHEMA', 'review intent rejection reason is invalid');
+    }
+    return value as unknown as IdeRemoteReviewIntentRejectedFrame;
+  }
   commonOperation(value);
   safePositive(value.commandSequence, 'commandSequence');
   if (value.type === 'authorize_operation') {
@@ -305,6 +392,19 @@ function validateClientFrame(value: Record<string, unknown>): IdeRemoteClientFra
     exactKeys(value, CLIENT_READY_KEYS);
     commonSession(value);
     return value as unknown as IdeRemoteTransportReadyFrame;
+  }
+  if (value.type === 'review_intent') {
+    exactKeys(value, CLIENT_REVIEW_INTENT_KEYS);
+    commonSession(value);
+    safePositive(value.intentSequence, 'intentSequence');
+    validatePrompt(value.prompt);
+    return value as unknown as IdeRemoteReviewIntentFrame;
+  }
+  if (value.type === 'review_intent_cancel') {
+    exactKeys(value, CLIENT_REVIEW_INTENT_CANCEL_KEYS);
+    commonSession(value);
+    safePositive(value.intentSequence, 'intentSequence');
+    return value as unknown as IdeRemoteReviewIntentCancelFrame;
   }
   commonOperation(value);
   if (value.type === 'operation_authorized') {
@@ -344,6 +444,24 @@ function validateClientFrame(value: Record<string, unknown>): IdeRemoteClientFra
 }
 
 function canonicalServer(frame: IdeRemoteServerFrame): Record<string, unknown> {
+  if (frame.type === 'review_intent_event') return {
+    commandSequence: frame.commandSequence,
+    connectionGeneration: frame.connectionGeneration,
+    event: frame.event,
+    intentSequence: frame.intentSequence,
+    sessionId: frame.sessionId,
+    type: frame.type,
+    version: frame.version,
+  };
+  if (frame.type === 'review_intent_rejected') return {
+    commandSequence: frame.commandSequence,
+    connectionGeneration: frame.connectionGeneration,
+    intentSequence: frame.intentSequence,
+    reason: frame.reason,
+    sessionId: frame.sessionId,
+    type: frame.type,
+    version: frame.version,
+  };
   if (frame.type === 'authorize_operation') return {
     capability: frame.capability,
     commandSequence: frame.commandSequence,
@@ -376,6 +494,21 @@ function canonicalServer(frame: IdeRemoteServerFrame): Record<string, unknown> {
 function canonicalClient(frame: IdeRemoteClientFrame): Record<string, unknown> {
   if (frame.type === 'transport_ready') return {
     connectionGeneration: frame.connectionGeneration,
+    sessionId: frame.sessionId,
+    type: frame.type,
+    version: frame.version,
+  };
+  if (frame.type === 'review_intent') return {
+    connectionGeneration: frame.connectionGeneration,
+    intentSequence: frame.intentSequence,
+    prompt: frame.prompt,
+    sessionId: frame.sessionId,
+    type: frame.type,
+    version: frame.version,
+  };
+  if (frame.type === 'review_intent_cancel') return {
+    connectionGeneration: frame.connectionGeneration,
+    intentSequence: frame.intentSequence,
     sessionId: frame.sessionId,
     type: frame.type,
     version: frame.version,

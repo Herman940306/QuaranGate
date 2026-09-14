@@ -1,0 +1,78 @@
+{
+  "name": "quarangate-vscode",
+  "displayName": "QuaranGate",
+  "description": "Governed QuaranGate review companion for VS Code Remote-WSL workspaces.",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "Chat"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extensions/quarangate-vscode/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onChatParticipant:quarangate.ideChat"
+  ],
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "quarangate.ideChat",
+        "name": "quarangate",
+        "fullName": "QuaranGate",
+        "description": "Governed review setup, readiness, and review requests.",
+        "isSticky": false
+      }
+    ],
+    "configuration": {
+      "title": "QuaranGate",
+      "properties": {
+        "quarangate.runtimeCredentialPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Owner-provisioned absolute path to the QuaranGate VS Code runtime credential."
+        },
+        "quarangate.reviewModel.vendor": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Exact public VS Code language-model vendor for governed reviews."
+        },
+        "quarangate.reviewModel.id": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Exact public VS Code language-model identifier for governed reviews."
+        },
+        "quarangate.reviewModel.family": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Exact public VS Code language-model family for governed reviews."
+        },
+        "quarangate.reviewModel.version": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Exact public VS Code language-model version for governed reviews."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.0",
+    "@types/vscode": "1.109.0",
+    "typescript": "5.9.2"
+  }
+}

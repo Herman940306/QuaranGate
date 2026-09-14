@@ -18,10 +18,14 @@ import {
   type IdeRemoteImplementationOutcome,
   type IdeRemoteOperationAuthorizedFrame,
   type IdeRemoteOperationCapability,
+  type IdeRemoteReviewIntentFrame,
+  type IdeRemoteReviewIntentCancelFrame,
+  type IdeRemoteReviewIntentRejection,
   type IdeRemoteServerFrame,
 } from '../../shared/ideCompanionRemoteTransport.js';
 import { parseIdeWorkspaceAttestation } from '../../shared/ideWorkspaceAttestation.js';
 import type { IdeImplementationOperationAdapter } from './ideImplementationCoordinator.js';
+import type { IdeOperationEvent } from '../../shared/ideSessions.js';
 import type { IdeReviewOperationAdapter } from './ideOperationCoordinator.js';
 
 export const IDE_REMOTE_AUTHORIZATION_TIMEOUT_MS = 20_000;
@@ -50,6 +54,10 @@ export interface IdeCompanionRemoteChannelOptions {
   close(): void;
   /** Trusted Plane-B reread: remote execution is forbidden until B7/B9 durably admitted this exact operation. */
   isOperationAdmitted(operationId: string, capability: IdeRemoteOperationCapability): boolean;
+  /** Optional trusted QuaranGate-side sink for non-authoritative user review intents. */
+  onReviewIntent?: (frame: IdeRemoteReviewIntentFrame) => void;
+  /** Optional trusted QuaranGate-side sink for exact intent cancellation. */
+  onReviewIntentCancel?: (frame: IdeRemoteReviewIntentCancelFrame) => void;
   authorizationTimeoutMs?: number;
 }
 
@@ -93,6 +101,7 @@ export class IdeCompanionRemoteChannel {
   readonly sessionId: string;
   readonly connectionGeneration: number;
   private nextCommandSequence = 1;
+  private nextReviewIntentSequence = 1;
   private pendingAuthorization?: PendingAuthorization;
   private authorized?: AuthorizedOperation;
   private active?: ActiveExecution;
@@ -202,6 +211,35 @@ export class IdeCompanionRemoteChannel {
     return true;
   }
 
+  sendReviewIntentEvent(intentSequence: number, event: IdeOperationEvent): boolean {
+    this.requireOpen();
+    if (event.sessionId !== this.sessionId || event.connectionGeneration !== this.connectionGeneration) {
+      throw err('IDE_REMOTE_CHANNEL_BINDING_MISMATCH', 'review intent event does not match authenticated session/generation');
+    }
+    return this.sendSequenced({
+      version: 1,
+      type: 'review_intent_event',
+      sessionId: this.sessionId,
+      connectionGeneration: this.connectionGeneration,
+      commandSequence: this.nextSequence(),
+      intentSequence,
+      event,
+    });
+  }
+
+  sendReviewIntentRejected(intentSequence: number, reason: IdeRemoteReviewIntentRejection): boolean {
+    this.requireOpen();
+    return this.sendSequenced({
+      version: 1,
+      type: 'review_intent_rejected',
+      sessionId: this.sessionId,
+      connectionGeneration: this.connectionGeneration,
+      commandSequence: this.nextSequence(),
+      intentSequence,
+      reason,
+    });
+  }
+
   handleClientFrame(bytes: Uint8Array | string): void {
     this.requireOpen();
     let frame: IdeRemoteClientFrame;
@@ -217,6 +255,8 @@ export class IdeCompanionRemoteChannel {
     try {
       if (frame.type === 'transport_ready') { this.acceptTransportReady(); return; }
       if (!this.transportReady) throw err('IDE_REMOTE_CHANNEL_UNEXPECTED_FRAME','remote client sent operation data before transport_ready');
+      if (frame.type === 'review_intent') { this.acceptReviewIntent(frame); return; }
+      if (frame.type === 'review_intent_cancel') { this.acceptReviewIntentCancel(frame); return; }
       if (frame.type === 'operation_authorized') { this.acceptAuthorization(frame); return; }
       if (frame.type === 'adapter_event') { this.acceptEvent(frame); return; }
       if (frame.type === 'review_result') { this.acceptReviewResult(frame); return; }
@@ -245,6 +285,31 @@ export class IdeCompanionRemoteChannel {
     if (this.transportReady) throw err('IDE_REMOTE_CHANNEL_SEQUENCE','duplicate transport_ready');
     this.transportReady = true;
     for (const waiter of this.readyWaiters.splice(0)) { clearTimeout(waiter.timer); waiter.resolve(); }
+  }
+
+  private acceptReviewIntent(frame: IdeRemoteReviewIntentFrame): void {
+    if (frame.intentSequence !== this.nextReviewIntentSequence) {
+      throw err('IDE_REMOTE_CHANNEL_SEQUENCE', 'review intent sequence is stale, replayed or skipped');
+    }
+    this.nextReviewIntentSequence += 1;
+    const handler = this.opts.onReviewIntent;
+    if (handler === undefined) {
+      this.sendReviewIntentRejected(frame.intentSequence, 'BRIDGE_UNAVAILABLE');
+      return;
+    }
+    handler(frame);
+  }
+
+  private acceptReviewIntentCancel(frame: IdeRemoteReviewIntentCancelFrame): void {
+    if (frame.intentSequence < 1 || frame.intentSequence >= this.nextReviewIntentSequence) {
+      throw err('IDE_REMOTE_CHANNEL_SEQUENCE', 'review intent cancellation is stale or unknown');
+    }
+    const handler = this.opts.onReviewIntentCancel;
+    if (handler === undefined) {
+      this.sendReviewIntentRejected(frame.intentSequence, 'BRIDGE_UNAVAILABLE');
+      return;
+    }
+    handler(frame);
   }
 
   private acceptAuthorization(frame: IdeRemoteOperationAuthorizedFrame): void {
@@ -386,6 +451,14 @@ export class IdeCompanionRemoteChannel {
     };
     if (signal.aborted) abort();
     else signal.addEventListener('abort', abort, { once: true });
+  }
+
+  private sendSequenced(frame: IdeRemoteServerFrame): boolean {
+    if (!this.send(frame)) {
+      this.failClosed();
+      return false;
+    }
+    return true;
   }
 
   private send(frame: IdeRemoteServerFrame): boolean {

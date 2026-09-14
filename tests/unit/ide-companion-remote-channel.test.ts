@@ -18,6 +18,26 @@ function harness(){const sent:IdeRemoteServerFrame[]=[];let closed=false;const c
 function authorizedFrame(prompt='review',over:Record<string,unknown>={}){return serializeIdeRemoteClientFrame({version:1,type:'operation_authorized',sessionId,connectionGeneration:7,commandSequence:1,operationId,auth:auth(prompt),workspaceAttestation:workspace,...over} as never);}
 
 describe('P7 I2.2 QuaranGate remote channel state machine',()=>{
+  it('routes a bounded user review intent as non-authoritative input and rejects replayed intent sequence',()=>{
+    const sent:IdeRemoteServerFrame[]=[];const seen:Array<Record<string,unknown>>=[];let closed=false;
+    const ch=new IdeCompanionRemoteChannel({sessionId,connectionGeneration:7,send:(f)=>{sent.push(f);return true;},close:()=>{closed=true;},isOperationAdmitted:()=>true,onReviewIntent:(frame)=>seen.push(frame as unknown as Record<string,unknown>)});
+    ch.handleClientFrame(serializeIdeRemoteClientFrame({version:1,type:'transport_ready',sessionId,connectionGeneration:7}));
+    const intent={version:1 as const,type:'review_intent' as const,sessionId,connectionGeneration:7,intentSequence:1,prompt:'review user intent'};
+    ch.handleClientFrame(serializeIdeRemoteClientFrame(intent));
+    expect(seen).toHaveLength(1);
+    expect(Object.keys(seen[0]!).sort()).toEqual(['connectionGeneration','intentSequence','prompt','sessionId','type','version']);
+    expect(seen[0]).not.toHaveProperty('operationId');
+    expect(seen[0]).not.toHaveProperty('controllerLeaseId');
+    ch.handleClientFrame(serializeIdeRemoteClientFrame(intent));
+    expect(closed).toBe(true);
+  });
+
+  it('fails closed at the intent boundary when the trusted QuaranGate bridge is unavailable without creating an operation command',()=>{
+    const h=harness();
+    h.ch.handleClientFrame(serializeIdeRemoteClientFrame({version:1,type:'review_intent',sessionId,connectionGeneration:7,intentSequence:1,prompt:'review'}));
+    expect(h.sent).toEqual([{version:1,type:'review_intent_rejected',sessionId,connectionGeneration:7,commandSequence:1,intentSequence:1,reason:'BRIDGE_UNAVAILABLE'}]);
+    expect(h.closed).toBe(false);
+  });
   it('does not send authorization until client transport_ready removes post-B6 startup race',async()=>{
     const sent:IdeRemoteServerFrame[]=[];const ch=new IdeCompanionRemoteChannel({sessionId,connectionGeneration:7,send:(f)=>{sent.push(f);return true;},close:()=>{},isOperationAdmitted:()=>true,authorizationTimeoutMs:1000});
     const pending=ch.authorizeOperation({operationId,controllerLeaseId:lease,capability:'request_review',prompt:'review'});expect(sent).toEqual([]);

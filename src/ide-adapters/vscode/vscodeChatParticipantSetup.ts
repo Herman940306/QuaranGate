@@ -107,7 +107,7 @@ export type VsCodeGovernedReviewEvent = Readonly<{
 
 export type VsCodeGovernedReviewResult = Readonly<{
   operationId: string;
-  terminalState: 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  terminalState: 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'INDETERMINATE';
 }>;
 
 /**
@@ -118,6 +118,7 @@ export type VsCodeGovernedReviewResult = Readonly<{
  * currently authorizes only QuaranGate-origin operations.
  */
 export interface VsCodeGovernedReviewPort {
+  isAvailable(): boolean;
   requestReview(input: Readonly<{
     prompt: string;
     signal: AbortSignal;
@@ -201,7 +202,7 @@ export class VsCodeChatParticipantSetup {
     transport: VsCodeParticipantTransportState;
     model: VsCodeParticipantModelState;
     modelIdentity?: VsCodeModelIdentity;
-    governedReview: 'READY' | 'NOT_WIRED';
+    governedReview: 'READY' | 'NOT_WIRED' | 'UNAVAILABLE';
   }> {
     const runtime = this.options.readiness.snapshot();
     const model = this.modelState();
@@ -209,7 +210,8 @@ export class VsCodeChatParticipantSetup {
       ...runtime,
       model: model.state,
       ...(model.identity === undefined ? {} : { modelIdentity: model.identity }),
-      governedReview: this.options.governedReview === undefined ? 'NOT_WIRED' : 'READY',
+      governedReview: this.options.governedReview === undefined ? 'NOT_WIRED'
+        : this.options.governedReview.isAvailable() ? 'READY' : 'UNAVAILABLE',
     };
   }
 
@@ -294,6 +296,10 @@ export class VsCodeChatParticipantSetup {
     if (review === undefined) {
       response.markdown('Governed review submission is not wired in this source slice. No operation was created and no model request was sent.');
       return { metadata: { action: 'review', outcome: 'NOT_WIRED' } };
+    }
+    if (!review.isAvailable()) {
+      response.markdown('QuaranGate governed review admission is unavailable. No operation was created and no model request was sent.');
+      return { metadata: { action: 'review', outcome: 'UNAVAILABLE' } };
     }
 
     const controller = new AbortController();

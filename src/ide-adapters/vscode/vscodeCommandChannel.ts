@@ -20,9 +20,12 @@ import {
   type IdeRemoteAdapterEventType,
   type IdeRemoteImplementationOutcome,
   type IdeRemoteOperationCapability,
+  type IdeRemoteReviewIntentEventFrame,
+  type IdeRemoteReviewIntentRejectedFrame,
   type IdeRemoteServerFrame,
 } from '../../shared/ideCompanionRemoteTransport.js';
 import { serializeIdeWorkspaceAttestation, type IdeWorkspacePhysicalIdentity } from '../../shared/ideWorkspaceAttestation.js';
+import { isTerminalIdeEventType } from '../../shared/ideSessions.js';
 import type { VsCodeCompanionConnection } from './vscodeCompanionConnection.js';
 import { readVsCodeCompanionCredential, type VsCodeCompanionCredential } from './vscodeCompanionCredential.js';
 
@@ -37,6 +40,7 @@ export type VsCodeCommandChannelErrorCode =
   | 'VSCODE_REMOTE_SEQUENCE_INVALID'
   | 'VSCODE_REMOTE_STATE_INVALID'
   | 'VSCODE_REMOTE_HANDLER_UNAVAILABLE'
+  | 'VSCODE_REMOTE_REVIEW_REJECTED'
   | 'VSCODE_REMOTE_WRITE_FAILED';
 
 export class VsCodeCommandChannelError extends Error {
@@ -55,6 +59,17 @@ export interface VsCodeRemoteOperationInput {
 export interface VsCodeRemoteReviewHandler { run(input: VsCodeRemoteOperationInput): Promise<void>; }
 export interface VsCodeRemoteImplementationHandler {
   run(input: VsCodeRemoteOperationInput): Promise<{ outcome: IdeRemoteImplementationOutcome }>;
+}
+
+export interface VsCodeGovernedUserReviewInput {
+  prompt: string;
+  signal: AbortSignal;
+  emit(type: 'status' | 'assistant_chunk', message: string): void;
+}
+
+export interface VsCodeGovernedUserReviewResult {
+  operationId: string;
+  terminalState: 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'INDETERMINATE';
 }
 
 export interface VsCodeCommandChannelOptions {
@@ -78,6 +93,16 @@ interface ActiveOperation extends AuthorizedOperation {
   controller: AbortController;
   nextEventSequence: number;
 }
+interface PendingUserReview {
+  intentSequence: number;
+  input: VsCodeGovernedUserReviewInput;
+  nextEventSequence: number;
+  operationId?: string;
+  cancelSent: boolean;
+  abort: () => void;
+  resolve(value: VsCodeGovernedUserReviewResult): void;
+  reject(error: Error): void;
+}
 
 function fail(code: VsCodeCommandChannelErrorCode, message: string): never {
   throw new VsCodeCommandChannelError(code, message);
@@ -88,12 +113,14 @@ export class VsCodeCommandChannel {
   private readonly clock: () => number;
   private readonly rng: (size:number)=>Buffer;
   private expectedCommandSequence = 1;
+  private nextIntentSequence = 1;
   private buffer = Buffer.alloc(0);
   private chain = Promise.resolve();
   private started = false;
   private closed = false;
   private authorized?: AuthorizedOperation;
   private active?: ActiveOperation;
+  private pendingUserReview?: PendingUserReview;
 
   constructor(private readonly opts: VsCodeCommandChannelOptions) {
     this.socket = opts.connection.socket;
@@ -114,6 +141,49 @@ export class VsCodeCommandChannel {
     this.write({version:1,type:'transport_ready',sessionId:this.opts.connection.sessionId,connectionGeneration:this.opts.connection.connectionGeneration});
   }
 
+  isReady(): boolean {
+    return this.started && !this.closed && !this.socket.destroyed;
+  }
+
+  requestUserReview(input: VsCodeGovernedUserReviewInput): Promise<VsCodeGovernedUserReviewResult> {
+    if (!this.isReady()) return Promise.reject(new VsCodeCommandChannelError('VSCODE_REMOTE_CHANNEL_CLOSED', 'QuaranGate review transport is unavailable'));
+    if (this.pendingUserReview !== undefined) return Promise.reject(new VsCodeCommandChannelError('VSCODE_REMOTE_STATE_INVALID', 'a user review intent is already pending'));
+    if (input.signal.aborted) return Promise.reject(new VsCodeCommandChannelError('VSCODE_REMOTE_REVIEW_REJECTED', 'user review intent was cancelled before admission'));
+    const intentSequence = this.nextIntentSequence;
+    if (!Number.isSafeInteger(intentSequence) || intentSequence < 1 || intentSequence === Number.MAX_SAFE_INTEGER) {
+      this.failClosed();
+      return Promise.reject(new VsCodeCommandChannelError('VSCODE_REMOTE_SEQUENCE_INVALID', 'review intent sequence exhausted'));
+    }
+    this.nextIntentSequence += 1;
+    return new Promise((resolve, reject) => {
+      const pending: PendingUserReview = {
+        intentSequence,
+        input,
+        nextEventSequence: 0,
+        cancelSent: false,
+        abort: () => this.cancelUserReviewIntent(intentSequence),
+        resolve,
+        reject,
+      };
+      this.pendingUserReview = pending;
+      try {
+        this.write({
+          version: 1,
+          type: 'review_intent',
+          sessionId: this.opts.connection.sessionId,
+          connectionGeneration: this.opts.connection.connectionGeneration,
+          intentSequence,
+          prompt: input.prompt,
+        });
+        input.signal.addEventListener('abort', pending.abort, { once: true });
+        if (input.signal.aborted) pending.abort();
+      } catch (error) {
+        this.finishUserReview(pending);
+        reject(error instanceof Error ? error : new VsCodeCommandChannelError('VSCODE_REMOTE_WRITE_FAILED', 'review intent could not be sent'));
+      }
+    });
+  }
+
   stop(): void {
     if (this.closed) return;
     this.closed = true;
@@ -121,6 +191,7 @@ export class VsCodeCommandChannel {
     this.active?.controller.abort(new Error('VS Code command channel stopped'));
     this.active = undefined;
     this.authorized = undefined;
+    this.rejectPendingUserReview(new VsCodeCommandChannelError('VSCODE_REMOTE_CHANNEL_CLOSED', 'VS Code command channel stopped'));
     if (!this.socket.destroyed) this.socket.destroy();
   }
 
@@ -142,7 +213,7 @@ export class VsCodeCommandChannel {
       this.chain = this.chain.then(() => this.handleFrame(frame)).catch(() => this.failClosed());
     }
   };
-  private readonly onClose = (): void => { this.closed = true; this.detach(); this.active?.controller.abort(new Error('authenticated QuaranGate connection closed')); };
+  private readonly onClose = (): void => { this.closed = true; this.detach(); this.active?.controller.abort(new Error('authenticated QuaranGate connection closed')); this.rejectPendingUserReview(new VsCodeCommandChannelError('VSCODE_REMOTE_CHANNEL_CLOSED','authenticated QuaranGate connection closed')); };
   private readonly onError = (): void => { this.failClosed(); };
 
   private async handleFrame(bytes: Buffer): Promise<void> {
@@ -153,9 +224,81 @@ export class VsCodeCommandChannel {
       fail('VSCODE_REMOTE_SEQUENCE_INVALID', 'QuaranGate command sequence is stale, replayed or skipped');
     }
     this.expectedCommandSequence += 1;
+    if (frame.type === 'review_intent_event') { this.acceptUserReviewEvent(frame); return; }
+    if (frame.type === 'review_intent_rejected') { this.acceptUserReviewRejected(frame); return; }
     if (frame.type === 'authorize_operation') { await this.authorize(frame); return; }
     if (frame.type === 'execute_operation') { await this.execute(frame); return; }
     this.cancel(frame);
+  }
+
+  private acceptUserReviewEvent(frame: IdeRemoteReviewIntentEventFrame): void {
+    const pending = this.pendingUserReview;
+    if (pending === undefined || frame.intentSequence !== pending.intentSequence) {
+      fail('VSCODE_REMOTE_SEQUENCE_INVALID', 'review intent event has no exact pending request');
+    }
+    const event = frame.event;
+    if (event.origin !== 'machine' || event.sequence !== pending.nextEventSequence) {
+      fail('VSCODE_REMOTE_SEQUENCE_INVALID', 'review intent durable event sequence/origin is invalid');
+    }
+    if (pending.operationId === undefined) {
+      if (event.type !== 'operation_started' || event.sequence !== 0) {
+        fail('VSCODE_REMOTE_SEQUENCE_INVALID', 'review intent first durable event must be operation_started');
+      }
+      pending.operationId = event.operationId;
+    } else if (event.operationId !== pending.operationId) {
+      fail('VSCODE_REMOTE_BINDING_MISMATCH', 'review intent event changed authoritative operation identity');
+    }
+    pending.nextEventSequence += 1;
+    if (event.type === 'assistant_chunk' && event.message !== undefined) pending.input.emit('assistant_chunk', event.message);
+    else if ((event.type === 'status' || event.type === 'tool_activity') && event.message !== undefined) pending.input.emit('status', event.message);
+    if (!isTerminalIdeEventType(event.type)) return;
+    const operationId = pending.operationId;
+    if (operationId === undefined) fail('VSCODE_REMOTE_BINDING_MISMATCH', 'review intent terminal event lacks admitted operation identity');
+    const terminalState = event.type === 'completed' ? 'COMPLETED'
+      : event.type === 'cancelled' ? 'CANCELLED'
+      : event.type === 'failed' ? 'FAILED'
+      : 'INDETERMINATE';
+    this.finishUserReview(pending);
+    pending.resolve({ operationId, terminalState });
+  }
+
+  private acceptUserReviewRejected(frame: IdeRemoteReviewIntentRejectedFrame): void {
+    const pending = this.pendingUserReview;
+    if (pending === undefined || frame.intentSequence !== pending.intentSequence) {
+      fail('VSCODE_REMOTE_SEQUENCE_INVALID', 'review intent rejection has no exact pending request');
+    }
+    this.finishUserReview(pending);
+    pending.reject(new VsCodeCommandChannelError('VSCODE_REMOTE_REVIEW_REJECTED', `QuaranGate review intent rejected: ${frame.reason}`));
+  }
+
+  private cancelUserReviewIntent(intentSequence: number): void {
+    const pending = this.pendingUserReview;
+    if (pending === undefined || pending.intentSequence !== intentSequence || pending.cancelSent || this.closed) return;
+    pending.cancelSent = true;
+    try {
+      this.write({
+        version: 1,
+        type: 'review_intent_cancel',
+        sessionId: this.opts.connection.sessionId,
+        connectionGeneration: this.opts.connection.connectionGeneration,
+        intentSequence,
+      });
+    } catch (error) {
+      this.finishUserReview(pending);
+      pending.reject(error instanceof Error ? error : new VsCodeCommandChannelError('VSCODE_REMOTE_WRITE_FAILED', 'review intent cancellation could not be sent'));
+    }
+  }
+
+  private finishUserReview(pending: PendingUserReview): void {
+    pending.input.signal.removeEventListener('abort', pending.abort);
+    if (this.pendingUserReview === pending) this.pendingUserReview = undefined;
+  }
+
+  private rejectPendingUserReview(error: Error): void {
+    const pending = this.pendingUserReview;
+    if (pending === undefined) return;
+    this.finishUserReview(pending);
+    pending.reject(error);
   }
 
   private async authorize(frame: Extract<IdeRemoteServerFrame,{type:'authorize_operation'}>): Promise<void> {
@@ -333,6 +476,6 @@ export class VsCodeCommandChannel {
     try { this.socket.write(body); }
     catch { this.failClosed(); fail('VSCODE_REMOTE_WRITE_FAILED','VS Code remote response write failed'); }
   }
-  private failClosed():void{if(this.closed)return;this.closed=true;this.detach();this.active?.controller.abort(new Error('VS Code remote channel failed closed'));this.socket.destroy();}
+  private failClosed():void{if(this.closed)return;this.closed=true;this.detach();this.active?.controller.abort(new Error('VS Code remote channel failed closed'));this.rejectPendingUserReview(new VsCodeCommandChannelError('VSCODE_REMOTE_CHANNEL_CLOSED','VS Code remote channel failed closed'));this.socket.destroy();}
   private detach():void{this.socket.off('data',this.onData);this.socket.off('close',this.onClose);this.socket.off('error',this.onError);}
 }

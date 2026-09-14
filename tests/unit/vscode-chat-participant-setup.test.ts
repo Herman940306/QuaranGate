@@ -257,7 +257,7 @@ describe('P7 I2 VS Code user-facing Chat Participant / setup composition', () =>
     const model = modelFixture(true);
     await model.access.prepareFromUserGesture();
     let reviewCalls = 0;
-    const review: VsCodeGovernedReviewPort = { requestReview: async () => { reviewCalls += 1; return { operationId: `ideo_${'a'.repeat(32)}`, terminalState: 'COMPLETED' }; } };
+    const review: VsCodeGovernedReviewPort = { isAvailable: () => true, requestReview: async () => { reviewCalls += 1; return { operationId: `ideo_${'a'.repeat(32)}`, terminalState: 'COMPLETED' }; } };
     const ctx = fakeChat();
     registerVsCodeChatParticipantSetup({
       chat: ctx.chat,
@@ -282,11 +282,28 @@ describe('P7 I2 VS Code user-facing Chat Participant / setup composition', () =>
     expect(result.markdown.join('\n')).toContain('No operation was created');
   });
 
+  it('fails closed when a concrete governed review bridge exists but is unavailable', async () => {
+    const model = modelFixture(true);
+    await model.access.prepareFromUserGesture();
+    let calls = 0;
+    const review: VsCodeGovernedReviewPort = {
+      isAvailable: () => false,
+      requestReview: async () => { calls += 1; return { operationId: `ideo_${'d'.repeat(32)}`, terminalState: 'COMPLETED' }; },
+    };
+    const ctx = fakeChat();
+    registerVsCodeChatParticipantSetup({ chat: ctx.chat, registration: registration(), readiness: readiness(), modelAccess: model.access, governedReview: review });
+    const result = await invoke(ctx.handler(), 'review inspect the change');
+    expect(result.result?.metadata).toMatchObject({ action: 'review', outcome: 'UNAVAILABLE' });
+    expect(calls).toBe(0);
+    expect(model.sent()).toBe(0);
+  });
+
   it('delegates a user review only to the narrow QuaranGate-governed port and cannot fabricate operation/controller/project/worktree identity', async () => {
     const model = modelFixture(true);
     await model.access.prepareFromUserGesture();
     const seen: Array<Record<string, unknown>> = [];
     const review: VsCodeGovernedReviewPort = {
+      isAvailable: () => true,
       requestReview: async (input) => {
         seen.push(input as unknown as Record<string, unknown>);
         input.emit({ type: 'status', message: 'durably admitted' });
@@ -311,7 +328,7 @@ describe('P7 I2 VS Code user-facing Chat Participant / setup composition', () =>
   it('rejects an invalid operation identity returned by the governed review boundary', async () => {
     const model = modelFixture(true);
     await model.access.prepareFromUserGesture();
-    const review: VsCodeGovernedReviewPort = { requestReview: async () => ({ operationId: 'participant-invented-id', terminalState: 'COMPLETED' }) };
+    const review: VsCodeGovernedReviewPort = { isAvailable: () => true, requestReview: async () => ({ operationId: 'participant-invented-id', terminalState: 'COMPLETED' }) };
     const ctx = fakeChat();
     registerVsCodeChatParticipantSetup({ chat: ctx.chat, registration: registration(), readiness: readiness(), modelAccess: model.access, governedReview: review });
     const result = await invoke(ctx.handler(), 'review inspect');
@@ -323,6 +340,7 @@ describe('P7 I2 VS Code user-facing Chat Participant / setup composition', () =>
     await model.access.prepareFromUserGesture();
     let sawAbort = false;
     const review: VsCodeGovernedReviewPort = {
+      isAvailable: () => true,
       requestReview: async ({ signal }) => await new Promise((resolve) => {
         signal.addEventListener('abort', () => { sawAbort = true; resolve({ operationId: `ideo_${'c'.repeat(32)}`, terminalState: 'CANCELLED' }); }, { once: true });
       }),
@@ -342,6 +360,7 @@ describe('P7 I2 VS Code user-facing Chat Participant / setup composition', () =>
     await model.access.prepareFromUserGesture();
     const huge = '界'.repeat(MAX_IDE_EVENT_MESSAGE_BYTES);
     const review: VsCodeGovernedReviewPort = {
+      isAvailable: () => true,
       requestReview: async ({ emit }) => {
         emit({ type: 'assistant_chunk', message: huge });
         throw new Error('SECRET_PROVIDER_ERROR_BODY');
