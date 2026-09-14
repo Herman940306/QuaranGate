@@ -5,7 +5,6 @@ import {
   parseIdeWorkspaceAttestation,
   type IdeWorkspaceAttestation,
 } from '../../shared/ideWorkspaceAttestation.js';
-import type { AdmittedIdeCompanionRequest } from './ideCompanionAdmission.js';
 import {
   assertIdeCompanionRuntimeRef,
   type IdeCompanionRuntimeRef,
@@ -27,11 +26,19 @@ export class IdeWorkspaceVerificationError extends Error {
   }
 }
 
+export interface AuthenticatedIdeWorkspacePayload {
+  enrollmentId: string;
+  ideInstanceId: string;
+  sessionId: string;
+  connectionGeneration: number;
+  payloadSha256: string;
+}
+
 export interface VerifyAuthenticatedIdeWorkspaceInput {
   store: IdeSessionStore;
   runtime: IdeCompanionRuntimeRef;
-  /** Genuine output of accepted B4/B3 admission for these exact payload bytes. */
-  admitted: AdmittedIdeCompanionRequest;
+  /** Genuine output of an accepted authenticated channel for these exact bytes. */
+  admitted: AuthenticatedIdeWorkspacePayload;
   payload: Uint8Array | string;
 }
 

@@ -1,0 +1,380 @@
+/**
+ * P7 B6 authenticated local Unix-domain companion listener.
+ *
+ * This listener establishes identity/workspace presence only. It does not run
+ * prompts, tools, providers, operations, audits or writer actions.
+ */
+import { randomBytes } from 'node:crypto';
+import { existsSync, lstatSync, rmSync } from 'node:fs';
+import { createServer, type Server, type Socket } from 'node:net';
+import {
+  IDE_COMPANION_HANDSHAKE_MAX_FRAME_BYTES,
+  IDE_COMPANION_HANDSHAKE_MAX_LIFETIME_MS,
+  IDE_COMPANION_HANDSHAKE_VERSION,
+  IdeCompanionHandshakeError,
+  parseIdeCompanionAttest,
+  parseIdeCompanionHello,
+  verifyIdeCompanionAttest,
+  type IdeCompanionAttestFrame,
+  type IdeCompanionHelloFrame,
+} from '../../shared/ideCompanionHandshake.js';
+import {
+  IdeWorkspaceAttestationError,
+} from '../../shared/ideWorkspaceAttestation.js';
+import {
+  IdeRegistryStoreError,
+  IdeSessionStore,
+  type IdeEnrollmentRow,
+  type IdeSessionRegistryKey,
+} from './ideSessionStore.js';
+import {
+  IdeCompanionRuntimeError,
+  assertIdeCompanionRuntimeRef,
+  hardenAndVerifyIdeCompanionSocket,
+  readIdeCompanionSecret,
+  type IdeCompanionRuntimeRef,
+} from './ideCompanionRuntime.js';
+import {
+  IdeWorkspaceVerificationError,
+  verifyAuthenticatedIdeWorkspace,
+} from './ideWorkspaceAttestation.js';
+
+export const IDE_COMPANION_LISTENER_MAX_CONNECTIONS = 16;
+export const IDE_COMPANION_LISTENER_HANDSHAKE_TIMEOUT_MS = 20_000;
+export const IDE_COMPANION_LISTENER_MAX_WRITE_QUEUE_BYTES = 64 * 1024;
+
+export type IdeCompanionListenerErrorCode =
+  | 'IDE_LISTENER_UNSUPPORTED_OS'
+  | 'IDE_LISTENER_ALREADY_STARTED'
+  | 'IDE_LISTENER_SOCKET_EXISTS'
+  | 'IDE_LISTENER_BIND_FAILED';
+
+export class IdeCompanionListenerError extends Error {
+  constructor(public readonly code: IdeCompanionListenerErrorCode, message: string) {
+    super(message);
+    this.name = 'IdeCompanionListenerError';
+  }
+}
+
+export interface IdeCompanionListenerOptions {
+  store: IdeSessionStore;
+  runtime: IdeCompanionRuntimeRef;
+  /** Trusted test seam; production callers omit it. */
+  nowMs?: () => number;
+  /** Trusted test seam; must return exactly 32 fresh random bytes in production. */
+  challengeBytes?: () => Buffer;
+}
+
+interface PendingHandshake {
+  hello: IdeCompanionHelloFrame;
+  enrollment: IdeEnrollmentRow;
+  expectedCurrentGeneration: number;
+  proposedGeneration: number;
+  serverChallenge: string;
+  expiresAtMs: number;
+}
+
+interface ConnectionState {
+  phase: 'HELLO' | 'ATTEST' | 'READY' | 'CLOSED';
+  buffer: Buffer;
+  processing: boolean;
+  pending?: PendingHandshake;
+  sessionKey?: IdeSessionRegistryKey;
+  enrollmentId?: string;
+}
+
+type PublicServerFrame =
+  | { version: 1; type: 'challenge'; sessionId: string; connectionGeneration: number; serverChallenge: string; expiresAtMs: number }
+  | { version: 1; type: 'ready'; sessionId: string; connectionGeneration: number }
+  | { version: 1; type: 'error'; code: string };
+
+function currentUid(): number {
+  if (typeof process.getuid !== 'function') throw new IdeCompanionListenerError('IDE_LISTENER_UNSUPPORTED_OS', 'Unix uid support is required');
+  return process.getuid();
+}
+
+function publicCode(error: unknown): string {
+  if (error instanceof IdeCompanionHandshakeError) return error.code;
+  if (error instanceof IdeCompanionRuntimeError) return 'IDE_RUNTIME_DENIED';
+  if (error instanceof IdeWorkspaceAttestationError || error instanceof IdeWorkspaceVerificationError) return 'IDE_WORKSPACE_DENIED';
+  if (error instanceof IdeRegistryStoreError) return 'IDE_SESSION_DENIED';
+  return 'INTERNAL';
+}
+
+function writeFrame(socket: Socket, frame: PublicServerFrame): void {
+  if (socket.destroyed) return;
+  const body = Buffer.from(`${JSON.stringify(frame)}\n`, 'utf8');
+  if (body.byteLength > IDE_COMPANION_LISTENER_MAX_WRITE_QUEUE_BYTES
+    || socket.writableLength + body.byteLength > IDE_COMPANION_LISTENER_MAX_WRITE_QUEUE_BYTES) {
+    socket.destroy();
+    return;
+  }
+  socket.write(body);
+}
+
+function sessionKey(enrollment: IdeEnrollmentRow, sessionId: string, connectionGeneration: number): IdeSessionRegistryKey {
+  return {
+    principalId: enrollment.principalId,
+    projectId: enrollment.projectId,
+    worktreeId: enrollment.worktreeId,
+    workspaceFingerprint: enrollment.workspaceFingerprint,
+    baseRevision: enrollment.baseRevision,
+    ideProduct: enrollment.ideProduct,
+    ideInstanceId: enrollment.ideInstanceId,
+    sessionId,
+    connectionGeneration,
+  };
+}
+
+export class IdeCompanionListener {
+  private readonly server: Server;
+  private readonly sockets = new Map<Socket, ConnectionState>();
+  private readonly enrollmentSockets = new Map<string, Socket>();
+  private readonly clock: () => number;
+  private readonly challenge: () => Buffer;
+  private started = false;
+  private ownsSocketPath = false;
+
+  constructor(private readonly opts: IdeCompanionListenerOptions) {
+    this.clock = opts.nowMs ?? (() => Date.now());
+    this.challenge = opts.challengeBytes ?? (() => randomBytes(32));
+    this.server = createServer((socket) => this.accept(socket));
+  }
+
+  async start(): Promise<void> {
+    if (this.started) throw new IdeCompanionListenerError('IDE_LISTENER_ALREADY_STARTED', 'IDE companion listener is already started');
+    if (process.platform === 'win32') throw new IdeCompanionListenerError('IDE_LISTENER_UNSUPPORTED_OS', 'Unix-domain sockets are required');
+    assertIdeCompanionRuntimeRef(this.opts.runtime);
+    // Refuse to expose even a local endpoint for a revoked/tampered runtime.
+    // The actual request path still re-reads the credential again per attest.
+    const startupMaterial = readIdeCompanionSecret(this.opts.runtime);
+    startupMaterial.secret.fill(0);
+    if (existsSync(this.opts.runtime.socketPath)) {
+      throw new IdeCompanionListenerError('IDE_LISTENER_SOCKET_EXISTS', 'IDE companion socket path already exists');
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error): void => reject(new IdeCompanionListenerError('IDE_LISTENER_BIND_FAILED', error.message));
+      this.server.once('error', onError);
+      this.server.listen(this.opts.runtime.socketPath, () => {
+        this.server.off('error', onError);
+        this.ownsSocketPath = true;
+        resolve();
+      });
+    });
+    try {
+      hardenAndVerifyIdeCompanionSocket(this.opts.runtime);
+      this.started = true;
+    } catch (error) {
+      await new Promise<void>((resolve) => this.server.close(() => resolve()));
+      this.removeOwnedSocketIfPresent();
+      throw error;
+    }
+  }
+
+  async stop(): Promise<void> {
+    // Reconcile durable session state synchronously before relying on socket
+    // close-event ordering. A controlled shutdown must not return while a
+    // previously READY session can still appear live in Plane-B.
+    for (const [socket, state] of [...this.sockets.entries()]) {
+      this.reconcileDisconnect(socket, state);
+      state.phase = 'CLOSED';
+      socket.destroy();
+    }
+    this.sockets.clear();
+    this.enrollmentSockets.clear();
+    if (this.started) {
+      await new Promise<void>((resolve) => this.server.close(() => resolve()));
+      this.started = false;
+    }
+    this.removeOwnedSocketIfPresent();
+  }
+
+  private removeOwnedSocketIfPresent(): void {
+    if (!this.ownsSocketPath) return;
+    try {
+      if (existsSync(this.opts.runtime.socketPath)) {
+        const info = lstatSync(this.opts.runtime.socketPath);
+        if (info.isSocket() && !info.isSymbolicLink() && info.uid === currentUid()) rmSync(this.opts.runtime.socketPath);
+      }
+    } catch { /* fail safe: never unlink an unproven path */ }
+    finally { this.ownsSocketPath = false; }
+  }
+
+  private accept(socket: Socket): void {
+    if (this.sockets.size >= IDE_COMPANION_LISTENER_MAX_CONNECTIONS) {
+      writeFrame(socket, { version: 1, type: 'error', code: 'CAPACITY' });
+      socket.end();
+      return;
+    }
+    const state: ConnectionState = { phase: 'HELLO', buffer: Buffer.alloc(0), processing: false };
+    this.sockets.set(socket, state);
+    socket.setTimeout(IDE_COMPANION_LISTENER_HANDSHAKE_TIMEOUT_MS);
+    socket.on('timeout', () => socket.destroy());
+    socket.on('error', () => undefined);
+    socket.on('close', () => this.closed(socket, state));
+    socket.on('data', (chunk: Buffer) => this.onData(socket, state, chunk));
+  }
+
+  private closed(socket: Socket, state: ConnectionState): void {
+    this.reconcileDisconnect(socket, state);
+    state.phase = 'CLOSED';
+  }
+
+  private reconcileDisconnect(socket: Socket, state: ConnectionState): void {
+    this.sockets.delete(socket);
+    if (state.enrollmentId !== undefined && this.enrollmentSockets.get(state.enrollmentId) === socket) {
+      this.enrollmentSockets.delete(state.enrollmentId);
+    }
+    if (state.sessionKey !== undefined) {
+      try {
+        const row = this.opts.store.getSession(state.sessionKey.sessionId);
+        if (row !== undefined && row.connectionGeneration === state.sessionKey.connectionGeneration
+          && row.state !== 'DISCONNECTED' && row.state !== 'STALE') {
+          this.opts.store.disconnect(state.sessionKey);
+        }
+      } catch { /* terminal/replaced state already fails closed */ }
+    }
+  }
+
+  private onData(socket: Socket, state: ConnectionState, chunk: Buffer): void {
+    if (state.phase === 'READY' || state.phase === 'CLOSED' || state.processing) {
+      writeFrame(socket, { version: 1, type: 'error', code: 'UNEXPECTED_FRAME' });
+      socket.end();
+      return;
+    }
+    if (state.buffer.byteLength + chunk.byteLength > IDE_COMPANION_HANDSHAKE_MAX_FRAME_BYTES + 1) {
+      writeFrame(socket, { version: 1, type: 'error', code: 'IDE_HANDSHAKE_FRAME_SIZE' });
+      socket.end();
+      return;
+    }
+    state.buffer = Buffer.concat([state.buffer, chunk]);
+    const newline = state.buffer.indexOf(0x0a);
+    if (newline < 0) return;
+    if (newline !== state.buffer.byteLength - 1) {
+      writeFrame(socket, { version: 1, type: 'error', code: 'MULTIPLE_FRAMES' });
+      socket.end();
+      return;
+    }
+    const frame = state.buffer.subarray(0, newline);
+    state.buffer = Buffer.alloc(0);
+    state.processing = true;
+    void this.handleFrame(socket, state, frame).finally(() => { state.processing = false; });
+  }
+
+  private async handleFrame(socket: Socket, state: ConnectionState, frame: Buffer): Promise<void> {
+    try {
+      if (state.phase === 'HELLO') {
+        this.handleHello(socket, state, frame);
+        return;
+      }
+      if (state.phase === 'ATTEST') {
+        this.handleAttest(socket, state, frame);
+        return;
+      }
+      throw new IdeCompanionListenerError('IDE_LISTENER_BIND_FAILED', 'unexpected connection phase');
+    } catch (error) {
+      writeFrame(socket, { version: 1, type: 'error', code: publicCode(error) });
+      socket.end();
+    }
+  }
+
+  private handleHello(socket: Socket, state: ConnectionState, bytes: Buffer): void {
+    const hello = parseIdeCompanionHello(bytes);
+    const runtime = this.opts.runtime;
+    assertIdeCompanionRuntimeRef(runtime);
+    if (hello.enrollmentId !== runtime.enrollmentId || hello.ideInstanceId !== runtime.ideInstanceId
+      || hello.runtimeInstanceId !== runtime.runtimeInstanceId || hello.adapterId !== runtime.adapterId
+      || hello.adapterVersion !== runtime.adapterVersion) {
+      throw new IdeCompanionRuntimeError('IDE_RUNTIME_BINDING_MISMATCH', 'hello does not match trusted runtime identity');
+    }
+    const enrollment = this.opts.store.getEnrollment(hello.enrollmentId);
+    if (!enrollment || enrollment.state !== 'ACTIVE' || enrollment.ideInstanceId !== hello.ideInstanceId
+      || enrollment.ideProduct !== runtime.ideProduct) {
+      throw new IdeRegistryStoreError('IDE_ENROLLMENT_NOT_ACTIVE', 'IDE enrollment is not active for this runtime');
+    }
+    const proposedGeneration = enrollment.currentGeneration + 1;
+    if (!Number.isSafeInteger(proposedGeneration) || proposedGeneration < 1) {
+      throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', 'IDE connection generation exhausted');
+    }
+    const challengeBytes = this.challenge();
+    if (!Buffer.isBuffer(challengeBytes) || challengeBytes.byteLength !== 32) throw new Error('challenge source did not return 32 bytes');
+    const now = this.clock();
+    if (!Number.isSafeInteger(now) || now < 0 || now > Number.MAX_SAFE_INTEGER - IDE_COMPANION_HANDSHAKE_MAX_LIFETIME_MS) throw new Error('clock is invalid');
+    const pending: PendingHandshake = {
+      hello,
+      enrollment,
+      expectedCurrentGeneration: enrollment.currentGeneration,
+      proposedGeneration,
+      serverChallenge: challengeBytes.toString('base64url'),
+      expiresAtMs: now + IDE_COMPANION_HANDSHAKE_MAX_LIFETIME_MS,
+    };
+    state.pending = pending;
+    state.phase = 'ATTEST';
+    writeFrame(socket, {
+      version: IDE_COMPANION_HANDSHAKE_VERSION,
+      type: 'challenge',
+      sessionId: hello.sessionId,
+      connectionGeneration: proposedGeneration,
+      serverChallenge: pending.serverChallenge,
+      expiresAtMs: pending.expiresAtMs,
+    });
+  }
+
+  private handleAttest(socket: Socket, state: ConnectionState, bytes: Buffer): void {
+    const pending = state.pending;
+    if (!pending) throw new Error('missing handshake challenge');
+    const frame = parseIdeCompanionAttest(bytes);
+    this.assertAttestMatchesChallenge(frame, pending);
+    const material = readIdeCompanionSecret(this.opts.runtime);
+    try { verifyIdeCompanionAttest({ frame, secret: material.secret, nowMs: this.clock() }); }
+    finally { material.secret.fill(0); }
+
+    const enrollment = pending.enrollment;
+    const opened = this.opts.store.openSessionIfCurrent({
+      enrollmentId: enrollment.enrollmentId,
+      principalId: enrollment.principalId,
+      projectId: enrollment.projectId,
+      worktreeId: enrollment.worktreeId,
+      ideProduct: enrollment.ideProduct,
+      ideInstanceId: enrollment.ideInstanceId,
+      workspaceFingerprint: enrollment.workspaceFingerprint,
+      baseRevision: enrollment.baseRevision,
+      sessionId: pending.hello.sessionId,
+    }, pending.expectedCurrentGeneration);
+    if (opened.connectionGeneration !== pending.proposedGeneration) throw new IdeRegistryStoreError('IDE_SESSION_BINDING_MISMATCH', 'handshake generation changed unexpectedly');
+    state.sessionKey = sessionKey(enrollment, opened.sessionId, opened.connectionGeneration);
+
+    verifyAuthenticatedIdeWorkspace({
+      store: this.opts.store,
+      runtime: this.opts.runtime,
+      admitted: {
+        enrollmentId: frame.enrollmentId,
+        ideInstanceId: frame.ideInstanceId,
+        sessionId: frame.sessionId,
+        connectionGeneration: frame.connectionGeneration,
+        payloadSha256: frame.payloadSha256,
+      },
+      payload: frame.workspaceAttestation,
+    });
+    this.opts.store.markAvailable(state.sessionKey);
+
+    const prior = this.enrollmentSockets.get(enrollment.enrollmentId);
+    if (prior !== undefined && prior !== socket) prior.destroy();
+    this.enrollmentSockets.set(enrollment.enrollmentId, socket);
+    state.enrollmentId = enrollment.enrollmentId;
+    state.phase = 'READY';
+    state.pending = undefined;
+    socket.setTimeout(0);
+    writeFrame(socket, { version: 1, type: 'ready', sessionId: opened.sessionId, connectionGeneration: opened.connectionGeneration });
+  }
+
+  private assertAttestMatchesChallenge(frame: IdeCompanionAttestFrame, pending: PendingHandshake): void {
+    const hello = pending.hello;
+    const mismatched = frame.enrollmentId !== hello.enrollmentId || frame.ideInstanceId !== hello.ideInstanceId
+      || frame.runtimeInstanceId !== hello.runtimeInstanceId || frame.adapterId !== hello.adapterId
+      || frame.adapterVersion !== hello.adapterVersion || frame.sessionId !== hello.sessionId
+      || frame.clientNonce !== hello.clientNonce || frame.connectionGeneration !== pending.proposedGeneration
+      || frame.serverChallenge !== pending.serverChallenge || frame.expiresAtMs !== pending.expiresAtMs;
+    if (mismatched) throw new IdeCompanionHandshakeError('IDE_HANDSHAKE_AUTH_DENIED', 'authentication denied');
+  }
+}

@@ -457,12 +457,33 @@ export class IdeSessionStore {
   }
 
   openSession(input: OpenIdeSession): IdeSessionRegistryRow {
+    return this.openSessionInternal(input);
+  }
+
+  /**
+   * B6 pre-controller handshake CAS: an unauthenticated hello may observe the
+   * current generation but must not mutate it. Only after MAC verification may
+   * the listener open a session, and only if the enrollment generation is still
+   * exactly the one challenged. A stale concurrent handshake therefore cannot
+   * stale a newer authenticated connection.
+   */
+  openSessionIfCurrent(input: OpenIdeSession, expectedCurrentGeneration: number): IdeSessionRegistryRow {
+    if (!Number.isSafeInteger(expectedCurrentGeneration) || expectedCurrentGeneration < 0) {
+      throw new IdeRegistryStoreError('IDE_SESSION_BINDING_MISMATCH', 'expected IDE enrollment generation is invalid');
+    }
+    return this.openSessionInternal(input, expectedCurrentGeneration);
+  }
+
+  private openSessionInternal(input: OpenIdeSession, expectedCurrentGeneration?: number): IdeSessionRegistryRow {
     validateEnrollmentIdentity(input); assertIdeSessionId(input.sessionId);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       if (this.db.prepare(`SELECT 1 FROM ide_sessions WHERE session_id=?`).get(input.sessionId)!==undefined) throw new IdeRegistryStoreError('IDE_SESSION_ID_REUSED','IDE session ID has already been used');
       const enrollment=this.requireEnrollment(input.enrollmentId); this.assertEnrollmentKey(enrollment,input);
       if (enrollment.state!=='ACTIVE') throw new IdeRegistryStoreError('IDE_ENROLLMENT_NOT_ACTIVE','IDE enrollment is not active');
+      if (expectedCurrentGeneration!==undefined && enrollment.currentGeneration!==expectedCurrentGeneration) {
+        throw new IdeRegistryStoreError('IDE_SESSION_BINDING_MISMATCH','IDE enrollment generation changed after handshake challenge');
+      }
       const next=enrollment.currentGeneration+1;
       if (!Number.isSafeInteger(next)||next<1) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE connection generation exhausted safe integer range');
       const now=nowIso();

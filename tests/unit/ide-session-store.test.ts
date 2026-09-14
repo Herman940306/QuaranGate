@@ -176,6 +176,24 @@ describe('P7 B2 generations and exact binding', () => {
     expect(store.getEnrollment(e.enrollmentId)?.currentGeneration).toBe(2);
   });
 
+
+  it('B6 opens a challenged session only when the enrollment generation is still exact', () => {
+    const e=store.createEnrollment(enrollment());
+    const s=store.openSessionIfCurrent({...keyFor(e),sessionId:`ides_${'7'.repeat(32)}`},0);
+    expect(s.connectionGeneration).toBe(1);
+    expect(store.getEnrollment(e.enrollmentId)?.currentGeneration).toBe(1);
+  });
+
+  it('B6 stale challenge CAS cannot stale or replace a newer authenticated generation', () => {
+    const e=store.createEnrollment(enrollment());
+    const winner=store.openSessionIfCurrent({...keyFor(e),sessionId:`ides_${'7'.repeat(32)}`},0);
+    expect(winner.connectionGeneration).toBe(1);
+    expect(errorCode(()=>store.openSessionIfCurrent({...keyFor(e),sessionId:`ides_${'8'.repeat(32)}`},0))).toBe('IDE_SESSION_BINDING_MISMATCH');
+    expect(store.getEnrollment(e.enrollmentId)?.currentGeneration).toBe(1);
+    expect(store.getSession(winner.sessionId)?.state).toBe('CONNECTED');
+    expect(store.getSession(`ides_${'8'.repeat(32)}`)).toBeUndefined();
+  });
+
   it('refuses reuse of a historical session ID', () => {
     const e = store.createEnrollment(enrollment()); const first = open(e);
     expect(errorCode(() => open(store.getEnrollment(e.enrollmentId)!, first.sessionId))).toBe('IDE_SESSION_ID_REUSED');
