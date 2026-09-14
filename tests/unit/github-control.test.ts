@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateGitHubConfig } from '../../src/executor/githubConfig.js';
 import { buildGitHubHeadCheckSpec, buildGitHubPushHelperSpec } from '../../src/executor/githubControl.js';
+import { isSupportedGitHubInstallationRepositorySelection } from '../../src/shared/github.js';
 import { principalCanGithubAccount, principalCanGithubProject, type Principal } from '../../src/gateway/config.js';
 
 const principal = (githubAccounts: string[], githubProjects: string[]): Principal => ({
@@ -25,6 +26,14 @@ describe('GitHub trusted configuration', () => {
   it('allows account-only discovery with zero local push mappings', () => {
     const cfg = validateGitHubConfig({ accounts: [{ owner: 'Herman940306' }] });
     expect(cfg.repositories).toEqual([]);
+  });
+
+  it('accepts exactly GitHub all/selected installation repository-selection modes', () => {
+    expect(isSupportedGitHubInstallationRepositorySelection('all')).toBe(true);
+    expect(isSupportedGitHubInstallationRepositorySelection('selected')).toBe(true);
+    expect(isSupportedGitHubInstallationRepositorySelection('private')).toBe(false);
+    expect(isSupportedGitHubInstallationRepositorySelection('')).toBe(false);
+    expect(isSupportedGitHubInstallationRepositorySelection(undefined)).toBe(false);
   });
 
   it('rejects duplicate trusted accounts, duplicate projects, and mappings outside trusted accounts', () => {

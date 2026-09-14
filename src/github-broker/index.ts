@@ -8,9 +8,9 @@
  * - callers cannot provide arbitrary URLs: every route expands one fixed GitHub
  *   REST endpoint family from separately validated owner/repo/ref inputs;
  * - discovery tokens are installation-wide but metadata-read only and are used
- *   solely to enumerate repositories granted to a trusted All-repositories
- *   installation; operation tokens are scoped to one repository and the minimum
- *   permission set for that operation.
+ *   solely to enumerate repositories granted to a trusted installation, including
+ *   Selected-repositories installations; operation tokens are scoped to one
+ *   repository and the minimum permission set for that operation.
  */
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -31,6 +31,7 @@ import {
   GITHUB_MAX_TITLE_CHARS,
   GITHUB_OWNER_PATTERN,
   GITHUB_REPO_PATTERN,
+  isSupportedGitHubInstallationRepositorySelection,
   type GitHubReviewEvent,
 } from '../shared/github.js';
 
@@ -234,8 +235,8 @@ async function installationIdForAccount(owner: string): Promise<number> {
         if (installation?.suspended_at != null) {
           throw new BridgeError('GITHUB_NOT_CONFIGURED', `QuaranHUB installation on ${owner} is suspended`, 503);
         }
-        if (installation?.repository_selection !== 'all') {
-          throw new BridgeError('GITHUB_NOT_CONFIGURED', `QuaranHUB installation on ${owner} must use All repositories`, 503);
+        if (!isSupportedGitHubInstallationRepositorySelection(installation?.repository_selection)) {
+          throw new BridgeError('GITHUB_API_ERROR', `QuaranHUB installation on ${owner} returned an unsupported repository selection`, 502);
         }
         return id;
       }
@@ -248,9 +249,11 @@ async function installationIdForAccount(owner: string): Promise<number> {
 async function installationWideToken(owner: string, permissions: Record<string, 'read' | 'write'>): Promise<{ token: string; expiresAt: string }> {
   // Discovery deliberately does not cache account-wide installation state or
   // tokens. Every discovery call re-verifies that the trusted installation is
-  // active and still configured for All repositories before minting a fresh,
-  // metadata-only installation token. This makes a later GitHub-side scope
-  // reduction fail closed instead of being masked by an hour-long cache.
+  // active with a supported GitHub repository-selection mode before minting a
+  // fresh metadata-only installation token. GitHub constrains that token to the
+  // repositories granted to the installation, including a Selected-repositories
+  // grant. This also makes later GitHub-side scope changes visible immediately
+  // instead of being masked by an hour-long account-token cache.
   const id = await installationIdForAccount(owner);
   const r = await rawGitHub('POST', `/app/installations/${id}/access_tokens`, appJwt(), { permissions });
   const token = r.json?.token;

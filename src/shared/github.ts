@@ -7,6 +7,14 @@ export const GITHUB_REPOSITORY_KEY_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})
 export const GITHUB_BRANCH_PATTERN = /^(?!\/)(?!.*\.\.)(?!.*(?:^|\/)\.)(?!.*[~^:?*\[\\\s])(?!.*\/$)(?!.*\.lock(?:\/|$))[A-Za-z0-9._\/-]{1,255}$/;
 export const GITHUB_COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 
+export type GitHubInstallationRepositorySelection = 'all' | 'selected';
+
+export function isSupportedGitHubInstallationRepositorySelection(
+  value: unknown,
+): value is GitHubInstallationRepositorySelection {
+  return value === 'all' || value === 'selected';
+}
+
 export const GITHUB_API_VERSION = '2026-03-10';
 export const GITHUB_MAX_LIST_ITEMS = 100;
 export const GITHUB_MAX_DISCOVERED_REPOSITORIES = 1000;

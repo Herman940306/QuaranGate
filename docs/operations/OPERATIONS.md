@@ -34,11 +34,11 @@ QuaranGate is intentionally conservative about operational authority. A successf
 - [Troubleshooting](#troubleshooting)
 - [Operational rules](#operational-rules)
 
-## Current closeout gates — 2026-09-06
+## Historical closeout gates — 2026-09-06
 
-The GitHub/MCP side-quest runtime is deployed and healthy, but closeout is intentionally human-gated:
+This section preserves the GitHub/MCP side-quest state as it existed on 2026-09-06. It is historical evidence, not current operational authority:
 
-1. `QuaranHUB` on `JustAGameZA` currently uses **Selected repositories**. `github_repositories` therefore fails closed with `GITHUB_NOT_CONFIGURED` until the organization owner changes only the installation repository access to **All repositories**. Do **not** add or change App permissions to fix this.
+1. At this checkpoint, `QuaranHUB` on `JustAGameZA` used **Selected repositories** and the then-current broker rejected that mode. P4 removes that obsolete all-only restriction without adding App permissions; current source discovery is constrained to the repositories GitHub grants to the installation.
 2. The clean candidate overlaps protected uncommitted owner work at `scripts/remote-owner-start.sh`; do not fast-forward/cherry-pick over that path until it is deliberately reconciled.
 
 The statuses-only repair is live: `github_checks` succeeds without GitHub Checks permission, reads Commit statuses, and returns `checkRuns: []` for compatibility.

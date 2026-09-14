@@ -2,12 +2,12 @@
 
 Status: **DEPLOYED CANDIDATE / LIVE STATUS-READ ACCEPTED / CLOSEOUT HUMAN-GATED — OWNER-APPROVED READ / WRITE / REVIEW, NO MERGE**
 
-## Current live state — 2026-09-06
+## Historical live state — 2026-09-06
 
 - Deployed candidate: `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`.
 - `github_checks`: **PASS** against live GitHub using Commit statuses only; no GitHub 422; `checkRuns: []` is expected compatibility output.
 - Trusted accounts loaded by the current runtime: `Herman940306`, `JustAGameZA`.
-- `JustAGameZA` repository discovery: **human-gated** because the QuaranHUB organization installation currently uses **Selected repositories**. The broker correctly fails closed and requires **All repositories** for account-level dynamic discovery. This is an installation repository-access setting, not an App-permission change.
+- At this historical checkpoint, `JustAGameZA` repository discovery was human-gated because the broker still required **All repositories**. P4 removes that obsolete all-only restriction; current source accepts GitHub's `all` and `selected` installation modes while discovery remains bounded to repositories granted to the installation.
 - Source promotion: blocked because the clean candidate and protected root work both touch `scripts/remote-owner-start.sh`.
 - No merge, force-push, wildcard-repository, Checks-permission or Docker-socket authority was added.
 
@@ -89,7 +89,7 @@ The `accounts` list is the remote authority root. QuaranGate will enumerate only
 trusted account -> QuaranHUB installation -> repositories visible to the App
 ```
 
-This enables current and future repositories on an approved account to appear automatically when the App installation uses **All repositories**, without broadening authority to unrelated GitHub accounts.
+With **All repositories**, current and future repositories granted by that installation appear automatically. With **Selected repositories**, only the repositories explicitly granted to the App installation appear. Neither mode broadens authority to unrelated GitHub accounts or to repositories outside the installation grant.
 
 The optional `repositories` list is a separate local-push registry:
 
@@ -216,7 +216,7 @@ Herman940306
 JustAGameZA
 ```
 
-The personal-account installation is usable. The `JustAGameZA` organization is trusted in QuaranGate, but its current QuaranHUB installation uses **Selected repositories**, so account-level discovery intentionally fails closed. Change that installation's repository access to **All repositories** before treating the organization as dynamically discoverable. Organizations such as `ZerithZA` are added only after their owner/admin installs QuaranHUB with **All repositories** and the QuaranGate owner explicitly adds that organization to `config/github.yaml`. QuaranGate still fails closed because only accounts listed in trusted `config/github.yaml` and allowed by the client `githubAccounts` grant are usable. An installation on some unrelated third-party account does not become visible merely because the App can be installed there.
+The personal-account installation is usable. `JustAGameZA` may remain on **Selected repositories**: account discovery returns only repositories GitHub reports as granted to that installation. Organizations such as `ZerithZA` are added only after their owner/admin installs QuaranHUB using either **Selected repositories** or **All repositories** and the QuaranGate owner explicitly adds that organization to `config/github.yaml`. QuaranGate still fails closed because only accounts listed in trusted `config/github.yaml` and allowed by the client `githubAccounts` grant are usable. An installation on an unrelated third-party account does not become visible merely because the App can be installed there, and a repository outside a Selected-repositories grant cannot be added to an installation token by QuaranGate.
 
 Repository-specific Git push remains more restrictive: a repository must additionally have a trusted local `project` mapping before `github_push_branch` can publish an exact local HEAD.
 

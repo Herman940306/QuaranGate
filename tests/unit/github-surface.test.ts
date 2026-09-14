@@ -110,7 +110,8 @@ describe('GitHub public authority surface', () => {
     expect(broker).toContain('/app/installations?per_page=100&page=');
     expect(broker).toContain('/installation/repositories?per_page=100&page=');
     expect(broker).toContain("{ metadata: 'read' }");
-    expect(broker).toContain("repository_selection !== 'all'");
+    expect(broker).toContain('isSupportedGitHubInstallationRepositorySelection(installation?.repository_selection)');
+    expect(broker).not.toContain('must use All repositories');
     expect(broker).toContain('installation?.suspended_at != null');
     expect(broker).not.toContain('accountInstallationCache');
     const discoveryToken = broker.slice(
@@ -118,6 +119,8 @@ describe('GitHub public authority surface', () => {
       broker.indexOf('async function repositoriesForAccount'),
     );
     expect(discoveryToken).not.toContain('tokenCache');
+    expect(discoveryToken).not.toContain('repositories:');
+    expect(broker).toContain('repositories: [repo]');
     expect(control).toContain('isTrustedGitHubOwner');
     expect(broker).toContain('validateTrustedOwner');
     expect(control).toContain('owner.toLowerCase() !== account.owner.toLowerCase()');

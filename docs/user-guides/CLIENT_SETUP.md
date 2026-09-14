@@ -371,7 +371,7 @@ githubAccounts: ["Herman940306", "JustAGameZA"]
 githubProjects: ["mcp-ide-bridge", "governed-ai-engineering-platform"]
 ```
 
-As of 2026-09-06, `JustAGameZA` is trusted and granted to the owner client, but live repository discovery remains intentionally blocked until that QuaranHUB installation is changed from Selected repositories to All repositories. `githubAccounts: ["*"]` means every account in trusted `config/github.yaml`; it never means arbitrary GitHub accounts. `githubProjects: ["*"]` means every trusted local push mapping. There is no merge scope/tool. `github:read` covers live repository/branch/commit/PR/check state plus issues, issue comments, submitted PR reviews and review comments. See `docs/backend/GITHUB_CONTROL_PLANE.md` for QuaranHUB installation, dynamic repository discovery, credential isolation, push restrictions and the GitHub-only egress boundary.
+QuaranHUB supports both **Selected repositories** and **All repositories** installations. For Selected repositories, `github_repositories` discovers only repositories GitHub grants to that installation; changing to All repositories is not required. `githubAccounts: ["*"]` means every account in trusted `config/github.yaml`; it never means arbitrary GitHub accounts. `githubProjects: ["*"]` means every trusted local push mapping. There is no merge scope/tool. `github:read` covers live repository/branch/commit/PR/check state plus issues, issue comments, submitted PR reviews and review comments. See `docs/backend/GITHUB_CONTROL_PLANE.md` for QuaranHUB installation, dynamic repository discovery, credential isolation, push restrictions and the GitHub-only egress boundary.
 
 ---
 
