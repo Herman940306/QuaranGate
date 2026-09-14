@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, cp, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, cp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import {
+  MAX_EVIDENCE_INPUT_BYTES,
   createEvidenceManifest,
   createQualificationStep,
+  readEvidenceInputJson,
   sanitizeEvidence,
+  writeEvidenceManifest,
 } from '../../scripts/vscode-qualification-evidence.mjs';
 import {
   MAX_RUNTIME_PROBE_BYTES,
@@ -80,6 +83,36 @@ describe('P7 I2 VS Code qualification infrastructure', () => {
       runId: 'invalid-direct-step',
       steps: [{ id: 'direct.invalid', result: 'MAYBE', observedAt: '2026-09-14T00:00:00.000Z' }],
     })).toThrow(/invalid qualification result/u);
+  });
+
+  it('confines evidence input/output to canonical qualification temp roots and preserves 0600 exclusive output', async () => {
+    const safeRoot = await mkdtemp(path.join(os.tmpdir(), 'quarangate-vscode-qualification-'));
+    const input = path.join(safeRoot, 'evidence-input.json');
+    await writeFile(input, JSON.stringify({ sourceCommit: SOURCE, runId: 'safe-io', steps: [{ id: 'safe.io', result: 'PASS' }] }), 'utf8');
+    await expect(readEvidenceInputJson(input)).resolves.toMatchObject({ runId: 'safe-io' });
+
+    const manifest = createEvidenceManifest({
+      sourceCommit: SOURCE,
+      runId: 'safe-output',
+      generatedAt: '2026-09-14T00:00:01.000Z',
+      steps: [createQualificationStep({ id: 'safe.output', result: 'PASS', observedAt: '2026-09-14T00:00:00.000Z' })],
+    });
+    const output = path.join(safeRoot, 'evidence-output.json');
+    await expect(writeEvidenceManifest(output, manifest)).resolves.toBe(output);
+    expect(JSON.parse(await readFile(output, 'utf8'))).toMatchObject({ sourceCommit: SOURCE, runId: 'safe-output' });
+    expect((await stat(output)).mode & 0o777).toBe(0o600);
+    await expect(writeEvidenceManifest(output, manifest)).rejects.toThrow();
+
+    await expect(writeEvidenceManifest(path.join(process.cwd(), 'should-not-write.json'), manifest))
+      .rejects.toThrow(/qualification artifact/u);
+    await expect(readEvidenceInputJson(path.join(process.cwd(), 'package.json'))).rejects.toThrow(/qualification artifact/u);
+  });
+
+  it('bounds the standalone evidence JSON input before parsing', async () => {
+    const safeRoot = await mkdtemp(path.join(os.tmpdir(), 'quarangate-vscode-qualification-'));
+    const oversized = path.join(safeRoot, 'oversized-evidence.json');
+    await writeFile(oversized, JSON.stringify({ padding: 'x'.repeat(MAX_EVIDENCE_INPUT_BYTES + 1) }), 'utf8');
+    await expect(readEvidenceInputJson(oversized)).rejects.toThrow(/byte bound/u);
   });
 
   it('accepts only fixture seeds under the authorized fixture convention', () => {

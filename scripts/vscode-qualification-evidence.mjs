@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -18,6 +19,8 @@ export const MAX_ERROR_STRING_BYTES = 512;
 export const MAX_EVIDENCE_ARRAY_ITEMS = 64;
 export const MAX_EVIDENCE_OBJECT_KEYS = 64;
 export const MAX_EVIDENCE_DEPTH = 5;
+export const MAX_EVIDENCE_INPUT_BYTES = 128 * 1024;
+export const QUALIFICATION_TEMP_PREFIX = 'quarangate-vscode-qualification-';
 
 const SENSITIVE_KEY = /(?:secret|password|credential|authorization|authmac|access[_-]?token|refresh[_-]?token|bearer|prompt|raw[_-]?response|response[_-]?body|editor[_-]?buffer|file[_-]?content)/iu;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
@@ -83,6 +86,55 @@ export function sha256Text(value) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+function isInside(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative.length > 0 && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+export async function assertSafeQualificationArtifactPath(filePath, { mustExist = false } = {}) {
+  const resolved = path.resolve(filePath);
+  const tempRoot = path.resolve(os.tmpdir());
+  const relative = path.relative(tempRoot, resolved);
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`qualification artifact path must be inside ${tempRoot}`);
+  }
+  const [rootName] = relative.split(path.sep);
+  if (!rootName.startsWith(QUALIFICATION_TEMP_PREFIX)) {
+    throw new Error(`qualification artifact root must start with ${QUALIFICATION_TEMP_PREFIX}`);
+  }
+  const safeRoot = path.join(tempRoot, rootName);
+  const rootInfo = await fs.lstat(safeRoot);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || await fs.realpath(safeRoot) !== safeRoot) {
+    throw new Error('qualification artifact root must be an existing canonical directory');
+  }
+  const parent = path.dirname(resolved);
+  const parentCanonical = await fs.realpath(parent);
+  if (parentCanonical !== parent || (parent !== safeRoot && !isInside(safeRoot, parent))) {
+    throw new Error('qualification artifact parent must remain inside the canonical qualification root');
+  }
+  if (mustExist) {
+    const info = await fs.lstat(resolved);
+    if (!info.isFile() || info.isSymbolicLink() || await fs.realpath(resolved) !== resolved) {
+      throw new Error('qualification artifact input must be a regular canonical non-symlink file');
+    }
+  }
+  return resolved;
+}
+
+export async function readEvidenceInputJson(filePath, maxBytes = MAX_EVIDENCE_INPUT_BYTES) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_EVIDENCE_INPUT_BYTES) {
+    throw new TypeError('evidence input byte bound is invalid');
+  }
+  const resolved = await assertSafeQualificationArtifactPath(filePath, { mustExist: true });
+  const info = await fs.lstat(resolved);
+  if (info.size > maxBytes) throw new Error('evidence input exceeds qualification byte bound');
+  const raw = await fs.readFile(resolved, 'utf8');
+  if (Buffer.byteLength(raw, 'utf8') > maxBytes) throw new Error('evidence input exceeds qualification byte bound');
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('evidence input must be a JSON object');
+  return parsed;
+}
+
 export function createQualificationStep({ id, result, observedAt, detail = {}, error = null }) {
   if (!STEP_ID.test(id)) throw new TypeError(`invalid qualification step id: ${id}`);
   if (!QUALIFICATION_RESULTS.includes(result)) throw new TypeError(`invalid qualification result: ${result}`);
@@ -133,14 +185,9 @@ export function createEvidenceManifest({ sourceCommit, runId, steps, environment
 }
 
 export async function writeEvidenceManifest(filePath, manifest) {
-  const resolved = path.resolve(filePath);
-  await fs.mkdir(path.dirname(resolved), { recursive: true });
+  const resolved = await assertSafeQualificationArtifactPath(filePath);
   await fs.writeFile(resolved, canonicalJson(manifest), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   return resolved;
-}
-
-async function readJson(filePath) {
-  return JSON.parse(await fs.readFile(path.resolve(filePath), 'utf8'));
 }
 
 function parseCli(argv) {
@@ -160,7 +207,7 @@ function parseCli(argv) {
 
 async function main() {
   const args = parseCli(process.argv.slice(2));
-  const raw = await readJson(args.input);
+  const raw = await readEvidenceInputJson(args.input);
   const steps = (raw.steps ?? []).map((step) => createQualificationStep(step));
   const manifest = createEvidenceManifest({ ...raw, steps });
   if (args.output) {

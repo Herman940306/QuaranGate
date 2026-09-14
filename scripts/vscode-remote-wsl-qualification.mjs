@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import {
   createEvidenceManifest,
   createQualificationStep,
+  readEvidenceInputJson,
   writeEvidenceManifest,
 } from './vscode-qualification-evidence.mjs';
 
@@ -337,15 +338,7 @@ function parseArgs(argv) {
 }
 
 export async function readRuntimeProbeJson(filePath) {
-  const resolved = path.resolve(filePath);
-  const info = await fs.lstat(resolved);
-  if (!info.isFile() || info.isSymbolicLink()) throw new Error('runtime probe must be a regular non-symlink file');
-  if (info.size > MAX_RUNTIME_PROBE_BYTES) throw new Error('runtime probe exceeds qualification byte bound');
-  const raw = await fs.readFile(resolved, 'utf8');
-  if (Buffer.byteLength(raw, 'utf8') > MAX_RUNTIME_PROBE_BYTES) throw new Error('runtime probe exceeds qualification byte bound');
-  const parsed = JSON.parse(raw);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('runtime probe must be a JSON object');
-  return parsed;
+  return readEvidenceInputJson(filePath, MAX_RUNTIME_PROBE_BYTES);
 }
 
 export async function buildQualificationEvidence(options = {}) {

@@ -62,11 +62,12 @@ The evidence layer never maps an absent or blocked live observation into `PASS`.
 
 - emits canonical JSON evidence with a manifest SHA-256;
 - revalidates qualification-step schemas at manifest construction even for direct library callers;
-- bounds string, array, object-key, nesting, and runtime-probe input sizes;
+- bounds string, array, object-key, nesting, standalone evidence-input, and runtime-probe input sizes;
 - redacts credential/secret/auth/token/prompt/raw-response/editor/file-content fields;
 - records exact step status and timestamp;
 - records exact source HEAD plus clean/dirty worktree state without dumping path names;
 - accepts only bounded symbolic error classifications rather than arbitrary raw provider error text;
+- confines file-based evidence input/output to an existing canonical `/tmp/quarangate-vscode-qualification-*` root, preventing qualification tooling from dirtying canonical repositories by caller-selected paths;
 - writes evidence with mode `0600` and exclusive-create semantics when an output file is requested.
 
 The default evidence model favors metadata, hashes, versions, operation identifiers, lifecycle state, and bounded error classification rather than prompt/response bodies or workspace dumps.
@@ -186,8 +187,8 @@ The qualification-infrastructure candidate was validated without executing live 
 
 ### Focused qualification infrastructure
 
-- `tests/integration/p7-i2-vscode-qualification.test.ts`: **17/17 PASS** across 1 file.
-- The tests prove result-class separation, bounded/redacted evidence, prototype-safe object sanitization, symbolic-only error classification, direct-caller schema revalidation, immutable source attribution with clean/dirty worktree evidence, bounded runtime-probe input, fixture confinement, disposable-target refusal for valuable repository paths, root-symlink/alias refusal, deterministic workspace identity/drift detection, honest WSL classification, `NOT_RUN` handling for absent live evidence, derived runtime-probe classification, and malformed-input fail-close behavior.
+- `tests/integration/p7-i2-vscode-qualification.test.ts`: **19/19 PASS** across 1 file.
+- The tests prove result-class separation, bounded/redacted evidence, prototype-safe object sanitization, symbolic-only error classification, direct-caller schema revalidation, immutable source attribution with clean/dirty worktree evidence, canonical temporary-root confinement for evidence input/output, `0600` exclusive evidence creation, bounded standalone/runtime-probe input, fixture confinement, disposable-target refusal for valuable repository paths, root-symlink/alias refusal, deterministic workspace identity/drift detection, honest WSL classification, `NOT_RUN` handling for absent live evidence, derived runtime-probe classification, and malformed-input fail-close behavior.
 
 ### Existing I2/public-model regression
 
