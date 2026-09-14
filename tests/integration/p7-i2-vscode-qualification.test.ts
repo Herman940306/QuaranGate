@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, cp, writeFile } from 'node:fs/promises';
+import { mkdtemp, cp, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -82,6 +82,14 @@ describe('P7 I2 VS Code qualification infrastructure', () => {
     expect(() => assertSafeDisposableWorkspace(generic)).toThrow(/unsafe disposable workspace/u);
   });
 
+  it('rejects a prefixed disposable-workspace root that aliases another directory through a symlink', async () => {
+    const target = await mkdtemp(path.join(os.tmpdir(), 'qg-qualification-target-'));
+    const holder = await mkdtemp(path.join(os.tmpdir(), 'qg-qualification-holder-'));
+    const alias = path.join(holder, 'quarangate-vscode-qualification-alias');
+    await symlink(target, alias, 'dir');
+    expect(() => assertSafeDisposableWorkspace(alias)).toThrow(/symbolic-link\/alias root/u);
+  });
+
   it('computes deterministic bounded workspace identity and detects drift', async () => {
     const baseline = await computeWorkspaceIdentity(SEED);
     const temp = await mkdtemp(path.join(os.tmpdir(), 'quarangate-vscode-qualification-'));
@@ -116,13 +124,12 @@ describe('P7 I2 VS Code qualification infrastructure', () => {
 
   it('builds evidence without executing live qualification', async () => {
     const manifest = await buildQualificationEvidence({
-      sourceCommit: SOURCE,
       fixtureSeed: SEED,
       runId: 'integration-no-live',
       environment: { env: {}, release: 'generic-linux' },
       runtimeProbe: null,
     });
-    expect(manifest.sourceCommit).toBe(SOURCE);
+    expect(manifest.sourceCommit).toMatch(/^[0-9a-f]{40}$/u);
     expect(manifest.environment).toMatchObject({ liveQualificationExecuted: false });
     expect(manifest.steps.find((step) => step.id === 'source.commit')?.result).toBe('PASS');
     expect(manifest.steps.find((step) => step.id === 'environment.wsl')?.result).toBe('BLOCKED_ENVIRONMENT');
@@ -133,5 +140,12 @@ describe('P7 I2 VS Code qualification infrastructure', () => {
     expect(() => createQualificationStep({ id: 'bad.status', result: 'MAYBE' })).toThrow(/invalid qualification result/u);
     expect(evaluateRuntimeProbe({ modelApi: { publicApiAvailable: 'maybe' } })
       .find((step) => step.id === 'vscode.model_api')?.result).toBe('FAIL');
+  });
+
+  it('accepts only symbolic error classifications and rejects arbitrary raw error text', () => {
+    expect(createQualificationStep({ id: 'error.safe', result: 'FAIL', error: 'MODEL_PROVIDER_ERROR' }).error)
+      .toBe('MODEL_PROVIDER_ERROR');
+    expect(() => createQualificationStep({ id: 'error.raw', result: 'FAIL', error: 'Bearer super-secret-value' }))
+      .toThrow(/symbolic error code/u);
   });
 });

@@ -64,6 +64,7 @@ The evidence layer never maps an absent or blocked live observation into `PASS`.
 - bounds string, array, object-key, and nesting sizes;
 - redacts credential/secret/auth/token/prompt/raw-response/editor/file-content fields;
 - records exact step status and timestamp;
+- accepts only bounded symbolic error classifications rather than arbitrary raw provider error text;
 - writes evidence with mode `0600` and exclusive-create semantics when an output file is requested.
 
 The default evidence model favors metadata, hashes, versions, operation identifiers, lifecycle state, and bounded error classification rather than prompt/response bodies or workspace dumps.
@@ -72,7 +73,7 @@ The default evidence model favors metadata, hashes, versions, operation identifi
 
 The committed seed under `tests/fixtures/vscode-qualification/workspace-seed/` is read-only input for tooling tests.
 
-Any future disposable mutation target must resolve beneath the operating-system temporary directory and have the explicit `quarangate-vscode-qualification-` prefix. Canonical QuaranGate, project-control, owner-host-control, and arbitrary repository paths fail closed.
+Any future disposable mutation target must resolve beneath the operating-system temporary directory, have the explicit `quarangate-vscode-qualification-` prefix, exist as a real directory, and have an exact canonical root (root symlink/alias paths are refused). Canonical QuaranGate, project-control, owner-host-control, and arbitrary repository paths fail closed.
 
 The workspace identity helper rejects symlinks and bounds both file count and total bytes before hashing deterministic relative-path/file-content evidence.
 
@@ -183,8 +184,8 @@ The qualification-infrastructure candidate was validated without executing live 
 
 ### Focused qualification infrastructure
 
-- `tests/integration/p7-i2-vscode-qualification.test.ts`: **12/12 PASS** across 1 file.
-- The tests prove result-class separation, bounded/redacted evidence, immutable source attribution, fixture confinement, disposable-target refusal for valuable repository paths, deterministic workspace identity/drift detection, honest WSL classification, `NOT_RUN` handling for absent live evidence, derived runtime-probe classification, and malformed-input fail-close behavior.
+- `tests/integration/p7-i2-vscode-qualification.test.ts`: **14/14 PASS** across 1 file.
+- The tests prove result-class separation, bounded/redacted evidence, symbolic-only error classification, immutable source attribution, fixture confinement, disposable-target refusal for valuable repository paths, root-symlink/alias refusal, deterministic workspace identity/drift detection, honest WSL classification, `NOT_RUN` handling for absent live evidence, derived runtime-probe classification, and malformed-input fail-close behavior.
 
 ### Existing I2/public-model regression
 
@@ -216,12 +217,12 @@ The final ext-backed validation mirror removed both methodology/environment mism
 
 ### Qualification CLI dry run
 
-`vscode-remote-wsl-qualification.mjs` was executed without a live runtime probe against source `f1432e63a7ff2e315fbc0738a26c81b818bd4904`.
+`vscode-remote-wsl-qualification.mjs` was exercised without a live runtime probe during candidate development. The final immutable candidate requires a post-commit dry run so the generated evidence can bind to the exact candidate HEAD rather than an uncommitted working tree.
 
 Observed infrastructure-level evidence:
 
 - evidence schema: `quarangate.vscode-qualification-evidence.v1`
-- exact source commit recorded: PASS
+- exact source commit recording was exercised; final immutable-source binding is verified post-commit
 - basic governed-container WSL environment signal: PASS
 - deterministic fixture seed identity: PASS
 - `liveQualificationExecuted`: `false`

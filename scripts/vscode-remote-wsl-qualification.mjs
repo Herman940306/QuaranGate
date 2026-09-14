@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import { lstatSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -26,13 +27,28 @@ function isInside(parent, child) {
   return relative.length > 0 && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
+function requireExactDirectory(resolved, label) {
+  let info;
+  let canonical;
+  try {
+    info = lstatSync(resolved);
+    canonical = realpathSync(resolved);
+  } catch {
+    throw new Error(`${label} must be an existing canonical directory: ${resolved}`);
+  }
+  if (!info.isDirectory() || info.isSymbolicLink() || canonical !== resolved) {
+    throw new Error(`${label} must not use a symbolic-link/alias root: ${resolved}`);
+  }
+  return resolved;
+}
+
 export function assertSafeDisposableWorkspace(candidate) {
   const resolved = path.resolve(candidate);
   const tempRoot = path.resolve(os.tmpdir());
   const base = path.basename(resolved);
   const allowed = isInside(tempRoot, resolved) && base.startsWith('quarangate-vscode-qualification-');
   if (!allowed) throw new Error(`unsafe disposable workspace path refused: ${resolved}`);
-  return resolved;
+  return requireExactDirectory(resolved, 'disposable workspace');
 }
 
 export function assertReadOnlyFixtureSeed(candidate) {
@@ -40,7 +56,7 @@ export function assertReadOnlyFixtureSeed(candidate) {
   if (!isInside(QUALIFICATION_FIXTURE_ROOT, resolved)) {
     throw new Error(`fixture seed must be inside ${QUALIFICATION_FIXTURE_ROOT}`);
   }
-  return resolved;
+  return requireExactDirectory(resolved, 'fixture seed');
 }
 
 async function walkFiles(root) {

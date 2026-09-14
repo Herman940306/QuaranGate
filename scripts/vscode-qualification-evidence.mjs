@@ -22,6 +22,7 @@ export const MAX_EVIDENCE_DEPTH = 5;
 const SENSITIVE_KEY = /(?:secret|password|credential|authorization|authmac|access[_-]?token|refresh[_-]?token|bearer|prompt|raw[_-]?response|response[_-]?body|editor[_-]?buffer|file[_-]?content)/iu;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const STEP_ID = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
+const ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/u;
 
 function truncateUtf8(value, maxBytes) {
   if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
@@ -93,7 +94,11 @@ export function createQualificationStep({ id, result, observedAt, detail = {}, e
     result,
     observedAt: at,
     detail: sanitizeEvidence(detail),
-    error: error === null ? null : truncateUtf8(String(error), MAX_ERROR_STRING_BYTES),
+    error: error === null ? null : (() => {
+      const code = String(error);
+      if (!ERROR_CODE.test(code)) throw new TypeError('qualification error must be a bounded symbolic error code');
+      return truncateUtf8(code, MAX_ERROR_STRING_BYTES);
+    })(),
   });
 }
 
