@@ -8,19 +8,28 @@
  * - claim admission (QUEUED -> PREPARING) runs inside BEGIN IMMEDIATE with
  *   the concurrency checks in the same transaction, so a restart can never
  *   double-admit writers;
- * - the bounded raw prompt is stored ONLY here (queued jobs must survive the
- *   MCP request and executor restarts). It is never logged, never returned by
- *   status/result routes, and its long-term retention is a future
- *   retention-policy concern (A1 retention classes).
+ * - the bounded raw prompt is stored ONLY while execution/recovery may still
+ *   require it. It is never logged or returned by status/result routes, and P3
+ *   purges it immediately when a job reaches an execution-terminal outcome;
+ *   prompt_hash remains as durable audit identity.
  */
 import { DatabaseSync } from 'node:sqlite';
+import { randomInt } from 'node:crypto';
 import { chmodSync, existsSync } from 'node:fs';
 import { BridgeError } from '../../shared/errors.js';
 import { AgentSessionStore } from './sessionStore.js';
 import {
   assertAgentJobTransition,
   assertApplyAttemptTransition,
+  isAgentFailureStatus,
   MAX_AGENT_PROMPT_CHARS,
+  MAX_AGENT_QUEUED_JOBS,
+  PROVIDER_BACKOFF_BASE_MS,
+  PROVIDER_BACKOFF_MAX_MS,
+  PROVIDER_BACKOFF_JITTER_FRACTION,
+  PROVIDER_CIRCUIT_FAILURE_THRESHOLD,
+  PROVIDER_CIRCUIT_OPEN_MS,
+  MAX_PROVIDER_RETRY_AFTER_MS,
   AGENT_APPLY_ATTEMPT_ACTIVE_STATES,
   AGENT_RETENTION_CLASSES,
   type AgentJobStatus,
@@ -31,7 +40,7 @@ import {
   type AgentRetentionClass,
 } from '../../shared/agents.js';
 
-export const AGENT_JOB_SCHEMA_VERSION = 6;
+export const AGENT_JOB_SCHEMA_VERSION = 7;
 
 /**
  * Concurrency admission counts EXECUTING jobs only. QUEUED jobs are "active"
@@ -54,21 +63,22 @@ export const MAX_APPLY_ATTEMPT_REASON_CHARS = 2000;
 export const MAX_APPLY_ATTEMPT_EVIDENCE_CHARS = 4000;
 
 /**
- * The exact schema shape a database claiming `user_version = 5` MUST have.
+ * The exact schema shape a database claiming the current schema version MUST have.
  * Used by {@link AgentJobStore.assertSchemaShape} to fail closed rather than
  * trust the bare version stamp. Declared here (not inline) so the fresh-install
  * DDL and the acceptance check stay reviewable side by side.
  */
-const REQUIRED_V5_TABLES = [
+const REQUIRED_SCHEMA_TABLES = [
   'agent_jobs',
   'agent_project_apply_state',
   'agent_apply_attempts',
   'agent_apply_journal',
   'agent_sessions',
+  'agent_provider_state',
 ] as const;
 
 /** Required column -> declared SQLite affinity, per table. */
-const REQUIRED_V5_COLUMNS: Record<string, Record<string, string>> = {
+const REQUIRED_SCHEMA_COLUMNS: Record<string, Record<string, string>> = {
   agent_jobs: {
     job_id: 'TEXT', principal_id: 'TEXT', backend: 'TEXT', project: 'TEXT',
     profile: 'TEXT', resource_policy: 'TEXT', status: 'TEXT',
@@ -108,13 +118,32 @@ const REQUIRED_V5_COLUMNS: Record<string, Record<string, string>> = {
     provider_state_ref: 'TEXT', state: 'TEXT', created_at: 'TEXT', last_used_at: 'TEXT',
     consumed_by_job_id: 'TEXT', reserved_by_job_id: 'TEXT', reserved_at: 'TEXT', expires_at: 'TEXT',
   },
+  // v7: P3 provider admission / cooldown state. Never stores provider payloads.
+  agent_provider_state: {
+    backend: 'TEXT', consecutive_failures: 'INTEGER', last_failure_at: 'TEXT',
+    last_failure_code: 'TEXT', last_success_at: 'TEXT', cooldown_until: 'TEXT',
+    circuit_state: 'TEXT', updated_at: 'TEXT',
+  },
 };
 
 /** Partial unique indexes that ARE the active-attempt exclusion authority. */
-const REQUIRED_V5_INDEXES = [
+const REQUIRED_SCHEMA_INDEXES = [
   'idx_apply_attempts_active_job',
   'idx_apply_attempts_active_project',
 ] as const;
+
+export type ProviderCircuitState = 'CLOSED' | 'OPEN';
+
+export interface ProviderAdmissionState {
+  backend: string;
+  consecutiveFailures: number;
+  lastFailureAt: string | null;
+  lastFailureCode: string | null;
+  lastSuccessAt: string | null;
+  cooldownUntil: string | null;
+  circuitState: ProviderCircuitState;
+  updatedAt: string | null;
+}
 
 export interface AgentJobRow {
   jobId: string;
@@ -444,23 +473,19 @@ export class AgentJobStore {
   }
 
   /**
-   * Verify that a database claiming `user_version = AGENT_JOB_SCHEMA_VERSION`
-   * actually HAS the schema-v5 shape before it is accepted.
+   * Verify the real schema shape before trusting a `user_version` stamp.
    *
-   * `PRAGMA user_version` is a bare integer stamp with no relationship to the
-   * objects that actually exist: a database can be stamped v5 by an
-   * interrupted or out-of-tree migration and still be missing the durable
-   * lifecycle columns the retention model depends on. Trusting the stamp
-   * alone would let the executor start against a database where
-   * retention_class / retention_duration_ms / retain_until do not exist —
-   * every retention query would then fail at runtime, or worse, be silently
-   * skipped.
+   * `PRAGMA user_version` is only an integer. It does not prove that the
+   * tables, columns, affinities, or durable exclusion indexes required by the
+   * stamped version actually exist. P3 also uses this verifier as the v6→v7
+   * preflight, excluding only the new v7 provider-state table, so malformed v6
+   * databases fail before any v7 mutation is attempted.
    *
-   * Fail closed instead. This NEVER migrates, backfills, or repairs: a
-   * malformed v5 database is an operator-visible fault, and inferring
-   * retention semantics for it is exactly what the frozen A6 model forbids.
+   * Fail closed instead of repairing or inferring missing historical state.
    */
-  private assertSchemaShape(): void {
+  private assertSchemaShape(options: { includeProviderState?: boolean; stampedVersion?: number } = {}): void {
+    const includeProviderState = options.includeProviderState ?? true;
+    const stampedVersion = options.stampedVersion ?? AGENT_JOB_SCHEMA_VERSION;
     const missing: string[] = [];
 
     const tableExists = (t: string): boolean =>
@@ -468,13 +493,15 @@ export class AgentJobStore {
     const indexExists = (i: string): boolean =>
       this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?`).get(i) !== undefined;
 
-    for (const t of REQUIRED_V5_TABLES) {
+    for (const t of REQUIRED_SCHEMA_TABLES) {
+      if (!includeProviderState && t === 'agent_provider_state') continue;
       if (!tableExists(t)) missing.push(`table ${t}`);
     }
 
     // Column presence + declared affinity for every table that exists. A
     // missing table is already reported above; do not double-report its columns.
-    for (const [table, columns] of Object.entries(REQUIRED_V5_COLUMNS)) {
+    for (const [table, columns] of Object.entries(REQUIRED_SCHEMA_COLUMNS)) {
+      if (!includeProviderState && table === 'agent_provider_state') continue;
       if (!tableExists(table)) continue;
       const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string }[];
       for (const [column, affinity] of Object.entries(columns)) {
@@ -490,7 +517,7 @@ export class AgentJobStore {
     // partial unique indexes, not by any in-memory lock. Without them a v5 DB
     // would silently permit two concurrently active apply attempts.
     if (tableExists('agent_apply_attempts')) {
-      for (const idx of REQUIRED_V5_INDEXES) {
+      for (const idx of REQUIRED_SCHEMA_INDEXES) {
         if (!indexExists(idx)) missing.push(`index ${idx}`);
       }
     }
@@ -498,13 +525,29 @@ export class AgentJobStore {
     if (missing.length > 0) {
       throw new BridgeError(
         'INTERNAL',
-        `agent job DB is stamped schema v${AGENT_JOB_SCHEMA_VERSION} but its schema is incomplete/incompatible ` +
+        `agent job DB is stamped schema v${stampedVersion} but its schema is incomplete/incompatible ` +
         `(missing or malformed: ${missing.join(', ')}); refusing to open — no automatic repair or retention backfill is performed`,
         500,
       );
     }
-    // v6: verify the session store shape using its own dedicated check.
+    // v6+: verify the session store shape using its own dedicated check.
     this._sessionStore.assertSchemaShape();
+  }
+
+  /** P3 v7 additive durable provider-admission state. */
+  private createProviderAdmissionSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_provider_state (
+        backend              TEXT PRIMARY KEY,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_failure_at      TEXT,
+        last_failure_code    TEXT,
+        last_success_at      TEXT,
+        cooldown_until       TEXT,
+        circuit_state        TEXT NOT NULL DEFAULT 'CLOSED',
+        updated_at           TEXT NOT NULL
+      );
+    `);
   }
 
   /**
@@ -524,6 +567,14 @@ export class AgentJobStore {
     }
     if (version > AGENT_JOB_SCHEMA_VERSION) {
       throw new BridgeError('INTERNAL', `agent job DB schema v${version} is newer than supported v${AGENT_JOB_SCHEMA_VERSION}`, 500);
+    }
+    // P3 v7 safety boundary: a database stamped v6 must prove the complete
+    // pre-v7 schema BEFORE any v7 table creation, prompt scrub, or version
+    // update occurs. A malformed v6 database is rejected byte-preservingly
+    // (apart from SQLite's normal open/journal bookkeeping); it is never
+    // partially repaired or privacy-migrated before the failure is reported.
+    if (version === 6) {
+      this.assertSchemaShape({ includeProviderState: false, stampedVersion: 6 });
     }
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -571,8 +622,9 @@ export class AgentJobStore {
           CREATE INDEX IF NOT EXISTS idx_agent_jobs_status ON agent_jobs(status);
           CREATE INDEX IF NOT EXISTS idx_agent_jobs_principal ON agent_jobs(principal_id);
         `);
-        // v6: fresh install also creates agent_sessions immediately.
+        // v6/v7: fresh install also creates session and provider-admission state.
         this._sessionStore.createSchema();
+        this.createProviderAdmissionSchema();
       }
       if (version < 2) {
         // v1 (A2) → v2 (A3): record the trusted base commit of a staged sandbox
@@ -700,12 +752,21 @@ export class AgentJobStore {
         }
       }
       if (version < 6) {
-        // v5 (A6 retention) → v6 (A8 session continuity): create the
-        // agent_sessions table. Strictly additive — zero changes to
-        // agent_jobs or any other existing table. Historical job rows are
-        // unaffected. Sessions are forward-only; no backfill is possible or
-        // required. The AgentSessionStore owns the DDL via createSchema().
+        // v5 (A6 retention) → v6 (A8 session continuity).
         this._sessionStore.createSchema();
+      }
+      if (version < 7) {
+        // v6 (A8) → v7 (P3): sanitized provider admission state plus the new
+        // raw-prompt minimization policy. Historical active/queued prompts are
+        // preserved because restartable work still needs them; terminal prompt
+        // bodies are intentionally scrubbed while prompt_hash and every other
+        // historical fact remain unchanged.
+        this.createProviderAdmissionSchema();
+        this.db.exec(`
+          UPDATE agent_jobs SET prompt = ''
+          WHERE status NOT IN ('QUEUED','PREPARING','RUNNING','VALIDATING')
+            AND prompt <> ''
+        `);
       }
       this.db.exec(`PRAGMA user_version=${AGENT_JOB_SCHEMA_VERSION}`);
       this.db.exec('COMMIT');
@@ -713,8 +774,8 @@ export class AgentJobStore {
       this.db.exec('ROLLBACK');
       throw e;
     }
-    // A forward migration that stamped v6 must also have PRODUCED v6. Verify
-    // the same way an already-v6 database is verified, so an incomplete
+    // A forward migration that stamped the current version must also have
+    // PRODUCED the current shape. Verify it so an incomplete
     // migration can never be accepted just because it reached the stamp.
     this.assertSchemaShape();
   }
@@ -738,6 +799,18 @@ export class AgentJobStore {
     }
     if (!Number.isSafeInteger(job.retentionDurationMs) || job.retentionDurationMs <= 0) {
       throw new BridgeError('MALFORMED_REQUEST', `retentionDurationMs must be a positive safe integer (got ${job.retentionDurationMs})`, 400);
+    }
+  }
+
+  /** Must be called while holding BEGIN IMMEDIATE for race-free admission. */
+  private assertQueueCapacity(): void {
+    const queued = this.countQueued();
+    if (queued >= MAX_AGENT_QUEUED_JOBS) {
+      throw new BridgeError(
+        'CONCURRENCY_LIMIT',
+        `agent queue is full (${queued}/${MAX_AGENT_QUEUED_JOBS}); retry after queued work completes`,
+        429,
+      );
     }
   }
 
@@ -793,8 +866,17 @@ export class AgentJobStore {
 
   insert(job: NewAgentJob): AgentJobRow {
     this.validateNewJob(job);
-    this.insertRow(job);
-    return this.get(job.jobId)!;
+    const createdAt = nowIso();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.assertQueueCapacity();
+      this.insertRow(job, null, createdAt);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+    return this.queuedRow(job, createdAt);
   }
 
   /**
@@ -813,6 +895,7 @@ export class AgentJobStore {
     let reservedSessionId: string | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      this.assertQueueCapacity();
       const session = this._sessionStore.findActiveSession(
         binding.principalId, binding.project, binding.backend, binding.profile,
       );
@@ -875,6 +958,11 @@ export class AgentJobStore {
     if (extras.exitCode !== undefined) { sets.push('exit_code = ?'); args.push(extras.exitCode); }
     if (extras.failureCode !== undefined) { sets.push('failure_code = ?'); args.push(extras.failureCode); }
     if (extras.failureReason !== undefined) { sets.push('failure_reason = ?'); args.push(extras.failureReason.slice(0, 500)); }
+    // P3 privacy boundary: once execution is over, raw prompt text has no
+    // remaining authority or recovery purpose. Keep prompt_hash, purge body.
+    if (to === 'COMPLETED' || to === 'CANCELLED' || isAgentFailureStatus(to)) {
+      sets.push("prompt = ''");
+    }
     args.push(jobId, from);
     const res = this.db.prepare(`UPDATE agent_jobs SET ${sets.join(', ')} WHERE job_id = ? AND status = ?`).run(...args);
     return Number(res.changes) === 1;
@@ -954,7 +1042,7 @@ export class AgentJobStore {
       const res = this.db.prepare(`
         UPDATE agent_jobs
         SET status = 'COMPLETED', completed_at = ?, summary = ?, exit_code = ?,
-            backend_session_id = ?
+            backend_session_id = ?, prompt = ''
         WHERE job_id = ? AND status = 'VALIDATING'
       `).run(input.completedAt, input.summary, input.exitCode, successorId, input.jobId);
       if (Number(res.changes) !== 1) {
@@ -967,6 +1055,7 @@ export class AgentJobStore {
         summary: input.summary,
         exitCode: input.exitCode,
         backendSessionId: successorId,
+        prompt: '',
       };
       this.db.exec('COMMIT');
     } catch (e) {
@@ -993,7 +1082,7 @@ export class AgentJobStore {
       }
       const res = this.db.prepare(`
         UPDATE agent_jobs SET status = 'CANCELLED', completed_at = ?,
-          failure_code = 'CANCELLED', failure_reason = ?
+          failure_code = 'CANCELLED', failure_reason = ?, prompt = ''
         WHERE job_id = ? AND status = 'QUEUED'
       `).run(completedAt, reason.slice(0, 500), jobId);
       this.db.exec('COMMIT');
@@ -1088,6 +1177,127 @@ export class AgentJobStore {
   countQueued(): number {
     const r = this.db.prepare(`SELECT COUNT(*) AS n FROM agent_jobs WHERE status = 'QUEUED'`).get() as { n: number };
     return Number(r.n);
+  }
+
+  /** P3 durable provider admission state. No provider payloads are stored. */
+  getProviderAdmissionState(backend: string): ProviderAdmissionState {
+    const row = this.db.prepare(`
+      SELECT backend, consecutive_failures, last_failure_at, last_failure_code,
+             last_success_at, cooldown_until, circuit_state, updated_at
+      FROM agent_provider_state WHERE backend = ?
+    `).get(backend) as Record<string, unknown> | undefined;
+    if (!row) {
+      return {
+        backend, consecutiveFailures: 0, lastFailureAt: null, lastFailureCode: null,
+        lastSuccessAt: null, cooldownUntil: null, circuitState: 'CLOSED', updatedAt: null,
+      };
+    }
+    const failures = Number(row.consecutive_failures);
+    const circuit = String(row.circuit_state);
+    if (!Number.isSafeInteger(failures) || failures < 0 || (circuit !== 'CLOSED' && circuit !== 'OPEN')) {
+      throw new BridgeError('INTERNAL', `provider admission state for ${backend} is malformed`, 500);
+    }
+    const optText = (v: unknown): string | null => v === null || v === undefined ? null : String(v);
+    return {
+      backend: String(row.backend),
+      consecutiveFailures: failures,
+      lastFailureAt: optText(row.last_failure_at),
+      lastFailureCode: optText(row.last_failure_code),
+      lastSuccessAt: optText(row.last_success_at),
+      cooldownUntil: optText(row.cooldown_until),
+      circuitState: circuit as ProviderCircuitState,
+      updatedAt: optText(row.updated_at),
+    };
+  }
+
+  /** Reject provider work while a persisted cooldown/circuit window is active. */
+  assertProviderAdmissible(backend: string, nowMs: number = Date.now()): void {
+    const state = this.getProviderAdmissionState(backend);
+    if (!state.cooldownUntil) return;
+    const untilMs = Date.parse(state.cooldownUntil);
+    if (!Number.isFinite(untilMs)) {
+      throw new BridgeError('INTERNAL', `provider admission cooldown for ${backend} is malformed`, 500);
+    }
+    if (untilMs <= nowMs) return;
+    const retryAfterMs = Math.max(1, Math.ceil(untilMs - nowMs));
+    throw new BridgeError(
+      'RATE_LIMITED',
+      `backend ${backend} is cooling down (${state.circuitState.toLowerCase()} circuit)`,
+      429,
+      retryAfterMs,
+    );
+  }
+
+  /**
+   * Persist a sanitized provider failure and compute the next bounded cooldown.
+   * `jitterUnit` is an injectable [0,1] test seam; production uses crypto RNG.
+   */
+  recordProviderFailure(
+    backend: string,
+    failureCode: string,
+    retryAfterMs?: number,
+    nowMs: number = Date.now(),
+    jitterUnit?: number,
+  ): ProviderAdmissionState {
+    if (!/^[A-Z0-9_:-]{1,64}$/.test(failureCode)) {
+      throw new BridgeError('INTERNAL', 'invalid provider failure code', 500);
+    }
+    const current = this.getProviderAdmissionState(backend);
+    const failures = current.consecutiveFailures + 1;
+    const exponent = Math.min(20, Math.max(0, failures - 1));
+    const base = Math.min(PROVIDER_BACKOFF_MAX_MS, PROVIDER_BACKOFF_BASE_MS * (2 ** exponent));
+    const jitterMax = Math.floor(base * PROVIDER_BACKOFF_JITTER_FRACTION);
+    const boundedUnit = jitterUnit === undefined
+      ? (jitterMax > 0 ? randomInt(jitterMax + 1) / jitterMax : 0)
+      : Math.min(1, Math.max(0, jitterUnit));
+    const jitter = Math.floor(jitterMax * boundedUnit);
+    const backoff = Math.min(PROVIDER_BACKOFF_MAX_MS, base + jitter);
+    const providerHint = retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0
+      ? Math.min(MAX_PROVIDER_RETRY_AFTER_MS, Math.ceil(retryAfterMs))
+      : 0;
+    const circuitState: ProviderCircuitState = failures >= PROVIDER_CIRCUIT_FAILURE_THRESHOLD ? 'OPEN' : 'CLOSED';
+    const cooldownMs = Math.max(
+      backoff,
+      providerHint,
+      circuitState === 'OPEN' ? PROVIDER_CIRCUIT_OPEN_MS : 0,
+    );
+    const at = new Date(nowMs).toISOString();
+    const cooldownUntil = new Date(nowMs + cooldownMs).toISOString();
+    this.db.prepare(`
+      INSERT INTO agent_provider_state
+        (backend, consecutive_failures, last_failure_at, last_failure_code, last_success_at, cooldown_until, circuit_state, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(backend) DO UPDATE SET
+        consecutive_failures = excluded.consecutive_failures,
+        last_failure_at = excluded.last_failure_at,
+        last_failure_code = excluded.last_failure_code,
+        last_success_at = excluded.last_success_at,
+        cooldown_until = excluded.cooldown_until,
+        circuit_state = excluded.circuit_state,
+        updated_at = excluded.updated_at
+    `).run(
+      backend, failures, at, failureCode, current.lastSuccessAt, cooldownUntil, circuitState, at,
+    );
+    return this.getProviderAdmissionState(backend);
+  }
+
+  /** A successful real provider completion closes the circuit and clears cooldown. */
+  recordProviderSuccess(backend: string, nowMs: number = Date.now()): ProviderAdmissionState {
+    const at = new Date(nowMs).toISOString();
+    this.db.prepare(`
+      INSERT INTO agent_provider_state
+        (backend, consecutive_failures, last_failure_at, last_failure_code, last_success_at, cooldown_until, circuit_state, updated_at)
+      VALUES (?, 0, NULL, NULL, ?, NULL, 'CLOSED', ?)
+      ON CONFLICT(backend) DO UPDATE SET
+        consecutive_failures = 0,
+        last_failure_at = NULL,
+        last_failure_code = NULL,
+        last_success_at = excluded.last_success_at,
+        cooldown_until = NULL,
+        circuit_state = 'CLOSED',
+        updated_at = excluded.updated_at
+    `).run(backend, at, at);
+    return this.getProviderAdmissionState(backend);
   }
 
   hasQueued(): boolean {
@@ -1378,7 +1588,7 @@ export class AgentJobStore {
 
       const j = this.db.prepare(`
         UPDATE agent_jobs
-        SET status = 'APPLIED', applied_at = ?, disposition_at = ?, retain_until = ?
+        SET status = 'APPLIED', applied_at = ?, disposition_at = ?, retain_until = ?, prompt = ''
         WHERE job_id = ? AND status = 'COMPLETED'
       `).run(T, T, retainUntil, jobId);
       if (Number(j.changes) !== 1) { this.db.exec('ROLLBACK'); return false; }
@@ -1445,7 +1655,7 @@ export class AgentJobStore {
       }
 
       const res = this.db.prepare(
-        `UPDATE agent_jobs SET status = 'DISCARDED', disposition_at = ?, retain_until = ? WHERE job_id = ? AND status = 'COMPLETED'`,
+        `UPDATE agent_jobs SET status = 'DISCARDED', disposition_at = ?, retain_until = ?, prompt = '' WHERE job_id = ? AND status = 'COMPLETED'`,
       ).run(T, retainUntil, jobId);
       this.db.exec('COMMIT');
       return Number(res.changes) === 1;

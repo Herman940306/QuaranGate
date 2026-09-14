@@ -77,17 +77,27 @@ export type BridgeErrorCode =
   | 'INTERNAL';
 
 export class BridgeError extends Error {
+  public readonly retryAfterMs?: number;
+
   constructor(
     public readonly code: BridgeErrorCode,
     message: string,
     public readonly httpStatus = 400,
+    retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'BridgeError';
+    if (retryAfterMs !== undefined && Number.isSafeInteger(retryAfterMs) && retryAfterMs > 0) {
+      this.retryAfterMs = retryAfterMs;
+    }
   }
 
   toJSON() {
-    return { error: this.code, message: this.message };
+    return {
+      error: this.code,
+      message: this.message,
+      ...(this.retryAfterMs !== undefined ? { retryAfterMs: this.retryAfterMs } : {}),
+    };
   }
 }
 

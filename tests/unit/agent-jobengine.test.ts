@@ -110,6 +110,30 @@ describe('agent job engine — dispatch validation (trusted config)', () => {
     }
   });
 
+  it('reports an enabled backend unavailable when no real runtime adapter is wired', () => {
+    engine.shutdown();
+    engine = new AgentJobEngine(
+      store, testConfig(), () => backendOpts, undefined, undefined, undefined, undefined,
+      new Set<string>(),
+    );
+    const kiro = engine.listBackends().find((b) => b.id === 'kiro');
+    expect(kiro).toMatchObject({ id: 'kiro', available: false });
+  });
+
+  it('fails dispatch closed before queueing when the requested real backend is unavailable at runtime', () => {
+    engine.shutdown();
+    engine = new AgentJobEngine(
+      store, testConfig(), () => backendOpts, undefined, undefined, undefined, undefined,
+      new Set<string>(),
+    );
+    expect(() => dispatch()).toThrowError(expect.objectContaining({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringContaining('unavailable in this runtime'),
+    }));
+    expect(store.hasQueued()).toBe(false);
+    expect(store.countActive()).toBe(0);
+  });
+
   it('no rejected dispatch persists a job', () => {
     for (const bad of [
       () => dispatch({ project: 'nope' }),
@@ -154,6 +178,47 @@ describe('agent job engine — execution lifecycle', () => {
     expect(done.exitCode).toBe(0);
     expect(done.startedAt).not.toBeNull();
     expect(done.completedAt).not.toBeNull();
+    expect(done.prompt).toBe(''); // P3: raw prompt purged at completion
+    expect(done.promptHash).toBe(j.promptHash);
+  });
+
+  it('fails closed instead of faking when production marks a backend available but its factory returns null', async () => {
+    engine.shutdown();
+    engine = new AgentJobEngine(
+      store, testConfig(), () => backendOpts, () => null, undefined, undefined, undefined,
+      new Set<string>(['kiro']),
+    );
+    const j = dispatch();
+    await waitFor(j.jobId, (s) => s === 'FAILED_PRECONDITION');
+    const failed = store.get(j.jobId)!;
+    expect(failed.failureCode).toBe('FAILED_PRECONDITION');
+    expect(failed.failureReason).toContain('has no real runtime adapter');
+    expect(failed.summary ?? '').not.toContain('Fake backend completed successfully');
+  });
+
+  it('persists provider throttle state and blocks the next dispatch before another provider call', async () => {
+    engine.shutdown();
+    let providerRuns = 0;
+    const throttledBackend: AgentBackendAdapter = {
+      async prepare() {},
+      async run() { providerRuns += 1; throw new BridgeError('RATE_LIMITED', 'synthetic structured throttle', 429, 7000); },
+      async validate() { return { summary: 'unreachable', exitCode: 0 }; },
+      isAgentFailure() { return false; },
+      isDryRun() { return false; },
+      async cleanup() {},
+    };
+    engine = new AgentJobEngine(
+      store, testConfig(), () => backendOpts, () => throttledBackend, undefined, undefined, undefined,
+      new Set<string>(['kiro']),
+    );
+    const first = dispatch();
+    await waitFor(first.jobId, (s) => s === 'FAILED_INFRASTRUCTURE');
+    expect(providerRuns).toBe(1);
+    expect(store.getProviderAdmissionState('kiro')).toMatchObject({
+      consecutiveFailures: 1, circuitState: 'CLOSED', lastFailureCode: 'RATE_LIMITED',
+    });
+    expect(() => dispatch()).toThrowError(expect.objectContaining({ code: 'RATE_LIMITED' }));
+    expect(providerRuns).toBe(1);
   });
 
   it('maps injected backend failure to FAILED_AGENT', async () => {
@@ -163,6 +228,8 @@ describe('agent job engine — execution lifecycle', () => {
     const failed = store.get(j.jobId)!;
     expect(failed.failureCode).toBe('FAILED_AGENT');
     expect(failed.failureReason).toContain('deterministic agent crash');
+    expect(failed.prompt).toBe('');
+    expect(failed.promptHash).toBe(j.promptHash);
   });
 
   it('enforces maxRuntimeMs as FAILED_TIMEOUT', async () => {
@@ -226,6 +293,7 @@ describe('agent job engine — cancellation', () => {
     expect(Date.now() - t0).toBeLessThan(1000); // no waiting out the fake run
     await new Promise((r) => setTimeout(r, 50));
     expect(store.get(j.jobId)!.status).toBe('CANCELLED'); // stays cancelled
+    expect(store.get(j.jobId)!.prompt).toBe('');
   });
 
   it('cancelling a terminal job returns its status unchanged', async () => {
@@ -284,6 +352,10 @@ describe('agent job engine — startup recovery', () => {
     const engine2 = new AgentJobEngine(store2, testConfig(), () => backendOpts);
     const recovered = engine2.recover();
     expect(recovered).toContain(active.jobId);
+    // P3: recovery no longer starts queued work until startup reconciliation
+    // has completed; the production index owns this explicit restart.
+    expect(store2.get(queued.jobId)!.status).toBe('QUEUED');
+    engine2.kick();
     const failed = store2.get(active.jobId)!;
     expect(failed.status).toBe('FAILED_INFRASTRUCTURE');
     expect(failed.failureReason).toBe('executor restarted during active agent execution');

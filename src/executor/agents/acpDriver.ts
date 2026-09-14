@@ -37,6 +37,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { BridgeError } from '../../shared/errors.js';
+import { MAX_PROVIDER_RETRY_AFTER_MS } from '../../shared/agents.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -158,6 +159,33 @@ const PRIVILEGED_REQUEST_PREFIXES = [
   'fs/', 'file/', 'shell/', 'terminal/', 'workspace/edit', 'mcp/', 'tools/call',
   'web/', 'net/', 'exec/', 'process/', 'session/delegate', 'subagent/',
 ];
+
+// ---------------------------------------------------------------------------
+// Provider throttle classification (P3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recognize only structured provider throttling evidence. Arbitrary prose is
+ * deliberately ignored to avoid misclassifying unrelated ACP failures.
+ */
+export function classifyAcpRateLimit(error: JsonRpcResponse['error']): { retryAfterMs?: number } | null {
+  if (!error) return null;
+  const data = (typeof error.data === 'object' && error.data !== null && !Array.isArray(error.data))
+    ? error.data as Record<string, unknown> : {};
+  const statuses = [error.code, data.status, data.statusCode, data.httpStatus];
+  const rateLimited = statuses.some((v) => Number(v) === 429);
+  if (!rateLimited) return null;
+
+  let retryAfterMs: number | undefined;
+  const explicitMs = Number(data.retryAfterMs ?? data.retry_after_ms);
+  const explicitSeconds = Number(data.retryAfterSeconds ?? data.retry_after_seconds);
+  if (Number.isFinite(explicitMs) && explicitMs > 0) {
+    retryAfterMs = Math.min(MAX_PROVIDER_RETRY_AFTER_MS, Math.ceil(explicitMs));
+  } else if (Number.isFinite(explicitSeconds) && explicitSeconds > 0) {
+    retryAfterMs = Math.min(MAX_PROVIDER_RETRY_AFTER_MS, Math.ceil(explicitSeconds * 1000));
+  }
+  return retryAfterMs === undefined ? {} : { retryAfterMs };
+}
 
 // ---------------------------------------------------------------------------
 // ACP Driver
@@ -496,8 +524,18 @@ export class AcpDriver extends EventEmitter {
     this.pendingRequests.delete(id);
     if (pending.timer) clearTimeout(pending.timer);
     if (resp.error) {
-      pending.reject(new BridgeError('SANDBOX_FAILED',
-        `ACP error (${resp.error.code}): ${resp.error.message}`, 500));
+      const throttle = classifyAcpRateLimit(resp.error);
+      if (throttle) {
+        pending.reject(new BridgeError(
+          'RATE_LIMITED',
+          'ACP provider rate limited the request',
+          429,
+          throttle.retryAfterMs,
+        ));
+      } else {
+        pending.reject(new BridgeError('SANDBOX_FAILED',
+          `ACP error (${resp.error.code}): ${resp.error.message}`, 500));
+      }
     } else {
       pending.resolve(resp.result);
     }

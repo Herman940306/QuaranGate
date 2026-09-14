@@ -120,12 +120,26 @@ describe('credential manager — non-exposure policy', () => {
     expect(key.length).toBeGreaterThan(10);
   });
 
-  it('caches the key after first read', () => {
+  it('re-reads the key on every use so rotation is observed without executor restart', () => {
     const mgr = new CredentialManager({ credentialPath: keyPath, helperImage: 'alpine' });
     const k1 = mgr.getKeyForDirectUse();
-    // Remove the file — cached should still work
-    rmSync(keyPath);
+    writeFileSync(keyPath, 'rotated-synthetic-key-testing-only!', { mode: 0o600 });
     const k2 = mgr.getKeyForDirectUse();
-    expect(k2).toBe(k1);
+    expect(k2).not.toBe(k1);
+    expect(k2).toBe('rotated-synthetic-key-testing-only!');
+  });
+
+  it('fails closed on the next use when the credential is revoked after a prior successful read', () => {
+    const mgr = new CredentialManager({ credentialPath: keyPath, helperImage: 'alpine' });
+    expect(mgr.getKeyForDirectUse()).toContain('synthetic-key');
+    rmSync(keyPath);
+    expect(() => mgr.getKeyForDirectUse()).toThrow(/not found/);
+  });
+
+  it('revalidates permissions on every use after a prior successful read', () => {
+    const mgr = new CredentialManager({ credentialPath: keyPath, helperImage: 'alpine' });
+    expect(mgr.getKeyForDirectUse()).toContain('synthetic-key');
+    chmodSync(keyPath, 0o644);
+    expect(() => mgr.getKeyForDirectUse()).toThrow(/unsafe permissions/);
   });
 });

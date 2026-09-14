@@ -26,7 +26,7 @@ let sessionKnown = false;
 
 function send(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
 function respond(id, result) { send({ jsonrpc: '2.0', id, result }); }
-function respondErr(id, code, message) { send({ jsonrpc: '2.0', id, error: { code, message } }); }
+function respondErr(id, code, message, data) { send({ jsonrpc: '2.0', id, error: { code, message, ...(data === undefined ? {} : { data }) } }); }
 function notify(method, params) { send({ jsonrpc: '2.0', method, params }); }
 
 const rl = readline.createInterface({ input: process.stdin });
@@ -117,6 +117,15 @@ rl.on('line', (line) => {
       return;
     }
     const text = params.prompt[0].text;
+
+    if (text.includes('RATE429-HUGE')) {
+      respondErr(id, 429, 'provider throttled', { retryAfterMs: 999999999 });
+      return;
+    }
+    if (text.includes('RATE429')) {
+      respondErr(id, -32000, 'provider throttled', { statusCode: 429, retryAfterSeconds: 7 });
+      return;
+    }
 
     if (text.includes('PRIV')) {
       // Server->client privileged request. The driver must refuse (error) and

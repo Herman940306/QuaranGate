@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentJobStore, AGENT_JOB_SCHEMA_VERSION, type NewAgentJob } from '../../src/executor/agents/jobStore.js';
 import { BridgeError } from '../../src/shared/errors.js';
-import { MAX_AGENT_PROMPT_CHARS, AGENT_RETENTION_DURATION_MS } from '../../src/shared/agents.js';
+import {
+  MAX_AGENT_PROMPT_CHARS, MAX_AGENT_QUEUED_JOBS, AGENT_RETENTION_DURATION_MS,
+  PROVIDER_BACKOFF_BASE_MS, PROVIDER_CIRCUIT_OPEN_MS, MAX_PROVIDER_RETRY_AFTER_MS,
+} from '../../src/shared/agents.js';
 
 let store: AgentJobStore;
 let dbPath: string;
@@ -39,7 +42,7 @@ const mode = (p: string) => statSync(p).mode & 0o777;
 describe('agent job store', () => {
   it('initializes the schema at the expected version', () => {
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(6); // A8: bumped from 5 → 6 (agent_sessions table)
+    expect(store.schemaVersion).toBe(7); // P3: provider admission + terminal prompt purge policy
   });
 
   it('creates SQLite files private to the runtime identity (0600, no group/other)', () => {
@@ -99,11 +102,87 @@ describe('agent job store', () => {
     expect(store.get(j.jobId)!.status).toBe('PREPARING');
   });
 
+  it('purges raw prompt on terminal failure while retaining prompt hash', () => {
+    const j = store.insert(newJob({ prompt: 'sensitive-terminal-prompt', promptHash: 'b'.repeat(64) }));
+    expect(store.transition(j.jobId, 'QUEUED', 'PREPARING', { startedAt: new Date().toISOString() })).toBe(true);
+    expect(store.get(j.jobId)!.prompt).toBe('sensitive-terminal-prompt');
+    expect(store.transition(j.jobId, 'PREPARING', 'FAILED_INFRASTRUCTURE', {
+      completedAt: new Date().toISOString(),
+      failureCode: 'FAILED_INFRASTRUCTURE',
+      failureReason: 'synthetic',
+    })).toBe(true);
+    const terminal = store.get(j.jobId)!;
+    expect(terminal.prompt).toBe('');
+    expect(terminal.promptHash).toBe('b'.repeat(64));
+  });
+
+  it('purges raw prompt on queued cancellation with session-safe primitive', () => {
+    const j = store.insert(newJob({ prompt: 'cancel-me', promptHash: 'c'.repeat(64) }));
+    expect(store.cancelQueuedWithSessionRelease(j.jobId, new Date().toISOString(), 'owner cancel')).toBe(true);
+    const terminal = store.get(j.jobId)!;
+    expect(terminal.status).toBe('CANCELLED');
+    expect(terminal.prompt).toBe('');
+    expect(terminal.promptHash).toBe('c'.repeat(64));
+  });
+
   it('rejects invalid transitions via the shared state machine', () => {
     const j = store.insert(newJob());
     expect(() => store.transition(j.jobId, 'QUEUED', 'COMPLETED')).toThrow(BridgeError);
     expect(() => store.transition(j.jobId, 'QUEUED', 'APPLIED')).toThrow(BridgeError);
     expect(store.get(j.jobId)!.status).toBe('QUEUED');
+  });
+
+  it('bounds the durable queue and rejects the 65th queued job atomically', () => {
+    for (let i = 0; i < MAX_AGENT_QUEUED_JOBS; i += 1) {
+      store.insert(newJob({ jobId: `job_${i.toString(16).padStart(32, '0')}` }));
+    }
+    expect(store.countQueued()).toBe(MAX_AGENT_QUEUED_JOBS);
+    expect(() => store.insert(newJob({ jobId: `job_${'f'.repeat(32)}` }))).toThrowError(
+      expect.objectContaining({ code: 'CONCURRENCY_LIMIT', httpStatus: 429 }),
+    );
+    expect(store.countQueued()).toBe(MAX_AGENT_QUEUED_JOBS);
+  });
+
+  it('persists provider cooldown state across restart and exposes bounded retry metadata', () => {
+    const t0 = Date.parse('2026-09-14T04:00:00.000Z');
+    const state = store.recordProviderFailure('kiro', 'RATE_LIMITED', 7000, t0, 0);
+    expect(state.consecutiveFailures).toBe(1);
+    expect(state.circuitState).toBe('CLOSED');
+    expect(Date.parse(state.cooldownUntil!) - t0).toBe(7000);
+    expect(() => store.assertProviderAdmissible('kiro', t0 + 1)).toThrowError(
+      expect.objectContaining({ code: 'RATE_LIMITED', retryAfterMs: 6999 }),
+    );
+    store.close();
+    store = new AgentJobStore(dbPath);
+    expect(store.getProviderAdmissionState('kiro').consecutiveFailures).toBe(1);
+    expect(() => store.assertProviderAdmissible('kiro', t0 + 1)).toThrowError(
+      expect.objectContaining({ code: 'RATE_LIMITED' }),
+    );
+  });
+
+  it('opens the provider circuit after three consecutive failures and success resets it', () => {
+    const t0 = Date.parse('2026-09-14T04:00:00.000Z');
+    store.recordProviderFailure('kiro', 'RATE_LIMITED', undefined, t0, 0);
+    store.recordProviderFailure('kiro', 'RATE_LIMITED', undefined, t0 + 1000, 0);
+    const opened = store.recordProviderFailure('kiro', 'RATE_LIMITED', undefined, t0 + 2000, 0);
+    expect(opened.consecutiveFailures).toBe(3);
+    expect(opened.circuitState).toBe('OPEN');
+    expect(Date.parse(opened.cooldownUntil!) - (t0 + 2000)).toBeGreaterThanOrEqual(PROVIDER_CIRCUIT_OPEN_MS);
+    const reset = store.recordProviderSuccess('kiro', t0 + 3000);
+    expect(reset.consecutiveFailures).toBe(0);
+    expect(reset.circuitState).toBe('CLOSED');
+    expect(reset.cooldownUntil).toBeNull();
+    expect(() => store.assertProviderAdmissible('kiro', t0 + 3001)).not.toThrow();
+  });
+
+  it('bounds provider backoff and clamps oversized Retry-After before persistence', () => {
+    const t0 = Date.parse('2026-09-14T04:00:00.000Z');
+    const state = store.recordProviderFailure('kiro', 'RATE_LIMITED', 999999999, t0, 1);
+    expect(Date.parse(state.cooldownUntil!) - t0).toBe(MAX_PROVIDER_RETRY_AFTER_MS);
+    const noHint = new AgentJobStore(join(mkdtempSync(join(tmpdir(), 'mcpb-provider-')), 'agents.db'));
+    const first = noHint.recordProviderFailure('kiro', 'RATE_LIMITED', undefined, t0, 0);
+    expect(Date.parse(first.cooldownUntil!) - t0).toBe(PROVIDER_BACKOFF_BASE_MS);
+    noHint.close();
   });
 
   it('claims the oldest queued job and moves it to PREPARING atomically', () => {

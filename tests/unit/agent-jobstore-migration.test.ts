@@ -107,13 +107,13 @@ describe('A6-B1 job store migration v2 -> v3', () => {
     const ids = seedV2Db(dbPath, 12);
 
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(6); // A8: bumped from 5 → 6
+    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
 
     for (const id of ids) {
       const got = store.get(id);
       expect(got, `record ${id} preserved`).toBeTruthy();
       expect(got!.status).toBe('COMPLETED');
-      expect(got!.prompt).toBe('legacy v2 prompt');
+      expect(got!.prompt).toBe(''); // P3 v7 intentionally purges terminal raw prompt
       expect(got!.baseCommit).toBe('a'.repeat(40)); // v2 provenance survives migration
       expect(got!.appliedAt).toBeNull(); // new v3 column defaults NULL for legacy rows
       expect(got!.dispositionAt).toBeNull(); // new v3 column defaults NULL for legacy rows
@@ -134,7 +134,7 @@ describe('A6-B1 job store migration v2 -> v3', () => {
     const ids = seedV2Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v2 -> v3
     const reopened = new AgentJobStore(dbPath); // v3 -> v6 (forward migration)
-    expect(reopened.schemaVersion).toBe(6); // A8: bumped from 5 → 6
+    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -151,13 +151,13 @@ describe('A3 job store migration v1 -> current (v3)', () => {
 
     const store = new AgentJobStore(dbPath); // opening runs migrate() cumulatively (v1 -> v2 -> ... -> v6)
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(6); // A8: bumped from 5 → 6
+    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
 
     for (const id of ids) {
       const got = store.get(id);
       expect(got, `record ${id} preserved`).toBeTruthy();
       expect(got!.status).toBe('COMPLETED');
-      expect(got!.prompt).toBe('legacy prompt');
+      expect(got!.prompt).toBe(''); // P3 v7 intentionally purges terminal raw prompt
       expect(got!.baseCommit).toBeNull(); // v2 column defaults NULL for legacy rows
       expect(got!.appliedAt).toBeNull(); // v3 column defaults NULL for legacy rows
       expect(got!.dispositionAt).toBeNull(); // v3 column defaults NULL for legacy rows
@@ -178,7 +178,7 @@ describe('A3 job store migration v1 -> current (v3)', () => {
     const ids = seedV1Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v1 -> v3
     const reopened = new AgentJobStore(dbPath); // v3 → v6 (forward migration)
-    expect(reopened.schemaVersion).toBe(6); // A8: schema bumped v5→v6
+    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -217,7 +217,7 @@ describe('A6-B1 artifact metadata columns — fresh v3 schema', () => {
   it('fresh v3 DB contains all nine required artifact metadata columns', () => {
     const store = new AgentJobStore(dbPath);
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
+    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -292,7 +292,7 @@ describe('A6-B1 artifact metadata columns — v2→v3 migration', () => {
   it('v2→v3 migration adds all nine artifact metadata columns', () => {
     seedV2Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
+    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -359,14 +359,14 @@ describe('A6-B1 artifact metadata columns — v2→v3 migration', () => {
     db.close();
   });
 
-  it('v2→v3 migration preserves all pre-existing v2 job fields intact', () => {
+  it('forward migration preserves v2 history except terminal raw prompt body', () => {
     const ids = seedV2Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
     for (const id of ids) {
       const got = store.get(id)!;
       expect(got, `record ${id} preserved`).toBeTruthy();
       expect(got.status).toBe('COMPLETED');
-      expect(got.prompt).toBe('legacy v2 prompt');
+      expect(got.prompt).toBe(''); // P3 v7 intentionally purges terminal raw prompt
       expect(got.baseCommit).toBe('a'.repeat(40));
       expect(got.writer).toBe(true);
       expect(got.principalId).toBe('p');
@@ -403,7 +403,7 @@ describe('A6-B1 artifact metadata columns — v1→v3 migration', () => {
   it('v1→v3 migration adds all nine artifact metadata columns', () => {
     seedV1Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
+    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -456,7 +456,7 @@ describe('A6-B1 artifact metadata columns — fresh-v3 and migrated-v3 schema eq
     seedV2Db(p, 2);
     new AgentJobStore(p).close(); // v2→v3
     const reopened = new AgentJobStore(p); // v3→v6 (forward migration)
-    expect(reopened.schemaVersion).toBe(6); // A8: schema bumped v5→v6
+    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
     reopened.close();
 
     const db = new DatabaseSync(p);
@@ -597,7 +597,7 @@ describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => 
     seedV4Db(dbPath, 5);
     const store = new AgentJobStore(dbPath);
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
+    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
     store.close();
   });
 
@@ -640,14 +640,14 @@ describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => 
     db.close();
   });
 
-  it('v4→v5 migration preserves all pre-existing v4 job fields intact', () => {
+  it('forward migration preserves v4 history except terminal raw prompt body', () => {
     const ids = seedV4Db(dbPath, 4);
     const store = new AgentJobStore(dbPath);
     for (const id of ids) {
       const got = store.get(id)!;
       expect(got).toBeTruthy();
       expect(got.status).toBe('APPLIED');
-      expect(got.prompt).toBe('v4 prompt');
+      expect(got.prompt).toBe(''); // P3 v7 intentionally purges terminal raw prompt
       expect(got.baseCommit).toBe('b'.repeat(40));
       expect(got.appliedAt).not.toBeNull();
       expect(got.dispositionAt).not.toBeNull();
@@ -665,7 +665,7 @@ describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => 
     const ids = seedV4Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v4 → v5
     const reopened = new AgentJobStore(dbPath); // v5 → v6 (A8 migration)
-    expect(reopened.schemaVersion).toBe(6); // A8: schema bumped v5→v6
+    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -751,7 +751,7 @@ describe('A6 v4→v5 migration atomicity', () => {
     // Opening should complete the migration cleanly (columnExists guard skips
     // the already-added column and adds the remaining two).
     const store = new AgentJobStore(p);
-    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
+    expect(store.schemaVersion).toBe(7); // current schema includes P3 v7
     store.close();
 
     const db2 = new DatabaseSync(p);
@@ -764,7 +764,7 @@ describe('A6 v4→v5 migration atomicity', () => {
 });
 
 // =============================================================================
-// A8 update: "stamp is not proof" — updated to test the current schema v6.
+// P3 update: "stamp is not proof" — current schema is v7; v6 remains a valid migration source.
 //
 // A bare `user_version = 6` stamp is NOT proof of a v6 DB. A DB can be
 // stamped v6 by an interrupted or out-of-tree migration and still be missing
@@ -772,10 +772,51 @@ describe('A6 v4→v5 migration atomicity', () => {
 // invariant applies: verify real shape before accepting the DB. Never repair.
 // =============================================================================
 
-describe('A6 v5 schema shape validation (stamp is not proof)', () => {
+describe('P3 v6 → v7 raw-prompt minimization migration', () => {
   let dbPath: string;
   beforeEach(() => {
-    dbPath = join(mkdtempSync(join(tmpdir(), 'mcpb-v5-shape-')), 'agents.db');
+    dbPath = join(mkdtempSync(join(tmpdir(), 'mcpb-migrate-v7-prompt-')), 'agents.db');
+  });
+
+  it('scrubs terminal historical prompts but preserves QUEUED prompt needed for restart', () => {
+    const current = new AgentJobStore(dbPath);
+    const queuedId = 'job_' + '1'.repeat(32);
+    const terminalId = 'job_' + '2'.repeat(32);
+    const mk = (jobId: string, prompt: string, hash: string) => ({
+      jobId, principalId: 'p', backend: 'kiro', project: 'proj', profile: 'audit',
+      resourcePolicy: 'economy', promptHash: hash, prompt, sessionPolicy: 'new' as const,
+      writer: false, retentionClass: 'ephemeral' as const,
+      retentionDurationMs: AGENT_RETENTION_DURATION_MS.ephemeral,
+    });
+    current.insert(mk(queuedId, 'restartable queued prompt', '1'.repeat(64)));
+    current.insert(mk(terminalId, 'historical terminal prompt', '2'.repeat(64)));
+    current.close();
+
+    const pre = new DatabaseSync(dbPath);
+    pre.prepare(`UPDATE agent_jobs SET status='COMPLETED', completed_at=?, prompt=? WHERE job_id=?`)
+      .run(new Date().toISOString(), 'historical terminal prompt', terminalId);
+    pre.exec('DROP TABLE agent_provider_state');
+    pre.exec('PRAGMA user_version=6');
+    pre.close();
+
+    const migrated = new AgentJobStore(dbPath);
+    const queued = migrated.get(queuedId)!;
+    const terminal = migrated.get(terminalId)!;
+    expect(queued.status).toBe('QUEUED');
+    expect(queued.prompt).toBe('restartable queued prompt');
+    expect(queued.promptHash).toBe('1'.repeat(64));
+    expect(terminal.status).toBe('COMPLETED');
+    expect(terminal.prompt).toBe('');
+    expect(terminal.promptHash).toBe('2'.repeat(64));
+    expect(migrated.schemaVersion).toBe(7);
+    migrated.close();
+  });
+});
+
+describe('current schema shape validation (stamp is not proof)', () => {
+  let dbPath: string;
+  beforeEach(() => {
+    dbPath = join(mkdtempSync(join(tmpdir(), 'mcpb-schema-shape-')), 'agents.db');
   });
 
   /**
@@ -799,18 +840,18 @@ describe('A6 v5 schema shape validation (stamp is not proof)', () => {
     return ids;
   }
 
-  it('accepts a genuine fresh v6 DB on re-open (positive control)', () => {
+  it('accepts a genuine current DB on re-open (positive control)', () => {
     new AgentJobStore(dbPath).close();
     const reopened = new AgentJobStore(dbPath);
     expect(reopened.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
     reopened.close();
   });
 
-  it('accepts a genuine migrated v6 DB on re-open (positive control)', () => {
+  it('accepts a genuine forward-migrated DB on re-open (positive control)', () => {
     seedV4Db(dbPath, 3);
-    new AgentJobStore(dbPath).close(); // v4 -> v6
+    new AgentJobStore(dbPath).close(); // v4 -> current
     const reopened = new AgentJobStore(dbPath);
-    expect(reopened.schemaVersion).toBe(6); // A8: schema bumped v5→v6
+    expect(reopened.schemaVersion).toBe(7); // current schema includes P3 v7
     reopened.close();
   });
 
@@ -818,6 +859,22 @@ describe('A6 v5 schema shape validation (stamp is not proof)', () => {
     seedFalselyStampedV6(dbPath, 2);
     expect(() => new AgentJobStore(dbPath)).toThrow(BridgeError);
     expect(() => new AgentJobStore(dbPath)).toThrow(/stamped schema v6 but its schema is incomplete/);
+  });
+
+  it('user_version=7 missing provider-admission table fails closed and is not repaired', () => {
+    new AgentJobStore(dbPath).close();
+    const db = new DatabaseSync(dbPath);
+    db.exec('DROP TABLE agent_provider_state');
+    db.exec('PRAGMA user_version=7');
+    db.close();
+    expect(() => new AgentJobStore(dbPath)).toThrow(BridgeError);
+    expect(() => new AgentJobStore(dbPath)).toThrow(/agent_provider_state/);
+    const after = new DatabaseSync(dbPath);
+    const exists = after.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_provider_state'`).get();
+    const uv = after.prepare('PRAGMA user_version').get() as { user_version: number };
+    after.close();
+    expect(exists).toBeUndefined();
+    expect(uv.user_version).toBe(7);
   });
 
   it('the fail-closed error names the missing agent_sessions table', () => {

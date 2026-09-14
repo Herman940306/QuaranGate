@@ -40,6 +40,21 @@ export type AgentJobId = string;
  */
 export const MAX_AGENT_PROMPT_CHARS = 32_768;
 
+/**
+ * P3 durable queue bound. Agent execution is intentionally serialized today,
+ * so an unbounded queue would permit unbounded raw-prompt accumulation and
+ * provider work backlog. This is product policy, not caller configuration.
+ */
+export const MAX_AGENT_QUEUED_JOBS = 64;
+
+/** P3 provider-admission policy. Product constants; never caller-selectable. */
+export const PROVIDER_BACKOFF_BASE_MS = 5_000;
+export const PROVIDER_BACKOFF_MAX_MS = 120_000;
+export const PROVIDER_BACKOFF_JITTER_FRACTION = 0.20;
+export const PROVIDER_CIRCUIT_FAILURE_THRESHOLD = 3;
+export const PROVIDER_CIRCUIT_OPEN_MS = 5 * 60 * 1000;
+export const MAX_PROVIDER_RETRY_AFTER_MS = 15 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // Job lifecycle
 // ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { AgentJobStore } from '../../src/executor/agents/jobStore.js';
+import { AgentJobStore, AGENT_JOB_SCHEMA_VERSION } from '../../src/executor/agents/jobStore.js';
 import { AGENT_RETENTION_DURATION_MS } from '../../src/shared/agents.js';
 import {
   evidenceVolumeName,
@@ -372,7 +372,7 @@ describe('lifecycle before service readiness', () => {
 // ---------------------------------------------------------------------------
 
 describe('schema version', () => {
-  it('store opens at v5', () => {
-    expect(store.schemaVersion).toBe(5);
+  it('store opens at the current schema version', () => {
+    expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
   });
 });

@@ -265,6 +265,13 @@ export class AgentJobEngine {
      */
     private readonly applierImage?: string,
     private readonly applierIO?: ApplierIO,
+    /**
+     * Production-only truth set for real backend adapters actually wired at
+     * executor startup. When omitted, deterministic unit-test/fake-only seams
+     * retain the historical fake backend behavior. When present, an enabled
+     * backend absent from this set is unavailable and MUST fail closed.
+     */
+    private readonly runtimeAvailableBackends?: ReadonlySet<string>,
   ) {}
 
   /** Startup reconciliation per the documented A2/A8 policy (fail closed). */
@@ -277,7 +284,9 @@ export class AgentJobEngine {
     for (const id of sessionRecovery.expired) {
       log('agent session reservation recovered as EXPIRED', { sessionId: id });
     }
-    this.kick();
+    // P3: state recovery only. Do NOT resume queued provider work until the
+    // executor has completed sandbox/evidence/GitHub reconciliation and has
+    // successfully bound its listening socket. index.ts owns the final kick().
     return recovered;
   }
 
@@ -287,7 +296,7 @@ export class AgentJobEngine {
   }
 
   listBackends(): { id: string; available: boolean; profiles: string[] }[] {
-    return this.config.backends.map((b) => ({ id: b.id, available: b.enabled, profiles: [...b.profiles] }));
+    return this.config.backends.map((b) => ({ id: b.id, available: b.enabled && (this.runtimeAvailableBackends ? this.runtimeAvailableBackends.has(b.id) : true), profiles: [...b.profiles] }));
   }
 
   listProjects(): { id: string; gitRequired: boolean; allowedBackends: string[]; allowedProfiles: string[] }[] {
@@ -322,6 +331,9 @@ export class AgentJobEngine {
     const backend = this.config.backends.find((b) => b.id === req.backend);
     if (!backend) throw new BridgeError('FORBIDDEN_BACKEND', `unknown backend ${req.backend}`, 403);
     if (!backend.enabled) throw new BridgeError('FORBIDDEN_BACKEND', `backend ${req.backend} is disabled`, 403);
+    if (this.runtimeAvailableBackends && !this.runtimeAvailableBackends.has(backend.id)) {
+      throw new BridgeError('PRECONDITION_FAILED', `backend ${req.backend} is enabled but unavailable in this runtime`, 503);
+    }
     if (!project.backends.includes(backend.id)) {
       throw new BridgeError('FORBIDDEN_BACKEND', `backend ${req.backend} not allowed for project ${req.project}`, 403);
     }
@@ -333,6 +345,10 @@ export class AgentJobEngine {
     if (!backend.profiles.includes(profile.id)) {
       throw new BridgeError('FORBIDDEN_PROFILE', `profile ${req.profile} not supported by backend ${req.backend}`, 403);
     }
+    // P3 production admission: persisted cooldown/circuit state is checked only
+    // for real runtime adapters. Fake-only test seams intentionally omit the
+    // runtime set and retain deterministic historical behavior.
+    if (this.runtimeAvailableBackends) this.store.assertProviderAdmissible(backend.id);
     const policyId = req.resourcePolicy ?? profile.defaultResourcePolicy;
     const policy = this.resolvePolicy(policyId);
 
@@ -647,10 +663,24 @@ export class AgentJobEngine {
         };
       }
 
-      backend = this.backendFactory?.(job, policy, sessionCtx) ?? new FakeAgentBackend(
-        { jobId: job.jobId, backend: job.backend, project: job.project, profile: job.profile, maxRuntimeMs: policy.maxRuntimeMs },
-        this.backendOptions(job),
-      );
+      // Re-check immediately before provider construction: an earlier queued
+      // job may have opened the provider cooldown after this job was admitted.
+      if (this.runtimeAvailableBackends) this.store.assertProviderAdmissible(job.backend);
+      const selectedBackend = this.backendFactory?.(job, policy, sessionCtx) ?? null;
+      if (this.runtimeAvailableBackends) {
+        if (!this.runtimeAvailableBackends.has(job.backend)) {
+          throw new BridgeError('PRECONDITION_FAILED', `backend ${job.backend} is unavailable in this runtime`, 503);
+        }
+        if (selectedBackend === null) {
+          throw new BridgeError('PRECONDITION_FAILED', `backend ${job.backend} has no real runtime adapter`, 503);
+        }
+        backend = selectedBackend;
+      } else {
+        backend = selectedBackend ?? new FakeAgentBackend(
+          { jobId: job.jobId, backend: job.backend, project: job.project, profile: job.profile, maxRuntimeMs: policy.maxRuntimeMs },
+          this.backendOptions(job),
+        );
+      }
       await backend.prepare(exec.controller.signal);
       step('PREPARING', 'RUNNING');
       // A resumed provider may advance its persisted conversation from this
@@ -720,9 +750,22 @@ export class AgentJobEngine {
         exitCode: result.exitCode,
         requireArtifact: required,
       });
-      // The atomic finalization COMMIT above is authoritative. This diagnostic
-      // must not enter the execution failure handler if serialization/output
-      // fails, because the source is already CONSUMED and successor ACTIVE.
+      // The atomic job/session COMMIT above is authoritative. Provider health
+      // is secondary state: failure to reset it must never reclassify committed
+      // job/session authority. Leaving a stale cooldown is conservative.
+      if (this.runtimeAvailableBackends?.has(job.backend)) {
+        try {
+          this.store.recordProviderSuccess(job.backend);
+        } catch (stateError) {
+          bestEffortLog('provider admission success reset failed', {
+            backend: job.backend,
+            error: stateError instanceof Error ? stateError.message.slice(0, 160) : 'unknown',
+          });
+        }
+      }
+      // This diagnostic must not enter the execution failure handler if
+      // serialization/output fails, because source is already CONSUMED and
+      // successor ACTIVE.
       bestEffortLog('agent job transition', {
         jobId: job.jobId,
         from: 'VALIDATING',
@@ -732,6 +775,22 @@ export class AgentJobEngine {
       });
     } catch (e) {
       if (backend?.cleanup) { await backend.cleanup().catch(() => {}); }
+
+      // P3: a structured provider throttle updates durable cooldown/circuit
+      // state before the job becomes terminal. If that persistence itself
+      // fails, stop claiming more work so we fail closed rather than hammer a
+      // provider without the admission state we rely on.
+      if (this.runtimeAvailableBackends?.has(job.backend) && e instanceof BridgeError && e.code === 'RATE_LIMITED') {
+        try {
+          this.store.recordProviderFailure(job.backend, 'RATE_LIMITED', e.retryAfterMs);
+        } catch (stateError) {
+          this.stopped = true;
+          bestEffortLog('provider admission failure persistence failed; engine stopped', {
+            backend: job.backend,
+            error: stateError instanceof Error ? stateError.message.slice(0, 160) : 'unknown',
+          });
+        }
+      }
 
       if (sourceSessionId) {
         const invalidSessionPreUse = e instanceof BridgeError && e.code === 'SESSION_NOT_RESUMABLE';
@@ -769,6 +828,7 @@ export class AgentJobEngine {
     const failureCode = exec.cause === 'timeout' ? 'FAILED_TIMEOUT'
       : exec.cause === 'shutdown' ? 'FAILED_INFRASTRUCTURE'
       : exec.cause === 'cancel' ? 'CANCELLED'
+      : (e instanceof BridgeError && e.code === 'RATE_LIMITED' && s === 'PREPARING') ? 'FAILED_PRECONDITION'
       : classifyExecutionFailure(e, backend);
     if (failureCode === 'CANCELLED') return; // cancel() persists CANCELLED itself
     this.store.transition(jobId, s, failureCode, {

@@ -314,18 +314,16 @@ let server: ReturnType<typeof app.listen>;
       ? new RunnerSandbox({ image: startupPolicy.ollama.stagerImage })
       : null;
 
-    // A4: wire the real Kiro backend when the trusted runner infrastructure is
-    // configured. The factory selects KiroBackend ONLY for backend=kiro and
-    // falls back to the fake backend otherwise.
-    // O1: wire the real Ollama backend only when trusted config enables it and
-    // startup policy accepts its explicit environment. The factory chain selects
-    // OllamaBackend for backend=ollama, KiroBackend for backend=kiro, and falls
-    // back to the fake backend otherwise.
+    // A4/P3: wire real provider adapters only when their trusted runtime
+    // prerequisites are configured. Production passes the exact wired-backend
+    // set into AgentJobEngine, so an explicitly requested provider that is not
+    // wired fails closed and can never silently execute the deterministic fake.
     let backendFactory:
       | ((job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null)
       | undefined;
     let kiroEnabled = false;
     let ollamaEnabled = false;
+    const runtimeAvailableBackends = new Set<string>();
 
     // Build composed factory chain (Ollama → Kiro → null)
     const factories: Array<(job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null> = [];
@@ -344,6 +342,7 @@ let server: ReturnType<typeof app.listen>;
       });
       factories.push(ollamaFactory);
       ollamaEnabled = true;
+      runtimeAvailableBackends.add('ollama');
     }
 
     if (startupPolicy.runnerImage && PROXY_IMAGE && KIRO_KEY_PATH) {
@@ -364,11 +363,12 @@ let server: ReturnType<typeof app.listen>;
       });
       factories.push(kiroFactory);
       kiroEnabled = true;
+      runtimeAvailableBackends.add('kiro');
     }
 
-    // Compose factories: try each in order, return first non-null result.
-    // CRITICAL (R1.7): Explicit backend=ollama when ollamaEnabled but factory
-    // returns null must FAIL CLOSED (not silently fall back to fake backend).
+    // Compose factories: try each real adapter in order. AgentJobEngine also
+    // receives runtimeAvailableBackends and treats any missing/null real adapter
+    // as PRECONDITION_FAILED in production.
     if (factories.length > 0) {
       backendFactory = (job, policy) => {
         // Explicit backend=ollama when Ollama is enabled requires Ollama factory success
@@ -393,7 +393,7 @@ let server: ReturnType<typeof app.listen>;
           const backend = factory(job, policy);
           if (backend !== null) return backend;
         }
-        return null; // All factories returned null → fake backend
+        return null; // Production engine converts this to fail-closed for real backends
       };
     }
 
@@ -406,6 +406,7 @@ let server: ReturnType<typeof app.listen>;
     agentEngine = new AgentJobEngine(
       agentStore, agentConfig, undefined, backendFactory,
       evidenceReaderFactory, kiroHelperImage || undefined, applierIO,
+      runtimeAvailableBackends,
     );
 
     // Step 2: recover active jobs (fail closed to FAILED_INFRASTRUCTURE).
@@ -488,8 +489,11 @@ let server: ReturnType<typeof app.listen>;
   }
 
   // Step 8: all lifecycle steps complete — executor is now safe to accept requests.
+  // P3: only after the socket binds successfully may recovered QUEUED work run.
+  // If listen fails, no provider work is restarted.
   server = app.listen(PORT, '0.0.0.0', () => {
     console.log(JSON.stringify({ level: 'info', msg: 'executor listening', port: PORT }));
+    agentEngine?.kick();
   });
 
 })().catch((e) => {

@@ -46,8 +46,6 @@ export interface CredentialManagerOptions {
 }
 
 export class CredentialManager {
-  private cachedKey: string | null = null;
-
   constructor(private readonly opts: CredentialManagerOptions) {}
 
   /**
@@ -68,16 +66,18 @@ export class CredentialManager {
     return { size: stat.size, mode, owner: `${stat.uid}:${stat.gid}` };
   }
 
-  /** The ONLY function that reads the raw key value. Cached for the process. */
+  /**
+   * The ONLY function that reads the raw key value. P3 deliberately performs
+   * a fresh metadata check + file read for every use so operator rotation or
+   * revocation takes effect without restarting the executor.
+   */
   private readKey(): string {
-    if (this.cachedKey) return this.cachedKey;
     this.verifyCredentialFile();
     const raw = fs.readFileSync(this.opts.credentialPath, 'utf8').trim();
     if (raw.length < 10 || raw.length > 256) {
       throw new BridgeError('SANDBOX_FAILED',
         `Kiro API key has unexpected length (${raw.length}); expected 10-256 chars`, 500);
     }
-    this.cachedKey = raw;
     return raw;
   }
 

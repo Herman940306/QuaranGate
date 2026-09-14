@@ -220,7 +220,7 @@ describe('AgentSessionStore', () => {
   });
 
   it('schema version upgraded to 6', () => {
-    expect(store.schemaVersion).toBe(6);
+    expect(store.schemaVersion).toBe(7);
   });
 });
 
@@ -628,10 +628,10 @@ describe('AgentJobEngine — session continuity dispatch', () => {
 // Schema migration tests
 // ---------------------------------------------------------------------------
 
-describe('AgentJobStore schema v6 migration', () => {
-  it('A8-S11: fresh install produces schema v6 with agent_sessions table', () => {
+describe('AgentJobStore session-continuity schema compatibility', () => {
+  it('A8-S11: current fresh install includes the v6 agent_sessions contract', () => {
     const store = new AgentJobStore(':memory:');
-    expect(store.schemaVersion).toBe(6);
+    expect(store.schemaVersion).toBe(7);
     // session store is accessible
     const ss = store.sessionStore;
     expect(ss).toBeDefined();
@@ -657,7 +657,7 @@ describe('AgentJobStore schema v6 migration', () => {
 
       // Re-open the same file — session must still be ACTIVE
       const store2 = new AgentJobStore(tmp);
-      expect(store2.schemaVersion).toBe(6);
+      expect(store2.schemaVersion).toBe(7);
       const row = store2.sessionStore.getSession(id);
       expect(row).toBeDefined();
       expect(row!.state).toBe('ACTIVE');
@@ -1177,7 +1177,7 @@ describe('A8 R1 — restart reservation matrix', () => {
     }
   });
 
-  it('AgentJobEngine.recover reconciles reservations before queue processing is kicked', () => {
+  it('AgentJobEngine.recover reconciles reservations without starting queued work', () => {
     const store = makeStore();
     const source = makeSessionId();
     store.sessionStore.insertSession({
@@ -1192,11 +1192,12 @@ describe('A8 R1 — restart reservation matrix', () => {
     expect(store.claimNext()!.status).toBe('PREPARING');
 
     const recovering = makeEngine(store);
-    let stateAtKick: string | undefined;
-    (recovering as any).kick = () => { stateAtKick = store.sessionStore.getSession(source)?.state; };
+    let kicked = false;
+    (recovering as any).kick = () => { kicked = true; };
     expect(recovering.recover()).toContain(job.jobId);
     expect(store.get(job.jobId)!.status).toBe('FAILED_INFRASTRUCTURE');
-    expect(stateAtKick).toBe('EXPIRED');
+    expect(store.sessionStore.getSession(source)?.state).toBe('EXPIRED');
+    expect(kicked).toBe(false);
   });
 
   it('EXPIRED survives restart and remains ineligible', () => {
@@ -1246,6 +1247,8 @@ describe('A8 R1 — restart reservation matrix', () => {
 
       const s2 = new AgentJobStore(tmp);
       expect(s2.get(job.jobId)!.status).toBe('COMPLETED');
+      expect(s2.get(job.jobId)!.prompt).toBe('');
+      expect(s2.get(job.jobId)!.promptHash).toBe(job.promptHash);
       expect(s2.get(job.jobId)!.backendSessionId).toBe(successor);
       expect(s2.sessionStore.getSession(source)!.state).toBe('CONSUMED');
       expect(s2.sessionStore.getSession(successor)!.state).toBe('ACTIVE');

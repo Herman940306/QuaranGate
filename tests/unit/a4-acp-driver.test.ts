@@ -16,12 +16,14 @@ import {
   ACP_AGENT_NAME_PREFIX,
   ACP_AGENT_NAME_PATTERN,
   ACP_PROTOCOL_VERSION,
+  classifyAcpRateLimit,
   newBridgeAgentName,
   isAllowedReadonlyTool,
   isReadonlyProfile,
   assertReadonlyProfile,
 } from '../../src/executor/agents/acpDriver.js';
 import { randomBytes } from 'node:crypto';
+import { MAX_PROVIDER_RETRY_AFTER_MS } from '../../src/shared/agents.js';
 import { readFileSync, unlinkSync } from 'node:fs';
 
 const MOCK = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'mock-acp-server.mjs');
@@ -130,6 +132,43 @@ describe('ACP driver — protocol against mock Kiro', () => {
       setTimeout(() => ac.abort(new Error('cancelled')), 100);
       await expect(p).rejects.toBeTruthy();
     } finally { d.kill('test done'); }
+  });
+});
+
+describe('ACP driver — P3 provider throttling', () => {
+  it('classifies only structured 429 evidence and extracts bounded Retry-After', () => {
+    expect(classifyAcpRateLimit({ code: -32000, message: 'x', data: { statusCode: 429, retryAfterSeconds: 7 } }))
+      .toEqual({ retryAfterMs: 7000 });
+    expect(classifyAcpRateLimit({ code: 429, message: 'x', data: { retryAfterMs: 999999999 } }))
+      .toEqual({ retryAfterMs: MAX_PROVIDER_RETRY_AFTER_MS });
+    expect(classifyAcpRateLimit({ code: -32000, message: 'rate limit in prose only' })).toBeNull();
+  });
+
+  it('maps a structured provider 429 to RATE_LIMITED with Retry-After metadata', async () => {
+    const d = makeDriver();
+    d.spawn();
+    try {
+      await d.initialize();
+      await d.sessionNew('/workspace');
+      await expect(d.prompt({ prompt: 'RATE429', timeoutMs: 10_000 })).rejects.toMatchObject({
+        code: 'RATE_LIMITED',
+        httpStatus: 429,
+        retryAfterMs: 7000,
+      });
+    } finally { await d.shutdown(); }
+  });
+
+  it('clamps an excessive provider Retry-After hint', async () => {
+    const d = makeDriver();
+    d.spawn();
+    try {
+      await d.initialize();
+      await d.sessionNew('/workspace');
+      await expect(d.prompt({ prompt: 'RATE429-HUGE', timeoutMs: 10_000 })).rejects.toMatchObject({
+        code: 'RATE_LIMITED',
+        retryAfterMs: MAX_PROVIDER_RETRY_AFTER_MS,
+      });
+    } finally { await d.shutdown(); }
   });
 });
 

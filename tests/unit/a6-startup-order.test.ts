@@ -113,6 +113,7 @@ vi.mock('../../src/executor/agents/jobEngine.js', async (importOriginal) => {
     constructor(..._args: unknown[]) {}
     recover(): string[] { h.stage('recoverActive'); return []; }
     protectedProviderStateRefs(): string[] { return ['provider-state-active']; }
+    kick(): void { h.stage('queueRestart'); }
     shutdown(): void {}
   }
   return { ...actual, AgentJobEngine: FakeEngine };
@@ -163,6 +164,7 @@ const FROZEN_ORDER = [
   'sandbox.reconcileOrphans',
   'evidenceLifecycle',
   'listen',
+  'queueRestart',
 ] as const;
 
 let exitCodes: number[] = [];
@@ -234,8 +236,8 @@ describe('executor startup ordering — success path', () => {
   it('listen() happens strictly after every lifecycle stage', async () => {
     await runStartup();
     const listenAt = h.order.indexOf('listen');
-    expect(listenAt).toBe(h.order.length - 1);
-    for (const s of FROZEN_ORDER.filter((x) => x !== 'listen')) {
+    expect(h.order[listenAt + 1]).toBe('queueRestart');
+    for (const s of FROZEN_ORDER.filter((x) => x !== 'listen' && x !== 'queueRestart')) {
       expect(h.order.indexOf(s), `${s} must precede listen`).toBeLessThan(listenAt);
     }
   });
@@ -250,6 +252,12 @@ describe('executor startup ordering — success path', () => {
     await runStartup();
     expect(h.order.indexOf('recoverActive')).toBeLessThan(h.order.indexOf('sandbox.reconcileOrphans'));
     expect(h.order.indexOf('recoverApplyAttempts')).toBeLessThan(h.order.indexOf('sandbox.reconcileOrphans'));
+  });
+
+  it('P3 restarts recovered queued work only after successful listen', async () => {
+    await runStartup();
+    expect(h.order.indexOf('queueRestart')).toBeGreaterThan(h.order.indexOf('listen'));
+    expect(h.order.indexOf('queueRestart')).toBeGreaterThan(h.order.indexOf('evidenceLifecycle'));
   });
 
   it('A8 R1 passes ACTIVE/RESERVED provider state refs into orphan preservation before sweep', async () => {
