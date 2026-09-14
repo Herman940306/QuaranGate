@@ -2,9 +2,9 @@
  * P7 B7 authenticated companion operation-control frames.
  *
  * This protocol is intentionally narrower than the B1 capability vocabulary:
- * B7 executes only request_review. Generic prompt and request_implementation
- * are not operation starts here because prompt text is not a read-only policy
- * boundary and writer arbitration is not yet accepted.
+ * B7 executes request_review. P7 B9 adds a distinct request_implementation
+ * start frame, but this pure protocol still grants no writer authority. The
+ * implementation start must pass the B9 B5+B8 admission seam before use.
  */
 import { IDE_WORKSPACE_ATTESTATION_MAX_BYTES } from './ideWorkspaceAttestation.js';
 import {
@@ -18,11 +18,13 @@ export const IDE_COMPANION_OPERATION_MAX_PROMPT_BYTES = 16 * 1024;
 export const IDE_COMPANION_OPERATION_MAX_AUTHENTICATED_PAYLOAD_BYTES = 40 * 1024;
 export const IDE_COMPANION_OPERATION_MAX_FRAME_BYTES = 48 * 1024;
 const REVIEW_PAYLOAD_DOMAIN = 'quarangate.ide.review.payload.v1';
+const IMPLEMENTATION_PAYLOAD_DOMAIN = 'quarangate.ide.implementation.payload.v1';
 
 export type IdeCompanionOperationControlFrame =
   | { version: 1; type: 'acquire_controller' }
   | { version: 1; type: 'release_controller' }
   | { version: 1; type: 'start_review'; auth: IdeCompanionAuthEnvelope; prompt: string; workspaceAttestation: string }
+  | { version: 1; type: 'start_implementation'; auth: IdeCompanionAuthEnvelope; prompt: string; workspaceAttestation: string }
   | { version: 1; type: 'cancel_operation'; auth: IdeCompanionAuthEnvelope };
 
 export type IdeCompanionOperationProtocolErrorCode =
@@ -94,20 +96,21 @@ function validateFrame(value: unknown): IdeCompanionOperationControlFrame {
     if (!exactKeys(row, ['version', 'type'])) fail('IDE_OPERATION_INVALID_SCHEMA', 'controller frame keys are invalid');
     return { version: 1, type: row.type };
   }
-  if (row.type === 'start_review') {
+  if (row.type === 'start_review' || row.type === 'start_implementation') {
     if (!exactKeys(row, ['version', 'type', 'auth', 'prompt', 'workspaceAttestation'])) fail('IDE_OPERATION_INVALID_SCHEMA', 'start frame keys are invalid');
     if (typeof row.prompt !== 'string') fail('IDE_OPERATION_INVALID_SCHEMA', 'prompt must be a string');
     const promptBytes = Buffer.byteLength(row.prompt, 'utf8');
     if (promptBytes < 1 || promptBytes > IDE_COMPANION_OPERATION_MAX_PROMPT_BYTES) {
-      fail('IDE_OPERATION_INVALID_SCHEMA', 'prompt exceeds bounded review envelope');
+      fail('IDE_OPERATION_INVALID_SCHEMA', 'prompt exceeds bounded operation envelope');
     }
     if (typeof row.workspaceAttestation !== 'string' || Buffer.byteLength(row.workspaceAttestation, 'utf8') < 1
       || Buffer.byteLength(row.workspaceAttestation, 'utf8') > IDE_WORKSPACE_ATTESTATION_MAX_BYTES) {
       fail('IDE_OPERATION_INVALID_SCHEMA', 'workspace attestation exceeds bound');
     }
     const auth = parseAuth(row.auth);
-    if (auth.capability !== 'request_review') fail('IDE_OPERATION_CAPABILITY_DENIED', 'B7 starts only request_review');
-    return { version: 1, type: 'start_review', auth, prompt: row.prompt, workspaceAttestation: row.workspaceAttestation };
+    const expected = row.type === 'start_review' ? 'request_review' : 'request_implementation';
+    if (auth.capability !== expected) fail('IDE_OPERATION_CAPABILITY_DENIED', `${row.type} requires ${expected}`);
+    return { version: 1, type: row.type, auth, prompt: row.prompt, workspaceAttestation: row.workspaceAttestation };
   }
   if (row.type === 'cancel_operation') {
     if (!exactKeys(row, ['version', 'type', 'auth'])) fail('IDE_OPERATION_INVALID_SCHEMA', 'cancel frame keys are invalid');
@@ -118,19 +121,27 @@ function validateFrame(value: unknown): IdeCompanionOperationControlFrame {
   fail('IDE_OPERATION_INVALID_SCHEMA', 'operation frame type is invalid');
 }
 
-export function serializeIdeCompanionReviewPayload(prompt: string, workspaceAttestation: string): string {
+function serializeBoundedOperationPayload(domain: string, prompt: string, workspaceAttestation: string): string {
   if (typeof prompt !== 'string' || Buffer.byteLength(prompt, 'utf8') < 1 || Buffer.byteLength(prompt, 'utf8') > IDE_COMPANION_OPERATION_MAX_PROMPT_BYTES) {
-    fail('IDE_OPERATION_INVALID_SCHEMA', 'prompt exceeds bounded review envelope');
+    fail('IDE_OPERATION_INVALID_SCHEMA', 'prompt exceeds bounded operation envelope');
   }
   if (typeof workspaceAttestation !== 'string' || Buffer.byteLength(workspaceAttestation, 'utf8') < 1
     || Buffer.byteLength(workspaceAttestation, 'utf8') > IDE_WORKSPACE_ATTESTATION_MAX_BYTES) {
     fail('IDE_OPERATION_INVALID_SCHEMA', 'workspace attestation exceeds bound');
   }
-  const text=JSON.stringify([REVIEW_PAYLOAD_DOMAIN,prompt,workspaceAttestation]);
+  const text=JSON.stringify([domain,prompt,workspaceAttestation]);
   if(Buffer.byteLength(text,'utf8')>IDE_COMPANION_OPERATION_MAX_AUTHENTICATED_PAYLOAD_BYTES) {
-    fail('IDE_OPERATION_FRAME_SIZE','authenticated review payload exceeds bound');
+    fail('IDE_OPERATION_FRAME_SIZE','authenticated operation payload exceeds bound');
   }
   return text;
+}
+
+export function serializeIdeCompanionReviewPayload(prompt: string, workspaceAttestation: string): string {
+  return serializeBoundedOperationPayload(REVIEW_PAYLOAD_DOMAIN,prompt,workspaceAttestation);
+}
+
+export function serializeIdeCompanionImplementationPayload(prompt: string, workspaceAttestation: string): string {
+  return serializeBoundedOperationPayload(IMPLEMENTATION_PAYLOAD_DOMAIN,prompt,workspaceAttestation);
 }
 
 export function serializeIdeCompanionOperationControlFrame(frame: IdeCompanionOperationControlFrame): string {

@@ -23,7 +23,7 @@ export interface AdmitIdeCompanionRequestInput {
   nowMs: number;
 }
 
-export interface AdmittedIdeCompanionRequest {
+export interface AuthenticatedClaimedIdeCompanionRequest {
   enrollmentId: string;
   ideInstanceId: string;
   sessionId: string;
@@ -34,13 +34,18 @@ export interface AdmittedIdeCompanionRequest {
   payloadSha256: string;
 }
 
+/** Identity after cryptographic verification + durable replay claim only. */
+export interface AdmittedIdeCompanionRequest extends AuthenticatedClaimedIdeCompanionRequest {}
+
 /**
  * One accepted frame is one-shot even if subsequent lifecycle authorization
  * fails: replay is claimed after cryptographic verification but before B1/B2
  * authority. That prevents a frame denied in one session state from becoming
  * usable later after state changes.
  */
-export function admitIdeCompanionRequest(input: AdmitIdeCompanionRequestInput): AdmittedIdeCompanionRequest {
+export function authenticateAndClaimIdeCompanionRequest(
+  input: AdmitIdeCompanionRequestInput,
+): AuthenticatedClaimedIdeCompanionRequest {
   const verified = verifyIdeCompanionEnvelope({
     envelope: input.envelope,
     secret: input.secret,
@@ -61,8 +66,6 @@ export function admitIdeCompanionRequest(input: AdmitIdeCompanionRequestInput): 
     expiresAtMs: verified.expiresAtMs,
   });
 
-  input.store.assertCompanionAuthority(verified);
-
   return {
     enrollmentId: verified.enrollmentId,
     ideInstanceId: verified.ideInstanceId,
@@ -73,4 +76,10 @@ export function admitIdeCompanionRequest(input: AdmitIdeCompanionRequestInput): 
     capability: verified.capability,
     payloadSha256: verified.payloadSha256,
   };
+}
+
+export function admitIdeCompanionRequest(input: AdmitIdeCompanionRequestInput): AdmittedIdeCompanionRequest {
+  const admitted = authenticateAndClaimIdeCompanionRequest(input);
+  input.store.assertCompanionAuthority(admitted);
+  return admitted;
 }

@@ -13,7 +13,7 @@ import {
   type IdeCompanionHelloFrame,
 } from '../../src/shared/ideCompanionHandshake.js';
 import { hashIdeCompanionPayload, signIdeCompanionEnvelope } from '../../src/shared/ideCompanionAuth.js';
-import { serializeIdeCompanionOperationControlFrame, serializeIdeCompanionReviewPayload } from '../../src/shared/ideCompanionOperations.js';
+import { serializeIdeCompanionImplementationPayload, serializeIdeCompanionOperationControlFrame, serializeIdeCompanionReviewPayload } from '../../src/shared/ideCompanionOperations.js';
 import type { IdeReviewOperationAdapter } from '../../src/executor/ide/ideOperationCoordinator.js';
 import {
   deriveIdeEnvironmentIdentity,
@@ -68,7 +68,7 @@ function physical(over: Partial<IdeWorkspacePhysicalIdentity> = {}): IdeWorkspac
   };
 }
 
-function setup(over: { workspace?: IdeWorkspacePhysicalIdentity } = {}): {
+function setup(over: { workspace?: IdeWorkspacePhysicalIdentity; capabilities?: IdeEnrollmentRow['capabilities'] } = {}): {
   enrollment: IdeEnrollmentRow;
   runtime: IdeCompanionRuntimeRef;
   workspace: IdeWorkspacePhysicalIdentity;
@@ -80,7 +80,7 @@ function setup(over: { workspace?: IdeWorkspacePhysicalIdentity } = {}): {
   const enrollment = store.createEnrollment({
     principalId: 'chatgpt-browser', projectId: 'quarangate', worktreeId: 'forward', ideProduct: 'vscode',
     ideInstanceId: `ide_${digit.repeat(32)}`, workspaceFingerprint: fingerprint, baseRevision,
-    capabilities: ['prompt', 'cancel', 'observe_response', 'request_review'],
+    capabilities: over.capabilities ?? ['prompt', 'cancel', 'observe_response', 'request_review'],
   });
   const runtime = createIdeCompanionRuntime({
     runtimeRoot, enrollmentId: enrollment.enrollmentId, ideInstanceId: enrollment.ideInstanceId,
@@ -196,7 +196,7 @@ async function complete(
 
 function signedOperationAuth(
   ctx: ReturnType<typeof setup>, sessionIdValue: string, generation: number, leaseId: string,
-  operationId: string, capability: 'request_review'|'cancel', payload: string, nonceByte: number,
+  operationId: string, capability: 'request_review'|'request_implementation'|'cancel', payload: string, nonceByte: number,
 ) {
   const material=readIdeCompanionSecret(ctx.runtime).secret;
   try {
@@ -516,6 +516,20 @@ describe('P7 B7 governed review operations over authenticated AF_UNIX connection
     expect(events.map(event=>event.type)).toEqual(['operation_started','indeterminate']);
     expect(store.getOperation(operationId)?.state).toBe('INDETERMINATE');
     expect(store.getSession(connection.sessionId)?.state).toBe('CONTROLLER_ACQUIRED');
+  });
+
+  it('keeps a fully signed and enrolled start_implementation frame non-executable in B9.1',async()=>{
+    const ctx=setup({capabilities:['prompt','cancel','observe_response','request_review','request_implementation']});
+    const connection=await readyController(ctx,completingAdapter); const operationId=`ideo_${'c'.repeat(32)}`; const prompt='implementation must remain disabled in B9.1';
+    const workspaceAttestation=makeWorkspaceAttestation(ctx,hello(ctx,connection.sessionId),connection.generation);
+    const payload=serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation);
+    const auth=signedOperationAuth(ctx,connection.sessionId,connection.generation,connection.leaseId,operationId,'request_implementation',payload,0x58);
+    const responsePromise=readLine(connection.socket);
+    connection.socket.write(`${serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth,prompt,workspaceAttestation})}\n`);
+    expect(await responsePromise).toMatchObject({type:'error',code:'IDE_IMPLEMENTATION_NOT_CONFIGURED'});
+    await new Promise(resolve=>setTimeout(resolve,20));
+    expect(store.getOperation(operationId)).toBeUndefined();
+    expect(store.getSession(connection.sessionId)?.state).toBe('DISCONNECTED');
   });
 
   it('invalid operation MAC opens no operation and disconnects the controller session fail closed',async()=>{

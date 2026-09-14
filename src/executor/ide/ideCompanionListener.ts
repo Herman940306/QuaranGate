@@ -434,6 +434,9 @@ export class IdeCompanionListener {
       this.operationCoordinator.startReview(frame.auth,frame.prompt,frame.workspaceAttestation,(event:IdeOperationEvent)=>writeFrame(socket,{version:1,type:'operation_event',event}));
       return;
     }
+    if(frame.type==='start_implementation'){
+      throw new IdeOperationCoordinatorError('IDE_IMPLEMENTATION_NOT_CONFIGURED','B9 implementation execution is not configured in this source batch');
+    }
     const result=this.operationCoordinator.cancel(frame.auth);
     writeFrame(socket,{version:1,type:'cancel_accepted',operationId:frame.auth.operationId,result});
   }

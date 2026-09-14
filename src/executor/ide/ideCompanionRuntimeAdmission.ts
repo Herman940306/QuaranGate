@@ -7,8 +7,9 @@
  */
 import type { IdeCompanionAuthEnvelope } from '../../shared/ideCompanionAuth.js';
 import {
-  admitIdeCompanionRequest,
+  authenticateAndClaimIdeCompanionRequest,
   type AdmittedIdeCompanionRequest,
+  type AuthenticatedClaimedIdeCompanionRequest,
 } from './ideCompanionAdmission.js';
 import { IdeSessionStore } from './ideSessionStore.js';
 import {
@@ -31,9 +32,9 @@ export interface AdmitIdeCompanionRuntimeRequestInput {
  * accepted B3 cryptographic/replay/authority funnel. Secret bytes are zeroed
  * from this wrapper's temporary Buffer once admission returns or throws.
  */
-export function admitIdeCompanionRuntimeRequest(
+export function authenticateAndClaimIdeCompanionRuntimeRequest(
   input: AdmitIdeCompanionRuntimeRequestInput,
-): AdmittedIdeCompanionRequest {
+): AuthenticatedClaimedIdeCompanionRequest {
   const material = readIdeCompanionSecret(input.runtime);
   try {
     if (input.envelope.enrollmentId !== input.runtime.enrollmentId
@@ -43,7 +44,7 @@ export function admitIdeCompanionRuntimeRequest(
         'companion envelope does not match its trusted runtime credential binding',
       );
     }
-    return admitIdeCompanionRequest({
+    return authenticateAndClaimIdeCompanionRequest({
       store: input.store,
       envelope: input.envelope,
       secret: material.secret,
@@ -53,4 +54,12 @@ export function admitIdeCompanionRuntimeRequest(
   } finally {
     material.secret.fill(0);
   }
+}
+
+export function admitIdeCompanionRuntimeRequest(
+  input: AdmitIdeCompanionRuntimeRequestInput,
+): AdmittedIdeCompanionRequest {
+  const admitted = authenticateAndClaimIdeCompanionRuntimeRequest(input);
+  input.store.assertCompanionAuthority(admitted);
+  return admitted;
 }

@@ -32,11 +32,17 @@ const NONCE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const MAC_PATTERN = /^[0-9a-f]{64}$/;
 
-export const IDE_COMPANION_B3_CAPABILITIES: readonly IdeCapability[] = [
+export const IDE_COMPANION_AUTH_CAPABILITIES: readonly IdeCapability[] = [
   ...IDE_REVIEW_BASE_CAPABILITIES,
   'read_bounded_editor_context',
+  // P7 B9 extends the already-authenticated envelope to the implementation
+  // capability. Writer authority is still separately required and is never
+  // granted by possession of a valid B3/B9 MAC alone.
+  'request_implementation',
 ] as const;
-const B3_CAPABILITY_SET = new Set<IdeCapability>(IDE_COMPANION_B3_CAPABILITIES);
+/** Historical internal alias retained for B3 evidence/tests; current policy is AUTH_CAPABILITIES. */
+export const IDE_COMPANION_B3_CAPABILITIES = IDE_COMPANION_AUTH_CAPABILITIES;
+const AUTH_CAPABILITY_SET = new Set<IdeCapability>(IDE_COMPANION_AUTH_CAPABILITIES);
 
 export type IdeCompanionAuthErrorCode =
   | 'IDE_COMPANION_FRAME_SIZE'
@@ -100,10 +106,10 @@ function assertSafeTime(value: unknown, field: string): asserts value is number 
   }
 }
 
-function assertB3Capability(value: unknown): asserts value is IdeCapability {
+function assertAuthenticatedCapability(value: unknown): asserts value is IdeCapability {
   try { assertIdeCapability(value); } catch { fail('IDE_COMPANION_CAPABILITY_DENIED', 'capability is unsupported'); }
-  if (!B3_CAPABILITY_SET.has(value as IdeCapability)) {
-    fail('IDE_COMPANION_CAPABILITY_DENIED', 'capability is outside P7 B3 policy');
+  if (!AUTH_CAPABILITY_SET.has(value as IdeCapability)) {
+    fail('IDE_COMPANION_CAPABILITY_DENIED', 'capability is outside authenticated companion policy');
   }
 }
 
@@ -129,7 +135,7 @@ function validateUnsigned(envelope: IdeCompanionUnsignedEnvelope): void {
   } catch {
     fail('IDE_COMPANION_INVALID_SCHEMA', 'companion identity field is invalid');
   }
-  assertB3Capability(envelope.capability);
+  assertAuthenticatedCapability(envelope.capability);
   if (typeof envelope.nonce !== 'string' || !NONCE_PATTERN.test(envelope.nonce)) {
     fail('IDE_COMPANION_INVALID_SCHEMA', 'nonce is invalid');
   }

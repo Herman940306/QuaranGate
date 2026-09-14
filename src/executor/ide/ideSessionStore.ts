@@ -42,14 +42,18 @@ import {
 } from '../../shared/ideSessions.js';
 import { IDE_COMPANION_MAX_CLOCK_SKEW_MS, IDE_COMPANION_MAX_LIFETIME_MS } from '../../shared/ideCompanionAuth.js';
 import { IDE_COMPANION_OPERATION_MAX_AUTHENTICATED_PAYLOAD_BYTES } from '../../shared/ideCompanionOperations.js';
+import { LIVE_WRITER_LEASE_ID_PATTERN } from '../../shared/liveWriter.js';
 
 export const IDE_REGISTRY_SCHEMA_VERSION = 3;
 export const IDE_MAX_ACTIVE_AUTH_REPLAYS = 4096;
 export const IDE_MAX_OPERATION_EVENTS = 4096;
 
-const B2_ENROLLMENT_CAPABILITIES = new Set<IdeCapability>([
+const IDE_ENROLLMENT_CAPABILITIES = new Set<IdeCapability>([
   ...IDE_REVIEW_BASE_CAPABILITIES,
   'read_bounded_editor_context',
+  // B9 permits an explicit implementation grant at enrollment, but the grant
+  // is inert until the exact B8 live-writer lease is also proven.
+  'request_implementation',
 ]);
 
 const LIVE_SESSION_STATES: readonly IdeSessionState[] = [
@@ -210,6 +214,20 @@ export interface IdeCompanionRegistryRequest {
   capability: IdeCapability;
 }
 
+export interface IdeLiveWriterAuthorityRow {
+  writerLeaseId: string;
+  projectId: string;
+  worktreeId: string;
+  ownerKind: 'agent_apply' | 'ide';
+  ownerId: string;
+  principalId: string;
+  state: 'ACTIVE' | 'RELEASED' | 'UNCERTAIN';
+}
+
+export interface IdeLiveWriterAuthorityReader {
+  getLiveWriterLease(writerLeaseId: string): IdeLiveWriterAuthorityRow | undefined;
+}
+
 export interface IdeAuthReplayClaim extends IdeCompanionRegistryRequest {
   nonceHash: string;
   expiresAtMs: number;
@@ -283,8 +301,8 @@ function canonicalCapabilities(capabilities: readonly IdeCapability[]): IdeCapab
   const seen = new Set<IdeCapability>();
   for (const capability of capabilities) {
     assertIdeCapability(capability);
-    if (!B2_ENROLLMENT_CAPABILITIES.has(capability)) {
-      throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', `capability ${capability} is outside P7 B2 read-only policy`);
+    if (!IDE_ENROLLMENT_CAPABILITIES.has(capability)) {
+      throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', `capability ${capability} is outside current P7 enrollment policy`);
     }
     if (seen.has(capability)) throw new IdeSessionContractError('INVALID_IDE_IDENTITY', 'duplicate IDE capability');
     seen.add(capability);
@@ -896,6 +914,44 @@ export class IdeSessionStore {
     assertIdeSessionAuthority(binding, authority);
   }
 
+  /** B9: re-read and prove full B1 authority from the exact durable B8 IDE lease. */
+  assertCompanionAuthorityWithWriter(
+    request: IdeCompanionRegistryRequest,
+    writerAuthority: IdeLiveWriterAuthorityReader,
+    writerLeaseId: string,
+  ): void {
+    const { session, enrollment } = this.requireCompanionContext(request);
+    if (request.capability !== 'request_implementation') {
+      throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'writer authority is valid only for request_implementation');
+    }
+    if (!LIVE_WRITER_LEASE_ID_PATTERN.test(writerLeaseId)) {
+      throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH', 'IDE live-writer lease id is invalid');
+    }
+    const writer = writerAuthority.getLiveWriterLease(writerLeaseId);
+    if (!writer
+      || writer.ownerKind !== 'ide'
+      || writer.ownerId !== request.operationId
+      || writer.principalId !== enrollment.principalId
+      || writer.projectId !== enrollment.projectId
+      || writer.worktreeId !== enrollment.worktreeId
+      || writer.state !== 'ACTIVE') {
+      throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH', 'durable IDE live-writer authority does not match trusted operation binding');
+    }
+    const authority: IdeSessionAuthorityRequest = {
+      principalId: enrollment.principalId, projectId: enrollment.projectId, worktreeId: enrollment.worktreeId,
+      workspaceFingerprint: enrollment.workspaceFingerprint, baseRevision: enrollment.baseRevision, ideProduct: enrollment.ideProduct,
+      ideInstanceId: enrollment.ideInstanceId, sessionId: session.sessionId, connectionGeneration: session.connectionGeneration,
+      capability: request.capability,
+    };
+    const binding: IdeSessionBinding = {
+      principalId: enrollment.principalId, projectId: enrollment.projectId, worktreeId: enrollment.worktreeId,
+      workspaceFingerprint: enrollment.workspaceFingerprint, baseRevision: enrollment.baseRevision, ideProduct: enrollment.ideProduct,
+      ideInstanceId: enrollment.ideInstanceId, sessionId: session.sessionId, connectionGeneration: session.connectionGeneration,
+      capabilities: enrollment.capabilities, sessionState: session.state, controllerLease: 'acquired', writerLease: 'acquired',
+    };
+    assertIdeSessionAuthority(binding, authority);
+  }
+
   /**
    * Atomically claim one already-authenticated B3 nonce digest. Raw nonce,
    * secret, MAC and payload bytes are never persisted. Replay state survives
@@ -971,7 +1027,7 @@ export class IdeSessionStore {
     assertIdeControllerLeaseId(claim.controllerLeaseId);
     assertIdeOperationId(claim.operationId);
     assertIdeCapability(claim.capability);
-    if (!B2_ENROLLMENT_CAPABILITIES.has(claim.capability)) {
+    if (!IDE_ENROLLMENT_CAPABILITIES.has(claim.capability)) {
       throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'companion capability is outside read-only IDE policy');
     }
     if (!/^[0-9a-f]{64}$/.test(claim.nonceHash)) {

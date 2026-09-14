@@ -1,6 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  IDE_COMPANION_AUTH_CAPABILITIES,
   IDE_COMPANION_B3_CAPABILITIES,
   IDE_COMPANION_MAX_AUTH_FRAME_BYTES,
   IDE_COMPANION_MAX_CLOCK_SKEW_MS,
@@ -51,11 +52,11 @@ function code(fn: () => unknown): string {
 }
 
 describe('P7 B3 authenticated companion envelope', () => {
-  it('freezes least-authority B3 capabilities and excludes implementation', () => {
-    expect(IDE_COMPANION_B3_CAPABILITIES).toEqual([
-      'prompt', 'cancel', 'observe_response', 'request_review', 'read_bounded_editor_context',
+  it('preserves the authenticated companion vocabulary and B9 adds implementation without implying writer authority', () => {
+    expect(IDE_COMPANION_AUTH_CAPABILITIES).toEqual([
+      'prompt', 'cancel', 'observe_response', 'request_review', 'read_bounded_editor_context', 'request_implementation',
     ]);
-    expect(IDE_COMPANION_B3_CAPABILITIES).not.toContain('request_implementation');
+    expect(IDE_COMPANION_B3_CAPABILITIES).toBe(IDE_COMPANION_AUTH_CAPABILITIES);
   });
 
   it('hashes exact payload bytes and nonce without persisting raw content', () => {
@@ -122,8 +123,11 @@ describe('P7 B3 authenticated companion envelope', () => {
     }
   });
 
-  it('rejects implementation at the protocol boundary even with a syntactically valid capability', () => {
-    expect(code(() => canonicalIdeCompanionMacInput(unsigned({ capability: 'request_implementation' })))).toBe('IDE_COMPANION_CAPABILITY_DENIED');
+  it('authenticates request_implementation as a B9 envelope capability without granting session/writer authority', () => {
+    const implementation = unsigned({ capability: 'request_implementation' });
+    expect(() => canonicalIdeCompanionMacInput(implementation)).not.toThrow();
+    const envelope = signIdeCompanionEnvelope(secret, implementation);
+    expect(verifyIdeCompanionEnvelope({ envelope, secret, payload, nowMs }).capability).toBe('request_implementation');
   });
 
   it('enforces bounded issue/expiry lifetime and clock skew', () => {

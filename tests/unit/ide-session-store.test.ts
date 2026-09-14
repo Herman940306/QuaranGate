@@ -147,8 +147,8 @@ describe('P7 B2 trusted enrollment', () => {
       .toEqual(['prompt', 'read_bounded_editor_context']);
   });
 
-  it('refuses implementation enrollment and unknown/duplicate/empty capabilities', () => {
-    expect(errorCode(() => store.createEnrollment(enrollment({ capabilities: ['request_implementation'] })))).toBe('IDE_REGISTRY_POLICY_DENIED');
+  it('permits an explicit B9 implementation grant but still refuses unknown/duplicate/empty capabilities', () => {
+    expect(store.createEnrollment(enrollment({ capabilities: ['request_implementation'] })).capabilities).toEqual(['request_implementation']);
     expect(errorCode(() => store.createEnrollment(enrollment({ capabilities: [] })))).toBe('IDE_REGISTRY_POLICY_DENIED');
     expect(errorCode(() => store.createEnrollment(enrollment({ capabilities: ['prompt', 'prompt'] })))).toBe('INVALID_IDE_IDENTITY');
     expect(errorCode(() => store.createEnrollment(enrollment({ capabilities: ['prompt', 'other' as IdeCapability] })))).toBe('IDE_CAPABILITY_DENIED');

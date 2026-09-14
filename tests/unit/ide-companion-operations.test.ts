@@ -6,6 +6,7 @@ import {
   IdeCompanionOperationProtocolError,
   parseIdeCompanionOperationControlFrame,
   serializeIdeCompanionOperationControlFrame,
+  serializeIdeCompanionImplementationPayload,
   serializeIdeCompanionReviewPayload,
   type IdeCompanionOperationControlFrame,
 } from '../../src/shared/ideCompanionOperations.js';
@@ -38,19 +39,27 @@ describe('P7 B7 companion operation-control protocol',()=>{
     expect(Buffer.byteLength(text)).toBeLessThan(IDE_COMPANION_OPERATION_MAX_FRAME_BYTES);
   });
 
+  it('round-trips a distinct B9 request_implementation start and domain-separates its authenticated payload',()=>{
+    const prompt='bounded implementation request';
+    const implementationPayload=serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation);
+    expect(implementationPayload).not.toBe(serializeIdeCompanionReviewPayload(prompt,workspaceAttestation));
+    const frame:IdeCompanionOperationControlFrame={version:1,type:'start_implementation',auth:auth('request_implementation',implementationPayload),prompt,workspaceAttestation};
+    expect(parseIdeCompanionOperationControlFrame(serializeIdeCompanionOperationControlFrame(frame))).toEqual(frame);
+  });
+
   it('round-trips exact-operation cancel with empty authenticated payload',()=>{
     const frame:IdeCompanionOperationControlFrame={version:1,type:'cancel_operation',auth:auth('cancel','')};
     expect(parseIdeCompanionOperationControlFrame(serializeIdeCompanionOperationControlFrame(frame))).toEqual(frame);
   });
 
-  it('denies generic prompt and request_implementation as B7 start authorities',()=>{
+  it('keeps review and implementation start capabilities non-interchangeable and still denies generic prompt',()=>{
     const prompt='x';
-    const payload=serializeIdeCompanionReviewPayload(prompt,workspaceAttestation);
-    const promptAuth={...auth('request_review',payload),capability:'prompt' as const};
+    const reviewPayload=serializeIdeCompanionReviewPayload(prompt,workspaceAttestation);
+    const implementationPayload=serializeIdeCompanionImplementationPayload(prompt,workspaceAttestation);
+    const promptAuth={...auth('request_review',reviewPayload),capability:'prompt' as const};
     expect(code(()=>serializeIdeCompanionOperationControlFrame({version:1,type:'start_review',auth:promptAuth,prompt,workspaceAttestation}))).toBe('IDE_OPERATION_CAPABILITY_DENIED');
-    const writer={...auth('request_review',payload),capability:'request_implementation' as const};
-    // B3 itself excludes request_implementation, so B7 never gets a writer-capable auth envelope.
-    expect(code(()=>serializeIdeCompanionOperationControlFrame({version:1,type:'start_review',auth:writer,prompt,workspaceAttestation}))).toBe('IDE_OPERATION_INVALID_SCHEMA');
+    expect(code(()=>serializeIdeCompanionOperationControlFrame({version:1,type:'start_review',auth:auth('request_implementation',implementationPayload),prompt,workspaceAttestation}))).toBe('IDE_OPERATION_CAPABILITY_DENIED');
+    expect(code(()=>serializeIdeCompanionOperationControlFrame({version:1,type:'start_implementation',auth:auth('request_review',reviewPayload),prompt,workspaceAttestation}))).toBe('IDE_OPERATION_CAPABILITY_DENIED');
   });
 
   it('enforces non-empty 16 KiB prompt and 24 KiB frame bounds',()=>{
