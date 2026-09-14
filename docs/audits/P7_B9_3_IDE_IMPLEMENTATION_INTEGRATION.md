@@ -116,3 +116,13 @@ B9.3 does **not** claim:
 - final P7 closure by itself.
 
 B9.3 is a source integration and adversarial closure candidate. Final B9/P7 status requires independent review and control reconciliation, followed by an explicit North-Star remaining-obligation audit.
+
+## Validation-environment clarification
+
+A fresh post-freeze verification in the current governed worker reproduced the complete **2491/2491 PASS across 81/81 files** when run with file parallelism disabled:
+
+`npx vitest run --configLoader native tests/unit --no-file-parallelism`
+
+The repository-default forked `npm test` transport was also retried three times in this same worker. Those attempts did not produce a QuaranGate assertion failure; Vitest/Tinypool terminated with `ERR_IPC_CHANNEL_CLOSED` before a normal full-suite verdict. A two-worker forked diagnostic reproduced the same IPC failure, and a thread-pool diagnostic was terminated by the environment with exit 137. The B9.3 listener suite itself completed **35/35 PASS** on observed forked runs before the pool failure, and the 19-file P7/B8/apply security matrix completed **434/434 PASS**.
+
+Accordingly, this audit does **not** relabel the current worker's default fork-pool execution as PASS. The full-corpus PASS claim is grounded in the complete serial execution above; the fork-pool behavior is retained as a test-runner/environment limitation for later canonical-baseline qualification.
