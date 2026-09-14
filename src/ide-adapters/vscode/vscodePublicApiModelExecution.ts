@@ -26,6 +26,8 @@ import type { VsCodeRemoteOperationInput, VsCodeRemoteReviewHandler } from './vs
 
 export const VSCODE_MODEL_SELECTOR_MAX_FIELD_BYTES = 256;
 export const VSCODE_MODEL_MAX_OUTPUT_BYTES = 64 * 1024;
+export const VSCODE_MODEL_SETUP_PROMPT = 'QuaranGate model access setup check. Reply with OK.';
+export const VSCODE_MODEL_SETUP_JUSTIFICATION = 'Allow QuaranGate to use the selected model for governed review operations.';
 
 export type VsCodeModelAccessState =
   | 'MODEL_PREPARATION_REQUIRED'
@@ -36,7 +38,8 @@ export type VsCodeModelAccessState =
   | 'MODEL_UNAVAILABLE'
   | 'MODEL_SELECTION_AMBIGUOUS'
   | 'MODEL_IDENTITY_MISMATCH'
-  | 'MODEL_PREPARATION_FAILED';
+  | 'MODEL_PREPARATION_FAILED'
+  | 'MODEL_PREPARATION_CANCELLED';
 
 export type VsCodeModelExecutionErrorCode =
   | 'VSCODE_MODEL_PREPARATION_REQUIRED'
@@ -93,6 +96,10 @@ export interface VsCodeLanguageModelResponse {
   readonly text: AsyncIterable<string>;
 }
 
+export interface VsCodeLanguageModelRequestOptions {
+  justification?: string;
+}
+
 /** Structural subset of vscode.LanguageModelChat used by this review-only adapter. */
 export interface VsCodeLanguageModelChat {
   readonly vendor: string;
@@ -104,7 +111,7 @@ export interface VsCodeLanguageModelChat {
   countTokens(text: string, token?: VsCodeCancellationToken): PromiseLike<number>;
   sendRequest(
     messages: VsCodeLanguageModelMessage[],
-    options?: undefined,
+    options?: VsCodeLanguageModelRequestOptions,
     token?: VsCodeCancellationToken,
   ): PromiseLike<VsCodeLanguageModelResponse>;
 }
@@ -256,28 +263,101 @@ export class VsCodeModelAccessController {
   }
 
   public async prepareFromUserGesture(): Promise<VsCodeModelAccessResult> {
+    const selection = await this.selectExactModelFromUserGesture();
+    if (selection.model !== undefined && selection.result.state === 'MODEL_ACCESS_ALLOWED') {
+      this.prepared = { model: selection.model, identity: selection.result.identity! };
+    }
+    return this.record(selection.result);
+  }
+
+  /**
+   * Explicit user-action-only consent path. VS Code documents that the first
+   * LanguageModelChat.sendRequest call may show consent UI and therefore must
+   * only occur in response to a user action. The fixed setup probe contains no
+   * user prompt/workspace content and its response is neither consumed nor
+   * persisted. Once the request object exists, it is cancelled immediately and
+   * persisted access is rechecked before remote execution may become READY.
+   */
+  public async authorizeFromUserGesture(signal?: AbortSignal): Promise<VsCodeModelAccessResult> {
+    const selection = await this.selectExactModelFromUserGesture();
+    const model = selection.model;
+    const modelIdentity = selection.result.identity;
+    if (model === undefined || selection.result.state !== 'MODEL_CONSENT_REQUIRED') {
+      if (model !== undefined && selection.result.state === 'MODEL_ACCESS_ALLOWED' && modelIdentity !== undefined) {
+        this.prepared = { model, identity: modelIdentity };
+      }
+      return this.record(selection.result);
+    }
+
+    const cancellation = this.api.createCancellationTokenSource();
+    const abort = (): void => cancellation.cancel();
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      if (signal?.aborted) {
+        cancellation.cancel();
+        return this.record({ state: 'MODEL_PREPARATION_CANCELLED', identity: modelIdentity });
+      }
+      try {
+        const message = this.api.createUserMessage(VSCODE_MODEL_SETUP_PROMPT);
+        await model.sendRequest([message], { justification: VSCODE_MODEL_SETUP_JUSTIFICATION }, cancellation.token);
+      } catch (error) {
+        if (signal?.aborted || cancellation.token.isCancellationRequested) {
+          return this.record({ state: 'MODEL_PREPARATION_CANCELLED', identity: modelIdentity });
+        }
+        const code = publicProviderCode(error);
+        const accessAfterFailure = this.api.canSendRequest(model);
+        if (code === 'NotFound') return this.record({ state: 'MODEL_UNAVAILABLE', identity: modelIdentity });
+        if (code === 'NoPermissions') {
+          if (accessAfterFailure === false) return this.record({ state: 'MODEL_ACCESS_DENIED', identity: modelIdentity });
+          return this.record({ state: 'MODEL_CONSENT_REQUIRED', identity: modelIdentity });
+        }
+        if (accessAfterFailure === false) return this.record({ state: 'MODEL_ACCESS_DENIED', identity: modelIdentity });
+        return this.record({ state: 'MODEL_PREPARATION_FAILED', identity: modelIdentity });
+      } finally {
+        // Consent is the only purpose of the setup request. Do not spend tokens
+        // generating or surface provider output for this fixed authorization probe.
+        cancellation.cancel();
+      }
+
+      if (!isSafeModelMetadata(model) || !matchesSelector(model, this.selector)) {
+        return this.record({ state: 'MODEL_IDENTITY_MISMATCH', identity: modelIdentity });
+      }
+      const access = this.api.canSendRequest(model);
+      if (access === true && modelIdentity !== undefined) {
+        this.prepared = { model, identity: modelIdentity };
+        return this.record({ state: 'MODEL_ACCESS_ALLOWED', identity: modelIdentity });
+      }
+      if (access === false) return this.record({ state: 'MODEL_ACCESS_DENIED', identity: modelIdentity });
+      return this.record({ state: 'MODEL_CONSENT_REQUIRED', identity: modelIdentity });
+    } finally {
+      signal?.removeEventListener('abort', abort);
+      cancellation.dispose();
+    }
+  }
+
+  private async selectExactModelFromUserGesture(): Promise<{ model?: VsCodeLanguageModelChat; result: VsCodeModelAccessResult }> {
     this.prepared = undefined;
     let models: readonly VsCodeLanguageModelChat[];
     try {
       models = await this.api.selectChatModels(this.selector);
     } catch (error) {
       const code = publicProviderCode(error);
-      if (code === 'NoPermissions') return this.record({ state: 'MODEL_CONSENT_REQUIRED' });
-      if (code === 'NotFound') return this.record({ state: 'MODEL_UNAVAILABLE' });
-      return this.record({ state: 'MODEL_PREPARATION_FAILED' });
+      if (code === 'NoPermissions') return { result: { state: 'MODEL_CONSENT_REQUIRED' } };
+      if (code === 'NotFound') return { result: { state: 'MODEL_UNAVAILABLE' } };
+      return { result: { state: 'MODEL_PREPARATION_FAILED' } };
     }
-    if (!Array.isArray(models) || models.length === 0) return this.record({ state: 'MODEL_UNAVAILABLE' });
-    if (models.length !== 1) return this.record({ state: 'MODEL_SELECTION_AMBIGUOUS' });
+    if (!Array.isArray(models)) return { result: { state: 'MODEL_PREPARATION_FAILED' } };
+    if (models.length === 0) return { result: { state: 'MODEL_UNAVAILABLE' } };
+    if (models.length !== 1) return { result: { state: 'MODEL_SELECTION_AMBIGUOUS' } };
     const model = models[0];
     if (model === undefined || !isSafeModelMetadata(model) || !matchesSelector(model, this.selector)) {
-      return this.record({ state: 'MODEL_IDENTITY_MISMATCH' });
+      return { result: { state: 'MODEL_IDENTITY_MISMATCH' } };
     }
     const modelIdentity = identity(model);
     const access = this.api.canSendRequest(model);
-    if (access === undefined) return this.record({ state: 'MODEL_CONSENT_REQUIRED', identity: modelIdentity });
-    if (access !== true) return this.record({ state: 'MODEL_ACCESS_DENIED', identity: modelIdentity });
-    this.prepared = { model, identity: modelIdentity };
-    return this.record({ state: 'MODEL_ACCESS_ALLOWED', identity: modelIdentity });
+    if (access === undefined) return { model, result: { state: 'MODEL_CONSENT_REQUIRED', identity: modelIdentity } };
+    if (access !== true) return { model, result: { state: 'MODEL_ACCESS_DENIED', identity: modelIdentity } };
+    return { model, result: { state: 'MODEL_ACCESS_ALLOWED', identity: modelIdentity } };
   }
 
   public invalidate(): void {
