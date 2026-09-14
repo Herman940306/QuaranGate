@@ -440,6 +440,13 @@ export class IdeCompanionRemoteChannel {
     this.closed = true;
     const failure=err('IDE_REMOTE_CHANNEL_CLOSED','remote companion channel failed closed');
     for(const waiter of this.readyWaiters.splice(0)){clearTimeout(waiter.timer);waiter.reject(failure);}
+    if (this.pendingAuthorization !== undefined) {
+      clearTimeout(this.pendingAuthorization.timer);
+      this.pendingAuthorization.reject(failure);
+      this.pendingAuthorization = undefined;
+    }
+    this.rejectActive(failure);
+    this.authorized = undefined;
     this.opts.close();
   }
 }

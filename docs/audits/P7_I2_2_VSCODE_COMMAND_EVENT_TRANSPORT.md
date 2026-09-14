@@ -136,6 +136,20 @@ The reconciled I2.2 source introduces no child process, shell, arbitrary filesys
 
 The listener also rejects configuration that attempts to combine this QuaranGate-origin remote mode with the prior client-origin operation adapters on the same socket, preventing dual operation-start authority.
 
+## Independent review R0 and remediation
+
+Immutable R0 candidate `ae6910b03792b0178ddb1e8198905e54406aab8a` (parent `9247fb380228405e47f154be4a4969a16f2b671d`, patch SHA-256 `20f27709ef66211dede98b5b997a57fda03820c1c7f4f1cc9942fc7bf2630c5b`) received an independent prompt-only source-bearing review from job `job_ab2231f363c167aa14cd4a6c5e51cbf4`. The reviewer returned `FAIL_REVIEW`, changedFiles empty, on one narrow concern: fail-close cleanup should not depend on a later socket-close callback to reject an active adapter after a fatal send/backpressure failure.
+
+The complete source already had `connectionClosed()` and `protocolFailure()` rejection paths, so the R0 finding overstated the existing gap. It nevertheless identified a worthwhile defense-in-depth invariant at the channel abstraction boundary. R1 therefore makes `failClosed()` itself terminal for all channel-local state before invoking the transport close callback:
+
+- clears/rejects any pending authorization;
+- rejects any active review/implementation adapter promise immediately;
+- clears retained authorization;
+- rejects/clears `transport_ready` waiters;
+- only then invokes `opts.close()`.
+
+A regression test now forces `cancel_operation` send failure while an adapter is active and proves the adapter promise rejects immediately with `IDE_REMOTE_CHANNEL_CLOSED` without manually invoking `connectionClosed()`. This removes reliance on socket close-event ordering and directly closes the independent review concern.
+
 ## Qualification evidence on reconciled bytes
 
 All evidence below was rerun after reconciliation; no unattributed historical test claim is reused.
@@ -144,14 +158,14 @@ All evidence below was rerun after reconciliation; no unattributed historical te
 
 `npx vitest run tests/unit/ide-companion-remote-transport.test.ts tests/unit/ide-companion-remote-channel.test.ts tests/unit/vscode-command-channel.test.ts --reporter=verbose`
 
-- **28/28 PASS across 3 files**.
-- Includes canonical frame bounds, invalid UTF-8, direction reflection, replay/gap rejection, exact session/generation binding, exact authorization, durable-admission reread, cancellation ordering/ack binding, bounded `transport_ready`, thrown send failure, fresh B4 rotation, fresh operation B5 drift denial, post-authorization/pre-execution B5 drift, B8 safe release on proven no-mutation, B7 timeout, and dual-authority listener refusal.
+- **29/29 PASS across 3 files**.
+- Includes canonical frame bounds, invalid UTF-8, direction reflection, replay/gap rejection, exact session/generation binding, exact authorization, durable-admission reread, cancellation ordering/ack binding, bounded `transport_ready`, thrown send failure, immediate active rejection on cancel-send failure, fresh B4 rotation, fresh operation B5 drift denial, post-authorization/pre-execution B5 drift, B8 safe release on proven no-mutation, B7 timeout, and dual-authority listener refusal.
 
 ### B1-B9 + I2.1 + I2.2 focused regression
 
 Bounded serial matrix across 21 IDE authority/runtime/workspace/operation/writer/listener/VS Code/I2.2 unit files:
 
-- **277/277 PASS across 21 files**.
+- **278/278 PASS across 21 files**.
 
 ### Shared writer + `agent_apply`
 
@@ -165,7 +179,7 @@ Canonical `npm test` was attempted on the final reconciled source and did **not*
 
 - exit: **0**
 - **87/87 unit files PASS**
-- **2543/2543 tests PASS**
+- **2544/2544 tests PASS**
 
 Because the canonical command completed successfully, a bounded-process fallback corpus was not required.
 

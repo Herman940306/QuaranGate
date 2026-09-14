@@ -99,6 +99,18 @@ describe('P7 I2.2 QuaranGate remote channel state machine',()=>{
     await expect(pending).rejects.toMatchObject({code:'IDE_REMOTE_CHANNEL_BINDING_MISMATCH'});expect(h.closed).toBe(true);
   });
 
+  it('cancel send failure rejects the active adapter immediately without relying on a later socket close callback',async()=>{
+    const sent:IdeRemoteServerFrame[]=[];let closed=false;
+    const ch=new IdeCompanionRemoteChannel({sessionId,connectionGeneration:7,send:(f)=>{sent.push(f);return f.type!=='cancel_operation';},close:()=>{closed=true;},isOperationAdmitted:()=>true,authorizationTimeoutMs:1000});
+    ch.handleClientFrame(serializeIdeRemoteClientFrame({version:1,type:'transport_ready',sessionId,connectionGeneration:7}));
+    const p=ch.authorizeOperation({operationId,controllerLeaseId:lease,capability:'request_review',prompt:'review'});ch.handleClientFrame(authorizedFrame());await p;
+    const ctl=new AbortController();const run=ch.reviewAdapter().run({operationId,sessionId,connectionGeneration:7,prompt:'review',signal:ctl.signal,emit:()=>{}});
+    ctl.abort();
+    expect(sent.at(-1)).toMatchObject({type:'cancel_operation',operationId});
+    await expect(run).rejects.toMatchObject({code:'IDE_REMOTE_CHANNEL_CLOSED'});
+    expect(closed).toBe(true);
+  });
+
   it('connection close rejects pending authorization and active execution',async()=>{
     const h=harness();const pending=h.ch.authorizeOperation({operationId,controllerLeaseId:lease,capability:'request_review',prompt:'review'});h.ch.connectionClosed();await expect(pending).rejects.toMatchObject({code:'IDE_REMOTE_CHANNEL_CLOSED'});
   });
