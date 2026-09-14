@@ -600,3 +600,87 @@ describe('P7 B7 durable operation coherence on reopen',()=>{
     expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
   });
 });
+
+describe('P7 B9.2 persisted implementation settlement coherence',()=>{
+  function activeImplementation(){
+    const e=store.createEnrollment(enrollment({capabilities:['request_implementation','cancel','observe_response']}));
+    const s=open(e);const k=sessionKey(s,e);store.markAvailable(k);const lease=store.acquireController(k);
+    const op=store.startImplementationOperation({
+      ...companionRequest(e,s,lease,{capability:'request_implementation'}),
+      runtimeInstanceId:`iderun_${'7'.repeat(32)}`,adapterId:'quarangate-companion',adapterVersion:'1.2.3',
+      payloadSha256:'8'.repeat(64),payloadBytes:123,writerLeaseId:`wrl_${'9'.repeat(32)}`,
+    });
+    return{e,s,k,lease,op};
+  }
+
+  it('refuses forged COMPLETED state while writer settlement remains HELD',()=>{
+    const ctx=activeImplementation();store.close();const db=new DatabaseSync(dbPath);db.exec('PRAGMA ignore_check_constraints=ON');
+    db.prepare(`UPDATE ide_operations SET state='COMPLETED',finished_at=?,safe_terminal_intent='COMPLETED',safe_terminal_intent_at=? WHERE operation_id=?`).run('2026-09-14T00:00:00.000Z','2026-09-14T00:00:00.000Z',ctx.op.operationId);
+    db.prepare(`INSERT INTO ide_operation_events(operation_id,sequence,event_type,message_sha256,message_bytes,created_at) VALUES (?,1,'completed',NULL,0,?)`).run(ctx.op.operationId,'2026-09-14T00:00:00.000Z');
+    db.prepare(`UPDATE ide_operations SET next_sequence=2 WHERE operation_id=?`).run(ctx.op.operationId);db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+  });
+
+  it('refuses forged safe terminal with RELEASED writer but no matching safe intent',()=>{
+    const ctx=activeImplementation();store.close();const db=new DatabaseSync(dbPath);db.exec('PRAGMA ignore_check_constraints=ON');
+    db.prepare(`UPDATE ide_operations SET state='FAILED',finished_at=?,writer_settlement='RELEASED',writer_settled_at=? WHERE operation_id=?`).run('2026-09-14T00:00:00.000Z','2026-09-14T00:00:00.000Z',ctx.op.operationId);
+    db.prepare(`INSERT INTO ide_operation_events(operation_id,sequence,event_type,message_sha256,message_bytes,created_at) VALUES (?,1,'failed',NULL,0,?)`).run(ctx.op.operationId,'2026-09-14T00:00:00.000Z');
+    db.prepare(`UPDATE ide_operations SET next_sequence=2 WHERE operation_id=?`).run(ctx.op.operationId);db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+  });
+
+  it('refuses unsafe terminal with RELEASED writer when no prior safe intent exists',()=>{
+    const ctx=activeImplementation();store.close();const db=new DatabaseSync(dbPath);db.exec('PRAGMA ignore_check_constraints=ON');
+    db.prepare(`UPDATE ide_operations SET state='INDETERMINATE',finished_at=?,writer_settlement='RELEASED',writer_settled_at=? WHERE operation_id=?`).run('2026-09-14T00:00:00.000Z','2026-09-14T00:00:00.000Z',ctx.op.operationId);
+    db.prepare(`INSERT INTO ide_operation_events(operation_id,sequence,event_type,message_sha256,message_bytes,created_at) VALUES (?,1,'indeterminate',NULL,0,?)`).run(ctx.op.operationId,'2026-09-14T00:00:00.000Z');
+    db.prepare(`UPDATE ide_operations SET next_sequence=2 WHERE operation_id=?`).run(ctx.op.operationId);db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+  });
+
+  it('refuses active implementation operation whose writer is already settled',()=>{
+    const ctx=activeImplementation();store.close();const db=new DatabaseSync(dbPath);db.exec('PRAGMA ignore_check_constraints=ON');
+    db.prepare(`UPDATE ide_operations SET writer_settlement='UNCERTAIN',writer_settled_at=? WHERE operation_id=?`).run('2026-09-14T00:00:00.000Z',ctx.op.operationId);db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+  });
+});
+
+describe('P7 B9.2 v3 -> v4 implementation writer provenance migration',()=>{
+  function downgradeCurrentToV3():void{
+    store.close(); const db=new DatabaseSync(dbPath);
+    db.exec(`DROP INDEX idx_ide_operations_writer_lease;
+      ALTER TABLE ide_operations DROP COLUMN safe_terminal_intent_at;
+      ALTER TABLE ide_operations DROP COLUMN safe_terminal_intent;
+      ALTER TABLE ide_operations DROP COLUMN writer_settled_at;
+      ALTER TABLE ide_operations DROP COLUMN mutation_started_at;
+      ALTER TABLE ide_operations DROP COLUMN writer_settlement;
+      ALTER TABLE ide_operations DROP COLUMN writer_lease_id;
+      PRAGMA user_version=3;`); db.close();
+  }
+
+  it('migrates genuine v3 review-only operation state to v4 without fabricating writer provenance',()=>{
+    const e=store.createEnrollment(enrollment({capabilities:['request_review']}));const s=open(e);store.markAvailable(sessionKey(s,e));const lease=store.acquireController(sessionKey(s,e));
+    store.startOperation({...companionRequest(e,s,lease),runtimeInstanceId:`iderun_${'7'.repeat(32)}`,adapterId:'quarangate-companion',adapterVersion:'1.2.3',payloadSha256:'8'.repeat(64),payloadBytes:123});
+    downgradeCurrentToV3(); const reopened=new IdeSessionStore(dbPath);expect(reopened.schemaVersion).toBe(4);
+    const op=reopened.getOperation(`ideo_${'5'.repeat(32)}`)!;expect(op.capability).toBe('request_review');expect(op.writerLeaseId).toBeNull();expect(op.writerSettlement).toBeNull();reopened.close();
+  });
+
+  it('refuses partial v4 writer columns/index under a v3 stamp instead of repairing them',()=>{
+    store.close();const db=new DatabaseSync(dbPath);db.exec('PRAGMA user_version=3');db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+    const after=new DatabaseSync(dbPath);expect((after.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(3);after.close();
+  });
+
+  it('refuses impossible historical v3 request_implementation operation with no writer provenance',()=>{
+    const e=store.createEnrollment(enrollment({capabilities:['request_review','request_implementation']}));const s=open(e);store.markAvailable(sessionKey(s,e));const lease=store.acquireController(sessionKey(s,e));
+    store.startOperation({...companionRequest(e,s,lease),runtimeInstanceId:`iderun_${'7'.repeat(32)}`,adapterId:'quarangate-companion',adapterVersion:'1.2.3',payloadSha256:'8'.repeat(64),payloadBytes:123});
+    downgradeCurrentToV3();
+    const db=new DatabaseSync(dbPath);db.prepare(`UPDATE ide_operations SET capability='request_implementation'`).run();db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+    const after=new DatabaseSync(dbPath);expect((after.prepare('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(3);after.close();
+  });
+
+  it('current v4 refuses a weakened writer-lease unique partial index',()=>{
+    store.close();const db=new DatabaseSync(dbPath);db.exec(`DROP INDEX idx_ide_operations_writer_lease; CREATE UNIQUE INDEX idx_ide_operations_writer_lease ON ide_operations(writer_lease_id);`);db.close();
+    expect(errorCode(()=>new IdeSessionStore(dbPath))).toBe('IDE_REGISTRY_SCHEMA');
+  });
+});

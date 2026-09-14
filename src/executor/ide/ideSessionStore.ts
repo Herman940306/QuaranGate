@@ -44,7 +44,7 @@ import { IDE_COMPANION_MAX_CLOCK_SKEW_MS, IDE_COMPANION_MAX_LIFETIME_MS } from '
 import { IDE_COMPANION_OPERATION_MAX_AUTHENTICATED_PAYLOAD_BYTES } from '../../shared/ideCompanionOperations.js';
 import { LIVE_WRITER_LEASE_ID_PATTERN } from '../../shared/liveWriter.js';
 
-export const IDE_REGISTRY_SCHEMA_VERSION = 3;
+export const IDE_REGISTRY_SCHEMA_VERSION = 4;
 export const IDE_MAX_ACTIVE_AUTH_REPLAYS = 4096;
 export const IDE_MAX_OPERATION_EVENTS = 4096;
 
@@ -92,6 +92,12 @@ const REQUIRED_INDEXES = {
     sql: `CREATE UNIQUE INDEX idx_ide_operations_one_active_session
           ON ide_operations(session_id) WHERE state IN (${ACTIVE_OPERATION_SQL})`,
   },
+  idx_ide_operations_writer_lease: {
+    table: 'ide_operations',
+    columns: ['writer_lease_id'],
+    sql: `CREATE UNIQUE INDEX idx_ide_operations_writer_lease
+          ON ide_operations(writer_lease_id) WHERE writer_lease_id IS NOT NULL`,
+  },
 } as const;
 const REQUIRED_COLUMNS: Record<string, Record<string, string>> = {
   ide_enrollments: {
@@ -113,6 +119,7 @@ const REQUIRED_COLUMNS: Record<string, Record<string, string>> = {
     principal_id: 'TEXT', project_id: 'TEXT', worktree_id: 'TEXT', workspace_fingerprint: 'TEXT', base_revision: 'TEXT',
     ide_product: 'TEXT', ide_instance_id: 'TEXT', runtime_instance_id: 'TEXT', adapter_id: 'TEXT', adapter_version: 'TEXT',
     capability: 'TEXT', controller_lease_hash: 'TEXT', payload_sha256: 'TEXT', payload_bytes: 'INTEGER',
+    writer_lease_id: 'TEXT', writer_settlement: 'TEXT', mutation_started_at: 'TEXT', writer_settled_at: 'TEXT', safe_terminal_intent: 'TEXT', safe_terminal_intent_at: 'TEXT',
     state: 'TEXT', next_sequence: 'INTEGER', started_at: 'TEXT', updated_at: 'TEXT', finished_at: 'TEXT', cancellation_requested_at: 'TEXT',
   },
   ide_operation_events: {
@@ -242,6 +249,13 @@ export interface StartIdeOperationInput extends IdeCompanionRegistryRequest {
   payloadBytes: number;
 }
 
+export interface StartIdeImplementationOperationInput extends StartIdeOperationInput {
+  writerLeaseId: string;
+}
+
+export type IdeOperationWriterSettlement = 'HELD' | 'RELEASED' | 'UNCERTAIN';
+export type IdeImplementationSafeTerminalIntent = 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
 export interface IdeOperationRow {
   operationId: string;
   enrollmentId: string;
@@ -261,6 +275,12 @@ export interface IdeOperationRow {
   controllerLeaseHash: string;
   payloadSha256: string;
   payloadBytes: number;
+  writerLeaseId: string | null;
+  writerSettlement: IdeOperationWriterSettlement | null;
+  mutationStartedAt: string | null;
+  writerSettledAt: string | null;
+  safeTerminalIntent: IdeImplementationSafeTerminalIntent | null;
+  safeTerminalIntentAt: string | null;
   state: IdeOperationState;
   nextSequence: number;
   startedAt: string;
@@ -358,15 +378,29 @@ function validateOperationStartInput(input: StartIdeOperationInput): void {
   assertIdeControllerLeaseId(input.controllerLeaseId);
   assertIdeOperationId(input.operationId);
   assertIdeCapability(input.capability);
-  if (input.capability !== 'request_review') {
-    throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'P7 B7 starts only request_review operations');
-  }
   if (!RUNTIME_INSTANCE_PATTERN.test(input.runtimeInstanceId)) throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'runtime instance identity is invalid');
   if (!ADAPTER_ID_PATTERN.test(input.adapterId)) throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'adapter identity is invalid');
   if (!ADAPTER_VERSION_PATTERN.test(input.adapterVersion)) throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'adapter version is invalid');
   if (!SHA256_PATTERN.test(input.payloadSha256)) throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'operation payload hash is invalid');
   if (!Number.isSafeInteger(input.payloadBytes) || input.payloadBytes < 1 || input.payloadBytes > IDE_COMPANION_OPERATION_MAX_AUTHENTICATED_PAYLOAD_BYTES) {
-    throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'operation payload bytes are outside B7 bounds');
+    throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'operation payload bytes are outside bounded operation envelope');
+  }
+}
+
+function validateReviewOperationStartInput(input: StartIdeOperationInput): void {
+  validateOperationStartInput(input);
+  if (input.capability !== 'request_review') {
+    throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'review operation start requires request_review');
+  }
+}
+
+function validateImplementationOperationStartInput(input: StartIdeImplementationOperationInput): void {
+  validateOperationStartInput(input);
+  if (input.capability !== 'request_implementation') {
+    throw new IdeRegistryStoreError('IDE_REGISTRY_POLICY_DENIED', 'implementation operation start requires request_implementation');
+  }
+  if (!LIVE_WRITER_LEASE_ID_PATTERN.test(input.writerLeaseId)) {
+    throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH', 'implementation writer lease identity is invalid');
   }
 }
 
@@ -405,6 +439,33 @@ export class IdeSessionStore {
       throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', `IDE registry schema v${version} is newer than supported v${IDE_REGISTRY_SCHEMA_VERSION}`);
     }
     if (version === IDE_REGISTRY_SCHEMA_VERSION) { this.assertSchemaShape(); return; }
+
+    if (version === 3) {
+      this.assertSchemaShape({ includeWriter: false, stampedVersion: 3 });
+      const columns=(this.db.prepare(`PRAGMA table_info(ide_operations)`).all() as Array<{name:string}>).map((row)=>row.name);
+      const partialColumns=['writer_lease_id','writer_settlement','mutation_started_at','writer_settled_at','safe_terminal_intent','safe_terminal_intent_at'].filter((name)=>columns.includes(name));
+      const partialIndex=this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_ide_operations_writer_lease'`).get()!==undefined;
+      if(partialColumns.length>0||partialIndex){
+        throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE registry v3 contains partial v4 writer state: ${[...partialColumns,...(partialIndex?['idx_ide_operations_writer_lease']:[])].join(', ')}`);
+      }
+      const impossible=this.db.prepare(`SELECT operation_id FROM ide_operations WHERE capability='request_implementation' LIMIT 1`).get() as {operation_id:string}|undefined;
+      if(impossible) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`historical v3 implementation operation ${impossible.operation_id} lacks B8 writer provenance`);
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.db.exec(`ALTER TABLE ide_operations ADD COLUMN writer_lease_id TEXT;
+          ALTER TABLE ide_operations ADD COLUMN writer_settlement TEXT CHECK(writer_settlement IN ('HELD','RELEASED','UNCERTAIN'));
+          ALTER TABLE ide_operations ADD COLUMN mutation_started_at TEXT;
+          ALTER TABLE ide_operations ADD COLUMN writer_settled_at TEXT;
+          ALTER TABLE ide_operations ADD COLUMN safe_terminal_intent TEXT CHECK(safe_terminal_intent IN ('COMPLETED','FAILED','CANCELLED'));
+          ALTER TABLE ide_operations ADD COLUMN safe_terminal_intent_at TEXT;
+          CREATE UNIQUE INDEX idx_ide_operations_writer_lease ON ide_operations(writer_lease_id) WHERE writer_lease_id IS NOT NULL;
+          PRAGMA user_version=4;`);
+        this.db.exec('COMMIT');
+      } catch(error){this.db.exec('ROLLBACK');throw error;}
+      this.assertSchemaShape();
+      restrictSqliteFileModes(this.path);
+      return;
+    }
 
     if (version === 2) {
       this.assertSchemaShape({ includeOperations: false, stampedVersion: 2 });
@@ -525,6 +586,12 @@ export class IdeSessionStore {
         controller_lease_hash TEXT NOT NULL,
         payload_sha256 TEXT NOT NULL,
         payload_bytes INTEGER NOT NULL CHECK(payload_bytes >= 0),
+        writer_lease_id TEXT,
+        writer_settlement TEXT CHECK(writer_settlement IN ('HELD','RELEASED','UNCERTAIN')),
+        mutation_started_at TEXT,
+        writer_settled_at TEXT,
+        safe_terminal_intent TEXT CHECK(safe_terminal_intent IN ('COMPLETED','FAILED','CANCELLED')),
+        safe_terminal_intent_at TEXT,
         state TEXT NOT NULL CHECK(state IN ('RUNNING','CANCELLING','COMPLETED','CANCELLED','FAILED','DISCONNECTED','INDETERMINATE')),
         next_sequence INTEGER NOT NULL CHECK(next_sequence >= 1),
         started_at TEXT NOT NULL,
@@ -534,6 +601,8 @@ export class IdeSessionStore {
       );
       CREATE UNIQUE INDEX idx_ide_operations_one_active_session
         ON ide_operations(session_id) WHERE state IN (${ACTIVE_OPERATION_SQL});
+      CREATE UNIQUE INDEX idx_ide_operations_writer_lease
+        ON ide_operations(writer_lease_id) WHERE writer_lease_id IS NOT NULL;
       CREATE TABLE ide_operation_events (
         operation_id TEXT NOT NULL REFERENCES ide_operations(operation_id),
         sequence INTEGER NOT NULL CHECK(sequence >= 0),
@@ -546,9 +615,10 @@ export class IdeSessionStore {
     `);
   }
 
-  private assertSchemaShape(options: { includeReplay?: boolean; includeOperations?: boolean; stampedVersion?: number } = {}): void {
+  private assertSchemaShape(options: { includeReplay?: boolean; includeOperations?: boolean; includeWriter?: boolean; stampedVersion?: number } = {}): void {
     const includeReplay = options.includeReplay ?? true;
     const includeOperations = options.includeOperations ?? true;
+    const includeWriter = options.includeWriter ?? true;
     const stampedVersion = options.stampedVersion ?? IDE_REGISTRY_SCHEMA_VERSION;
     const missing: string[] = [];
     const tableExists = (name: string): boolean => this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(name) !== undefined;
@@ -564,6 +634,7 @@ export class IdeSessionStore {
       if (!tableExists(table)) continue;
       const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string; pk: number }[];
       for (const [column, affinity] of Object.entries(columns)) {
+        if (!includeWriter && table === 'ide_operations' && ['writer_lease_id','writer_settlement','mutation_started_at','writer_settled_at','safe_terminal_intent','safe_terminal_intent_at'].includes(column)) continue;
         const got = info.find((c) => c.name === column);
         if (!got) missing.push(`${table}.${column}`);
         else if (String(got.type).toUpperCase() !== affinity) missing.push(`${table}.${column} has type ${String(got.type)}, expected ${affinity}`);
@@ -576,7 +647,8 @@ export class IdeSessionStore {
     }
     const normalizeSql = (sql: string): string => sql.replace(/\s+/g, ' ').trim().replace(/;$/, '').toLowerCase();
     for (const [index, expected] of Object.entries(REQUIRED_INDEXES)) {
-      if (!includeOperations && index === 'idx_ide_operations_one_active_session') continue;
+      if (!includeOperations && (index === 'idx_ide_operations_one_active_session' || index === 'idx_ide_operations_writer_lease')) continue;
+      if (!includeWriter && index === 'idx_ide_operations_writer_lease') continue;
       if (!indexExists(index)) { missing.push(`index ${index}`); continue; }
       const indexList = this.db.prepare(`PRAGMA index_list(${expected.table})`).all() as Array<{ name: string; unique: number; partial: number }>;
       const listed = indexList.find((row) => row.name === index);
@@ -606,14 +678,14 @@ export class IdeSessionStore {
     if (missing.length > 0) {
       throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA', `IDE registry is stamped schema v${stampedVersion} but incomplete/incompatible: ${missing.join(', ')}`);
     }
-    if(includeOperations)this.assertDurableOperationCoherence();
+    if(includeOperations)this.assertDurableOperationCoherence(!includeWriter);
   }
 
-  private assertDurableOperationCoherence(): void {
+  private assertDurableOperationCoherence(legacyWriterFields = false): void {
     const rows=this.db.prepare(`SELECT * FROM ide_operations ORDER BY operation_id`).all() as Record<string,unknown>[];
     const terminalEvent:Partial<Record<IdeOperationState,IdeOperationEvent['type']>>={COMPLETED:'completed',CANCELLED:'cancelled',FAILED:'failed',DISCONNECTED:'disconnected',INDETERMINATE:'indeterminate'};
     for(const raw of rows){
-      const op=this.rowToOperation(raw);
+      const op=this.rowToOperation(raw, legacyWriterFields);
       const events=this.getOperationAudit(op.operationId);
       if(events.length!==op.nextSequence)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE operation ${op.operationId} audit length/next sequence mismatch`);
       if(events.length<1||events[0]?.sequence!==0||events[0]?.eventType!=='operation_started')throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA',`IDE operation ${op.operationId} lacks canonical start event`);
@@ -673,6 +745,14 @@ export class IdeSessionStore {
     assertIdeOperationId(operationId);
     const rows = this.db.prepare(`SELECT * FROM ide_operation_events WHERE operation_id=? ORDER BY sequence`).all(operationId) as Record<string, unknown>[];
     return rows.map((row) => this.rowToOperationAudit(row));
+  }
+
+  /** B9.2 recovery seam: terminal implementation operations whose B8 settlement is not yet locally recorded. */
+  listImplementationOperationsWithHeldWriter(): IdeOperationRow[] {
+    const rows=this.db.prepare(`SELECT * FROM ide_operations
+      WHERE capability='request_implementation' AND writer_settlement='HELD'
+      ORDER BY operation_id`).all() as Record<string,unknown>[];
+    return rows.map((row)=>this.rowToOperation(row));
   }
 
   revokeEnrollment(key: IdeEnrollmentKey): boolean {
@@ -752,7 +832,17 @@ export class IdeSessionStore {
 
   /** B7: atomically bind one authenticated review operation to the current controller/session. */
   startOperation(input: StartIdeOperationInput): IdeOperationRow {
-    validateOperationStartInput(input);
+    validateReviewOperationStartInput(input);
+    return this.startOperationInternal(input, null);
+  }
+
+  /** B9.2: durably attribute the exact B8 lease before any implementation adapter may run. */
+  startImplementationOperation(input: StartIdeImplementationOperationInput): IdeOperationRow {
+    validateImplementationOperationStartInput(input);
+    return this.startOperationInternal(input, input.writerLeaseId);
+  }
+
+  private startOperationInternal(input: StartIdeOperationInput, writerLeaseId: string | null): IdeOperationRow {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       if (this.db.prepare(`SELECT 1 FROM ide_operations WHERE operation_id=?`).get(input.operationId)!==undefined) {
@@ -760,16 +850,18 @@ export class IdeSessionStore {
       }
       const {session,enrollment}=this.requireCompanionContext(input);
       if(session.state!=='CONTROLLER_ACQUIRED') throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','IDE session is not ready to start an operation');
+      const isImplementation=input.capability==='request_implementation';
+      if(isImplementation!== (writerLeaseId!==null)) throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','IDE operation writer provenance is incomplete');
       const now=nowIso();
       const controllerLeaseHash=sha256(input.controllerLeaseId);
       this.db.prepare(`INSERT INTO ide_operations
         (operation_id,enrollment_id,session_id,connection_generation,principal_id,project_id,worktree_id,workspace_fingerprint,base_revision,
          ide_product,ide_instance_id,runtime_instance_id,adapter_id,adapter_version,capability,controller_lease_hash,payload_sha256,payload_bytes,
-         state,next_sequence,started_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'RUNNING',1,?,?)`).run(
+         writer_lease_id,writer_settlement,mutation_started_at,writer_settled_at,safe_terminal_intent,safe_terminal_intent_at,state,next_sequence,started_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,'RUNNING',1,?,?)`).run(
         input.operationId,enrollment.enrollmentId,session.sessionId,session.connectionGeneration,enrollment.principalId,enrollment.projectId,enrollment.worktreeId,
         enrollment.workspaceFingerprint,enrollment.baseRevision??null,enrollment.ideProduct,enrollment.ideInstanceId,input.runtimeInstanceId,input.adapterId,input.adapterVersion,
-        input.capability,controllerLeaseHash,input.payloadSha256,input.payloadBytes,now,now,
+        input.capability,controllerLeaseHash,input.payloadSha256,input.payloadBytes,writerLeaseId,isImplementation?'HELD':null,now,now,
       );
       const moved=this.db.prepare(`UPDATE ide_sessions SET state='OPERATION_ACTIVE',updated_at=?
         WHERE session_id=? AND connection_generation=? AND state='CONTROLLER_ACQUIRED' AND controller_lease_id=?`).run(
@@ -781,6 +873,183 @@ export class IdeSessionStore {
       this.db.exec('COMMIT');
     } catch(error){try{this.db.exec('ROLLBACK');}catch{} throw error;}
     return this.getOperation(input.operationId)!;
+  }
+
+  /** Mark the conservative durable mutation boundary before invoking a mutation-capable adapter. */
+  markImplementationMutationStarted(operationId:string, writerLeaseId:string, controllerLeaseId:string): IdeOperationRow {
+    assertIdeOperationId(operationId); assertIdeControllerLeaseId(controllerLeaseId);
+    if(!LIVE_WRITER_LEASE_ID_PATTERN.test(writerLeaseId)) throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','implementation writer lease identity is invalid');
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      const raw=this.db.prepare(`SELECT * FROM ide_operations WHERE operation_id=?`).get(operationId) as Record<string,unknown>|undefined;
+      if(!raw) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+      const op=this.rowToOperation(raw);
+      if(op.capability!=='request_implementation'||op.writerLeaseId!==writerLeaseId||op.writerSettlement!=='HELD') throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','implementation writer provenance mismatch');
+      if(op.controllerLeaseHash!==sha256(controllerLeaseId)) throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','IDE operation controller lease mismatch');
+      if(op.state!=='RUNNING'||op.mutationStartedAt!==null) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation mutation boundary is not startable');
+      const now=nowIso();
+      const changed=this.db.prepare(`UPDATE ide_operations SET mutation_started_at=?,updated_at=? WHERE operation_id=? AND state='RUNNING' AND writer_settlement='HELD' AND mutation_started_at IS NULL`).run(now,now,operationId);
+      if(Number(changed.changes)!==1) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation mutation boundary lost CAS race');
+      this.db.exec('COMMIT');
+    }catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
+    return this.getOperation(operationId)!;
+  }
+
+  /** Persist a safe adapter outcome before any external B8 release is attempted. */
+  prepareImplementationSafeTerminal(
+    operationId:string,
+    writerLeaseId:string,
+    controllerLeaseId:string,
+    intent:IdeImplementationSafeTerminalIntent,
+  ): IdeOperationRow {
+    assertIdeOperationId(operationId); assertIdeControllerLeaseId(controllerLeaseId);
+    if(!LIVE_WRITER_LEASE_ID_PATTERN.test(writerLeaseId)) throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','implementation writer lease identity is invalid');
+    if(!['COMPLETED','FAILED','CANCELLED'].includes(intent)) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation safe-terminal intent is invalid');
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      const raw=this.db.prepare(`SELECT * FROM ide_operations WHERE operation_id=?`).get(operationId) as Record<string,unknown>|undefined;
+      if(!raw) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+      const op=this.rowToOperation(raw);
+      if(op.capability!=='request_implementation'||op.writerLeaseId!==writerLeaseId||op.writerSettlement!=='HELD') throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','implementation writer provenance mismatch');
+      if(op.controllerLeaseHash!==sha256(controllerLeaseId)) throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','IDE operation controller lease mismatch');
+      if(!ACTIVE_OPERATION_STATES.includes(op.state)) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation operation is already terminal');
+      assertIdeOperationTransition(op.state,intent);
+      if(op.safeTerminalIntent!==null){
+        if(op.safeTerminalIntent!==intent) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation safe-terminal intent is already different');
+        this.db.exec('COMMIT'); return op;
+      }
+      const now=nowIso();
+      const changed=this.db.prepare(`UPDATE ide_operations SET safe_terminal_intent=?,safe_terminal_intent_at=?,updated_at=?
+        WHERE operation_id=? AND writer_lease_id=? AND writer_settlement='HELD' AND safe_terminal_intent IS NULL AND state=?`).run(
+        intent,now,now,operationId,writerLeaseId,op.state,
+      );
+      if(Number(changed.changes)!==1) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation safe-terminal intent lost CAS race');
+      this.db.exec('COMMIT');
+    }catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
+    return this.getOperation(operationId)!;
+  }
+
+  /**
+   * Finalize a safe terminal only after re-reading the exact immutable B8
+   * lease as RELEASED. The terminal audit event, operation state, session
+   * settlement and local writer-settlement mirror commit in one Plane-B txn.
+   */
+  finalizeImplementationSafeTerminal(
+    operationId:string,
+    writerAuthority:IdeLiveWriterAuthorityReader,
+    writerLeaseId:string,
+    controllerLeaseId:string,
+  ): IdeOperationRow {
+    assertIdeOperationId(operationId); assertIdeControllerLeaseId(controllerLeaseId);
+    const snapshot=this.getOperation(operationId);
+    if(!snapshot) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+    this.assertExternalImplementationWriter(snapshot,writerAuthority,writerLeaseId,'RELEASED');
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      const raw=this.db.prepare(`SELECT * FROM ide_operations WHERE operation_id=?`).get(operationId) as Record<string,unknown>|undefined;
+      if(!raw) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+      const op=this.rowToOperation(raw);
+      if(op.capability!=='request_implementation'||op.writerLeaseId!==writerLeaseId||op.writerSettlement!=='HELD'||op.safeTerminalIntent===null) throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','implementation safe terminal lacks exact writer/intention provenance');
+      if(op.controllerLeaseHash!==sha256(controllerLeaseId)) throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','IDE operation controller lease mismatch');
+      if(!ACTIVE_OPERATION_STATES.includes(op.state)) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation operation is already terminal');
+      assertIdeOperationTransition(op.state,op.safeTerminalIntent);
+      const type=op.safeTerminalIntent==='COMPLETED'?'completed':op.safeTerminalIntent==='FAILED'?'failed':'cancelled';
+      const now=nowIso();
+      const event:IdeOperationEvent={version:1,operationId:op.operationId,sessionId:op.sessionId,connectionGeneration:op.connectionGeneration,origin:'machine',sequence:op.nextSequence,type};
+      this.insertOperationAuditEventTx(event,now);
+      const changed=this.db.prepare(`UPDATE ide_operations SET state=?,next_sequence=?,finished_at=?,writer_settlement='RELEASED',writer_settled_at=?,updated_at=?
+        WHERE operation_id=? AND state=? AND next_sequence=? AND writer_lease_id=? AND writer_settlement='HELD' AND safe_terminal_intent=?`).run(
+        op.safeTerminalIntent,op.nextSequence+1,now,now,now,op.operationId,op.state,op.nextSequence,writerLeaseId,op.safeTerminalIntent,
+      );
+      if(Number(changed.changes)!==1) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation safe terminal lost operation CAS race');
+      this.settleOperationSessionTx(op,controllerLeaseId,now);
+      this.db.exec('COMMIT');
+    }catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
+    return this.getOperation(operationId)!;
+  }
+
+  /** Finalize an unsafe/ambiguous terminal only after exact B8 UNCERTAIN proof. */
+  finalizeImplementationUncertainTerminal(
+    operationId:string,
+    writerAuthority:IdeLiveWriterAuthorityReader,
+    writerLeaseId:string,
+    controllerLeaseId:string,
+    type:'indeterminate'|'disconnected',
+  ): IdeOperationRow {
+    assertIdeOperationId(operationId); assertIdeControllerLeaseId(controllerLeaseId);
+    const snapshot=this.getOperation(operationId);
+    if(!snapshot) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+    this.assertExternalImplementationWriter(snapshot,writerAuthority,writerLeaseId,'UNCERTAIN');
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      const raw=this.db.prepare(`SELECT * FROM ide_operations WHERE operation_id=?`).get(operationId) as Record<string,unknown>|undefined;
+      if(!raw) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+      const op=this.rowToOperation(raw);
+      if(op.capability!=='request_implementation'||op.writerLeaseId!==writerLeaseId||op.writerSettlement!=='HELD') throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','implementation uncertain terminal lacks exact writer provenance');
+      if(op.controllerLeaseHash!==sha256(controllerLeaseId)) throw new IdeRegistryStoreError('IDE_CONTROLLER_LEASE_MISMATCH','IDE operation controller lease mismatch');
+      if(!ACTIVE_OPERATION_STATES.includes(op.state)) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation operation is already terminal');
+      const target=type==='indeterminate'?'INDETERMINATE':'DISCONNECTED'; assertIdeOperationTransition(op.state,target);
+      const now=nowIso();
+      const event:IdeOperationEvent={version:1,operationId:op.operationId,sessionId:op.sessionId,connectionGeneration:op.connectionGeneration,origin:'machine',sequence:op.nextSequence,type};
+      this.insertOperationAuditEventTx(event,now);
+      const changed=this.db.prepare(`UPDATE ide_operations SET state=?,next_sequence=?,finished_at=?,writer_settlement='UNCERTAIN',writer_settled_at=?,updated_at=?
+        WHERE operation_id=? AND state=? AND next_sequence=? AND writer_lease_id=? AND writer_settlement='HELD'`).run(
+        target,op.nextSequence+1,now,now,now,op.operationId,op.state,op.nextSequence,writerLeaseId,
+      );
+      if(Number(changed.changes)!==1) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation uncertain terminal lost operation CAS race');
+      this.settleOperationSessionTx(op,controllerLeaseId,now);
+      this.db.exec('COMMIT');
+    }catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
+    return this.getOperation(operationId)!;
+  }
+
+  /** Mirror an already-terminal operation's writer state only after exact B8 proof. */
+  markImplementationWriterSettlement(
+    operationId:string,
+    writerAuthority:IdeLiveWriterAuthorityReader,
+    writerLeaseId:string,
+    settlement:'RELEASED'|'UNCERTAIN',
+  ): boolean {
+    assertIdeOperationId(operationId);
+    if(!LIVE_WRITER_LEASE_ID_PATTERN.test(writerLeaseId)) throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','implementation writer lease identity is invalid');
+    const snapshot=this.getOperation(operationId);
+    if(!snapshot) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+    this.assertExternalImplementationWriter(snapshot,writerAuthority,writerLeaseId,settlement);
+    if(settlement==='RELEASED'&&snapshot.safeTerminalIntent===null) throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','released implementation writer lacks prior safe-terminal proof');
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      const raw=this.db.prepare(`SELECT * FROM ide_operations WHERE operation_id=?`).get(operationId) as Record<string,unknown>|undefined;
+      if(!raw) throw new IdeRegistryStoreError('IDE_OPERATION_NOT_FOUND','IDE operation not found');
+      const op=this.rowToOperation(raw);
+      if(op.capability!=='request_implementation'||op.writerLeaseId!==writerLeaseId) throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','implementation writer settlement binding mismatch');
+      if(ACTIVE_OPERATION_STATES.includes(op.state)) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','active implementation operation cannot mirror terminal writer authority');
+      if(op.writerSettlement===settlement){this.db.exec('COMMIT');return false;}
+      if(op.writerSettlement!=='HELD') throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH',`implementation writer is already ${op.writerSettlement}`);
+      const now=nowIso();
+      const changed=this.db.prepare(`UPDATE ide_operations SET writer_settlement=?,writer_settled_at=?,updated_at=? WHERE operation_id=? AND writer_lease_id=? AND writer_settlement='HELD'`).run(settlement,now,now,operationId,writerLeaseId);
+      if(Number(changed.changes)!==1) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation writer settlement lost CAS race');
+      this.db.exec('COMMIT');return true;
+    }catch(error){try{this.db.exec('ROLLBACK');}catch{}throw error;}
+  }
+
+  private assertExternalImplementationWriter(
+    op:IdeOperationRow,
+    writerAuthority:IdeLiveWriterAuthorityReader,
+    writerLeaseId:string,
+    expectedState:'RELEASED'|'UNCERTAIN',
+  ): void {
+    if(op.capability!=='request_implementation'||op.writerLeaseId!==writerLeaseId) throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH','implementation writer provenance mismatch');
+    const writer=writerAuthority.getLiveWriterLease(writerLeaseId);
+    if(!writer||writer.state!==expectedState||writer.ownerKind!=='ide'||writer.ownerId!==op.operationId||writer.principalId!==op.principalId||writer.projectId!==op.projectId||writer.worktreeId!==op.worktreeId){
+      throw new IdeRegistryStoreError('IDE_OPERATION_BINDING_MISMATCH',`external B8 writer authority is not exact ${expectedState}`);
+    }
+  }
+
+  private settleOperationSessionTx(op:IdeOperationRow,controllerLeaseId:string,now:string):void{
+    const session=this.db.prepare(`SELECT state,controller_lease_id FROM ide_sessions WHERE session_id=? AND connection_generation=?`).get(op.sessionId,op.connectionGeneration) as {state:string;controller_lease_id:string|null}|undefined;
+    if(!session||session.state!=='OPERATION_ACTIVE'||session.controller_lease_id!==controllerLeaseId) throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','IDE implementation terminal cannot settle current session');
+    const settled=this.db.prepare(`UPDATE ide_sessions SET state='CONTROLLER_ACQUIRED',updated_at=? WHERE session_id=? AND connection_generation=? AND state='OPERATION_ACTIVE' AND controller_lease_id=?`).run(now,op.sessionId,op.connectionGeneration,controllerLeaseId);
+    if(Number(settled.changes)!==1) throw new IdeRegistryStoreError('IDE_SESSION_STATE_MISMATCH','IDE implementation settlement lost session CAS race');
   }
 
   requestOperationCancellation(request: IdeCompanionRegistryRequest): IdeOperationRow {
@@ -820,6 +1089,9 @@ export class IdeSessionStore {
       if(event.sequence!==op.nextSequence) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','IDE operation event sequence is not the durable next sequence');
       if(!ACTIVE_OPERATION_STATES.includes(op.state)) throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH',`IDE operation is terminal: ${op.state}`);
       const terminal=terminalStateForEvent(event.type);
+      if(op.capability==='request_implementation'&&terminal!==null){
+        throw new IdeRegistryStoreError('IDE_OPERATION_STATE_MISMATCH','implementation terminal events require the B9 writer-settlement finalizer');
+      }
       if(terminal===null && event.sequence>=IDE_MAX_OPERATION_EVENTS-1) throw new IdeRegistryStoreError('IDE_OPERATION_EVENT_LIMIT','IDE operation event limit reached; terminal slot reserved');
       if(event.sequence>=IDE_MAX_OPERATION_EVENTS) throw new IdeRegistryStoreError('IDE_OPERATION_EVENT_LIMIT','IDE operation event limit reached');
       if(terminal!==null) assertIdeOperationTransition(op.state,terminal);
@@ -1102,11 +1374,17 @@ export class IdeSessionStore {
     return{sessionId,enrollmentId,connectionGeneration,state,controllerLeaseId,createdAt:String(row.created_at),updatedAt:String(row.updated_at),endedAt};
   }
 
-  private rowToOperation(row: Record<string, unknown>): IdeOperationRow {
+  private rowToOperation(row: Record<string, unknown>, legacyWriterFields = false): IdeOperationRow {
     const operationId=String(row.operation_id),enrollmentId=String(row.enrollment_id),sessionId=String(row.session_id),connectionGeneration=Number(row.connection_generation);
     const principalId=String(row.principal_id),projectId=String(row.project_id),worktreeId=String(row.worktree_id),workspaceFingerprint=String(row.workspace_fingerprint),baseRevision=row.base_revision==null?undefined:String(row.base_revision);
     const ideProduct=String(row.ide_product) as IdeProductId,ideInstanceId=String(row.ide_instance_id),runtimeInstanceId=String(row.runtime_instance_id),adapterId=String(row.adapter_id),adapterVersion=String(row.adapter_version),capability=String(row.capability) as IdeCapability;
     const controllerLeaseHash=String(row.controller_lease_hash),payloadSha256=String(row.payload_sha256),payloadBytes=Number(row.payload_bytes),state=String(row.state) as IdeOperationState,nextSequence=Number(row.next_sequence);
+    const writerLeaseId=legacyWriterFields||row.writer_lease_id==null?null:String(row.writer_lease_id);
+    const writerSettlement=legacyWriterFields||row.writer_settlement==null?null:String(row.writer_settlement) as IdeOperationWriterSettlement;
+    const mutationStartedAt=legacyWriterFields||row.mutation_started_at==null?null:String(row.mutation_started_at);
+    const writerSettledAt=legacyWriterFields||row.writer_settled_at==null?null:String(row.writer_settled_at);
+    const safeTerminalIntent=legacyWriterFields||row.safe_terminal_intent==null?null:String(row.safe_terminal_intent) as IdeImplementationSafeTerminalIntent;
+    const safeTerminalIntentAt=legacyWriterFields||row.safe_terminal_intent_at==null?null:String(row.safe_terminal_intent_at);
     assertIdeOperationId(operationId);assertIdeEnrollmentId(enrollmentId);assertIdeSessionId(sessionId);assertIdeConnectionGeneration(connectionGeneration);
     assertIdePrincipalId(principalId);assertIdeLogicalId(projectId,'projectId');assertIdeLogicalId(worktreeId,'worktreeId');assertIdeWorkspaceFingerprint(workspaceFingerprint);assertBaseRevision(baseRevision);assertIdeProduct(ideProduct);assertIdeInstanceId(ideInstanceId);assertIdeCapability(capability);
     if(!RUNTIME_INSTANCE_PATTERN.test(runtimeInstanceId)||!ADAPTER_ID_PATTERN.test(adapterId)||!ADAPTER_VERSION_PATTERN.test(adapterVersion))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation runtime attribution is invalid');
@@ -1118,7 +1396,29 @@ export class IdeSessionStore {
     const terminal=TERMINAL_OPERATION_STATES.includes(state);
     if(terminal!==(finishedAt!==null))throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation terminal fields are inconsistent');
     if(state==='CANCELLING'&&cancellationRequestedAt===null)throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','IDE operation cancellation fields are inconsistent');
-    return{operationId,enrollmentId,sessionId,connectionGeneration,principalId,projectId,worktreeId,workspaceFingerprint,baseRevision,ideProduct,ideInstanceId,runtimeInstanceId,adapterId,adapterVersion,capability,controllerLeaseHash,payloadSha256,payloadBytes,state,nextSequence,startedAt:String(row.started_at),updatedAt:String(row.updated_at),finishedAt,cancellationRequestedAt};
+    if(!legacyWriterFields){
+      if(capability==='request_review'){
+        if(writerLeaseId!==null||writerSettlement!==null||mutationStartedAt!==null||writerSettledAt!==null||safeTerminalIntent!==null||safeTerminalIntentAt!==null) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','review operation unexpectedly carries writer provenance');
+      }else if(capability==='request_implementation'){
+        if(writerLeaseId===null||!LIVE_WRITER_LEASE_ID_PATTERN.test(writerLeaseId)||writerSettlement===null||!['HELD','RELEASED','UNCERTAIN'].includes(writerSettlement)) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','implementation operation writer provenance is incomplete');
+        if(writerSettlement==='HELD'&&writerSettledAt!==null) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','held implementation writer has settlement timestamp');
+        if((safeTerminalIntent===null)!==(safeTerminalIntentAt===null)) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','implementation safe-terminal intent fields are inconsistent');
+        if(safeTerminalIntent!==null&&!['COMPLETED','FAILED','CANCELLED'].includes(safeTerminalIntent)) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','implementation safe-terminal intent is invalid');
+        if(writerSettlement!=='HELD'&&writerSettledAt===null) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','settled implementation writer lacks settlement timestamp');
+        if(ACTIVE_OPERATION_STATES.includes(state)&&writerSettlement!=='HELD') throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','active implementation operation does not hold writer authority');
+        if(writerSettlement!=='HELD'&&!TERMINAL_OPERATION_STATES.includes(state)) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','nonterminal implementation operation has settled writer authority');
+        const safeTerminal=state==='COMPLETED'||state==='FAILED'||state==='CANCELLED';
+        const unsafeTerminal=state==='DISCONNECTED'||state==='INDETERMINATE';
+        if(safeTerminal&&(writerSettlement!=='RELEASED'||safeTerminalIntent!==state)) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','safe implementation terminal lacks matching RELEASED writer proof');
+        if(safeTerminal&&writerSettledAt===null) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','safe implementation terminal lacks writer settlement timestamp');
+        if(unsafeTerminal&&writerSettlement==='RELEASED'&&safeTerminalIntent===null) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','unsafe implementation terminal has RELEASED writer without prior safe intent');
+        if(unsafeTerminal&&writerSettlement==='UNCERTAIN'&&writerSettledAt===null) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','unsafe implementation terminal lacks uncertainty timestamp');
+        if(unsafeTerminal&&writerSettlement==='HELD'&&writerSettledAt!==null) throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','unreconciled unsafe implementation terminal has settlement timestamp');
+      }else if(writerLeaseId!==null||writerSettlement!==null||mutationStartedAt!==null||writerSettledAt!==null||safeTerminalIntent!==null||safeTerminalIntentAt!==null){
+        throw new IdeRegistryStoreError('IDE_REGISTRY_SCHEMA','non-implementation operation unexpectedly carries writer provenance');
+      }
+    }
+    return{operationId,enrollmentId,sessionId,connectionGeneration,principalId,projectId,worktreeId,workspaceFingerprint,baseRevision,ideProduct,ideInstanceId,runtimeInstanceId,adapterId,adapterVersion,capability,controllerLeaseHash,payloadSha256,payloadBytes,writerLeaseId,writerSettlement,mutationStartedAt,writerSettledAt,safeTerminalIntent,safeTerminalIntentAt,state,nextSequence,startedAt:String(row.started_at),updatedAt:String(row.updated_at),finishedAt,cancellationRequestedAt};
   }
 
   private rowToOperationAudit(row: Record<string, unknown>): IdeOperationAuditRow {
