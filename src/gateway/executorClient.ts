@@ -1,6 +1,7 @@
 /** HTTP client for the private executor service. */
 import { request } from 'undici';
 import { BridgeError } from '../shared/errors.js';
+import { MAX_PROVIDER_RETRY_AFTER_MS } from '../shared/agents.js';
 import type { ExecResult, FileStat, TargetInfo } from '../shared/types.js';
 import type {
   GitHubBranchSummary, GitHubChecksSummary, GitHubCommentSummary, GitHubCommitSummary,
@@ -25,7 +26,18 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   const text = await res.body.text();
   const json = text ? JSON.parse(text) : {};
   if (res.statusCode >= 400) {
-    throw new BridgeError((json.error ?? 'INTERNAL') as never, json.message ?? 'executor error', res.statusCode);
+    const rawRetryAfterMs = json.retryAfterMs;
+    const retryAfterMs = typeof rawRetryAfterMs === 'number'
+      && Number.isSafeInteger(rawRetryAfterMs)
+      && rawRetryAfterMs > 0
+      ? Math.min(rawRetryAfterMs, MAX_PROVIDER_RETRY_AFTER_MS)
+      : undefined;
+    throw new BridgeError(
+      (json.error ?? 'INTERNAL') as never,
+      json.message ?? 'executor error',
+      res.statusCode,
+      retryAfterMs,
+    );
   }
   return json as T;
 }

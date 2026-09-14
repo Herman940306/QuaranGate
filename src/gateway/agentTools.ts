@@ -77,7 +77,17 @@ function agentGuarded(
     } catch (e) {
       const be = asBridgeError(e);
       audit({ reqId, principal: p?.id ?? null, tool, target: null, decision: 'deny', code: be.code, durationMs: Date.now() - started, detail: be.message });
-      return { content: [{ type: 'text', text: JSON.stringify({ error: be.code, message: be.message }) }], isError: true };
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: be.code,
+            message: be.message,
+            ...(be.retryAfterMs !== undefined ? { retryAfterMs: be.retryAfterMs } : {}),
+          }),
+        }],
+        isError: true,
+      };
     }
   };
 }
