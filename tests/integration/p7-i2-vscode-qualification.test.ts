@@ -1,0 +1,137 @@
+import { describe, expect, it } from 'vitest';
+import { mkdtemp, cp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import {
+  createEvidenceManifest,
+  createQualificationStep,
+  sanitizeEvidence,
+} from '../../scripts/vscode-qualification-evidence.mjs';
+import {
+  QUALIFICATION_FIXTURE_ROOT,
+  assertReadOnlyFixtureSeed,
+  assertSafeDisposableWorkspace,
+  buildQualificationEvidence,
+  classifyWslEnvironment,
+  computeWorkspaceIdentity,
+  evaluateRuntimeProbe,
+} from '../../scripts/vscode-remote-wsl-qualification.mjs';
+
+const SOURCE = 'f1432e63a7ff2e315fbc0738a26c81b818bd4904';
+const SEED = path.join(QUALIFICATION_FIXTURE_ROOT, 'workspace-seed');
+
+describe('P7 I2 VS Code qualification infrastructure', () => {
+  it('keeps PASS/FAIL/BLOCKED/NOT_SUPPORTED/NOT_RUN distinct', () => {
+    const results = ['PASS', 'FAIL', 'BLOCKED_ENVIRONMENT', 'NOT_SUPPORTED', 'NOT_RUN'] as const;
+    const steps = results.map((result, index) => createQualificationStep({
+      id: `result.${index}`,
+      result,
+      observedAt: '2026-09-14T00:00:00.000Z',
+    }));
+    expect(steps.map((step) => step.result)).toEqual(results);
+  });
+
+  it('redacts sensitive raw material and bounds oversized strings', () => {
+    const sanitized = sanitizeEvidence({
+      accessToken: 'bearer-secret',
+      credential: 'credential-secret',
+      prompt: 'do something private',
+      rawResponse: 'provider-private-body',
+      operationId: 'op_safe',
+      note: 'x'.repeat(10_000),
+    }) as Record<string, unknown>;
+    expect(sanitized.accessToken).toBe('[REDACTED]');
+    expect(sanitized.credential).toBe('[REDACTED]');
+    expect(sanitized.prompt).toBe('[REDACTED]');
+    expect(sanitized.rawResponse).toBe('[REDACTED]');
+    expect(sanitized.operationId).toBe('op_safe');
+    expect(Buffer.byteLength(String(sanitized.note), 'utf8')).toBeLessThanOrEqual(2048);
+  });
+
+  it('records immutable source identity and rejects duplicate step ids', () => {
+    const step = createQualificationStep({
+      id: 'source.commit', result: 'PASS', observedAt: '2026-09-14T00:00:00.000Z',
+    });
+    const manifest = createEvidenceManifest({
+      sourceCommit: SOURCE,
+      runId: 'test-run',
+      generatedAt: '2026-09-14T00:00:01.000Z',
+      steps: [step],
+    });
+    expect(manifest.sourceCommit).toBe(SOURCE);
+    expect(manifest.manifestSha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(() => createEvidenceManifest({ sourceCommit: SOURCE, runId: 'dup', steps: [step, step] })).toThrow(/duplicate step/u);
+  });
+
+  it('accepts only fixture seeds under the authorized fixture convention', () => {
+    expect(assertReadOnlyFixtureSeed(SEED)).toBe(path.resolve(SEED));
+    expect(() => assertReadOnlyFixtureSeed(process.cwd())).toThrow(/fixture seed must be inside/u);
+  });
+
+  it('refuses canonical or valuable repository paths as disposable workspaces', () => {
+    expect(() => assertSafeDisposableWorkspace(process.cwd())).toThrow(/unsafe disposable workspace/u);
+    expect(() => assertSafeDisposableWorkspace('/workspace/QuaranGate-project-control')).toThrow(/unsafe disposable workspace/u);
+    expect(() => assertSafeDisposableWorkspace('/workspace/QuaranGate-u1-full')).toThrow(/unsafe disposable workspace/u);
+  });
+
+  it('allows only explicitly named temporary disposable workspaces', async () => {
+    const safe = await mkdtemp(path.join(os.tmpdir(), 'quarangate-vscode-qualification-'));
+    expect(assertSafeDisposableWorkspace(safe)).toBe(path.resolve(safe));
+    const generic = await mkdtemp(path.join(os.tmpdir(), 'random-workspace-'));
+    expect(() => assertSafeDisposableWorkspace(generic)).toThrow(/unsafe disposable workspace/u);
+  });
+
+  it('computes deterministic bounded workspace identity and detects drift', async () => {
+    const baseline = await computeWorkspaceIdentity(SEED);
+    const temp = await mkdtemp(path.join(os.tmpdir(), 'quarangate-vscode-qualification-'));
+    await cp(SEED, temp, { recursive: true });
+    const copied = await computeWorkspaceIdentity(temp);
+    expect(copied.identitySha256).toBe(baseline.identitySha256);
+    await writeFile(path.join(temp, 'src', 'review-target.txt'), 'qualification fixture drift\n', 'utf8');
+    const drifted = await computeWorkspaceIdentity(temp);
+    expect(drifted.identitySha256).not.toBe(baseline.identitySha256);
+  });
+
+  it('classifies WSL evidence without pretending a non-WSL host is qualified', () => {
+    expect(classifyWslEnvironment({ env: { WSL_DISTRO_NAME: 'Ubuntu-24.04' }, release: 'linux' }).result).toBe('PASS');
+    expect(classifyWslEnvironment({ env: {}, release: '6.8.0-generic' }).result).toBe('BLOCKED_ENVIRONMENT');
+  });
+
+  it('keeps absent live runtime probes explicitly NOT_RUN', () => {
+    const steps = evaluateRuntimeProbe(null);
+    expect(steps.length).toBeGreaterThan(5);
+    expect(new Set(steps.map((step) => step.result))).toEqual(new Set(['NOT_RUN']));
+  });
+
+  it('preserves runtime probe result classifications without elevating blocked evidence', () => {
+    const steps = evaluateRuntimeProbe({
+      remotePlacement: { extensionHostKind: 'workspace', remoteName: 'wsl' },
+      modelAccess: { state: 'CONSENT_REQUIRED' },
+    });
+    expect(steps.find((step) => step.id === 'vscode.remote_placement')?.result).toBe('PASS');
+    expect(steps.find((step) => step.id === 'vscode.model_access')?.result).toBe('BLOCKED_ENVIRONMENT');
+    expect(steps.find((step) => step.id === 'review.execution')?.result).toBe('NOT_RUN');
+  });
+
+  it('builds evidence without executing live qualification', async () => {
+    const manifest = await buildQualificationEvidence({
+      sourceCommit: SOURCE,
+      fixtureSeed: SEED,
+      runId: 'integration-no-live',
+      environment: { env: {}, release: 'generic-linux' },
+      runtimeProbe: null,
+    });
+    expect(manifest.sourceCommit).toBe(SOURCE);
+    expect(manifest.environment).toMatchObject({ liveQualificationExecuted: false });
+    expect(manifest.steps.find((step) => step.id === 'source.commit')?.result).toBe('PASS');
+    expect(manifest.steps.find((step) => step.id === 'environment.wsl')?.result).toBe('BLOCKED_ENVIRONMENT');
+    expect(manifest.steps.find((step) => step.id === 'review.execution')?.result).toBe('NOT_RUN');
+  });
+
+  it('fails closed on malformed qualification status instead of coercing it', () => {
+    expect(() => createQualificationStep({ id: 'bad.status', result: 'MAYBE' })).toThrow(/invalid qualification result/u);
+    expect(evaluateRuntimeProbe({ modelApi: { publicApiAvailable: 'maybe' } })
+      .find((step) => step.id === 'vscode.model_api')?.result).toBe('FAIL');
+  });
+});

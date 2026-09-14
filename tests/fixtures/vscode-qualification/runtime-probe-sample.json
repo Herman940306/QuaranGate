@@ -1,0 +1,46 @@
+{
+  "remotePlacement": {
+    "extensionHostKind": "workspace",
+    "remoteName": "wsl"
+  },
+  "b4RuntimeBinding": {
+    "credentialOwnerVerified": true,
+    "credentialModeVerified": true,
+    "bindingMatches": true
+  },
+  "b6AuthenticatedSession": {
+    "authenticated": true,
+    "sessionId": "session_fixture_01",
+    "generation": 7
+  },
+  "b5WorkspaceIdentity": {
+    "workspaceMatched": true,
+    "gitIdentityMatched": true
+  },
+  "workspaceDrift": {
+    "caseExecuted": true,
+    "changedWorkspaceDenied": true,
+    "handlerInvoked": false
+  },
+  "modelApi": {
+    "publicApiAvailable": true
+  },
+  "modelAccess": {
+    "state": "CONSENT_REQUIRED"
+  },
+  "reviewExecution": {
+    "attempted": false
+  },
+  "cancellation": {
+    "attempted": false
+  },
+  "disconnect": {
+    "attempted": false
+  },
+  "backpressure": {
+    "attempted": false
+  },
+  "reconnectGeneration": {
+    "attempted": false
+  }
+}
