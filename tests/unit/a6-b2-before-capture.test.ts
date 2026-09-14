@@ -583,4 +583,24 @@ describe('A3 reconciler skips evidence volumes', () => {
     expect(result.removedVolumes).toContain('bridge-ws-job_bbb');
     expect(result.removedVolumes).not.toContain('bridge-evidence-job_aaa');
   });
+
+  it('A8 R1 preserves only explicitly protected provider-session state and removes unprotected provider state', async () => {
+    const { RunnerSandbox } = await import('../../src/executor/agents/sandboxRunner.js');
+    const { LABEL_MANAGED, LABEL_RESOURCE, LABEL_JOB } = await import('../../src/executor/agents/sandboxSpec.js');
+
+    vi.clearAllMocks();
+    (dockerStub.listContainersByFilter as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    (dockerStub.listVolumesByFilter as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { Name: 'bridge-provider-active', Labels: { [LABEL_MANAGED]: 'true', [LABEL_RESOURCE]: 'provider-session', [LABEL_JOB]: 'job_active' } },
+      { Name: 'bridge-provider-expired', Labels: { [LABEL_MANAGED]: 'true', [LABEL_RESOURCE]: 'provider-session', [LABEL_JOB]: 'job_expired' } },
+    ]);
+
+    const sandbox = new RunnerSandbox({ image: 'test:latest' });
+    const result = await sandbox.reconcileOrphans({
+      preserveManagedVolumeNames: new Set(['bridge-provider-active']),
+    });
+
+    expect(result.removedVolumes).not.toContain('bridge-provider-active');
+    expect(result.removedVolumes).toContain('bridge-provider-expired');
+  });
 });

@@ -254,7 +254,7 @@ export class RunnerSandbox {
    * are ephemeral and not attachable) and is failed closed: containers are
    * killed+removed, workspace volumes removed.
    */
-  async reconcileOrphans(): Promise<{ removedContainers: string[]; removedVolumes: string[]; removedNetworks: string[] }> {
+  async reconcileOrphans(opts: { preserveManagedVolumeNames?: ReadonlySet<string> } = {}): Promise<{ removedContainers: string[]; removedVolumes: string[]; removedNetworks: string[] }> {
     const removedContainers: string[] = [];
     const removedVolumes: string[] = [];
     const removedNetworks: string[] = [];
@@ -295,6 +295,14 @@ export class RunnerSandbox {
       // retained pre-cutover evidence.
       const resource = ownershipLabelValue(v.Labels, 'resource');
       if (resource === 'evidence') continue;
+      // A8 R1: provider session state is durable while referenced by an ACTIVE
+      // or RESERVED session. The exact preserve set comes from the executor DB
+      // after reservation recovery and before this sweep runs. This is additive
+      // to H1 network orphan reconciliation below; neither boundary replaces the other.
+      if (opts.preserveManagedVolumeNames?.has(v.Name)) {
+        log('sandbox orphan volume retained (active provider session state)', { volume: v.Name });
+        continue;
+      }
       // Fail-safe: an unreadable/contradictory resource label is not proof that
       // this is an ephemeral A3 resource. Retain rather than delete.
       if (resource === null) {

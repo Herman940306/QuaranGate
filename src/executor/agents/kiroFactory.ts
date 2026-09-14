@@ -15,9 +15,11 @@
  * (read/grep/glob + fsWrite, mcp_impl_ identity); audit/plan/review remain
  * strictly read-only. Reaching COMPLETED is never an apply — the host project
  * is never modified (A6 owns review/apply/discard).
+ *
+ * A8: accepts optional resolved session context for resume dispatch.
  */
 import type { AgentProfileId, AgentResourcePolicy } from '../../shared/agents.js';
-import type { AgentBackendAdapter } from './jobEngine.js';
+import type { AgentBackendAdapter, ResolvedSessionContext } from './jobEngine.js';
 import type { AgentJobRow } from './jobStore.js';
 import { KiroBackend, resolveModel, type KiroBackendOptions } from './kiroBackend.js';
 import { BridgeError } from '../../shared/errors.js';
@@ -36,9 +38,9 @@ export interface KiroFactoryProject {
 export function createKiroBackendFactory(
   projects: KiroFactoryProject[],
   deps: KiroFactoryDeps,
-): (job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null {
+): (job: AgentJobRow, policy: AgentResourcePolicy, session?: ResolvedSessionContext) => AgentBackendAdapter | null {
   const hostPathById = new Map(projects.map((p) => [p.id, p.hostPath]));
-  return (job, policy) => {
+  return (job, policy, session) => {
     if (job.backend !== 'kiro') return null; // deterministic fake for everything else
     const hostPath = hostPathById.get(job.project);
     if (!hostPath) {
@@ -57,6 +59,10 @@ export function createKiroBackendFactory(
         hostPath,
         policy,
         model: resolveModel(policy.modelClass),
+        // A8 R1: resume requires both provider identity and the managed Kiro
+        // session-state volume. KiroBackend independently verifies ownership.
+        providerSessionId: session?.providerSessionId ?? null,
+        providerStateVolume: session?.providerStateRef ?? null,
       },
       deps,
     );

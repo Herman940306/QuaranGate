@@ -8,6 +8,7 @@
  *
  *   - initialize        params {protocolVersion:1, clientCapabilities:{}}
  *   - session/new       params {cwd, mcpServers:[]}            -> {sessionId, models?}
+ *   - session/load      params {sessionId,cwd,mcpServers:[]}    (capability-gated)
  *   - session/prompt    params {sessionId, prompt:[{type:"text",text}]} -> {stopReason}
  *   - session/cancel    NOTIFICATION params {sessionId}        (no response)
  *   - progress arrives as `session/update` notifications:
@@ -137,6 +138,7 @@ const DEFAULT_MAX_PROTOCOL_BYTES = 16 * 1024 * 1024; // 16 MiB
 const DEFAULT_MAX_STDERR_BYTES = 1 * 1024 * 1024; // 1 MiB
 const INITIALIZE_TIMEOUT_MS = 30_000;
 const SESSION_NEW_TIMEOUT_MS = 30_000;
+const SESSION_LOAD_TIMEOUT_MS = 30_000;
 const DEFAULT_PROMPT_TIMEOUT_MS = 300_000;
 const MAX_ASSISTANT_TEXT_BYTES = 256 * 1024;
 const MAX_TOOL_CALLS = 512;
@@ -176,6 +178,7 @@ export class AcpDriver extends EventEmitter {
   private readonly maxProtocolBytes: number;
   private readonly maxStderrBytes: number;
   private initialized = false;
+  private initResult: AcpInitResult | null = null;
   private sessionId: string | null = null;
   private dead = false;
   private exitCode: number | null = null;
@@ -249,6 +252,7 @@ export class AcpDriver extends EventEmitter {
       throw new BridgeError('SANDBOX_FAILED', 'ACP initialize: missing protocolVersion', 500);
     }
     this.initialized = true;
+    this.initResult = result;
     return result;
   }
 
@@ -265,6 +269,38 @@ export class AcpDriver extends EventEmitter {
     }
     this.sessionId = result.sessionId;
     return result;
+  }
+
+  /**
+   * A8 R1 provider restoration. Kiro CLI 2.5.0 advertises
+   * agentCapabilities.loadSession=true; current Kiro ACP documents
+   * session/load as the supported restoration primitive. Never emulate load by
+   * merely assigning a local session id.
+   */
+  async sessionLoad(sessionId: string, cwd: string): Promise<Record<string, unknown>> {
+    this.assertInitialized();
+    if (!sessionId || sessionId.trim() === '') {
+      throw new BridgeError('SESSION_NOT_RESUMABLE', 'ACP session/load requires a non-empty sessionId', 409);
+    }
+    if (this.initResult?.agentCapabilities?.loadSession !== true) {
+      throw new BridgeError('SESSION_NOT_RESUMABLE', 'ACP provider did not advertise loadSession capability', 409);
+    }
+    let result: unknown;
+    try {
+      result = await this.sendRequest('session/load', {
+        sessionId,
+        cwd,
+        mcpServers: [],
+      }, SESSION_LOAD_TIMEOUT_MS);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message.slice(0, 200) : 'provider restoration failed';
+      throw new BridgeError('SESSION_NOT_RESUMABLE', `ACP session/load failed: ${detail}`, 409);
+    }
+    if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+      throw new BridgeError('SESSION_NOT_RESUMABLE', 'ACP session/load returned a malformed response', 409);
+    }
+    this.sessionId = sessionId;
+    return result as Record<string, unknown>;
   }
 
   /** Send a prompt and wait for the turn to complete (stopReason). */

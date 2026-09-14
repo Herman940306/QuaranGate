@@ -72,6 +72,8 @@ export type BridgeErrorCode =
   | 'FORBIDDEN_GITHUB_ACCOUNT'
   | 'GITHUB_REMOTE_REFUSED'
   | 'GITHUB_PUSH_FAILED'
+  // A8 session continuity
+  | 'SESSION_NOT_RESUMABLE'
   | 'INTERNAL';
 
 export class BridgeError extends Error {

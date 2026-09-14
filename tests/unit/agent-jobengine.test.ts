@@ -98,13 +98,15 @@ describe('agent job engine — dispatch validation (trusted config)', () => {
     expect(() => dispatch({ resourcePolicy: 'unlimited' })).toThrow(BridgeError);
   });
 
-  it('rejects sessionPolicy resume explicitly (A8 feature)', () => {
+  it('rejects sessionPolicy resume when no active session exists (A8: SESSION_NOT_RESUMABLE)', () => {
+    // A8 is implemented: resume is no longer a stub MALFORMED_REQUEST.
+    // With no prior session, resume fails closed with SESSION_NOT_RESUMABLE.
     try {
       dispatch({ sessionPolicy: 'resume' });
       expect.unreachable();
     } catch (e) {
-      expect((e as BridgeError).code).toBe('MALFORMED_REQUEST');
-      expect((e as BridgeError).message).toContain('A8');
+      expect((e as BridgeError).code).toBe('SESSION_NOT_RESUMABLE');
+      expect((e as BridgeError).message).toContain('no active session');
     }
   });
 
@@ -284,7 +286,7 @@ describe('agent job engine — startup recovery', () => {
     expect(recovered).toContain(active.jobId);
     const failed = store2.get(active.jobId)!;
     expect(failed.status).toBe('FAILED_INFRASTRUCTURE');
-    expect(failed.failureReason).toBe('executor restarted during active fake execution');
+    expect(failed.failureReason).toBe('executor restarted during active agent execution');
     // The queued job survived and now completes under the new engine.
     const start = Date.now();
     for (;;) {

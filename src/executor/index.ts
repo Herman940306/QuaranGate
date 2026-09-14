@@ -428,7 +428,8 @@ let server: ReturnType<typeof app.listen>;
     // Step 4: AWAIT sandbox orphan reconciliation (was fire-and-forget; A6 requires
     // synchronous completion before evidence lifecycle runs). Global failure here
     // propagates and fails startup closed.
-    const orphanResult = await sandbox.reconcileOrphans();
+    const protectedProviderState = new Set(agentEngine.protectedProviderStateRefs());
+    const orphanResult = await sandbox.reconcileOrphans({ preserveManagedVolumeNames: protectedProviderState });
     console.log(JSON.stringify({
       level: 'info', msg: 'sandbox orphan reconciliation',
       removedContainers: orphanResult.removedContainers.length,

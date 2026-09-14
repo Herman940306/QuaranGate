@@ -48,6 +48,13 @@ export interface RunnerControl {
   /** Bound on captured assistant text. */
   maxAssistantBytes?: number;
   /**
+   * A8 R1: when present, restore this provider session with negotiated
+   * session/load before prompt. If the provider rejects the session (unknown/expired),
+   * the turn fails with a FAILED_AGENT error (fail closed — never silently
+   * creates a new session). Absent for sessionPolicy='new' (the default).
+   */
+  resumeSessionId?: string;
+  /**
    * Trusted launch seam. Production omits these (defaults to the real CLI);
    * deterministic tests point them at a mock ACP server. Because control data
    * is trusted Executor output, this is never caller-influenced.
@@ -123,10 +130,22 @@ export async function runAcpJob(control: RunnerControl): Promise<RunnerResult> {
     base.agentInfo = init.agentInfo ? { name: init.agentInfo.name, version: init.agentInfo.version } : undefined;
     base.kiroVersion = init.agentInfo?.version;
 
-    const session = await driver.sessionNew(control.cwd);
-    base.sessionId = session.sessionId;
-    base.models = session.models;
-    base.modes = session.modes;
+    // A8 R1: real provider restoration. A resume request MUST execute the
+    // negotiated Kiro ACP session/load operation before prompt. The driver
+    // capability-gates sessionLoad() on agentCapabilities.loadSession=true and
+    // fails closed if unsupported/malformed/dead. There is NEVER fallback to
+    // session/new for a resume request.
+    if (control.resumeSessionId) {
+      const loaded = await driver.sessionLoad(control.resumeSessionId, control.cwd);
+      base.sessionId = control.resumeSessionId;
+      base.models = loaded.models;
+      base.modes = loaded.modes;
+    } else {
+      const session = await driver.sessionNew(control.cwd);
+      base.sessionId = session.sessionId;
+      base.models = session.models;
+      base.modes = session.modes;
+    }
 
     if (control.dryRun || !control.prompt) {
       base.ok = true;

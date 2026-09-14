@@ -26,7 +26,7 @@
  * Follows the FakeAgentBackend phase contract (prepare → run → validate) so it
  * plugs into AgentJobEngine unchanged.
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -58,7 +58,7 @@ import { createDockerGitObjectReader } from './gitHelper.js';
 import {
   createNetwork, removeNetwork, connectNetwork, createContainer, startContainer,
   waitContainer, getContainerLogs, inspectContainerFull,
-  killContainer, removeContainer, removeVolume,
+  killContainer, removeContainer, removeVolume, createVolume, listVolumesByFilter,
   getArchive, putArchive,
 } from '../docker.js';
 
@@ -68,6 +68,7 @@ import {
 
 const RUNNER_HOME = '/home/runner';
 const RUNNER_KIRO_HOME = `${RUNNER_HOME}/.kiro`;
+const RUNNER_KIRO_SESSION_DIR = `${RUNNER_KIRO_HOME}/sessions/cli`;
 const EGRESS_PROXY_ALIAS = 'egress-proxy';
 const EGRESS_PROXY_PORT = 8080;
 
@@ -114,6 +115,13 @@ async function extractSingleFile(tarStream: Readable): Promise<Buffer> {
 const ns = (): string => SANDBOX_LABEL_NS.replace(/\./g, '-');
 function homeVolumeName(jobId: string): string { return `${ns()}-home-${jobId}`; }
 function controlVolumeName(jobId: string): string { return `${ns()}-control-${jobId}`; }
+function providerSessionVolumeName(jobId: string): string { return `${ns()}-provider-session-${jobId}`; }
+const PROVIDER_BINDING_LABEL = `${SANDBOX_LABEL_NS}.provider-binding`;
+function providerBindingHash(job: Pick<KiroBackendJobInput, 'principalId' | 'project' | 'backend' | 'profile'>): string {
+  return createHash('sha256')
+    .update(`${job.principalId}\0${job.project}\0${job.backend}\0${job.profile}`, 'utf8')
+    .digest('hex');
+}
 function runnerContainerName(jobId: string): string { return `${ns()}-krunner-${jobId}`; }
 function proxyContainerName(jobId: string): string { return `${ns()}-proxy-${jobId}`; }
 function manifestContainerName(jobId: string, phase: string): string { return `${ns()}-manifest-${phase}-${jobId}`; }
@@ -134,6 +142,15 @@ export interface KiroBackendJobInput {
   hostPath: string;
   policy: AgentResourcePolicy;
   model: string;
+  /**
+   * A8: when sessionPolicy='resume', the engine passes the previously-captured
+   * provider session ID. The runner restores it using capability-gated
+   * session/load before prompt. When absent (or null), a fresh session/new is
+   * always performed.
+   */
+  providerSessionId?: string | null;
+  /** A8 R1: trusted managed volume holding only Kiro ACP session persistence. */
+  providerStateVolume?: string | null;
 }
 
 export interface KiroBackendResult {
@@ -152,6 +169,14 @@ export interface KiroBackendResult {
   writeMode: boolean;
   /** B3 canonical artifact result (real Kiro writer non-dry-run jobs only). */
   artifactResult?: ArtifactResult;
+  /**
+   * A8: the ACP provider session ID captured from this job's turn. Passed
+   * back to the engine so it can persist into agent_sessions. Never returned
+   * to any caller — engine-internal only.
+   */
+  providerSessionId?: string | null;
+  /** A8 R1: backend-private state reference for the successor session. */
+  providerStateRef?: string | null;
 }
 
 export interface KiroBackendOptions {
@@ -285,6 +310,7 @@ export function buildRunnerCreateBody(opts: {
   secretVolume: string;
   homeVolume: string;
   controlVolume: string;
+  providerSessionVolume: string;
   internalNetwork: string;
   proxyUrl: string;
   memoryBytes: number;
@@ -351,6 +377,8 @@ export function buildRunnerCreateBody(opts: {
         { Type: 'volume', Source: opts.workspaceVolume, Target: WORKSPACE_PATH, ReadOnly: opts.workspaceReadOnly },
         { Type: 'volume', Source: opts.secretVolume, Target: '/run/secrets', ReadOnly: true },
         { Type: 'volume', Source: opts.homeVolume, Target: RUNNER_HOME, ReadOnly: false },
+        // A8 R1: persist ONLY Kiro's ACP session database/files, not arbitrary HOME.
+        { Type: 'volume', Source: opts.providerSessionVolume, Target: RUNNER_KIRO_SESSION_DIR, ReadOnly: false },
         { Type: 'volume', Source: opts.controlVolume, Target: RUNNER_CONTROL_PATH, ReadOnly: true },
       ],
     },
@@ -556,6 +584,9 @@ export class KiroBackend {
   private secretVolume: string | null = null;
   private homeVolume: string | null = null;
   private controlVolume: string | null = null;
+  private providerStateVolume: string | null = null;
+  private providerStateCreatedByThisJob = false;
+  private providerStateHandedOff = false;
   private intNet: string | null = null;
   private extNet: string | null = null;
   private proxyContainerId: string | null = null;
@@ -566,6 +597,8 @@ export class KiroBackend {
   private readonly model: string;
   private readonly capability: ProfileCapability;
   private readonly writeMode: boolean;
+  /** A8: provider session ID to resume (when job input includes it). */
+  private readonly resumableProviderSessionId: string | null;
   /** Pristine post-staging manifest, captured before the runner writes (write mode only). */
   private baselineManifest: WorkspaceManifest | null = null;
   private changeSet: ChangeSet | null = null;
@@ -591,6 +624,12 @@ export class KiroBackend {
     // .kiro/agents/<name>.json to override the bridge agent.
     this.agentName = `${this.capability.agentNamePrefix}${randomBytes(16).toString('hex')}`;
     this.model = job.model || resolveModel(job.policy.modelClass);
+    // A8: preserve the prior provider session ID for resume (if supplied).
+    this.resumableProviderSessionId = job.providerSessionId ?? null;
+    this.providerStateVolume = job.providerStateVolume ?? null;
+    if (this.resumableProviderSessionId && !this.providerStateVolume) {
+      throw new BridgeError('SESSION_NOT_RESUMABLE', 'Kiro resume requires persisted provider session state', 409);
+    }
   }
 
   /** Evidence accessor: whether this job runs in A5 write mode. */
@@ -675,6 +714,10 @@ export class KiroBackend {
       this.homeVolume = await this.provisionHome();
       this.checkAbort(signal);
 
+      log('kiro backend: provisioning provider session state', { jobId: this.job.jobId, resume: Boolean(this.resumableProviderSessionId) });
+      await this.provisionProviderSessionState();
+      this.checkAbort(signal);
+
       log('kiro backend: provisioning control bundle', { jobId: this.job.jobId, dryRun: Boolean(this.opts.dryRun) });
       this.controlVolume = await this.provisionControl();
       this.checkAbort(signal);
@@ -703,6 +746,8 @@ export class KiroBackend {
         { name: '.kiro/', mode: 0o700 },
         { name: '.kiro/agents/', mode: 0o700 },
         { name: '.kiro/settings/', mode: 0o700 },
+        { name: '.kiro/sessions/', mode: 0o700 },
+        { name: '.kiro/sessions/cli/', mode: 0o700 },
         { name: '.config/', mode: 0o700 },
         { name: '.local/', mode: 0o700 },
         { name: '.local/share/', mode: 0o700 },
@@ -722,6 +767,47 @@ export class KiroBackend {
       tar,
     });
     return volName;
+  }
+
+  /**
+   * A8 R1: create a dedicated provider-session volume for a fresh job or
+   * verify the managed persisted volume attached to a RESERVED session. Only
+   * $KIRO_HOME/sessions/cli is retained across jobs; the rest of HOME remains
+   * disposable.
+   */
+  private async provisionProviderSessionState(): Promise<void> {
+    if (this.providerStateVolume) {
+      const vols = await listVolumesByFilter({
+        name: [this.providerStateVolume],
+        label: [
+          `${LABEL_MANAGED}=true`,
+          `${LABEL_RESOURCE}=provider-session`,
+          `${PROVIDER_BINDING_LABEL}=${providerBindingHash(this.job)}`,
+        ],
+      });
+      const exact = vols.find((v) => v.Name === this.providerStateVolume);
+      const labels = exact?.Labels ?? {};
+      if (!exact
+        || labels[LABEL_MANAGED] !== 'true'
+        || labels[LABEL_RESOURCE] !== 'provider-session'
+        || labels[PROVIDER_BINDING_LABEL] !== providerBindingHash(this.job)) {
+        throw new BridgeError(
+          'SESSION_NOT_RESUMABLE',
+          'persisted Kiro provider session volume is missing, unowned, or bound to a different session context',
+          409,
+        );
+      }
+      return;
+    }
+    const name = providerSessionVolumeName(this.job.jobId);
+    await createVolume(name, {
+      [LABEL_MANAGED]: 'true',
+      [LABEL_RESOURCE]: 'provider-session',
+      [LABEL_JOB]: this.job.jobId,
+      [PROVIDER_BINDING_LABEL]: providerBindingHash(this.job),
+    });
+    this.providerStateVolume = name;
+    this.providerStateCreatedByThisJob = true;
   }
 
   /**
@@ -746,6 +832,10 @@ export class KiroBackend {
       dryRun: Boolean(this.opts.dryRun),
       promptTimeoutMs: this.job.policy.maxRuntimeMs,
       maxAssistantBytes: MAX_ASSISTANT_BYTES,
+      // A8: when a prior provider session ID exists, pass it through so
+      // runnerMain can execute negotiated session/load before the resumed
+      // prompt. When null/absent runnerMain behaves as before (fresh session/new).
+      resumeSessionId: this.resumableProviderSessionId ?? undefined,
     };
 
     const tar = await buildTar({
@@ -830,7 +920,7 @@ export class KiroBackend {
    */
   async run(signal: AbortSignal): Promise<void> {
     this.checkAbort(signal);
-    if (!this.staged || !this.secretVolume || !this.homeVolume || !this.controlVolume || !this.intNet) {
+    if (!this.staged || !this.secretVolume || !this.homeVolume || !this.providerStateVolume || !this.controlVolume || !this.intNet) {
       throw new BridgeError('SANDBOX_FAILED', 'prepare() did not complete', 500);
     }
     const limits = toRunnerLimits(this.job.policy);
@@ -841,6 +931,7 @@ export class KiroBackend {
       workspaceVolume: this.staged.volumeName,
       secretVolume: this.secretVolume,
       homeVolume: this.homeVolume,
+      providerSessionVolume: this.providerStateVolume,
       controlVolume: this.controlVolume,
       internalNetwork: this.intNet,
       proxyUrl: `http://${EGRESS_PROXY_ALIAS}:${EGRESS_PROXY_PORT}`,
@@ -1016,6 +1107,7 @@ export class KiroBackend {
         });
       }
 
+      this.providerStateHandedOff = Boolean(r.sessionId && this.providerStateVolume);
       return {
         summary,
         exitCode: 0,
@@ -1027,6 +1119,10 @@ export class KiroBackend {
         changedFiles: this.changeSet?.changedFiles,
         writeMode: this.writeMode,
         artifactResult,
+        // A8: pass the ACP session ID back to the engine for persistence.
+        // The engine stores it in agent_sessions; it is never returned to callers.
+        providerSessionId: r.sessionId ?? null,
+        providerStateRef: this.providerStateVolume,
       };
     } finally {
       await this.cleanup();
@@ -1328,6 +1424,10 @@ export class KiroBackend {
       await this.opts.credentialManager.revokeSecret(this.job.jobId).catch(() => {});
       this.secretVolume = null;
     }
+    if (this.providerStateVolume && this.providerStateCreatedByThisJob && !this.providerStateHandedOff) {
+      await removeVolume(this.providerStateVolume, true).catch(() => {});
+      this.providerStateVolume = null;
+    }
     if (this.homeVolume) { await removeVolume(this.homeVolume, true).catch(() => {}); this.homeVolume = null; }
     if (this.staged) {
       await this.opts.sandbox.disposeWorkspace(this.staged.volumeName).catch(() => {});
@@ -1336,9 +1436,23 @@ export class KiroBackend {
     log('kiro backend: cleanup complete', { jobId: this.job.jobId });
   }
 
+  /**
+   * A8 R1 fail-closed cleanup for ambiguous provider advancement. Called by
+   * AgentJobEngine only when a new session failed or a resumed provider may
+   * have consumed/advanced persisted state. Never called for a safe pre-run
+   * reservation release.
+   */
+  async discardSessionState(): Promise<void> {
+    if (!this.providerStateVolume) return;
+    await removeVolume(this.providerStateVolume, true).catch(() => {});
+    this.providerStateVolume = null;
+    this.providerStateHandedOff = false;
+    this.providerStateCreatedByThisJob = false;
+  }
+
   private checkAbort(signal: AbortSignal): void {
     if (signal.aborted) throw signal.reason ?? new Error('aborted');
   }
 }
 
-export { RUNNER_SECRET_PATH, secretVolumeName, homeVolumeName, controlVolumeName };
+export { RUNNER_SECRET_PATH, secretVolumeName, homeVolumeName, controlVolumeName, providerSessionVolumeName, RUNNER_KIRO_SESSION_DIR, PROVIDER_BINDING_LABEL, providerBindingHash };

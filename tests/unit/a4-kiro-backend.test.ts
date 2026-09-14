@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   KiroBackend, buildRunnerCreateBody, resolveModel, bridgeAgentConfig, parseRunnerResult,
+  RUNNER_KIRO_SESSION_DIR, providerSessionVolumeName,
   type KiroBackendJobInput, type KiroBackendOptions,
 } from '../../src/executor/agents/kiroBackend.js';
 import { CredentialManager } from '../../src/executor/agents/credentialManager.js';
@@ -21,7 +22,7 @@ const testPolicy: AgentResourcePolicy = {
 
 function makeJob(overrides: Partial<KiroBackendJobInput> = {}): KiroBackendJobInput {
   return {
-    jobId: 'job_' + '0'.repeat(32), backend: 'kiro', project: 'test-project',
+    jobId: 'job_' + '0'.repeat(32), principalId: 'owner', backend: 'kiro', project: 'test-project',
     profile: 'audit', prompt: 'Analyze the codebase.', hostPath: '/tmp/test-project',
     policy: testPolicy, model: 'claude-haiku-4.5', ...overrides,
   };
@@ -95,6 +96,26 @@ describe('KiroBackend — isDryRun (A6-B3 trust-gate remediation)', () => {
   });
 });
 
+describe('KiroBackend — A8 R1 provider state contract', () => {
+  it('refuses resume identity without a persisted provider-state volume', () => {
+    expect(() => new KiroBackend(makeJob({ providerSessionId: 'provider-session' }), makeOpts()))
+      .toThrowError(expect.objectContaining({ code: 'SESSION_NOT_RESUMABLE' }));
+  });
+
+  it('accepts resume only when provider identity and provider-state volume are both supplied', () => {
+    expect(() => new KiroBackend(makeJob({
+      providerSessionId: 'provider-session',
+      providerStateVolume: 'managed-provider-state',
+    }), makeOpts())).not.toThrow();
+  });
+
+  it('provider session volume name is job-scoped and separate from disposable HOME', () => {
+    const name = providerSessionVolumeName('job_' + 'a'.repeat(32));
+    expect(name).toContain('provider-session-job_');
+    expect(name).not.toContain('-home-');
+  });
+});
+
 describe('model class mapping', () => {
   it('maps to models ADVERTISED by Kiro 2.5.0 session/new (never haiku)', () => {
     // availableModels observed live: claude-sonnet-4, claude-sonnet-4.5.
@@ -124,7 +145,7 @@ describe('buildRunnerCreateBody — hardened Docker Engine API body (no CLI)', (
     jobId: 'job_' + '0'.repeat(32),
     image: 'mcp-ide-bridge-kiro-runner:test',
     workspaceVolume: 'ws-vol', secretVolume: 'sec-vol', homeVolume: 'home-vol',
-    controlVolume: 'ctl-vol',
+    providerSessionVolume: 'provider-session-vol', controlVolume: 'ctl-vol',
     internalNetwork: 'jobnet-int', proxyUrl: 'http://egress-proxy:8080',
     memoryBytes: 1_073_741_824, nanoCpus: 1_000_000_000, pidsLimit: 128,
     workspaceReadOnly: true,
@@ -154,6 +175,7 @@ describe('buildRunnerCreateBody — hardened Docker Engine API body (no CLI)', (
     expect(mount('/run/secrets')).toMatchObject({ Source: 'sec-vol', ReadOnly: true });
     expect(mount('/run/control')).toMatchObject({ Source: 'ctl-vol', ReadOnly: true });
     expect(mount('/home/runner')).toMatchObject({ Source: 'home-vol', ReadOnly: false });
+    expect(mount(RUNNER_KIRO_SESSION_DIR)).toMatchObject({ Source: 'provider-session-vol', ReadOnly: false });
   });
 
   it('uses the internal job network and the egress proxy (backend-only)', () => {

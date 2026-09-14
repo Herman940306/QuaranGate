@@ -39,7 +39,7 @@ const mode = (p: string) => statSync(p).mode & 0o777;
 describe('agent job store', () => {
   it('initializes the schema at the expected version', () => {
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(5);
+    expect(store.schemaVersion).toBe(6); // A8: bumped from 5 → 6 (agent_sessions table)
   });
 
   it('creates SQLite files private to the runtime identity (0600, no group/other)', () => {

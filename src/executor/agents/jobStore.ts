@@ -16,6 +16,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, existsSync } from 'node:fs';
 import { BridgeError } from '../../shared/errors.js';
+import { AgentSessionStore } from './sessionStore.js';
 import {
   assertAgentJobTransition,
   assertApplyAttemptTransition,
@@ -30,7 +31,7 @@ import {
   type AgentRetentionClass,
 } from '../../shared/agents.js';
 
-export const AGENT_JOB_SCHEMA_VERSION = 5;
+export const AGENT_JOB_SCHEMA_VERSION = 6;
 
 /**
  * Concurrency admission counts EXECUTING jobs only. QUEUED jobs are "active"
@@ -63,6 +64,7 @@ const REQUIRED_V5_TABLES = [
   'agent_project_apply_state',
   'agent_apply_attempts',
   'agent_apply_journal',
+  'agent_sessions',
 ] as const;
 
 /** Required column -> declared SQLite affinity, per table. */
@@ -98,6 +100,13 @@ const REQUIRED_V5_COLUMNS: Record<string, Record<string, string>> = {
     id: 'INTEGER', attempt_id: 'TEXT', op_index: 'INTEGER', path: 'TEXT',
     op: 'TEXT', before_existed: 'INTEGER', before_content_hash: 'TEXT',
     before_mode: 'INTEGER', created_dirs: 'TEXT', completed_at: 'TEXT',
+  },
+  // v6: A8 session continuity table
+  agent_sessions: {
+    session_id: 'TEXT', principal_id: 'TEXT', project: 'TEXT',
+    backend: 'TEXT', profile: 'TEXT', provider_session_id: 'TEXT',
+    provider_state_ref: 'TEXT', state: 'TEXT', created_at: 'TEXT', last_used_at: 'TEXT',
+    consumed_by_job_id: 'TEXT', reserved_by_job_id: 'TEXT', reserved_at: 'TEXT', expires_at: 'TEXT',
   },
 };
 
@@ -356,6 +365,35 @@ export interface TransitionExtras {
   failureReason?: string;
 }
 
+/** Trusted A8 binding used only for atomic session reservation at dispatch. */
+export interface SessionReservationBinding {
+  principalId: string;
+  project: string;
+  backend: string;
+  profile: string;
+}
+
+/** Successor identity committed atomically with job completion. */
+export interface SessionSuccessorInput {
+  sessionId: string;
+  principalId: string;
+  project: string;
+  backend: string;
+  profile: string;
+  providerSessionId: string;
+  providerStateRef?: string | null;
+}
+
+export interface CompleteJobWithSessionInput {
+  jobId: string;
+  sourceSessionId?: string | null;
+  successor?: SessionSuccessorInput | null;
+  completedAt: string;
+  summary: string;
+  exitCode: number;
+  requireArtifact: boolean;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -377,6 +415,8 @@ function restrictSqliteFileModes(path: string): void {
 
 export class AgentJobStore {
   private db: DatabaseSync;
+  /** A8: session continuity store — shares the same DB connection. */
+  private _sessionStore!: AgentSessionStore;
 
   constructor(path: string) {
     // Create the DB (and, via WAL, the -wal/-shm sidecars) under a restrictive
@@ -394,6 +434,7 @@ export class AgentJobStore {
       process.umask(prevUmask);
     }
     restrictSqliteFileModes(path);
+    this._sessionStore = new AgentSessionStore(this.db);
     this.migrate();
   }
 
@@ -462,6 +503,8 @@ export class AgentJobStore {
         500,
       );
     }
+    // v6: verify the session store shape using its own dedicated check.
+    this._sessionStore.assertSchemaShape();
   }
 
   /**
@@ -528,6 +571,8 @@ export class AgentJobStore {
           CREATE INDEX IF NOT EXISTS idx_agent_jobs_status ON agent_jobs(status);
           CREATE INDEX IF NOT EXISTS idx_agent_jobs_principal ON agent_jobs(principal_id);
         `);
+        // v6: fresh install also creates agent_sessions immediately.
+        this._sessionStore.createSchema();
       }
       if (version < 2) {
         // v1 (A2) → v2 (A3): record the trusted base commit of a staged sandbox
@@ -654,14 +699,22 @@ export class AgentJobStore {
           this.db.exec('ALTER TABLE agent_jobs ADD COLUMN retain_until TEXT');
         }
       }
+      if (version < 6) {
+        // v5 (A6 retention) → v6 (A8 session continuity): create the
+        // agent_sessions table. Strictly additive — zero changes to
+        // agent_jobs or any other existing table. Historical job rows are
+        // unaffected. Sessions are forward-only; no backfill is possible or
+        // required. The AgentSessionStore owns the DDL via createSchema().
+        this._sessionStore.createSchema();
+      }
       this.db.exec(`PRAGMA user_version=${AGENT_JOB_SCHEMA_VERSION}`);
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
     }
-    // A forward migration that stamped v5 must also have PRODUCED v5. Verify
-    // the same way an already-v5 database is verified, so an incomplete
+    // A forward migration that stamped v6 must also have PRODUCED v6. Verify
+    // the same way an already-v6 database is verified, so an incomplete
     // migration can never be accepted just because it reached the stamp.
     this.assertSchemaShape();
   }
@@ -671,27 +724,116 @@ export class AgentJobStore {
     return Number(row.user_version);
   }
 
-  insert(job: NewAgentJob): AgentJobRow {
+  /** A8: access the session store (shares same DB connection). */
+  get sessionStore(): AgentSessionStore {
+    return this._sessionStore;
+  }
+
+  private validateNewJob(job: NewAgentJob): void {
     if (job.prompt.length > MAX_AGENT_PROMPT_CHARS) {
       throw new BridgeError('MALFORMED_REQUEST', `prompt exceeds ${MAX_AGENT_PROMPT_CHARS} chars`, 400);
     }
-    // Validate the durable retention snapshot before any INSERT. Fail closed:
-    // a new job must never be created with invalid bridge-owned retention data.
     if (!(AGENT_RETENTION_CLASSES as readonly string[]).includes(job.retentionClass)) {
       throw new BridgeError('MALFORMED_REQUEST', `invalid retentionClass: ${String(job.retentionClass)}`, 400);
     }
     if (!Number.isSafeInteger(job.retentionDurationMs) || job.retentionDurationMs <= 0) {
       throw new BridgeError('MALFORMED_REQUEST', `retentionDurationMs must be a positive safe integer (got ${job.retentionDurationMs})`, 400);
     }
+  }
+
+  private insertRow(job: NewAgentJob, backendSessionId: string | null = null, createdAt: string = nowIso()): void {
     this.db.prepare(`
       INSERT INTO agent_jobs (job_id, principal_id, backend, project, profile, resource_policy,
-        status, created_at, prompt_hash, prompt, session_policy, writer,
+        status, created_at, prompt_hash, prompt, session_policy, writer, backend_session_id,
         retention_class, retention_duration_ms)
-      VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(job.jobId, job.principalId, job.backend, job.project, job.profile, job.resourcePolicy,
-      nowIso(), job.promptHash, job.prompt, job.sessionPolicy, job.writer ? 1 : 0,
+      createdAt, job.promptHash, job.prompt, job.sessionPolicy, job.writer ? 1 : 0, backendSessionId,
       job.retentionClass, job.retentionDurationMs);
+  }
+
+  private queuedRow(job: NewAgentJob, createdAt: string, backendSessionId: string | null = null): AgentJobRow {
+    return {
+      jobId: job.jobId,
+      principalId: job.principalId,
+      backend: job.backend,
+      project: job.project,
+      profile: job.profile,
+      resourcePolicy: job.resourcePolicy,
+      status: 'QUEUED',
+      failureCode: null,
+      failureReason: null,
+      createdAt,
+      startedAt: null,
+      completedAt: null,
+      promptHash: job.promptHash,
+      prompt: job.prompt,
+      summary: null,
+      exitCode: null,
+      backendSessionId,
+      sessionPolicy: job.sessionPolicy,
+      writer: job.writer,
+      baseCommit: null,
+      appliedAt: null,
+      dispositionAt: null,
+      retentionClass: job.retentionClass,
+      retentionDurationMs: job.retentionDurationMs,
+      retainUntil: null,
+      artifactHash: null,
+      changeSetHash: null,
+      artifactState: null,
+      artifactContentComplete: null,
+      artifactApplicable: null,
+      artifactReason: null,
+      artifactVolume: null,
+      artifactBytes: null,
+      artifactOpCount: null,
+    };
+  }
+
+  insert(job: NewAgentJob): AgentJobRow {
+    this.validateNewJob(job);
+    this.insertRow(job);
     return this.get(job.jobId)!;
+  }
+
+  /**
+   * A8 R1 atomic resume admission. The job row and ACTIVE -> RESERVED session
+   * transition commit together under BEGIN IMMEDIATE. Two dispatches can never
+   * reserve the same provider session, and a failed INSERT cannot leak a lease.
+   *
+   * A8 R2 post-COMMIT invariant: COMMIT is the authoritative success boundary
+   * for this atomic transition. Once COMMIT succeeds, this method returns only
+   * deterministic data known from the transaction/input; no diagnostic SELECT
+   * may convert the committed RESERVED + QUEUED state into dispatch failure.
+   */
+  insertWithSessionReservation(job: NewAgentJob, binding: SessionReservationBinding): AgentJobRow {
+    this.validateNewJob(job);
+    const createdAt = nowIso();
+    let reservedSessionId: string | null = null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const session = this._sessionStore.findActiveSession(
+        binding.principalId, binding.project, binding.backend, binding.profile,
+      );
+      if (!session) {
+        throw new BridgeError(
+          'SESSION_NOT_RESUMABLE',
+          `no active session found for the current authorized context (principal=${binding.principalId}, project=${binding.project}, backend=${binding.backend}, profile=${binding.profile})`,
+          409,
+        );
+      }
+      if (!this._sessionStore.reserveSession(session.sessionId, job.jobId)) {
+        throw new BridgeError('SESSION_NOT_RESUMABLE', `session ${session.sessionId} could not be reserved`, 409);
+      }
+      reservedSessionId = session.sessionId;
+      this.insertRow(job, reservedSessionId, createdAt);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+    return this.queuedRow(job, createdAt, reservedSessionId);
   }
 
   get(jobId: string): AgentJobRow | undefined {
@@ -746,6 +888,120 @@ export class AgentJobStore {
   setBaseCommit(jobId: string, baseCommit: string): boolean {
     const res = this.db.prepare('UPDATE agent_jobs SET base_commit = ? WHERE job_id = ?').run(baseCommit, jobId);
     return Number(res.changes) === 1;
+  }
+
+  /**
+   * Persist the opaque QuaranGate session ID returned by the backend after a
+   * job completes (A8). Stores the QUARANGATE session id (sess_…), NOT the
+   * raw provider session id. The provider session id is kept in
+   * `agent_sessions.provider_session_id` and never written here.
+   *
+   * Called once per job, after the backend's `validate()` returns a sessionId.
+   * Independent of status CAS — provenance, set at most once.
+   */
+  setBackendSessionId(jobId: string, sessionId: string): boolean {
+    const res = this.db.prepare(
+      'UPDATE agent_jobs SET backend_session_id = ? WHERE job_id = ?',
+    ).run(sessionId, jobId);
+    return Number(res.changes) === 1;
+  }
+
+  /**
+   * A8 R1 atomic success boundary. Source-session consumption, successor
+   * creation, job session pointer, and VALIDATING -> COMPLETED commit in ONE
+   * SQLite transaction. If any statement fails, no session lifecycle change
+   * survives. Artifact publication (when required) must already be AVAILABLE.
+   *
+   * A8 R2 post-COMMIT invariant: COMMIT is the authoritative success boundary
+   * for this atomic transition. Once COMMIT succeeds, this method returns a
+   * completed row derived from the pre-COMMIT job row and deterministic input;
+   * no diagnostic/readback SELECT may convert committed success into failure or
+   * trigger provider/session invalidation in the caller.
+   */
+  finalizeCompletedWithSession(input: CompleteJobWithSessionInput): AgentJobRow {
+    let completed: AgentJobRow | null = null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(
+        'SELECT * FROM agent_jobs WHERE job_id = ?',
+      ).get(input.jobId) as Record<string, unknown> | undefined;
+      if (!row) {
+        throw new BridgeError('INVALID_JOB_TRANSITION', `job ${input.jobId} is not VALIDATING at atomic completion`, 409);
+      }
+      const existing = rowToJob(row);
+      if (existing.status !== 'VALIDATING') {
+        throw new BridgeError('INVALID_JOB_TRANSITION', `job ${input.jobId} is not VALIDATING at atomic completion`, 409);
+      }
+      if (input.requireArtifact && existing.artifactState !== 'AVAILABLE') {
+        throw new BridgeError('ARTIFACT_REQUIRED', `job ${input.jobId} lacks AVAILABLE artifact at atomic completion`, 500);
+      }
+
+      if (input.sourceSessionId) {
+        if (existing.sessionPolicy !== 'resume' || existing.backendSessionId !== input.sourceSessionId) {
+          throw new BridgeError('SESSION_NOT_RESUMABLE', `job ${input.jobId} source session identity changed before completion`, 409);
+        }
+        if (!this._sessionStore.consumeReservedSession(input.sourceSessionId, input.jobId)) {
+          throw new BridgeError('SESSION_NOT_RESUMABLE', `source session ${input.sourceSessionId} is not reserved by job ${input.jobId}`, 409);
+        }
+      }
+
+      let successorId: string | null = null;
+      if (input.successor) {
+        this._sessionStore.insertSession(input.successor);
+        successorId = input.successor.sessionId;
+      }
+
+      const res = this.db.prepare(`
+        UPDATE agent_jobs
+        SET status = 'COMPLETED', completed_at = ?, summary = ?, exit_code = ?,
+            backend_session_id = ?
+        WHERE job_id = ? AND status = 'VALIDATING'
+      `).run(input.completedAt, input.summary, input.exitCode, successorId, input.jobId);
+      if (Number(res.changes) !== 1) {
+        throw new BridgeError('INVALID_JOB_TRANSITION', `job ${input.jobId} lost VALIDATING state during atomic completion`, 409);
+      }
+      completed = {
+        ...existing,
+        status: 'COMPLETED',
+        completedAt: input.completedAt,
+        summary: input.summary,
+        exitCode: input.exitCode,
+        backendSessionId: successorId,
+      };
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+    return completed!;
+  }
+
+  /**
+   * Cancel a QUEUED job and safely release its un-used A8 reservation in the
+   * same transaction. Active jobs are handled by the normal cancellation path
+   * because provider use may already have begun.
+   */
+  cancelQueuedWithSessionRelease(jobId: string, completedAt: string, reason: string): boolean {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db.prepare(
+        'SELECT status, session_policy, backend_session_id FROM agent_jobs WHERE job_id = ?',
+      ).get(jobId) as { status: AgentJobStatus; session_policy: string; backend_session_id: string | null } | undefined;
+      if (!row || row.status !== 'QUEUED') { this.db.exec('COMMIT'); return false; }
+      if (row.session_policy === 'resume' && row.backend_session_id) {
+        this._sessionStore.releaseReservation(row.backend_session_id, jobId);
+      }
+      const res = this.db.prepare(`
+        UPDATE agent_jobs SET status = 'CANCELLED', completed_at = ?,
+          failure_code = 'CANCELLED', failure_reason = ?
+        WHERE job_id = ? AND status = 'QUEUED'
+      `).run(completedAt, reason.slice(0, 500), jobId);
+      this.db.exec('COMMIT');
+      return Number(res.changes) === 1;
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
   }
 
   // -------------------------------------------------------------------------

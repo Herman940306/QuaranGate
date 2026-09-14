@@ -7,6 +7,7 @@
  * shapes validated live (see a4-kiro-acp-runtime-facts):
  *   - initialize      -> {protocolVersion:1, agentCapabilities, authMethods:[], agentInfo}
  *   - session/new     -> {sessionId, models}
+ *   - session/load    -> restores a known provider session (A8 R1)
  *   - session/prompt  requires {sessionId:string, prompt:[{type:"text",text}]}
  *                     emits session/update notifications, then {stopReason}
  *   - session/cancel  notification (no response)
@@ -18,8 +19,10 @@
  *   "WIDEN"   -> emit a `bash` (shell) tool_call to test read-only validation
  */
 import readline from 'node:readline';
+import { appendFileSync } from 'node:fs';
 
 let sessionId = null;
+let sessionKnown = false;
 
 function send(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
 function respond(id, result) { send({ jsonrpc: '2.0', id, result }); }
@@ -38,11 +41,14 @@ rl.on('line', (line) => {
   if (msg.method === undefined && msg.id !== undefined) return;
 
   const { id, method, params } = msg;
+  if (method && process.env.MOCK_ACP_TRACE_FILE) {
+    appendFileSync(process.env.MOCK_ACP_TRACE_FILE, method + '\n');
+  }
 
   if (method === 'initialize') {
     respond(id, {
       protocolVersion: 1,
-      agentCapabilities: { loadSession: true, mcpCapabilities: { http: true } },
+      agentCapabilities: { loadSession: process.env.MOCK_ACP_LOAD_MODE !== 'unsupported', mcpCapabilities: { http: true } },
       authMethods: [],
       agentInfo: { name: 'Mock Kiro CLI Agent', version: '2.5.0' },
     });
@@ -57,7 +63,32 @@ rl.on('line', (line) => {
       return;
     }
     sessionId = 'sess-' + Math.random().toString(16).slice(2, 10);
+    sessionKnown = true;
     respond(id, { sessionId, modes: { current: 'default' }, models: ['claude-haiku-4.5', 'auto'] });
+    return;
+  }
+
+  if (method === 'session/load') {
+    if (process.env.MOCK_ACP_LOAD_MODE === 'unsupported') {
+      respondErr(id, -32601, 'session/load unsupported');
+      return;
+    }
+    if (!params || typeof params.sessionId !== 'string' || typeof params.cwd !== 'string'
+      || !Array.isArray(params.mcpServers) || params.mcpServers.length !== 0) {
+      respondErr(id, -32602, 'session/load requires sessionId,cwd,mcpServers:[]');
+      return;
+    }
+    if (params.sessionId.includes('dead')) {
+      respondErr(id, -32004, 'session not found');
+      return;
+    }
+    if (process.env.MOCK_ACP_LOAD_MODE === 'malformed') {
+      respond(id, null);
+      return;
+    }
+    sessionId = params.sessionId;
+    sessionKnown = true;
+    respond(id, { modes: { current: 'default' }, models: ['claude-haiku-4.5', 'auto'] });
     return;
   }
 
@@ -71,6 +102,10 @@ rl.on('line', (line) => {
     // Enforce the REAL shape.
     if (!params || typeof params.sessionId !== 'string') {
       respondErr(id, -32602, 'session/prompt requires sessionId:string');
+      return;
+    }
+    if (!sessionKnown || params.sessionId !== sessionId) {
+      respondErr(id, -32004, 'session must be created or loaded before prompt');
       return;
     }
     if (!Array.isArray(params.prompt) || params.prompt[0]?.type !== 'text' || typeof params.prompt[0]?.text !== 'string') {

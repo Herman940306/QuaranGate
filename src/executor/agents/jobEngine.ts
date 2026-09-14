@@ -21,11 +21,12 @@ import {
   type AgentRetentionClass,
 } from '../../shared/agents.js';
 import type { AgentControlPlaneConfig } from '../agentConfig.js';
-import { AgentJobStore, type AgentJobRow } from './jobStore.js';
+import { AgentJobStore, type AgentJobRow, type NewAgentJob, type SessionSuccessorInput } from './jobStore.js';
 import { FakeAgentBackend, type FakeBackendOptions } from './fakeBackend.js';
 import { verifyCanonicalArtifact, type ReadonlyEvidenceSource } from './artifactReader.js';
 import { renderDiffPage, type DiffPageResult } from './diffRenderer.js';
 import { runApplyAttempt, type ApplierIO, type ApplyAttemptSuccess } from './applyEngine.js';
+import { SESSION_ID_PREFIX } from './sessionStore.js';
 
 /**
  * B3 artifact result returned by a backend that constructed a canonical
@@ -61,6 +62,15 @@ export interface AgentBackendAdapter {
     changedFiles?: string[];
     /** B3 canonical artifact result (real Kiro writer jobs only). */
     artifactResult?: ArtifactResult;
+    /**
+     * A8: provider-specific session ID produced by this job's backend turn.
+     * Returned only when the backend created or confirmed a session.
+     * The engine stores this (server-side only) in agent_sessions and records
+     * the opaque QuaranGate session ID on the job row. Never returned to callers.
+     */
+    providerSessionId?: string | null;
+    /** Backend-private durable state reference (A8 R1; never caller-visible). */
+    providerStateRef?: string | null;
   }>;
   isAgentFailure(e: unknown): boolean;
   /**
@@ -75,8 +85,10 @@ export interface AgentBackendAdapter {
    * must never fall back to inferring dry-run from execution results.
    */
   isDryRun(): boolean;
-  /** Cleanup resources on failure/cancellation (best-effort). */
+  /** Cleanup ordinary job-scoped resources on failure/cancellation (best-effort). */
   cleanup?(): Promise<void>;
+  /** A8 R1: invalidate/remove provider session state after ambiguous advancement. */
+  discardSessionState?(): Promise<void>;
 }
 
 export interface DispatchRequest {
@@ -87,6 +99,21 @@ export interface DispatchRequest {
   prompt: string;
   resourcePolicy?: string;
   sessionPolicy?: 'new' | 'resume';
+}
+
+/**
+ * Backend-facing session context resolved by the engine before handing off to
+ * the adapter. Only present when sessionPolicy='resume' found an active session.
+ * The `providerSessionId` is retrieved from the session store and passed only to
+ * the backend adapter — never returned to any caller or logged.
+ */
+export interface ResolvedSessionContext {
+  /** QuaranGate opaque session ID (safe to record on the job row). */
+  sessionId: string;
+  /** Backend-specific session token — adapter-internal only, never exposed. */
+  providerSessionId: string;
+  /** Backend-private durable state ref (for Kiro: managed session-state volume). */
+  providerStateRef: string | null;
 }
 
 /** A6-B4 review request. path/cursor/maxBytes are bounded caller inputs. */
@@ -125,6 +152,23 @@ interface ActiveExecution {
 function log(msg: string, fields: Record<string, unknown>): void {
   // Never include prompt text or credentials here.
   console.log(JSON.stringify({ level: 'info', msg, ...fields }));
+}
+
+/**
+ * Emit a diagnostic only after a durable state transition has committed.
+ *
+ * Observability failure must never reclassify committed job/session authority,
+ * change the caller-visible outcome, or prevent required follow-up scheduling.
+ * Keep this wrapper at post-COMMIT call sites only: transaction/provider
+ * failures before the authoritative boundary must still propagate normally.
+ */
+function bestEffortLog(msg: string, fields: Record<string, unknown>): void {
+  try {
+    log(msg, fields);
+  } catch {
+    // Deliberately silent: this fallback is diagnostic-only and must not throw
+    // or invoke another fallible logger.
+  }
 }
 
 /** Authorization/policy BridgeError codes → a deliberate policy denial. */
@@ -184,7 +228,7 @@ function classifyExecutionFailure(
 ): 'FAILED_POLICY' | 'FAILED_PRECONDITION' | 'FAILED_AGENT' | 'FAILED_INFRASTRUCTURE' {
   if (e instanceof BridgeError) {
     if (POLICY_ERROR_CODES.has(e.code)) return 'FAILED_POLICY';
-    if (e.code === 'PRECONDITION_FAILED') return 'FAILED_PRECONDITION';
+    if (e.code === 'PRECONDITION_FAILED' || e.code === 'SESSION_NOT_RESUMABLE') return 'FAILED_PRECONDITION';
   }
   if (backend?.isAgentFailure(e) ?? false) return 'FAILED_AGENT';
   return 'FAILED_INFRASTRUCTURE';
@@ -203,8 +247,9 @@ export class AgentJobEngine {
     /**
      * Backend factory (A4+). If provided, the engine uses this to create the
      * backend adapter for a job. If it returns null, falls back to FakeAgentBackend.
+     * A8: receives optional resolved session context for resume dispatch.
      */
-    private readonly backendFactory?: (job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null,
+    private readonly backendFactory?: (job: AgentJobRow, policy: AgentResourcePolicy, session?: ResolvedSessionContext) => AgentBackendAdapter | null,
     /**
      * A6-B4 trusted evidence reader factory. Absent in fake-only deployments
      * (no real artifacts are ever AVAILABLE there, so agent_diff fails closed
@@ -222,12 +267,23 @@ export class AgentJobEngine {
     private readonly applierIO?: ApplierIO,
   ) {}
 
-  /** Startup reconciliation per the documented A2 policy (fail closed). */
+  /** Startup reconciliation per the documented A2/A8 policy (fail closed). */
   recover(): string[] {
-    const recovered = this.store.recoverActive('executor restarted during active fake execution');
+    // Order is security-significant: active jobs fail first, then leaked
+    // reservations are reconciled, and only then may queued work execute.
+    const recovered = this.store.recoverActive('executor restarted during active agent execution');
     for (const id of recovered) log('agent job recovered as FAILED_INFRASTRUCTURE', { jobId: id });
+    const sessionRecovery = this.store.sessionStore.recoverReservations();
+    for (const id of sessionRecovery.expired) {
+      log('agent session reservation recovered as EXPIRED', { sessionId: id });
+    }
     this.kick();
     return recovered;
+  }
+
+  /** A8 R1 refs that generic startup orphan cleanup must retain. */
+  protectedProviderStateRefs(): string[] {
+    return this.store.sessionStore.listProtectedProviderStateRefs();
   }
 
   listBackends(): { id: string; available: boolean; profiles: string[] }[] {
@@ -252,11 +308,12 @@ export class AgentJobEngine {
   /**
    * Validate a dispatch against the trusted configuration and enqueue it.
    * Nothing here trusts gateway-side validation.
+   *
+   * A8: session policy is evaluated AFTER all authorization checks pass.
+   * A stored session NEVER confers authorization — every field is re-validated
+   * against the current trusted configuration before the session lookup.
    */
   dispatch(req: DispatchRequest): AgentJobRow {
-    if (req.sessionPolicy === 'resume') {
-      throw new BridgeError('MALFORMED_REQUEST', 'sessionPolicy "resume" is not supported until phase A8; use "new"', 400);
-    }
     if (typeof req.prompt !== 'string' || req.prompt.length < 1 || req.prompt.length > MAX_AGENT_PROMPT_CHARS) {
       throw new BridgeError('MALFORMED_REQUEST', `prompt must be 1..${MAX_AGENT_PROMPT_CHARS} chars`, 400);
     }
@@ -280,9 +337,6 @@ export class AgentJobEngine {
     const policy = this.resolvePolicy(policyId);
 
     // Snapshot the immutable retention policy at dispatch time.
-    // retentionClass comes from the trusted resource policy; retentionDurationMs
-    // is resolved ONCE here from AGENT_RETENTION_DURATION_MS and persisted.
-    // Historical GC MUST use the persisted retentionDurationMs — never re-resolve.
     const retentionClass: AgentRetentionClass = policy.retentionClass;
     if (!(AGENT_RETENTION_CLASSES as readonly string[]).includes(retentionClass)) {
       throw new BridgeError('MALFORMED_REQUEST', `resource policy ${policyId} has invalid retentionClass: ${String(retentionClass)}`, 400);
@@ -292,8 +346,12 @@ export class AgentJobEngine {
       throw new BridgeError('MALFORMED_REQUEST', `AGENT_RETENTION_DURATION_MS[${retentionClass}] is not a valid positive integer`, 500);
     }
 
-    const job = this.store.insert({
-      jobId: `job_${randomBytes(16).toString('hex')}`,
+    // A8 R1: authorization is fully validated above. For resume, the job
+    // insert and ACTIVE -> RESERVED transition are one BEGIN IMMEDIATE
+    // transaction in AgentJobStore. Session state never confers permission.
+    const jobId = `job_${randomBytes(16).toString('hex')}`;
+    const newJob: NewAgentJob = {
+      jobId,
       principalId: req.principal,
       backend: backend.id,
       project: project.id,
@@ -302,12 +360,39 @@ export class AgentJobEngine {
       promptHash: createHash('sha256').update(req.prompt, 'utf8').digest('hex'),
       prompt: req.prompt,
       sessionPolicy: req.sessionPolicy ?? 'new',
-      // Writer classification comes from the trusted profile contract only.
       writer: profile.workspaceAccess === 'sandbox-write',
       retentionClass,
       retentionDurationMs,
+    };
+
+    const job = req.sessionPolicy === 'resume'
+      ? this.store.insertWithSessionReservation(newJob, {
+          principalId: req.principal,
+          project: project.id,
+          backend: backend.id,
+          profile: profile.id,
+        })
+      : this.store.insert(newJob);
+
+    if (job.sessionPolicy === 'resume') {
+      bestEffortLog('agent job session reserved', {
+        jobId: job.jobId,
+        sessionId: job.backendSessionId,
+        principal: job.principalId,
+        backend: job.backend,
+        project: job.project,
+        profile: job.profile,
+      });
+    }
+    bestEffortLog('agent job queued', {
+      jobId: job.jobId,
+      principal: job.principalId,
+      backend: job.backend,
+      project: job.project,
+      profile: job.profile,
+      writer: job.writer,
+      sessionPolicy: job.sessionPolicy,
     });
-    log('agent job queued', { jobId: job.jobId, principal: job.principalId, backend: job.backend, project: job.project, profile: job.profile, writer: job.writer });
     this.kick();
     return job;
   }
@@ -453,7 +538,19 @@ export class AgentJobEngine {
     let job = this.getOwnedJob(jobId, principal);
     for (let attempt = 0; attempt < 3; attempt++) {
       const s = job.status;
-      if (s !== 'QUEUED' && s !== 'PREPARING' && s !== 'RUNNING' && s !== 'VALIDATING') {
+      if (s === 'QUEUED') {
+        const ok = this.store.cancelQueuedWithSessionRelease(
+          jobId, new Date().toISOString(), 'cancelled by owner',
+        );
+        if (ok) {
+          log('agent queued job cancelled with safe session release', { jobId, principal });
+          this.kick();
+          return this.store.get(jobId)!;
+        }
+        job = this.getOwnedJob(jobId, principal);
+        continue;
+      }
+      if (s !== 'PREPARING' && s !== 'RUNNING' && s !== 'VALIDATING') {
         return job; // terminal — nothing to cancel
       }
       const ok = this.store.transition(jobId, s, 'CANCELLED', {
@@ -462,6 +559,18 @@ export class AgentJobEngine {
         failureReason: 'cancelled by owner',
       });
       if (ok) {
+        // A8: do not leave a resume reservation stranded after active
+        // cancellation. PREPARING has not entered provider.run(), so release is
+        // safe. RUNNING/VALIDATING may already have advanced provider state, so
+        // expire the source reservation fail-closed. execute() may race and
+        // attempt the same release/expiry; these CAS operations are idempotent.
+        if (job.sessionPolicy === 'resume' && job.backendSessionId) {
+          if (s === 'PREPARING') {
+            this.store.sessionStore.releaseReservation(job.backendSessionId, job.jobId);
+          } else {
+            this.store.sessionStore.expireReservation(job.backendSessionId, job.jobId);
+          }
+        }
         const exec = this.active.get(jobId);
         if (exec) { exec.cause = 'cancel'; exec.controller.abort(new Error('cancelled by owner')); }
         log('agent job cancelled', { jobId, principal });
@@ -517,33 +626,47 @@ export class AgentJobEngine {
       log('agent job transition', { jobId: job.jobId, from, to });
     };
 
+    const sourceSessionId = job.sessionPolicy === 'resume' ? job.backendSessionId : null;
+    let providerUseStarted = false;
+
     try {
-      // Select backend: factory (A4 real Kiro) or fallback (A2 fake).
-      backend = this.backendFactory?.(job, policy) ?? new FakeAgentBackend(
+      let sessionCtx: ResolvedSessionContext | undefined;
+      if (sourceSessionId) {
+        const provider = this.store.sessionStore.getReservedProviderContext(sourceSessionId, job.jobId);
+        if (!provider) {
+          throw new BridgeError(
+            'SESSION_NOT_RESUMABLE',
+            `session ${sourceSessionId} is not reserved by job ${job.jobId} at execution time`,
+            409,
+          );
+        }
+        sessionCtx = {
+          sessionId: sourceSessionId,
+          providerSessionId: provider.providerSessionId,
+          providerStateRef: provider.providerStateRef,
+        };
+      }
+
+      backend = this.backendFactory?.(job, policy, sessionCtx) ?? new FakeAgentBackend(
         { jobId: job.jobId, backend: job.backend, project: job.project, profile: job.profile, maxRuntimeMs: policy.maxRuntimeMs },
         this.backendOptions(job),
       );
-      // claimNext already moved QUEUED -> PREPARING.
       await backend.prepare(exec.controller.signal);
       step('PREPARING', 'RUNNING');
+      // A resumed provider may advance its persisted conversation from this
+      // point. Any later failure therefore invalidates the source reservation.
+      if (sourceSessionId) providerUseStarted = true;
       await backend.run(exec.controller.signal);
       step('RUNNING', 'VALIDATING');
       const result = await backend.validate(exec.controller.signal);
-      // Persist trusted provenance BEFORE completion. base_commit is set once
-      // (independent of the status CAS) so it survives and is available to the
-      // review/apply lifecycle (A6). Reaching COMPLETED is NOT an apply.
+
       if (result.baseCommit) {
         this.store.setBaseCommit(job.jobId, result.baseCommit);
         log('agent job base commit recorded', { jobId: job.jobId, changedFiles: result.changedFiles?.length ?? 0 });
       }
 
-      // A6-B3: if this job requires a canonical artifact, validate() must have
-      // produced one. Publish it atomically before COMPLETED transition.
-      // Trust-gate remediation: dry-run status comes ONLY from the backend
-      // adapter's own trusted construction-time flag (isDryRun()) — never
-      // inferred from result.baseCommit or result.writeMode. A missing
-      // baseCommit on a REQUIRED (non-dry-run) job is a hard failure below,
-      // not a silent bypass of the artifact requirement.
+      // Preserve the A6 writer contract: artifact requirements are satisfied
+      // BEFORE an ACTIVE successor session can become durable.
       const required = artifactRequired(job, backend.isDryRun());
       if (required) {
         if (!result.baseCommit) {
@@ -560,7 +683,6 @@ export class AgentJobEngine {
             500,
           );
         }
-        // Atomic publication via JobStore (CAS: artifact_state must be NULL)
         this.store.publishArtifact(job.jobId, result.artifactResult);
         log('agent job artifact published', {
           jobId: job.jobId,
@@ -570,14 +692,66 @@ export class AgentJobEngine {
         });
       }
 
-      step('VALIDATING', 'COMPLETED', {
+      if (sourceSessionId && !result.providerSessionId) {
+        throw new BridgeError(
+          'SESSION_NOT_RESUMABLE',
+          `resumed job ${job.jobId} completed without a provider session identity`,
+          500,
+        );
+      }
+      const successor: SessionSuccessorInput | null = result.providerSessionId
+        ? {
+            sessionId: `${SESSION_ID_PREFIX}${randomBytes(16).toString('hex')}`,
+            principalId: job.principalId,
+            project: job.project,
+            backend: job.backend,
+            profile: job.profile,
+            providerSessionId: result.providerSessionId,
+            providerStateRef: result.providerStateRef ?? null,
+          }
+        : null;
+
+      const completed = this.store.finalizeCompletedWithSession({
+        jobId: job.jobId,
+        sourceSessionId,
+        successor,
         completedAt: new Date().toISOString(),
         summary: result.summary,
         exitCode: result.exitCode,
+        requireArtifact: required,
+      });
+      // The atomic finalization COMMIT above is authoritative. This diagnostic
+      // must not enter the execution failure handler if serialization/output
+      // fails, because the source is already CONSUMED and successor ACTIVE.
+      bestEffortLog('agent job transition', {
+        jobId: job.jobId,
+        from: 'VALIDATING',
+        to: 'COMPLETED',
+        sourceSessionId,
+        successorSessionId: completed.backendSessionId,
       });
     } catch (e) {
-      // Ensure cleanup on any failure path.
       if (backend?.cleanup) { await backend.cleanup().catch(() => {}); }
+
+      if (sourceSessionId) {
+        const invalidSessionPreUse = e instanceof BridgeError && e.code === 'SESSION_NOT_RESUMABLE';
+        if (providerUseStarted || invalidSessionPreUse) {
+          // Provider state may have advanced OR its required persisted state is
+          // missing/mismatched. Never resurrect the source in either case.
+          this.store.sessionStore.expireReservation(sourceSessionId, job.jobId);
+          if (providerUseStarted && backend?.discardSessionState) {
+            await backend.discardSessionState().catch(() => {});
+          }
+        } else {
+          // No provider call occurred and session integrity itself was not the
+          // failure: the exact reservation can be safely released.
+          this.store.sessionStore.releaseReservation(sourceSessionId, job.jobId);
+        }
+      } else if (backend?.discardSessionState) {
+        // Fresh provider state without durable completion must not survive as
+        // an orphan resumable conversation.
+        await backend.discardSessionState().catch(() => {});
+      }
       this.failActive(job.jobId, exec, backend, e);
     } finally {
       clearTimeout(timeout);

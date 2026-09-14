@@ -74,6 +74,19 @@ describe('runAcpJob — full turn (aggregation + bounds)', () => {
   });
 });
 
+describe('runAcpJob — A8 R1 provider restoration', () => {
+  it('resume uses session/load before prompt and returns the restored session ID', async () => {
+    const r = await runAcpJob(control({
+      dryRun: false,
+      prompt: 'CONTINUE-SESSION',
+      resumeSessionId: 'persisted-session-42',
+    }));
+    expect(r.ok).toBe(true);
+    expect(r.sessionId).toBe('persisted-session-42');
+    expect(r.assistantText).toContain('MARKER:CONTINUE-SESSION');
+  });
+});
+
 describe('runAcpJob — failure surfaces cleanly', () => {
   it('returns ok:false with a bounded error when the ACP process cannot start', async () => {
     const r = await runAcpJob(control({ acpCommand: '/nonexistent/kiro-cli-xyz', acpPrefixArgs: [] }));

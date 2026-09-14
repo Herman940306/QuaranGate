@@ -22,6 +22,7 @@ import {
   assertReadonlyProfile,
 } from '../../src/executor/agents/acpDriver.js';
 import { randomBytes } from 'node:crypto';
+import { readFileSync, unlinkSync } from 'node:fs';
 
 const MOCK = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'mock-acp-server.mjs');
 
@@ -129,6 +130,103 @@ describe('ACP driver — protocol against mock Kiro', () => {
       setTimeout(() => ac.abort(new Error('cancelled')), 100);
       await expect(p).rejects.toBeTruthy();
     } finally { d.kill('test done'); }
+  });
+});
+
+describe('ACP driver — A8 R1 session/load restoration', () => {
+  function tracePath(): string {
+    return `/tmp/a8-acp-trace-${randomBytes(8).toString('hex')}.log`;
+  }
+
+  it('NEW wire sequence is initialize -> session/new -> session/prompt', async () => {
+    const trace = tracePath();
+    const d = makeDriver({
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', MOCK_ACP_TRACE_FILE: trace },
+    });
+    d.spawn();
+    try {
+      await d.initialize();
+      await d.sessionNew(process.cwd());
+      await d.prompt({ prompt: 'NEW-TURN', timeoutMs: 10_000 });
+      const methods = readFileSync(trace, 'utf8').trim().split('\n');
+      expect(methods.slice(0, 3)).toEqual(['initialize', 'session/new', 'session/prompt']);
+      expect(methods).not.toContain('session/load');
+    } finally {
+      await d.shutdown();
+      try { unlinkSync(trace); } catch { /* absent */ }
+    }
+  });
+
+  it('wire sequence is initialize -> session/load -> session/prompt and never session/new', async () => {
+    const trace = tracePath();
+    const d = makeDriver({
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', MOCK_ACP_TRACE_FILE: trace },
+    });
+    d.spawn();
+    try {
+      await d.initialize();
+      await d.sessionLoad('persisted-session-1', process.cwd());
+      const turn = await d.prompt({ prompt: 'RESUMED-TURN', timeoutMs: 10_000 });
+      expect(turn.assistantText).toContain('MARKER:RESUMED-TURN');
+      const methods = readFileSync(trace, 'utf8').trim().split('\n');
+      expect(methods.slice(0, 3)).toEqual(['initialize', 'session/load', 'session/prompt']);
+      expect(methods).not.toContain('session/new');
+    } finally {
+      await d.shutdown();
+      try { unlinkSync(trace); } catch { /* absent */ }
+    }
+  });
+
+  it('fails closed when loadSession capability is not advertised; no fallback-to-new', async () => {
+    const trace = tracePath();
+    const d = makeDriver({
+      env: {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        MOCK_ACP_TRACE_FILE: trace,
+        MOCK_ACP_LOAD_MODE: 'unsupported',
+      },
+    });
+    d.spawn();
+    try {
+      await d.initialize();
+      await expect(d.sessionLoad('persisted-session-1', process.cwd()))
+        .rejects.toMatchObject({ code: 'SESSION_NOT_RESUMABLE' });
+      const methods = readFileSync(trace, 'utf8').trim().split('\n');
+      expect(methods).toEqual(['initialize']);
+      expect(methods).not.toContain('session/new');
+    } finally {
+      await d.shutdown();
+      try { unlinkSync(trace); } catch { /* absent */ }
+    }
+  });
+
+  it('fails closed on missing/dead provider session and never falls back to session/new', async () => {
+    const trace = tracePath();
+    const d = makeDriver({ env: { PATH: process.env.PATH ?? '/usr/bin:/bin', MOCK_ACP_TRACE_FILE: trace } });
+    d.spawn();
+    try {
+      await d.initialize();
+      await expect(d.sessionLoad('dead-session', process.cwd()))
+        .rejects.toMatchObject({ code: 'SESSION_NOT_RESUMABLE' });
+      const methods = readFileSync(trace, 'utf8').trim().split('\n');
+      expect(methods).toContain('session/load');
+      expect(methods).not.toContain('session/new');
+    } finally {
+      await d.shutdown();
+      try { unlinkSync(trace); } catch { /* absent */ }
+    }
+  });
+
+  it('fails closed on malformed session/load result', async () => {
+    const d = makeDriver({
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', MOCK_ACP_LOAD_MODE: 'malformed' },
+    });
+    d.spawn();
+    try {
+      await d.initialize();
+      await expect(d.sessionLoad('persisted-session-1', process.cwd()))
+        .rejects.toMatchObject({ code: 'SESSION_NOT_RESUMABLE' });
+    } finally { await d.shutdown(); }
   });
 });
 

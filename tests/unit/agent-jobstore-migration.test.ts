@@ -107,7 +107,7 @@ describe('A6-B1 job store migration v2 -> v3', () => {
     const ids = seedV2Db(dbPath, 12);
 
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(5);
+    expect(store.schemaVersion).toBe(6); // A8: bumped from 5 → 6
 
     for (const id of ids) {
       const got = store.get(id);
@@ -133,8 +133,8 @@ describe('A6-B1 job store migration v2 -> v3', () => {
   it('is idempotent: reopening a migrated v3 DB does not disturb records', () => {
     const ids = seedV2Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v2 -> v3
-    const reopened = new AgentJobStore(dbPath); // v3 -> v3 (no-op)
-    expect(reopened.schemaVersion).toBe(5);
+    const reopened = new AgentJobStore(dbPath); // v3 -> v6 (forward migration)
+    expect(reopened.schemaVersion).toBe(6); // A8: bumped from 5 → 6
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -149,9 +149,9 @@ describe('A3 job store migration v1 -> current (v3)', () => {
   it('migrates a populated v1 DB straight to the current schema, preserving all records', () => {
     const ids = seedV1Db(dbPath, 12); // >10 A2 records, per A3 requirement
 
-    const store = new AgentJobStore(dbPath); // opening runs migrate() cumulatively (v1 -> v2 -> v3)
+    const store = new AgentJobStore(dbPath); // opening runs migrate() cumulatively (v1 -> v2 -> ... -> v6)
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(5);
+    expect(store.schemaVersion).toBe(6); // A8: bumped from 5 → 6
 
     for (const id of ids) {
       const got = store.get(id);
@@ -177,8 +177,8 @@ describe('A3 job store migration v1 -> current (v3)', () => {
   it('is idempotent: reopening a current-schema DB does not disturb records', () => {
     const ids = seedV1Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v1 -> v3
-    const reopened = new AgentJobStore(dbPath); // v3 -> v3 (no-op)
-    expect(reopened.schemaVersion).toBe(5);
+    const reopened = new AgentJobStore(dbPath); // v3 → v6 (forward migration)
+    expect(reopened.schemaVersion).toBe(6); // A8: schema bumped v5→v6
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -217,7 +217,7 @@ describe('A6-B1 artifact metadata columns — fresh v3 schema', () => {
   it('fresh v3 DB contains all nine required artifact metadata columns', () => {
     const store = new AgentJobStore(dbPath);
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(5);
+    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -292,7 +292,7 @@ describe('A6-B1 artifact metadata columns — v2→v3 migration', () => {
   it('v2→v3 migration adds all nine artifact metadata columns', () => {
     seedV2Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(5);
+    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -403,7 +403,7 @@ describe('A6-B1 artifact metadata columns — v1→v3 migration', () => {
   it('v1→v3 migration adds all nine artifact metadata columns', () => {
     seedV1Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(5);
+    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -455,8 +455,8 @@ describe('A6-B1 artifact metadata columns — fresh-v3 and migrated-v3 schema eq
     const p = join(dir, 'agents.db');
     seedV2Db(p, 2);
     new AgentJobStore(p).close(); // v2→v3
-    const reopened = new AgentJobStore(p); // v3→v3 (no-op)
-    expect(reopened.schemaVersion).toBe(5);
+    const reopened = new AgentJobStore(p); // v3→v6 (forward migration)
+    expect(reopened.schemaVersion).toBe(6); // A8: schema bumped v5→v6
     reopened.close();
 
     const db = new DatabaseSync(p);
@@ -597,7 +597,7 @@ describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => 
     seedV4Db(dbPath, 5);
     const store = new AgentJobStore(dbPath);
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(5);
+    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
     store.close();
   });
 
@@ -664,8 +664,8 @@ describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => 
   it('migration v4→v5 is idempotent (re-open does not disturb records)', () => {
     const ids = seedV4Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v4 → v5
-    const reopened = new AgentJobStore(dbPath); // v5 → v5 (no-op)
-    expect(reopened.schemaVersion).toBe(5);
+    const reopened = new AgentJobStore(dbPath); // v5 → v6 (A8 migration)
+    expect(reopened.schemaVersion).toBe(6); // A8: schema bumped v5→v6
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -751,7 +751,7 @@ describe('A6 v4→v5 migration atomicity', () => {
     // Opening should complete the migration cleanly (columnExists guard skips
     // the already-added column and adds the remaining two).
     const store = new AgentJobStore(p);
-    expect(store.schemaVersion).toBe(5);
+    expect(store.schemaVersion).toBe(6); // A8: schema bumped v5→v6
     store.close();
 
     const db2 = new DatabaseSync(p);
@@ -764,11 +764,12 @@ describe('A6 v4→v5 migration atomicity', () => {
 });
 
 // =============================================================================
-// A6 remediation F5: a bare `user_version = 5` stamp is NOT proof of a v5 DB.
+// A8 update: "stamp is not proof" — updated to test the current schema v6.
 //
-// The live jobs database was stamped v5 by an out-of-tree runtime, so the
-// store must verify the real schema shape before accepting a database that
-// claims the supported version — and must never repair or backfill it.
+// A bare `user_version = 6` stamp is NOT proof of a v6 DB. A DB can be
+// stamped v6 by an interrupted or out-of-tree migration and still be missing
+// the agent_sessions table (the sole v6 addition). The same fail-closed
+// invariant applies: verify real shape before accepting the DB. Never repair.
 // =============================================================================
 
 describe('A6 v5 schema shape validation (stamp is not proof)', () => {
@@ -777,54 +778,78 @@ describe('A6 v5 schema shape validation (stamp is not proof)', () => {
     dbPath = join(mkdtempSync(join(tmpdir(), 'mcpb-v5-shape-')), 'agents.db');
   });
 
-  /** A v4 database stamped v5 without ever gaining the v5 columns. */
-  function seedFalselyStampedV5(path: string, rows = 2): string[] {
+  /**
+   * A fully-migrated v5 database (all v5 columns present) but FALSELY stamped
+   * v6 without the v6 addition (agent_sessions table). Tests "stamp is not proof"
+   * at the current schema version. (Before A8, used seedFalselyStampedV5 — a
+   * v4 DB stamped v5. Now v5 is a valid migration source so we stamp at v6.)
+   */
+  function seedFalselyStampedV6(path: string, rows = 2): string[] {
     const ids = seedV4Db(path, rows);
     const db = new DatabaseSync(path);
-    db.exec('PRAGMA user_version=5');
+    // Add v5 retention columns so the DB looks like a real v5
+    for (const col of RETENTION_COLUMNS) {
+      try {
+        db.exec(`ALTER TABLE agent_jobs ADD COLUMN ${col} ${col === 'retention_duration_ms' ? 'INTEGER' : 'TEXT'}`);
+      } catch { /* guard: column may already exist */ }
+    }
+    // Stamp at v6 but deliberately omit agent_sessions table
+    db.exec('PRAGMA user_version=6');
     db.close();
     return ids;
   }
 
-  it('accepts a genuine fresh v5 DB on re-open (positive control)', () => {
+  it('accepts a genuine fresh v6 DB on re-open (positive control)', () => {
     new AgentJobStore(dbPath).close();
     const reopened = new AgentJobStore(dbPath);
     expect(reopened.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
     reopened.close();
   });
 
-  it('accepts a genuine migrated v5 DB on re-open (positive control)', () => {
+  it('accepts a genuine migrated v6 DB on re-open (positive control)', () => {
     seedV4Db(dbPath, 3);
-    new AgentJobStore(dbPath).close(); // v4 -> v5
+    new AgentJobStore(dbPath).close(); // v4 -> v6
     const reopened = new AgentJobStore(dbPath);
-    expect(reopened.schemaVersion).toBe(5);
+    expect(reopened.schemaVersion).toBe(6); // A8: schema bumped v5→v6
     reopened.close();
   });
 
-  it('user_version=5 with NO retention columns → fails closed', () => {
-    seedFalselyStampedV5(dbPath, 2);
+  it('user_version=6 with missing agent_sessions table → fails closed', () => {
+    seedFalselyStampedV6(dbPath, 2);
     expect(() => new AgentJobStore(dbPath)).toThrow(BridgeError);
-    expect(() => new AgentJobStore(dbPath)).toThrow(/stamped schema v5 but its schema is incomplete/);
+    expect(() => new AgentJobStore(dbPath)).toThrow(/stamped schema v6 but its schema is incomplete/);
   });
 
-  it('the fail-closed error names every missing retention column', () => {
-    seedFalselyStampedV5(dbPath, 1);
+  it('the fail-closed error names the missing agent_sessions table', () => {
+    seedFalselyStampedV6(dbPath, 1);
     let msg = '';
     try { new AgentJobStore(dbPath); } catch (e) { msg = (e as Error).message; }
-    for (const col of RETENTION_COLUMNS) {
-      expect(msg, `error must name agent_jobs.${col}`).toContain(`agent_jobs.${col}`);
-    }
+    expect(msg).toContain('agent_sessions');
   });
 
-  it.each(RETENTION_COLUMNS)('user_version=5 missing only %s → fails closed', (missingCol) => {
+  it.each(RETENTION_COLUMNS)('user_version=6 missing only %s in agent_jobs → fails closed', (missingCol) => {
+    // All v5 cols present EXCEPT missingCol; agent_sessions table present; stamped v6.
     seedV4Db(dbPath, 1);
     const db = new DatabaseSync(dbPath);
-    // Add the other two retention columns, leave `missingCol` absent, stamp v5.
     for (const col of RETENTION_COLUMNS) {
       if (col === missingCol) continue;
-      db.exec(`ALTER TABLE agent_jobs ADD COLUMN ${col} ${col === 'retention_duration_ms' ? 'INTEGER' : 'TEXT'}`);
+      try {
+        db.exec(`ALTER TABLE agent_jobs ADD COLUMN ${col} ${col === 'retention_duration_ms' ? 'INTEGER' : 'TEXT'}`);
+      } catch { /* ok */ }
     }
-    db.exec('PRAGMA user_version=5');
+    // Add agent_sessions so it is not the failing item
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_sessions (
+        session_id TEXT PRIMARY KEY, principal_id TEXT NOT NULL,
+        project TEXT NOT NULL, backend TEXT NOT NULL, profile TEXT NOT NULL,
+        provider_session_id TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'ACTIVE',
+        created_at TEXT NOT NULL, last_used_at TEXT NOT NULL,
+        consumed_by_job_id TEXT, expires_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_sessions_binding
+        ON agent_sessions(principal_id, project, backend, profile, state);
+    `);
+    db.exec('PRAGMA user_version=6');
     db.close();
 
     expect(() => new AgentJobStore(dbPath)).toThrow(BridgeError);
@@ -833,14 +858,23 @@ describe('A6 v5 schema shape validation (stamp is not proof)', () => {
     expect(msg).toContain(`agent_jobs.${missingCol}`);
   });
 
-  it('user_version=5 with a retention column of the WRONG affinity → fails closed', () => {
+  it('user_version=6 with a retention column of the WRONG affinity → fails closed', () => {
     seedV4Db(dbPath, 1);
     const db = new DatabaseSync(dbPath);
     db.exec('ALTER TABLE agent_jobs ADD COLUMN retention_class TEXT');
     // retention_duration_ms declared TEXT instead of INTEGER.
     db.exec('ALTER TABLE agent_jobs ADD COLUMN retention_duration_ms TEXT');
     db.exec('ALTER TABLE agent_jobs ADD COLUMN retain_until TEXT');
-    db.exec('PRAGMA user_version=5');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_sessions (
+        session_id TEXT PRIMARY KEY, principal_id TEXT NOT NULL,
+        project TEXT NOT NULL, backend TEXT NOT NULL, profile TEXT NOT NULL,
+        provider_session_id TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'ACTIVE',
+        created_at TEXT NOT NULL, last_used_at TEXT NOT NULL,
+        consumed_by_job_id TEXT, expires_at TEXT
+      );
+    `);
+    db.exec('PRAGMA user_version=6');
     db.close();
 
     let msg = '';
@@ -848,14 +882,16 @@ describe('A6 v5 schema shape validation (stamp is not proof)', () => {
     expect(msg).toContain('retention_duration_ms has type TEXT, expected INTEGER');
   });
 
-  it('user_version=5 missing a required apply-lifecycle table → fails closed', () => {
+  it('user_version=6 missing a required apply-lifecycle table → fails closed', () => {
     seedV4Db(dbPath, 1);
     const db = new DatabaseSync(dbPath);
     for (const col of RETENTION_COLUMNS) {
-      db.exec(`ALTER TABLE agent_jobs ADD COLUMN ${col} ${col === 'retention_duration_ms' ? 'INTEGER' : 'TEXT'}`);
+      try {
+        db.exec(`ALTER TABLE agent_jobs ADD COLUMN ${col} ${col === 'retention_duration_ms' ? 'INTEGER' : 'TEXT'}`);
+      } catch { /* ok */ }
     }
     db.exec('DROP TABLE agent_apply_journal');
-    db.exec('PRAGMA user_version=5');
+    db.exec('PRAGMA user_version=6');
     db.close();
 
     let msg = '';
@@ -863,14 +899,16 @@ describe('A6 v5 schema shape validation (stamp is not proof)', () => {
     expect(msg).toContain('table agent_apply_journal');
   });
 
-  it('user_version=5 missing the active-attempt exclusion indexes → fails closed', () => {
+  it('user_version=6 missing the active-attempt exclusion indexes → fails closed', () => {
     seedV4Db(dbPath, 1);
     const db = new DatabaseSync(dbPath);
     for (const col of RETENTION_COLUMNS) {
-      db.exec(`ALTER TABLE agent_jobs ADD COLUMN ${col} ${col === 'retention_duration_ms' ? 'INTEGER' : 'TEXT'}`);
+      try {
+        db.exec(`ALTER TABLE agent_jobs ADD COLUMN ${col} ${col === 'retention_duration_ms' ? 'INTEGER' : 'TEXT'}`);
+      } catch { /* ok */ }
     }
     db.exec('DROP INDEX idx_apply_attempts_active_job');
-    db.exec('PRAGMA user_version=5');
+    db.exec('PRAGMA user_version=6');
     db.close();
 
     let msg = '';
@@ -878,25 +916,25 @@ describe('A6 v5 schema shape validation (stamp is not proof)', () => {
     expect(msg).toContain('index idx_apply_attempts_active_job');
   });
 
-  it('a rejected malformed v5 DB is NOT repaired, backfilled, or re-stamped', () => {
-    const ids = seedFalselyStampedV5(dbPath, 3);
+  it('a rejected malformed v6 DB is NOT repaired, backfilled, or re-stamped', () => {
+    const ids = seedFalselyStampedV6(dbPath, 3);
     expect(() => new AgentJobStore(dbPath)).toThrow(BridgeError);
 
     const db = new DatabaseSync(dbPath);
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    const cols = (db.prepare('PRAGMA table_info(agent_jobs)').all() as { name: string }[]).map((c) => c.name);
+    const tables = (db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as { name: string }[]).map(t => t.name);
     const rows = db.prepare('SELECT COUNT(*) AS n FROM agent_jobs').get() as { n: number };
     const sample = db.prepare('SELECT * FROM agent_jobs WHERE job_id = ?').get(ids[0]!) as Record<string, unknown>;
     db.close();
 
-    expect(uv.user_version).toBe(5);            // untouched — no re-stamp
+    expect(uv.user_version).toBe(6);            // untouched — no re-stamp
     expect(Number(rows.n)).toBe(3);             // no rows destroyed
     expect(sample.prompt).toBe('v4 prompt');    // historical data intact
-    for (const col of RETENTION_COLUMNS) {
-      expect(cols, `${col} must NOT be silently added`).not.toContain(col);
-    }
+    // agent_sessions was NOT silently added by a repair/backfill
+    expect(tables).not.toContain('agent_sessions');
   });
 });
+
 
 // =============================================================================
 // A6 remediation: downgrade / newer-than-supported schema

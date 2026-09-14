@@ -29,12 +29,13 @@ const h = vi.hoisted(() => {
   const order: string[] = [];
   const fail: { stage: string | null } = { stage: null };
   const startupPolicyCalls: Array<[boolean, Record<string, unknown>]> = [];
+  const orphanArgs: unknown[] = [];
   /** Record a stage, and throw from it when this test asked that stage to fail. */
   const stage = (name: string): void => {
     order.push(name);
     if (fail.stage === name) throw new Error(`simulated global failure in ${name}`);
   };
-  return { order, fail, startupPolicyCalls, stage };
+  return { order, fail, startupPolicyCalls, orphanArgs, stage };
 });
 
 // ---------------------------------------------------------------------------
@@ -111,6 +112,7 @@ vi.mock('../../src/executor/agents/jobEngine.js', async (importOriginal) => {
   class FakeEngine {
     constructor(..._args: unknown[]) {}
     recover(): string[] { h.stage('recoverActive'); return []; }
+    protectedProviderStateRefs(): string[] { return ['provider-state-active']; }
     shutdown(): void {}
   }
   return { ...actual, AgentJobEngine: FakeEngine };
@@ -120,7 +122,8 @@ vi.mock('../../src/executor/agents/sandboxRunner.js', async (importOriginal) => 
   const actual = await importOriginal<typeof import('../../src/executor/agents/sandboxRunner.js')>();
   class FakeSandbox {
     constructor(_opts: unknown) {}
-    async reconcileOrphans() {
+    async reconcileOrphans(opts?: unknown) {
+      h.orphanArgs.push(opts);
       h.stage('sandbox.reconcileOrphans');
       return { removedContainers: [], removedVolumes: [], removedNetworks: [] };
     }
@@ -183,6 +186,7 @@ beforeEach(() => {
   h.order.length = 0;
   h.fail.stage = null;
   h.startupPolicyCalls.length = 0;
+  h.orphanArgs.length = 0;
   exitCodes = [];
 
   const dir = mkdtempSync(join(tmpdir(), 'mcpb-startup-'));
@@ -246,6 +250,14 @@ describe('executor startup ordering — success path', () => {
     await runStartup();
     expect(h.order.indexOf('recoverActive')).toBeLessThan(h.order.indexOf('sandbox.reconcileOrphans'));
     expect(h.order.indexOf('recoverApplyAttempts')).toBeLessThan(h.order.indexOf('sandbox.reconcileOrphans'));
+  });
+
+  it('A8 R1 passes ACTIVE/RESERVED provider state refs into orphan preservation before sweep', async () => {
+    await runStartup();
+    expect(h.orphanArgs).toHaveLength(1);
+    const arg = h.orphanArgs[0] as { preserveManagedVolumeNames?: Set<string> };
+    expect(arg.preserveManagedVolumeNames).toBeInstanceOf(Set);
+    expect(arg.preserveManagedVolumeNames?.has('provider-state-active')).toBe(true);
   });
 
   it('passes the trusted AGENT_STAGER_IMAGE through the real production startup boundary', async () => {
