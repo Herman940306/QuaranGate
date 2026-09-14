@@ -62,6 +62,10 @@ All times are SAST (`UTC+02:00`) unless explicitly suffixed `Z`.
 - Tailscale `1.102.2`; Wolf Tailscale IPv4 `100.79.53.72`.
 - Funnel is enabled at `https://wolf.taildc680e.ts.net` and proxies `/` to
   `http://127.0.0.1:8787`.
+- Wolf-local DNS resolves the hostname to `100.79.53.72`; Cloudflare and Google
+  public DNS instead returned Funnel relays `176.58.90.46`, `.63`, and `.145`.
+  Verified relay-pinned H1/H2 readiness passed through all three at `06:53`
+  SAST. It is a current external-relay control, not failure-time proof.
 - The current gateway is `quarangate-gateway-1`, image
   `quarangate:gateway-5d375bd...`, image ID `sha256:4af9b6...`, healthy,
   restart count 0, OOM false, 512 MiB memory limit, 256 PID limit.

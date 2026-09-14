@@ -71,6 +71,36 @@ else
   printf '%s\n' 'UNVERIFIED / OPEN: tailscale CLI unavailable'
 fi
 
+section "public_funnel_relays"
+public_dns_json="$(curl --fail --silent --show-error --max-time 10 \
+  -H 'accept: application/dns-json' \
+  "https://cloudflare-dns.com/dns-query?name=${PUBLIC_HOST}&type=A" 2>/dev/null || true)"
+if [[ -n "$public_dns_json" ]] && command -v jq >/dev/null 2>&1; then
+  printf '%s\n' "cloudflare_public_dns"
+  jq '{Status,Answer:[.Answer[]? | select(.type == 1) | {type,data,TTL}]}' <<<"$public_dns_json" \
+    || printf '%s\n' 'UNVERIFIED / OPEN: public DNS response was not valid JSON'
+  mapfile -t public_relays < <(jq -r '.Answer[]? | select(.type == 1) | .data' <<<"$public_dns_json" | sort -u)
+  if [[ ${#public_relays[@]} -eq 0 ]]; then
+    printf '%s\n' 'UNVERIFIED / OPEN: public DNS returned no Funnel relay A records'
+  fi
+  for relay in "${public_relays[@]}"; do
+    if [[ ! "$relay" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      printf 'UNVERIFIED / OPEN: ignored non-IPv4 public DNS answer\n'
+      continue
+    fi
+    try "relay=$relay http1_ready" curl --noproxy '*' --fail --silent --show-error --max-time 15 \
+      --http1.1 --resolve "$PUBLIC_HOST:443:$relay" -o /dev/null \
+      -w 'http=%{http_code} version=%{http_version} remote=%{remote_ip} verify=%{ssl_verify_result} connect=%{time_connect} tls=%{time_appconnect} total=%{time_total}\n' \
+      "$PUBLIC_BASE/readyz"
+    try "relay=$relay http2_ready" curl --noproxy '*' --fail --silent --show-error --max-time 15 \
+      --http2 --resolve "$PUBLIC_HOST:443:$relay" -o /dev/null \
+      -w 'http=%{http_code} version=%{http_version} remote=%{remote_ip} verify=%{ssl_verify_result} connect=%{time_connect} tls=%{time_appconnect} total=%{time_total}\n' \
+      "$PUBLIC_BASE/readyz"
+  done
+else
+  printf '%s\n' 'UNVERIFIED / OPEN: public DNS relay discovery unavailable'
+fi
+
 section "docker_gateway_executor"
 if command -v docker >/dev/null 2>&1; then
   try "containers" docker ps --no-trunc \

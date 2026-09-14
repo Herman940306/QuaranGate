@@ -45,6 +45,18 @@ At `2026-09-14T04:31:22Z`, after the reproduced failure was reported:
 These controls do not prove the connector was healthy at the approximate
 `06:26 SAST` failure time.
 
+At `2026-09-14T04:53Z`, public DNS and relay-pinned controls established a path
+not covered by Wolf-local MagicDNS:
+
+- Cloudflare and Google public DNS both returned `176.58.90.46`,
+  `176.58.90.63`, and `176.58.90.145`;
+- each relay returned `/readyz` 200 under verified TLS with both HTTP/1.1 and
+  HTTP/2;
+- total latency was 1.26–1.29 seconds in this six-request snapshot.
+
+This proves the public Funnel relay path was healthy then, not at the
+approximate failure time and not specifically from the ChatGPT connector.
+
 ## Required Post-Deployment Validation
 
 1. Confirm exact image/build revision and startup telemetry identity.

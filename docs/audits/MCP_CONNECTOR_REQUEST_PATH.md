@@ -4,7 +4,10 @@
 
 ```text
 ChatGPT connector runtime (external; implementation not visible)
+  -> public DNS returns Tailscale Funnel relay addresses
   -> HTTPS :443, HTTP/1.1 or HTTP/2, TLS 1.3 accepted
+Tailscale Funnel public relay (three A records observed)
+  -> encrypted proxy to Wolf; relay does not terminate client TLS
 Tailscale Funnel in tailscaled 1.102.2 on WSL host Wolf
   -> TLS terminates in tailscaled
   -> configured cleartext HTTP proxy target http://127.0.0.1:8787
@@ -26,6 +29,7 @@ quarangate-executor-1
 | Hop | Owner | Protocol / address | TLS | Auth | Timeout / keepalive | Restart / dependency | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | ChatGPT connector to Wolf | OpenAI connector platform | HTTPS `wolf.taildc680e.ts.net:443`; source port external/ephemeral | Client-to-tailscaled; verified TLS 1.3 and trusted leaf | OAuth bearer expected after discovery | External retry/timeout/keepalive limits not visible locally | External platform/session/account binding | UNVERIFIED / OPEN |
+| Public DNS / Funnel relay | Tailscale | Public A records `176.58.90.46`, `176.58.90.63`, `176.58.90.145` at 2026-09-14; encrypted relay to Wolf | Relay preserves end-to-end client TLS to tailscaled | None at relay | Non-configurable Funnel bandwidth limits documented; request timeout/retry not documented in inspected material | External Tailscale relay service | VERIFIED NOW for current DNS and H1/H2 readiness; failure-time state unavailable |
 | Funnel listener | `tailscaled.service`, PID lineage owned by systemd | Tailscale Funnel on Wolf Tailscale IPs, TCP 443; HTTP/1.1 and HTTP/2 accepted | Terminates here; ALPN h2 verified | Forwards HTTP to app; application auth remains gateway-owned | Funnel proxy limits/retries not exposed by inspected CLI status | tailscaled active since 2026-09-12 21:10, NRestarts=0; depends on WSL/Windows network | VERIFIED NOW except undocumented limits |
 | Funnel backend | tailscaled reverse proxy | `http://127.0.0.1:8787` | None on loopback hop | No separate proxy auth | Backend HTTP version/retry policy not yet captured | Fixed loopback port; not an ephemeral container IP | VERIFIED NOW except backend transport limits |
 | Docker publication | Docker Desktop / Compose | host `127.0.0.1:8787` to container `8787/tcp` | None | None | Docker forwarding limits not configured in Compose | Exists only while gateway container is running | VERIFIED NOW |
@@ -58,6 +62,12 @@ http_request_start only; no terminal event; process/restart evidence
 Tailscale proxy error with no app start
   => TLS/HTTP ingress reached Funnel but backend was unavailable
 ```
+
+Wolf-local DNS returns `100.79.53.72`, while Cloudflare and Google public DNS
+returned the three Funnel relay addresses above. A normal curl from Wolf can
+therefore take the tailnet-local path. Relay-pinned verified curls passed H1 and
+H2 readiness on all three public addresses; these are stronger current controls
+but still are not a historical test at the failed timestamp.
 
 The deployed revision does not yet emit `http_request_*`; these rules become
 mechanically usable only after the telemetry candidate is independently accepted
