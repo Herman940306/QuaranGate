@@ -107,7 +107,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   active = await activateVsCodeProductionComposition({
     chat: chatPort(),
     registration: registrationContext(context),
-    workspaceSnapshot: workspaceSnapshot(context),
+    // Do not freeze workspace evidence at activation. B5 must observe the
+    // current supported VS Code facts again for every operation authorization.
+    workspaceSnapshotProvider: () => workspaceSnapshot(context),
     adapterVersion: packageVersion,
     ...(credentialPath === undefined ? {} : { credentialPath }),
     ...(modelSelector === undefined ? {} : { modelSelector, modelApi: modelApi(context) }),

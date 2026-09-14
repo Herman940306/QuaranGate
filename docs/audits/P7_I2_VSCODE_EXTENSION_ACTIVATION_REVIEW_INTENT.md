@@ -6,6 +6,18 @@ Accepted source base: `f0ec7d91055a10f87abb7322ba3fda7bfc76e6e5` (`feat(ide): ad
 
 Accepted control base: `e31ff0b5765be5da4c0adc874119e818e48b66f2` (`docs(control): accept vscode participant setup foundation`)
 
+Failed immutable candidate: `0c5fffdb29c43470925d9ee17cb29d83fdc34f06` (`feat(ide): add vscode extension review intent bridge`)
+
+## R1 fresh-workspace remediation
+
+ChatGPT review of `0c5fffdb29c43470925d9ee17cb29d83fdc34f06` failed because the production extension entrypoint captured one VS Code workspace snapshot during activation and `vscodeExtensionActivation.ts` reused those cached folder/host bytes for later operation-time B5 collection. Lower-level command-channel tests collected fresh workspace evidence, but the real production composition therefore did not preserve that invariant when the active VS Code workspace changed after activation.
+
+R1 removes that production cache boundary. `VsCodeProductionActivationInput` now accepts only a narrow `workspaceSnapshotProvider()` returning the already bounded `VsCodeWorkspaceSnapshot` shape. The production extension supplies `() => workspaceSnapshot(context)`, so every invocation re-reads exactly the current supported VS Code facts: `vscode.env.remoteName`, the current extension-host kind, and current `vscode.workspace.workspaceFolders` URI / `fsPath` / scheme values. No arbitrary VS Code API object is passed across the seam.
+
+Initial B5/bootstrap obtains one current provider snapshot. Every I2.2 authorization-time `collectWorkspace` call obtains a **new** provider snapshot and then runs the existing `collectVsCodeWorkspacePhysicalIdentity()` realpath/filesystem/environment/Git checks. Operation-time workspace-folder evidence is never cached or substituted with the activation-time snapshot. The optional collector-options parameter is a trusted test seam for the existing machine-ID test path; the production extension entrypoint does not supply it.
+
+The production-composition regression starts an authenticated listener/enrollment for qualified workspace A, activates the actual production composition on A, prepares the configured review model without sending a model request, changes the simulated current VS Code snapshot to different workspace B, and submits a user participant review. It proves the operation-time provider observed B rather than cached A; B5 rejects B against the A enrollment; the deterministic server-owned operation ID has no durable B7 row; model send count remains zero; and no fallback to A occurs.
+
 ## Scope
 
 This source slice turns the accepted VS Code source foundations into a concrete production extension-side composition and adds the narrow QuaranGate-side bridge required for an explicit **user-originated review intent** to enter the already accepted governed review lifecycle.
@@ -114,6 +126,7 @@ Fail-closed cases are mechanically covered:
 - already-pending local user intent -> local rejection before a second authority path can exist;
 - existing controller conflict -> admission rejection, no operation/model send;
 - fresh B5 workspace drift -> B7 admission rejection, no model send;
+- production activation workspace A -> current workspace B drift -> operation-time provider reads B, no cached-A fallback, no durable B7 row and no model send;
 - stale/closed authenticated channel -> local failure before admission, no model send;
 - replayed/skipped intent sequence -> remote channel closes fail-safe;
 - transport disconnect -> pending participant intent rejects; existing B6/B7 exact session-generation disconnect reconciliation remains authoritative.
@@ -163,10 +176,10 @@ Static candidate scans found no private Copilot API, undocumented Chat command I
 
 Validation on the candidate source before freeze:
 
-- focused activation/bridge + participant/model/I2.2/B7/listener matrix: **114/114 PASS across 8 files**;
-- complete P7 B1-B9 + I2 regression matrix: **325/325 PASS across 24 files**;
+- focused activation/bridge + participant/model/I2.2/B7/listener matrix: **115/115 PASS across 8 files**;
+- complete P7 B1-B9 + I2 regression matrix: **326/326 PASS across 24 files**;
 - shared writer / `agent_apply`: **246/246 PASS across 4 files**;
-- canonical `npm test`: **2591/2591 PASS across 90/90 unit files**, exit `0`;
+- canonical `npm test`: **2592/2592 PASS across 90/90 unit files**, exit `0`;
 - catalog/public subset: **26/26 PASS across 4 files** and exact public MCP catalog remains **45**;
 - root typecheck: **PASS**;
 - production extension offline dependency install/audit: **PASS / 0 vulnerabilities**;

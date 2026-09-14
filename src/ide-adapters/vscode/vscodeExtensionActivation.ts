@@ -32,13 +32,17 @@ import {
 } from './vscodePublicApiModelExecution.js';
 import {
   collectVsCodeWorkspacePhysicalIdentity,
+  type VsCodeWorkspaceCollectorOptions,
   type VsCodeWorkspaceSnapshot,
 } from './vscodeWorkspaceCollector.js';
 
 export interface VsCodeProductionActivationInput {
   chat: VsCodeChatApiPort;
   registration: VsCodeParticipantRegistrationContext;
-  workspaceSnapshot: VsCodeWorkspaceSnapshot;
+  /** Narrow live VS Code fact provider. Every call must observe the current host/folder shape. */
+  workspaceSnapshotProvider(): VsCodeWorkspaceSnapshot;
+  /** Trusted collector test seam; the production extension entrypoint omits it. */
+  workspaceCollectorOptions?: VsCodeWorkspaceCollectorOptions;
   adapterVersion: string;
   credentialPath?: string;
   modelSelector?: VsCodeExactModelSelector;
@@ -106,7 +110,7 @@ export async function activateVsCodeProductionComposition(
 
   if (registration.registered && input.credentialPath !== undefined && input.credentialPath.length > 0) {
     try {
-      workspace = await collectVsCodeWorkspacePhysicalIdentity(input.workspaceSnapshot);
+      workspace = await collectVsCodeWorkspacePhysicalIdentity(input.workspaceSnapshotProvider(), input.workspaceCollectorOptions);
       const credential = readVsCodeCompanionCredential(input.credentialPath, input.adapterVersion);
       const credentialBinding = bindingWithoutSecret(credential);
       connection = await connectVsCodeCompanion({ credential, workspace });
@@ -117,7 +121,7 @@ export async function activateVsCodeProductionComposition(
       channel = new VsCodeCommandChannel({
         connection: currentConnection,
         credentialBinding,
-        collectWorkspace: async () => await collectVsCodeWorkspacePhysicalIdentity(input.workspaceSnapshot),
+        collectWorkspace: async () => await collectVsCodeWorkspacePhysicalIdentity(input.workspaceSnapshotProvider(), input.workspaceCollectorOptions),
         ...(reviewHandler === undefined ? {} : { reviewHandler }),
       });
       channel.start();
