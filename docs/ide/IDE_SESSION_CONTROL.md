@@ -4,7 +4,7 @@
 
 IDE Session Control is the second major execution plane in QuaranGate. It is intended to let an authorized client communicate with an AI agent inside an explicitly enrolled, currently open IDE session without turning GUI automation, window focus or clipboard injection into a security boundary.
 
-This document describes the **design contract**. It does not claim that Kiro, VS Code, Cursor, Visual Studio or Antigravity production adapters exist today.
+This document describes the **design and acceptance contract**. Source implementation status and production qualification are tracked separately below; source existence must never be read as live/production acceptance.
 
 > [!IMPORTANT]
 > The implemented Agent Control Plane and the future IDE Session Control Plane are independent. Agent Dispatch permission does not grant IDE-session permission, and IDE-session permission does not grant Agent Dispatch, filesystem, terminal or target permission.
