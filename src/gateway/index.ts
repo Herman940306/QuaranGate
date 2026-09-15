@@ -16,10 +16,12 @@ import { buildServer } from './mcp.js';
 import { executor } from './executorClient.js';
 import { audit, newReqId } from './audit.js';
 import { mountRequestTelemetry, requestTelemetryId } from './requestTelemetry.js';
+import { buildGatewayRequestPolicy, gatewayRequestAdmission } from './requestAdmission.js';
 
 const PORT = Number(process.env.BRIDGE_PORT ?? 8787);
 const PUBLIC_URL = (process.env.BRIDGE_PUBLIC_URL ?? `http://127.0.0.1:${PORT}`).replace(/\/+$/, '');
 const MCP_RESOURCE = oauthResourceForPublicUrl(PUBLIC_URL);
+const REQUEST_POLICY = buildGatewayRequestPolicy(PUBLIC_URL, PORT);
 
 if (!process.env.INTERNAL_TOKEN || process.env.INTERNAL_TOKEN === '<SET_SECURELY>') {
   console.error('FATAL: INTERNAL_TOKEN is not set');
@@ -48,6 +50,9 @@ try {
 
 const app = express();
 app.disable('x-powered-by');
+// SH-01: reject DNS-rebinding Host values and hostile browser Origins before
+// telemetry, authentication, OAuth, Console, or MCP route handling.
+app.use(gatewayRequestAdmission(REQUEST_POLICY));
 mountRequestTelemetry(app);
 
 // Liveness only: the process is running. Never depends on config or executor.

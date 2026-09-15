@@ -148,7 +148,7 @@ beforeEach(() => {
   uncaught = [];
   h.executorReady.value = true;
   process.env.INTERNAL_TOKEN = 'test-internal-token';
-  process.env.BRIDGE_PORT = '0';
+  process.env.BRIDGE_PORT = '8787';
   process.env.DATA_DIR = join(tmp, 'data');
   delete process.env.BRIDGE_PUBLIC_URL;
   exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {

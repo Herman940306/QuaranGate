@@ -932,7 +932,11 @@ Before changing ingress, preserve these invariants:
 
 ```text
 TLS for remote clients
-exact BRIDGE_PUBLIC_URL
+exact BRIDGE_PUBLIC_URL origin (no path/query/fragment)
+non-loopback BRIDGE_PUBLIC_URL uses HTTPS
+raw Host must resolve to the configured public authority or exact gateway loopback authority
+browser Origin, when present, must be an approved same deployment origin
+X-Forwarded-Host / Forwarded never grant request authority
 loopback-only gateway bind
 no public executor port
 no Docker socket in the gateway
