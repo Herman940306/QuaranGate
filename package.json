@@ -21,7 +21,9 @@
     "gen-key": "node scripts/gen-client-key.mjs",
     "revoke-key": "node scripts/revoke-client.mjs",
     "validate-config": "node scripts/validate-config.mjs",
-    "test:console": "vitest run --configLoader native tests/unit/console-*.test.ts"
+    "test:console": "vitest run --configLoader native tests/unit/console-*.test.ts",
+    "test:p9": "vitest run --configLoader native tests/unit/p9-*.test.ts tests/integration/p9-lifecycle.test.ts --no-file-parallelism",
+    "installer:plan": "node dist/installer/cli.js plan"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

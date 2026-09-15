@@ -1,6 +1,6 @@
 # QuaranGate Installer & Lifecycle Productization — D1/D2
 
-**Status:** Owner-approved pre-production requirement; not implemented.
+**Status:** Implemented as an isolated P9 D1/D2 source candidate; independent review, upstream P7 binding, signed Windows release packaging and live production qualification remain pending.
 
 **Roadmap role:** D1 and D2 must close before A9 production hardening begins.
 
@@ -50,3 +50,28 @@ The desired Windows experience is a signed, user-friendly installer executable s
 ## D1/D2 acceptance direction
 
 Before A9, qualification must cover a fresh/clean install, first run, restart/recovery, upgrade, failed-upgrade rollback, repair, uninstall/data-preservation choices and reinstall, proving both usability and unchanged security boundaries.
+
+## Isolated P9 implementation architecture
+
+The isolated P9 candidate implements the source-level lifecycle boundary as:
+
+- a native Windows Forms wizard source (scripts/windows/QuaranGate-Setup.ps1) with a RemoteSigned click launcher, explicit review and no unsigned-package mutation;
+- a fixed-argument WSL/Node planner (src/installer/cli.ts) which performs mechanical host probes and emits a digest-bound review plan;
+- a deterministic D1 policy layer (src/installer/productInstaller.ts) that maps human choices to the existing QuaranGate scopes rather than creating a second authority system;
+- a strict release-package manifest (src/installer/releasePackage.ts) binding every payload file and OCI image to immutable SHA-256 identity;
+- a versioned installation manifest plus D2 planner/coordinator (src/lifecycle/**) with plan-before-mutation, exact recovery anchors, credential preservation or reauthorization, fail-closed repair, supported rollback, preserve-by-default uninstall, reinstall attestation and interruption classification;
+- private atomic lifecycle persistence with traversal, symlink, junction-equivalent path alias, hard-link, permission and bounded-read defenses;
+- bounded/redacted lifecycle evidence.
+
+The Windows wizard remains in source-candidate mode until a trusted signed release payload exists. It will produce and display the exact review plan, but deliberately returns PACKAGE_APPLY_DEFERRED_RELEASE_GATE instead of mutating installation state when run from an unsigned source tree. This is not a replacement for the required signed release installer; it is the fail-closed source boundary from which that package must be built.
+
+## Current qualification boundary
+
+The deterministic unit/integration harness uses disposable roots and typed fake lifecycle drivers. It proves non-host-specific D1/D2 policy, persistence and recovery behavior without touching live QuaranGate, real credentials, Task Scheduler, Docker state, provider entitlements, models or project data.
+
+The following remain outside this isolated parallel source qualification:
+
+- final accepted IDE adapter inventory and package payload: PENDING_UPSTREAM_P7;
+- final signed Windows package build: DEFERRED_EXTERNAL_OWNER_CREDENTIAL plus a trusted installer toolchain;
+- live Windows/WSL install, upgrade, rollback, repair, uninstall and reinstall rehearsal: NOT_RUN;
+- canonical integration and production deployment: NOT_AUTHORIZED.
