@@ -141,6 +141,7 @@ export function planFromGuidedAnswers(guided: GuidedAnswers): ReturnType<typeof 
     schemaVersion: 1,
     host,
     profile: guided.profile,
+    release: { state: 'RELEASE_GATE_PENDING' },
     installRoot: guided.installRoot,
     roots: {
       state,
@@ -200,6 +201,7 @@ export function main(argv = process.argv.slice(2)): void {
     requiredConsents: plan.requiredConsents,
     readiness: plan.readiness,
     review: {
+      release: plan.review.release,
       installRoot: plan.installRoot,
       projectAuthority: plan.review.projectAuthorities.join(', '),
       providers: Object.entries(plan.review.providers).map(([name, state]) => `${name}=${state}`).join(', '),

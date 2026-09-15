@@ -40,6 +40,7 @@ function answers(overrides: Partial<InstallerAnswers> = {}): InstallerAnswers {
     schemaVersion: 1,
     host: readyFacts(),
     profile: 'RECOMMENDED',
+    release: { state: 'RELEASE_GATE_PENDING' },
     installRoot: '/opt/quarangate',
     roots: {
       state: '/var/lib/quarangate',

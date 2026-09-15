@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
 import { canonicalSerialize } from '../executor/agents/canonicalJson.js';
+import { validateRootOwnership } from './pathOwnership.js';
 
 export const INSTALLATION_MANIFEST_SCHEMA_VERSION = 1 as const;
 
@@ -147,6 +148,19 @@ export const InstallationManifestSchema = z.object({
   sessionResumePolicy: SessionResumePolicySchema,
   health: HealthSchema,
 }).strict().superRefine((value, ctx) => {
+  try {
+    validateRootOwnership({
+      install: value.roots.install,
+      lifecycle: value.roots,
+      projects: [],
+    });
+  } catch (error) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['roots'],
+      message: error instanceof Error ? error.message : 'root ownership validation failed',
+    });
+  }
   for (const [kind, version] of [
     ['CONFIG', value.configSchemaVersion],
     ['STATE', value.stateSchemaVersion],

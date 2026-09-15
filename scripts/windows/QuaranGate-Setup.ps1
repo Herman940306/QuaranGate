@@ -168,6 +168,7 @@ $reviewButton.Add_Click({
             $plan = $planJson | ConvertFrom-Json -ErrorAction Stop
 
             $review = @"
+Release: $($plan.review.release)
 Install root: $($plan.review.installRoot)
 Project authority: $($plan.review.projectAuthority)
 Providers: $($plan.review.providers)

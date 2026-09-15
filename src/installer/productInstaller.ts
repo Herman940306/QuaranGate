@@ -2,6 +2,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { canonicalSerialize } from '../executor/agents/canonicalJson.js';
 import type { Scope } from '../gateway/config.js';
+import { attestPhysicalPath, validateRootOwnership } from '../lifecycle/pathOwnership.js';
 
 const GIB = 1024 ** 3;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -315,6 +316,15 @@ export type StartupChoice =
       runLevel: 'LIMITED';
     };
 
+export type InstallReleaseChoice =
+  | { state: 'RELEASE_GATE_PENDING' }
+  | {
+      state: 'VERIFIED_RELEASE';
+      productVersion: string;
+      sourceCommit: string;
+      manifestDigest: string;
+    };
+
 export type BackupProfile = 'RECOMMENDED' | 'MINIMAL' | 'CUSTOM';
 export type BackupCategory = 'CONFIG' | 'PROJECT_REFERENCES' | 'DURABLE_STATE' | 'EVIDENCE' | 'MODELS';
 export interface BackupChoice {
@@ -328,6 +338,7 @@ export interface InstallerAnswers {
   schemaVersion: 1;
   host: HostFacts;
   profile: InstallProfile;
+  release: InstallReleaseChoice;
   installRoot: string;
   roots: {
     state: string;
@@ -369,6 +380,7 @@ export interface InstallPlan {
   digest: string;
   readiness: SystemReadiness;
   profile: InstallProfile;
+  release: InstallReleaseChoice;
   installRoot: string;
   roots: InstallerAnswers['roots'];
   projects: PlannedProject[];
@@ -382,6 +394,7 @@ export interface InstallPlan {
   backup: BackupChoice;
   requiredConsents: string[];
   review: {
+    release: string;
     projectAuthorities: string[];
     providers: Record<keyof ProviderChoices, ProviderState>;
     localAi: string;
@@ -405,6 +418,7 @@ export interface InstallConsent {
 export interface AuthorizedInstallPlan {
   authorized: true;
   plan: InstallPlan;
+  approvedSensitiveChoices: string[];
   consentDigest: string;
 }
 
@@ -477,6 +491,16 @@ function validateProject(project: ProjectEnrollment): PlannedProject {
     guards: ['.git', '.env', '.env.*', 'secrets', 'credentials'],
     canonicalAttestationRequired: true,
   };
+}
+
+function validateRelease(choice: InstallReleaseChoice): string {
+  if (choice.state === 'RELEASE_GATE_PENDING') return 'RELEASE_GATE_PENDING';
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(choice.productVersion)
+    || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u.test(choice.sourceCommit)
+    || !SHA256.test(choice.manifestDigest)) {
+    throw new InstallerPolicyError('RELEASE_IDENTITY_INVALID', 'Verified release identity is invalid');
+  }
+  return `VERIFIED_RELEASE:${choice.productVersion}:${choice.sourceCommit}:${choice.manifestDigest}`;
 }
 
 function validateGithub(choice: GithubChoice): void {
@@ -584,19 +608,31 @@ export function buildInstallPlan(answers: InstallerAnswers): InstallPlan {
   }
   if (!profileDefaults()[answers.profile]) throw new InstallerPolicyError('PROFILE_INVALID', 'Installer profile is invalid');
 
-  const installRoot = normalizeAbsolutePath(answers.installRoot, 'install root');
-  const roots = {
+  const requestedInstallRoot = normalizeAbsolutePath(answers.installRoot, 'install root');
+  const requestedRoots = {
     state: normalizeAbsolutePath(answers.roots.state, 'state root'),
     evidence: normalizeAbsolutePath(answers.roots.evidence, 'evidence root'),
     models: normalizeAbsolutePath(answers.roots.models, 'models root'),
     backups: normalizeAbsolutePath(answers.roots.backups, 'backup root'),
     cache: normalizeAbsolutePath(answers.roots.cache, 'cache root'),
   };
-  const projects = answers.projects.map(validateProject);
-  if (projects.length === 0 || new Set(projects.map((project) => project.id)).size !== projects.length) {
+  const requestedProjects = answers.projects.map(validateProject);
+  if (requestedProjects.length === 0 || new Set(requestedProjects.map((project) => project.id)).size !== requestedProjects.length) {
     throw new InstallerPolicyError('PROJECTS_INVALID', 'At least one unique project enrollment is required');
   }
+  const ownership = validateRootOwnership({
+    install: requestedInstallRoot,
+    lifecycle: requestedRoots,
+    projects: requestedProjects,
+  });
+  const installRoot = ownership.install;
+  const roots = ownership.lifecycle;
+  const projects = requestedProjects.map((project, index) => ({
+    ...project,
+    path: ownership.projects[index]!.path,
+  }));
 
+  const releaseIdentity = validateRelease(answers.release);
   for (const provider of ['kiro', 'copilot', 'ollama'] as const) validateProvider(provider, answers.providers[provider]);
   validateLocalAi(answers.localAi, answers.host);
   const ideEnrollment = validateIde(answers.ide);
@@ -607,8 +643,8 @@ export function buildInstallPlan(answers: InstallerAnswers): InstallPlan {
   if (answers.startup.enabled && answers.startup.runLevel !== 'LIMITED') {
     throw new InstallerPolicyError('STARTUP_PRIVILEGE_INVALID', 'Startup must use a limited user identity');
   }
-  if (answers.backup.location !== roots.backups) {
-    throw new InstallerPolicyError('BACKUP_ROOT_MISMATCH', 'Backup policy location must match the reviewed backup root');
+  if (attestPhysicalPath(answers.backup.location, 'backup policy location') !== roots.backups) {
+    throw new InstallerPolicyError('BACKUP_ROOT_MISMATCH', 'Backup policy location must match the reviewed physical backup root');
   }
   if (answers.backup.includeCredentials && answers.backup.profile !== 'CUSTOM') {
     throw new InstallerPolicyError('BACKUP_CREDENTIAL_POLICY_INVALID', 'Credential backup requires an explicit custom policy');
@@ -632,6 +668,7 @@ export function buildInstallPlan(answers: InstallerAnswers): InstallPlan {
     schemaVersion: 1,
     readiness,
     profile: answers.profile,
+    release: answers.release,
     installRoot,
     roots,
     projects,
@@ -645,6 +682,7 @@ export function buildInstallPlan(answers: InstallerAnswers): InstallPlan {
     backup: answers.backup,
     requiredConsents,
     review: {
+      release: releaseIdentity,
       projectAuthorities: projects.map((project) => `${project.id}:${project.access}`),
       providers: {
         kiro: answers.providers.kiro.state,
@@ -683,13 +721,41 @@ export function approveInstallPlan(plan: InstallPlan, consent: InstallConsent): 
   if (unexpected.length > 0) {
     throw new InstallerPolicyError('SENSITIVE_CONSENT_UNKNOWN', `Consent names unknown sensitive choices: ${unexpected.join(', ')}`);
   }
+  const approvedSensitiveChoices = [...approved].sort();
   return {
     authorized: true,
     plan,
+    approvedSensitiveChoices,
     consentDigest: hashCanonical({
       accepted: true,
-      approvedSensitiveChoices: [...approved].sort(),
+      approvedSensitiveChoices,
       planDigest: plan.digest,
     }),
   };
+}
+
+export function verifyAuthorizedInstallPlan(value: AuthorizedInstallPlan): AuthorizedInstallPlan {
+  if (!value || value.authorized !== true || !value.plan || !Array.isArray(value.approvedSensitiveChoices)) {
+    throw new InstallerPolicyError('AUTHORIZED_PLAN_INVALID', 'Authorized install plan is malformed');
+  }
+  const actualPlanDigest = hashCanonical(planWithoutDigest(value.plan));
+  if (actualPlanDigest !== value.plan.digest || value.plan.readiness.status !== 'READY') {
+    throw new InstallerPolicyError('PLAN_IDENTITY_MISMATCH', 'Authorized install plan no longer matches the reviewed plan');
+  }
+  const approved = [...new Set(value.approvedSensitiveChoices)].sort();
+  if (approved.length !== value.approvedSensitiveChoices.length
+    || approved.some((choice, index) => choice !== value.approvedSensitiveChoices[index])) {
+    throw new InstallerPolicyError('SENSITIVE_CONSENT_INVALID', 'Authorized sensitive choices must be sorted and unique');
+  }
+  const missing = value.plan.requiredConsents.filter((choice) => !approved.includes(choice));
+  const unexpected = approved.filter((choice) => !value.plan.requiredConsents.includes(choice));
+  const expectedConsentDigest = hashCanonical({
+    accepted: true,
+    approvedSensitiveChoices: approved,
+    planDigest: value.plan.digest,
+  });
+  if (missing.length > 0 || unexpected.length > 0 || value.consentDigest !== expectedConsentDigest) {
+    throw new InstallerPolicyError('CONSENT_IDENTITY_MISMATCH', 'Authorized install consent does not match the reviewed plan');
+  }
+  return value;
 }
