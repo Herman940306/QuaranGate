@@ -76,12 +76,12 @@ The intended design is a narrow machine-facing adapter that can prove which IDE 
 |---|---|---|
 | Agent Control Plane | **Available** | Sandboxed dispatch, evidence, diff, guarded apply and discard are implemented. |
 | VS Code Chat Participant architecture | **Feasibility proven** | S1 proved a QuaranGate-owned Chat Participant can share a deterministic core with a machine IPC path. |
-| VS Code production IDE-session adapter | **Not implemented** | S1 was a spike, not production acceptance. |
-| Kiro IDE Session Control | **Not implemented** | Required future target. Kiro S2 has not been authorized. |
-| Cursor IDE Session Control | **Not implemented** | Required future target. |
-| Visual Studio | **Feasibility target** | Secondary; does not block the North Star if no safe stable transport exists. |
-| Antigravity | **Feasibility target** | Secondary; does not block the North Star if no safe stable transport exists. |
-| Multi-client/session hardening | **Not implemented** | Required before production acceptance of this plane. |
+| VS Code production IDE-session adapter | **Source implemented / live open** | I2 source is converged; final Remote-WSL/model-access live re-verification remains open. |
+| Kiro machine-facing control | **Governed ACP source implemented / live deferred** | Owner-reconciled I1 uses distinct Kiro CLI/ACP sessions; direct control of Kiro built-in IDE chat is unsupported and a non-goal. Provider-backed live acceptance remains deferred while entitlement/test capability is inactive. |
+| Cursor IDE Session Control | **Source implemented / live blocked** | I3 source is converged; live qualification is blocked until an authorized Cursor environment exists. |
+| Visual Studio | **Deferred feasibility target** | Secondary; does not block the North Star if no safe stable transport exists. |
+| Antigravity | **Deferred feasibility target** | Secondary; does not block the North Star if no safe stable transport exists. |
+| Multi-client/session hardening | **Source implemented / final live open** | I6 cross-adapter source/adversarial hardening is converged; final production closure follows required primary-target live truth. |
 
 The S1 evidence is important but narrow: it proves one VS Code architecture can work. It does **not** prove production security, complete host air-gap properties, Kiro integration, Cursor integration or generic active-session attachment.
 
@@ -621,13 +621,13 @@ Terminal, editor and filesystem context should not be dumped into audit merely b
 
 | Gate | Target | Requirement | Current state |
 |---|---|---|---|
-| **I0** | Common contract | Authority, identity, transport and threat model | Design documented; not production-complete |
-| **I1** | Kiro | Qualify supported machine-facing session/control architecture | Not started; Kiro S2 unauthorized |
-| **I2** | VS Code | Production adapter using qualified Architecture A and/or B | Architecture B feasibility proven by S1; production adapter not started |
-| **I3** | Cursor | Qualify supported adapter and workspace/session binding | Not started |
-| **I4** | Visual Studio | Feasibility and adapter if safe/stable | Secondary |
-| **I5** | Antigravity | Feasibility and adapter if safe/stable | Secondary |
-| **I6** | Cross-adapter hardening | Multi-client concurrency, reconnect, writer arbitration, recovery, security acceptance | Required before production acceptance |
+| **I0** | Common contract | Authority, identity, transport and threat model | B1-B9 source foundation closed; final plane acceptance remains tied to primary live targets |
+| **I1** | Kiro | Qualify supported machine-facing session/control architecture | Owner objective reconciled: governed Kiro CLI/ACP source path implemented; direct built-in-chat control unsupported/non-goal; provider-backed live acceptance deferred |
+| **I2** | VS Code | Production adapter using qualified Architecture A and/or B | Source implemented and converged; final Remote-WSL/model-access live re-verification open |
+| **I3** | Cursor | Qualify supported adapter and workspace/session binding | Source implemented and converged; live qualification blocked until authorized Cursor environment exists |
+| **I4** | Visual Studio | Feasibility and adapter if safe/stable | Deferred secondary feasibility; non-blocking |
+| **I5** | Antigravity | Feasibility and adapter if safe/stable | Deferred secondary feasibility; non-blocking |
+| **I6** | Cross-adapter hardening | Multi-client concurrency, reconnect, writer arbitration, recovery, security acceptance | Source/adversarial hardening implemented and converged; final live closure open |
 
 Kiro, VS Code and Cursor are required North-Star targets. Visual Studio and Antigravity are best-effort feasibility targets.
 
@@ -661,9 +661,9 @@ That evidence must not be upgraded into a broader claim.
 
 ## Kiro
 
-Kiro's isolated Agent Control Plane backend is a separate capability. Its existence does not prove the ability to control an active Kiro IDE chat session.
+Kiro's isolated Agent Control Plane backend is the owner-approved machine-facing Kiro path for ordinary QuaranGate use. It governs a distinct Kiro CLI/ACP session against an authorized project/worktree while the human may use Kiro IDE, VS Code, or another approved editor. It does **not** prove or require the ability to control an active Kiro built-in IDE chat session.
 
-Kiro S2 has not been authorized.
+I1R1 explicitly records same-session IDE+CLI attachment as a supported-product constraint and current non-goal. A direct built-in Kiro chat adapter remains blocked unless Kiro publishes a supported identify/prompt/stream/cancel/workspace contract. No private protocol, GUI automation, undocumented command, or session-file manipulation is an acceptable fallback. Provider-backed live acceptance of the existing ACP path remains deferred while real entitlement/test capability is inactive.
 
 ---
 

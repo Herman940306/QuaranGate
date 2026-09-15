@@ -258,8 +258,8 @@ A test count, verdict or architectural statement that was true at one checkpoint
 | O1 local Ollama backend | **Production deployed; full post-remediation acceptance pending** | Read-only local backend; source reliability/tooling fixes deployed, complete live matrix still required |
 | GitHub App Control Plane | **Deployed candidate; closeout human-gated** | 17 tools; no merge; statuses-only checks; `JustAGameZA` requires All repositories; source promotion blocked |
 | GitHub Copilot backend | **Future / owner-deferred, required before A9** | A7; no current subscription/test capability |
-| Session continuity | **Next active Agent Control Plane gate** | A8 |
-| IDE Session Control | **North Star** | Design/feasibility evidence only |
+| Session continuity | **Available / source accepted** | A8 continuity and recovery source is integrated; provider-backed live qualification remains separate |
+| IDE Session Control | **Source substantially implemented / live closure open** | B1-B9, I2/I3 source and I6 hardening are converged; Kiro uses the owner-approved ACP path; primary live gates remain explicit |
 
 ## 6.2 GitHub App Control Plane current boundary
 
@@ -1024,22 +1024,21 @@ The following are mandatory pre-A9 gates:
 | Gate | Purpose | Production entry requirement |
 |---|---|---|
 | A7 | GitHub Copilot backend | A real governed Copilot backend must be qualified when subscription/test capability is available; backend identity must never imply authority |
-| I1-I6 | IDE Session Control | Production adapters and shared live-writer arbitration/recovery must close before A9 |
+| I1-I6 | IDE Session Control | Required primary machine-facing paths and shared live-writer arbitration/recovery must close before A9; unsupported built-in Kiro chat control is not required, and I4/I5 remain secondary non-blocking feasibility targets |
 | U1 | QuaranGate Control Center | A user-friendly GUI must expose the product's normal capabilities without requiring Docker/MCP/YAML/WSL knowledge |
 | D1 | Guided installer + first-run setup | Click-install deployment with owner-visible setup questions, prerequisite detection and deliberate permission choices |
 | D2 | Upgrade / repair / rollback / uninstall lifecycle | Safe lifecycle management must preserve projects, evidence, models, credentials and rollback anchors according to explicit owner choices |
 
-The intended sequence after the current A8 gate is:
+The current release sequence is:
 
 ```text
-A8 Session continuity
-  -> A7 Copilot qualification when capability is available
-  -> I1-I6 IDE Session Control
-  -> U1 Control Center
-  -> D1 Guided installer / first run
-  -> D2 Upgrade / repair / rollback / uninstall
-  -> A9 Production hardening + full E2E
-  -> v1.0 production release
+OH1 R4 live lifecycle recovery
+  -> P7 primary IDE live closure and final acceptance
+  -> D1/D2 product lifecycle (P9) review/integration
+  -> SH-01..SH-15 security hardening
+  -> deferred provider-live gates (including A7) when real qualification capability exists
+  -> P10/A9 production qualification + complete E2E
+  -> P11 v1.0 release/promotion
 ```
 
 A7 may remain deferred while there is genuinely no qualification capability, but **A9 is not authorized to close around that absence**. Any future sequencing adjustment remains an owner decision.
@@ -1066,13 +1065,13 @@ post-remediation source/runtime present; complete live O1 acceptance matrix stil
 
 | Gate | Purpose | Status |
 |---|---|---|
-| I0 | Common authority/security contract | Design documented |
-| I1 | Kiro | Not started |
-| I2 | VS Code | Architecture B feasibility proven; production adapter not started |
-| I3 | Cursor | Not started |
-| I4 | Visual Studio | Secondary feasibility |
-| I5 | Antigravity | Secondary feasibility |
-| I6 | Concurrency/recovery/hardening | Not started; required before production |
+| I0 | Common authority/security contract | B1-B9 source foundation closed; final production acceptance remains tied to primary live targets |
+| I1 | Kiro | Owner objective reconciled: governed Kiro CLI/ACP source path implemented; direct built-in-chat control unsupported/non-goal; provider-backed live acceptance deferred |
+| I2 | VS Code | Source implemented/converged; final Remote-WSL/model-access live re-verification open |
+| I3 | Cursor | Source implemented/converged; live qualification blocked until an authorized Cursor environment exists |
+| I4 | Visual Studio | Deferred secondary feasibility; non-blocking |
+| I5 | Antigravity | Deferred secondary feasibility; non-blocking |
+| I6 | Concurrency/recovery/hardening | Source/adversarial hardening implemented/converged; final live closure open |
 
 ---
 

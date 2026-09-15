@@ -861,7 +861,7 @@ This is deliberately **not** the same as claiming that a completely empty machin
 | A5 | Kiro sandbox implementation | ✅ Complete |
 | A6 | Diff / guarded apply / discard + evidence lifecycle | ✅ Complete |
 | A7 | GitHub Copilot backend | ⏸️ Deferred until real qualification capability exists, but **required before A9** |
-| A8 | Session continuity | ⏭️ Next active Agent Control Plane gate |
+| A8 | Session continuity | ✅ Source/continuity acceptance complete; provider-backed live qualification remains separate |
 | A9 | Production hardening + complete E2E | 📋 Not started; gated on the pre-production productization program below |
 
 ## Required before production hardening
@@ -869,7 +869,7 @@ This is deliberately **not** the same as claiming that a completely empty machin
 The owner has frozen a productization rule: **A9 hardens the release product, not an operator-only intermediate build.** Before A9 may begin, QuaranGate must close:
 
 1. **A7 — GitHub Copilot backend** once real subscription/test capability is available.
-2. **I1-I6 — IDE Session Control**, including production adapters plus concurrency/recovery/live-writer arbitration.
+2. **I1-I6 — IDE Session Control**, using only supported machine-facing paths: VS Code/Cursor companion source plus concurrency/recovery/live-writer arbitration, and the owner-reconciled Kiro CLI/ACP architecture rather than unsupported built-in Kiro chat control. I4 Visual Studio and I5 Antigravity remain secondary non-blocking feasibility targets.
 3. **U1 — QuaranGate Control Center**, a nontechnical GUI designed after a fresh forensic audit of the then-current repository/capabilities.
 4. **D1 — Guided installer and first-run setup**, providing click-install deployment with explicit owner choices.
 5. **D2 — Upgrade / repair / rollback / uninstall lifecycle**, proving safe ongoing product ownership after installation.
@@ -877,10 +877,11 @@ The owner has frozen a productization rule: **A9 hardens the release product, no
 Current intended path:
 
 ```text
-A8 -> A7 -> I1-I6 -> U1 -> D1 -> D2 -> A9 -> v1.0
+OH1 R4 live recovery -> P7 live closure -> D1/D2 (P9) -> SH-01..SH-15
+-> deferred provider-live gates when real capability exists -> P10/A9 -> P11/v1.0
 ```
 
-A8 remains the immediate next core gate. A7's current lack of test capability does not authorize skipping it at production closeout.
+A8 source/continuity work and U1 are already accepted. A7 and other provider-backed live gates remain mandatory before production closeout when real subscription/test capability becomes available; their current external block does not justify fabricated acceptance.
 
 See [Control Center](docs/frontend/CONTROL_CENTER.md) and [Installer Productization](docs/operations/INSTALLER_PRODUCTIZATION.md).
 
