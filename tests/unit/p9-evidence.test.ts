@@ -3,6 +3,10 @@ import { createLifecycleEvidence } from '../../src/lifecycle/evidence.js';
 
 describe('P9 bounded lifecycle evidence', () => {
   it('records only bounded identities and redacts common credential shapes', () => {
+    // Construct token-shaped sentinels at runtime so the repository never stores
+    // a static credential-looking value while still exercising the redactor.
+    const fakeGithubToken = `ghp_${'a'.repeat(24)}`;
+    const fakeApiToken = `sk-${'b'.repeat(24)}`;
     const evidence = createLifecycleEvidence({
       operationId: 'op-evidence-001',
       action: 'UPGRADE',
@@ -10,14 +14,14 @@ describe('P9 bounded lifecycle evidence', () => {
       planDigest: 'a'.repeat(64),
       productVersion: '0.2.0',
       errorCode: 'UPGRADE_FAILED',
-      detail: 'authorization: Bearer raw-token token=secret-value ghp_abcdefghijklmnopqrstuvwxyz123456 sk-abcdefghijklmnopqrstuvwxyz',
+      detail: `authorization: Bearer raw-token token=secret-value ${fakeGithubToken} ${fakeApiToken}`,
       paths: ['/var/lib/quarangate/config', '/var/lib/quarangate/state'],
     });
     const json = JSON.stringify(evidence);
     expect(json).not.toContain('raw-token');
     expect(json).not.toContain('secret-value');
-    expect(json).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz123456');
-    expect(json).not.toContain('sk-abcdefghijklmnopqrstuvwxyz');
+    expect(json).not.toContain(fakeGithubToken);
+    expect(json).not.toContain(fakeApiToken);
     expect(evidence.paths.every((path) => path.identityDigest.match(/^[0-9a-f]{64}$/u))).toBe(true);
     expect(evidence.paths.map((path) => path.label)).toEqual(['config', 'state']);
   });
