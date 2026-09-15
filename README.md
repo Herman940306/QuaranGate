@@ -160,7 +160,7 @@ These boundaries are intentional and should be read as part of the product, not 
 | Raw Docker API exposed to MCP clients | **Not supported** |
 | Automatic application of agent-generated changes | **Not supported** |
 | Automatic cloud fallback | **Not supported** |
-| GitHub Copilot production backend | **Source implemented/current-line qualification in progress; live provider acceptance owner-deferred — A7; required before A9** |
+| GitHub Copilot production backend | **Source accepted on current line; live provider acceptance owner-deferred — A7; required before A9** |
 | Session resume/continuity | **Next active Agent Control Plane gate — A8** |
 | Full production hardening program | **Roadmap — A9; blocked until A7, I1-I6, U1, D1 and D2 close** |
 | Production IDE Session Control adapter | **Roadmap / qualification program** |
@@ -868,7 +868,7 @@ This is deliberately **not** the same as claiming that a completely empty machin
 
 The owner has frozen a productization rule: **A9 hardens the release product, not an operator-only intermediate build.** Before A9 may begin, QuaranGate must close:
 
-1. **A7 — GitHub Copilot backend** source qualification/integration now; live provider qualification once real subscription/test capability is available.
+1. **A7 — GitHub Copilot backend** source accepted/integrated on the current line; live provider qualification once real subscription/test capability is available.
 2. **I1-I6 — IDE Session Control**, using only supported machine-facing paths: VS Code/Cursor companion source plus concurrency/recovery/live-writer arbitration, and the owner-reconciled Kiro CLI/ACP architecture rather than unsupported built-in Kiro chat control. I4 Visual Studio and I5 Antigravity remain secondary non-blocking feasibility targets.
 3. **U1 — QuaranGate Control Center**, a nontechnical GUI designed after a fresh forensic audit of the then-current repository/capabilities.
 4. **D1 — Guided installer and first-run setup**, providing click-install deployment with explicit owner choices.

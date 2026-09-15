@@ -2,7 +2,7 @@
 
 ## Verdict
 
-`SOURCE_CANDIDATE_IMPLEMENTED / OWNER_AUTHORIZED_SELF_AUDIT_IN_PROGRESS / LIVE_PROVIDER_QUALIFICATION_DEFERRED`
+`OWNER_AUTHORIZED_SELF_AUDIT_PASS / SOURCE_ACCEPTED / LIVE_PROVIDER_QUALIFICATION_DEFERRED`
 
 This current-line lane implements a real, fail-closed, **read-only** GitHub Copilot CLI ACP backend on top of canonical `5928e226b6d4cfb9be5f5286b7a6b185dae85496`. It does not claim a live Copilot provider PASS, writer support, or production qualification. Herman's current Copilot entitlement/test capability remains inactive; live A7/P5 qualification therefore remains an external gate.
 
@@ -177,7 +177,9 @@ The historical A7 patch was **not** accepted unchanged. Current-line audit/remed
 12. preserve explicitly configured Copilot overlay across owner-host start/health/acceptance/deploy/rollback;
 13. keep operator config/example docs aligned with current implement/read-only semantics.
 
-This source is being reviewed under Herman's standing owner-authorized strict self-audit exception. It must be labeled `OWNER_AUTHORIZED_SELF_AUDIT_PASS` only after immutable freeze and post-commit reproduction; it is **not** an independent review.
+This source was reviewed under Herman's standing owner-authorized strict self-audit exception and is accepted as `OWNER_AUTHORIZED_SELF_AUDIT_PASS`; it is **not** an independent review.
+
+Immutable implementation commit: `bb736c8fde2aaa4cb5f701617042ed19bb034ea6`, parent canonical `5928e226b6d4cfb9be5f5286b7a6b185dae85496`, subject `feat(a7): integrate governed copilot backend`, exactly 20 paths. Frozen/post-commit receipts: patch SHA-256 `583b9641811053bbee440c260b8f7c5431be23230e6b8ceb8746e512b3c9262b`; path/status SHA-256 `45ee445cc6a334f4fe4c122228e96db1669b482eb48a6152a13e0b2da45af9e4`; content-manifest SHA-256 `85c84528aedacb4b8c9c9257029a3a9401fe76b882faa7b3a95b7771c8494e5b`. Post-commit replay: `354/354` widened focused PASS, `99/99` full unit files / `2692/2692` tests PASS, typecheck PASS, build PASS, commit diff-check PASS. Worktree clean after dependency-symlink cleanup.
 
 ## Current modified path set
 

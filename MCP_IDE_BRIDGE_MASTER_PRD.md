@@ -257,7 +257,7 @@ A test count, verdict or architectural statement that was true at one checkpoint
 | Governed offline npm source build | **Available** | Lock-scoped bundle; canonical lock; source build network `none` |
 | O1 local Ollama backend | **Production deployed; full post-remediation acceptance pending** | Read-only local backend; source reliability/tooling fixes deployed, complete live matrix still required |
 | GitHub App Control Plane | **Deployed candidate; closeout human-gated** | 17 tools; no merge; statuses-only checks; `JustAGameZA` requires All repositories; source promotion blocked |
-| GitHub Copilot backend | **Source implemented/current-line qualification in progress; live provider acceptance owner-deferred, required before A9** | A7 |
+| GitHub Copilot backend | **Source accepted on current line; live provider acceptance owner-deferred, required before A9** | A7 |
 | Session continuity | **Available / source accepted** | A8 continuity and recovery source is integrated; provider-backed live qualification remains separate |
 | IDE Session Control | **Source substantially implemented / live closure open** | B1-B9, I2/I3 source and I6 hardening are converged; Kiro uses the owner-approved ACP path; primary live gates remain explicit |
 
@@ -1011,7 +1011,7 @@ The accepted offline build procedure is recorded in `docs/operations/OPERATIONS.
 | A4 | Kiro ACP read-only | Complete |
 | A5 | Kiro sandbox implementation | Complete |
 | A6 | Diff / apply / discard / retained-resource lifecycle | Complete |
-| A7 | GitHub Copilot backend | Source implementation proceeds without entitlement; live qualification owner-deferred until real test capability exists and **required before A9** |
+| A7 | GitHub Copilot backend | Source accepted without entitlement; live qualification owner-deferred until real test capability exists and **required before A9** |
 | A8 | Session continuity | Next active Agent Control Plane gate |
 | A9 | Production hardening + full E2E | Not started; may begin only after the pre-production productization gates below close |
 
