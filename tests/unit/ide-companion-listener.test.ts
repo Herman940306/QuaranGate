@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -297,6 +298,66 @@ describe('P7 B6 authenticated AF_UNIX listener foundation', () => {
     expect(ready).toMatchObject({ version: 1, type: 'ready', sessionId: started.hello.sessionId, connectionGeneration: 1 });
     expect(store.getEnrollment(ctx.enrollment.enrollmentId)?.currentGeneration).toBe(1);
     expect(store.getSession(started.hello.sessionId)?.state).toBe('AVAILABLE');
+  });
+
+  it('reclaims only an exact owner-only orphaned Unix socket left by abrupt process death', async () => {
+    const ctx = setup();
+    const child = spawn(process.execPath, ['--input-type=commonjs', '-e', `
+      const { chmodSync } = require('node:fs');
+      const { createServer } = require('node:net');
+      const path = process.argv[1];
+      const server = createServer();
+      server.on('error', (error) => { console.error(error.code || error.message); process.exit(2); });
+      server.listen(path, () => { chmodSync(path, 0o600); });
+      setInterval(() => undefined, 1000);
+    `, ctx.runtime.socketPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let childStderr = '';
+    child.stderr!.on('data', (chunk) => { childStderr += chunk.toString('utf8'); });
+    try {
+      let ready = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (child.exitCode !== null || child.signalCode !== null) break;
+        if (existsSync(ctx.runtime.socketPath)) {
+          const info = lstatSync(ctx.runtime.socketPath);
+          if (info.isSocket() && (info.mode & 0o777) === 0o600) { ready = true; break; }
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
+      if (!ready) throw new Error(`orphan socket helper did not become ready: ${childStderr.trim() || 'no child diagnostic'}`);
+      const occupied = lstatSync(ctx.runtime.socketPath);
+      expect(occupied.isSocket()).toBe(true);
+      expect(occupied.mode & 0o777).toBe(0o600);
+      child.kill('SIGKILL');
+      await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      expect(existsSync(ctx.runtime.socketPath)).toBe(true);
+      expect(lstatSync(ctx.runtime.socketPath).isSocket()).toBe(true);
+
+      listener = new IdeCompanionListener({ store, runtime: ctx.runtime, nowMs: () => nowMs, challengeBytes: () => Buffer.alloc(32, 0x42) });
+      await listener.start();
+      const rebound = lstatSync(ctx.runtime.socketPath);
+      expect(rebound.isSocket()).toBe(true);
+      expect(rebound.mode & 0o777).toBe(0o600);
+      expect(rebound.ino).not.toBe(occupied.ino);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+  });
+
+  it('refuses a live owner-only socket and never unlinks the occupied endpoint', async () => {
+    const ctx = setup();
+    const occupied = createServer();
+    await new Promise<void>((resolve, reject) => {
+      occupied.once('error', reject);
+      occupied.listen(ctx.runtime.socketPath, () => { occupied.off('error', reject); resolve(); });
+    });
+    chmodSync(ctx.runtime.socketPath, 0o600);
+    const inode = lstatSync(ctx.runtime.socketPath).ino;
+    listener = new IdeCompanionListener({ store, runtime: ctx.runtime, nowMs: () => nowMs, challengeBytes: () => Buffer.alloc(32, 0x42) });
+    await expect(listener.start()).rejects.toMatchObject({ code: 'IDE_LISTENER_SOCKET_EXISTS' });
+    expect(occupied.listening).toBe(true);
+    expect(existsSync(ctx.runtime.socketPath)).toBe(true);
+    expect(lstatSync(ctx.runtime.socketPath).ino).toBe(inode);
+    await new Promise<void>((resolve) => occupied.close(() => resolve()));
   });
 
   it('does not mutate Plane-B state for hello alone or for an invalid MAC', async () => {

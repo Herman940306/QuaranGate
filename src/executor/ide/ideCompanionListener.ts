@@ -22,8 +22,8 @@ import {
 } from '../../shared/ideCompanionRemoteTransport.js';
 import { BridgeError } from '../../shared/errors.js';
 import type { AgentJobStore } from '../agents/jobStore.js';
-import { existsSync, lstatSync, rmSync } from 'node:fs';
-import { createServer, type Server, type Socket } from 'node:net';
+import { existsSync, lstatSync, rmSync, unlinkSync } from 'node:fs';
+import { connect, createServer, type Server, type Socket } from 'node:net';
 import {
   IDE_COMPANION_HANDSHAKE_MAX_FRAME_BYTES,
   IDE_COMPANION_HANDSHAKE_MAX_LIFETIME_MS,
@@ -146,6 +146,54 @@ function currentUid(): number {
   return process.getuid();
 }
 
+const IDE_COMPANION_STALE_SOCKET_PROBE_TIMEOUT_MS = 500;
+
+function socketExistsError(): IdeCompanionListenerError {
+  return new IdeCompanionListenerError('IDE_LISTENER_SOCKET_EXISTS', 'IDE companion socket path already exists');
+}
+
+async function reclaimOrphanedSocketIfSafe(path: string): Promise<void> {
+  if (!existsSync(path)) return;
+
+  let before;
+  try { before = lstatSync(path); } catch { throw socketExistsError(); }
+  if (!before.isSocket() || before.isSymbolicLink() || before.uid !== currentUid() || (before.mode & 0o777) !== 0o600) {
+    throw socketExistsError();
+  }
+
+  const disposition = await new Promise<'LIVE'|'STALE'|'GONE'|'UNKNOWN'>((resolve) => {
+    const probe = connect(path);
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (value: 'LIVE'|'STALE'|'GONE'|'UNKNOWN'): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      probe.removeAllListeners();
+      probe.destroy();
+      resolve(value);
+    };
+    timer = setTimeout(() => finish('UNKNOWN'), IDE_COMPANION_STALE_SOCKET_PROBE_TIMEOUT_MS);
+    probe.once('connect', () => finish('LIVE'));
+    probe.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ECONNREFUSED') finish('STALE');
+      else if (error.code === 'ENOENT') finish('GONE');
+      else finish('UNKNOWN');
+    });
+  });
+
+  if (disposition === 'GONE') return;
+  if (disposition !== 'STALE') throw socketExistsError();
+
+  let after;
+  try { after = lstatSync(path); } catch { return; }
+  if (!after.isSocket() || after.isSymbolicLink() || after.uid !== before.uid || after.gid !== before.gid
+    || after.dev !== before.dev || after.ino !== before.ino || (after.mode & 0o777) !== 0o600) {
+    throw socketExistsError();
+  }
+  unlinkSync(path);
+}
+
 function publicCode(error: unknown): string {
   if (error instanceof IdeCompanionHandshakeError) return error.code;
   if (error instanceof IdeCompanionOperationProtocolError) return error.code;
@@ -248,9 +296,7 @@ export class IdeCompanionListener {
     // The actual request path still re-reads the credential again per attest.
     const startupMaterial = readIdeCompanionSecret(this.opts.runtime);
     startupMaterial.secret.fill(0);
-    if (existsSync(this.opts.runtime.socketPath)) {
-      throw new IdeCompanionListenerError('IDE_LISTENER_SOCKET_EXISTS', 'IDE companion socket path already exists');
-    }
+    await reclaimOrphanedSocketIfSafe(this.opts.runtime.socketPath);
     // B9.3 opt-in execution turns listener startup into a recovery boundary.
     // Do this only after proving the endpoint path is not already occupied and
     // before accepting any new connection.

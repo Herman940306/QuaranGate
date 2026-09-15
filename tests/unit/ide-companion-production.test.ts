@@ -1,5 +1,6 @@
+import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import YAML from 'yaml';
@@ -85,6 +86,53 @@ describe('P7 I2 IDE companion production composition', () => {
     expect(second.bootstrapBindings[0]!.credentialPath).toBe(credentialPath);
     expect(readFileSync(credentialPath, 'utf8')).toBe(credentialBefore);
     await second.stop();
+  });
+
+  it('recovers production startup after an abrupt process death leaves the exact owner-only Unix socket orphaned', async () => {
+    const l = tempLayout(); writeConfig(l.configPath);
+    const first = await startIdeCompanionProduction({ configPath: l.configPath, databasePath: l.databasePath, runtimeRoot: l.runtimeRoot });
+    const credentialPath = first.bootstrapBindings[0]!.credentialPath;
+    const credentialBefore = readFileSync(credentialPath, 'utf8');
+    const socketPath = join(l.runtimeRoot, entry().runtimeInstanceId as string, 'companion.sock');
+    await first.stop();
+
+    const child = spawn(process.execPath, ['--input-type=commonjs', '-e', `
+      const { chmodSync } = require('node:fs');
+      const { createServer } = require('node:net');
+      const path = process.argv[1];
+      const server = createServer();
+      server.on('error', (error) => { console.error(error.code || error.message); process.exit(2); });
+      server.listen(path, () => chmodSync(path, 0o600));
+      setInterval(() => undefined, 1000);
+    `, socketPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let childStderr = '';
+    child.stderr!.on('data', (chunk) => { childStderr += chunk.toString('utf8'); });
+    try {
+      let ready = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (child.exitCode !== null || child.signalCode !== null) break;
+        if (existsSync(socketPath)) {
+          const info = lstatSync(socketPath);
+          if (info.isSocket() && (info.mode & 0o777) === 0o600) { ready = true; break; }
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
+      if (!ready) throw new Error(`orphan socket helper did not become ready: ${childStderr.trim() || 'no child diagnostic'}`);
+      const orphan = lstatSync(socketPath);
+      child.kill('SIGKILL');
+      await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      expect(existsSync(socketPath)).toBe(true);
+
+      const second = await startIdeCompanionProduction({ configPath: l.configPath, databasePath: l.databasePath, runtimeRoot: l.runtimeRoot });
+      const rebound = lstatSync(socketPath);
+      expect(rebound.isSocket()).toBe(true);
+      expect(rebound.mode & 0o777).toBe(0o600);
+      expect(rebound.ino).not.toBe(orphan.ino);
+      expect(readFileSync(credentialPath, 'utf8')).toBe(credentialBefore);
+      await second.stop();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
   });
 
   it('stales a previously live session before a restarted listener becomes available', async () => {
