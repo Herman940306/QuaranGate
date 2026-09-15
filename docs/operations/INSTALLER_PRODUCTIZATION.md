@@ -1,6 +1,6 @@
 # QuaranGate Installer & Lifecycle Productization — D1/D2
 
-**Status:** Source remediation implemented and fully validated in the isolated P9 review-remediation lane; immutable freeze/current-canonical integration are pending. Signed Windows release packaging and live production qualification remain pending.
+**Status:** Source remediation frozen and accepted under the owner-authorized strict self-audit exception; current-canonical integration is pending. Signed Windows release packaging and live production qualification remain pending.
 
 **Roadmap role:** D1 and D2 must close before A9 production hardening begins.
 

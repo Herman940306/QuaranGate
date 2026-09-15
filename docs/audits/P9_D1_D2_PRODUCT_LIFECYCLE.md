@@ -235,3 +235,30 @@ Source remediation validation is complete but this document does not claim final
 - trusted signed Windows package build using the owner release-signing credential/toolchain;
 - live Windows/WSL fresh-install, repair, upgrade, rollback, uninstall/reinstall and interruption-recovery rehearsal;
 - P10/A9 and P11 release qualification.
+
+## Owner-authorized source acceptance receipt
+
+Verdict: `OWNER_AUTHORIZED_SELF_AUDIT_PASS / P9_SOURCE_REMEDIATION_ACCEPTED`.
+
+This verdict is deliberately not labeled independent review. It applies to source remediation only and does not claim signed-Windows-package or live production lifecycle acceptance.
+
+Immutable remediation source:
+
+- commit: `3464847df8704aa4a55d65f7a76a68e600af4644`;
+- parent: `22f15cf6a9c1d192b9554d3572b011da7d276f26`;
+- subject: `fix(p9): harden lifecycle release remediation`;
+- patch SHA-256: `e29f20a796cf0a7bbecb8c34273cbe2cdc332179abac814d1d525d538cab7be2`;
+- path/status SHA-256: `c078d51143f3f1213e64af0da7bccc2cfb3d8dabfaf22f7c67ec9956c92bb3ff`;
+- content-manifest SHA-256: `8ba606fda0173d28da9a428864a99a11f9334204077c0c7b29ad10c3382b73bf`;
+- remediation path count: `11`.
+
+Immutable replay on that exact commit:
+
+- all P9 unit/integration: `92/92 PASS` across `9/9` files;
+- repository full unit: `2673/2673 PASS` across `99/99` files;
+- typecheck: PASS;
+- build: PASS;
+- commit diff-check: PASS;
+- temporary dependency symlink removed after validation; worktree clean; staging empty.
+
+Next source gate: transplant the complete P9 chain onto the then-current accepted canonical source and repeat integration validation before canonical promotion.
