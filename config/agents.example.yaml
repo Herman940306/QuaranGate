@@ -21,8 +21,8 @@ backends:
     # configuration belongs to the backend adapter phase (A4).
 
   - id: copilot
-    enabled: false                       # transport decision deferred to A7
-    profiles: [audit, review]
+    enabled: false                       # A7 governed ACP source; live entitlement qualification deferred
+    profiles: [audit, plan, review]      # read-only only; implement/writer remains refused
     defaultResourcePolicy: economy
 
   # O1 Ollama read-only backend. Disabled by default (safe deployable state).

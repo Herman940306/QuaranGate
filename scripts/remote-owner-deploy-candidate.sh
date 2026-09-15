@@ -43,6 +43,18 @@ fi
 # Exact pre-GitHub composition used to restore a first-enable rollback.
 BASE_QG_FILES=("${QG_FILES[@]}")
 
+# A7 Copilot is executor-only. If runtime configuration already enables it,
+# rollback retains the MAIN_ROOT overlay while candidate deployment validates
+# and uses the candidate overlay.
+copilot_expected=0
+if grep -Eq '^AGENT_COPILOT_RUNNER_IMAGE=.+$' "$RUNTIME_ENV"; then copilot_expected=1; fi
+if [[ "$copilot_expected" == 1 ]]; then
+  [[ -f "$MAIN_ROOT/compose.copilot.yaml" ]] || fail 'Copilot is configured but runtime compose.copilot.yaml is missing'
+  [[ -f "$REPO_ROOT/compose.copilot.yaml" ]] || fail 'Copilot is configured but candidate compose.copilot.yaml is missing'
+  BASE_QG_FILES+=(-f "$MAIN_ROOT/compose.copilot.yaml")
+  QG_FILES+=(-f "$REPO_ROOT/compose.copilot.yaml")
+fi
+
 github_expected=0
 if [[ -f "$MAIN_ROOT/config/github.yaml" ]]; then github_expected=1; fi
 if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-broker --format '{{.ID}}' | grep -q .; then github_expected=1; fi

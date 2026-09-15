@@ -119,6 +119,10 @@ export interface AcpDriverOptions {
   model: string;
   /** Extra acp flags appended verbatim (trusted; e.g. `--agent-engine v2`). */
   extraAcpArgs?: string[];
+  /** Complete provider-specific ACP argv from trusted runner policy only. */
+  acpArgs?: string[];
+  /** Bounded provider label used only in process-exit diagnostics. */
+  processLabel?: string;
   maxProtocolBytes?: number;
   maxStderrBytes?: number;
 }
@@ -229,11 +233,13 @@ export class AcpDriver extends EventEmitter {
   buildArgs(): string[] {
     return [
       ...(this.opts.commandPrefixArgs ?? []),
-      'acp',
-      '--agent', this.opts.agent,
-      '--model', this.opts.model,
-      '--trust-tools', this.opts.trustTools,
-      ...(this.opts.extraAcpArgs ?? []),
+      ...(this.opts.acpArgs ?? [
+        'acp',
+        '--agent', this.opts.agent,
+        '--model', this.opts.model,
+        '--trust-tools', this.opts.trustTools,
+        ...(this.opts.extraAcpArgs ?? []),
+      ]),
     ];
   }
 
@@ -254,7 +260,8 @@ export class AcpDriver extends EventEmitter {
       this.dead = true;
       this.exitCode = code;
       this.exitSignal = signal as string | null;
-      this.rejectAllPending(new Error(`kiro-cli exited (code=${code}, signal=${signal})`));
+      const label = this.opts.processLabel ?? 'kiro-cli';
+      this.rejectAllPending(new Error(`${label} exited (code=${code}, signal=${signal})`));
       this.emit('exit', code, signal);
     });
     this.proc.on('error', (err) => {

@@ -74,6 +74,26 @@ describe('remote owner projects-work hard boundary', () => {
     }
   });
 
+  it('preserves an explicitly configured Copilot overlay across unattended start, health, and infra acceptance', () => {
+    for (const name of ['remote-owner-start.sh', 'remote-owner-health.sh', 'remote-owner-infra-acceptance.sh']) {
+      const script = readFileSync(join(root, 'scripts', name), 'utf8');
+      expect(script, name).toContain("AGENT_COPILOT_RUNNER_IMAGE");
+      expect(script, name).toContain('compose.copilot.yaml');
+      expect(script, name).toContain("Copilot is configured but compose.copilot.yaml is missing");
+      expect(script, name).toContain('QG_FILES+=(-f "$copilot_overlay")');
+    }
+  });
+
+  it('candidate deployment uses candidate Copilot source while rollback retains the runtime overlay', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain("AGENT_COPILOT_RUNNER_IMAGE");
+    expect(script).toContain('[[ -f "$MAIN_ROOT/compose.copilot.yaml" ]]');
+    expect(script).toContain('[[ -f "$REPO_ROOT/compose.copilot.yaml" ]]');
+    expect(script).toContain('BASE_QG_FILES+=(-f "$MAIN_ROOT/compose.copilot.yaml")');
+    expect(script).toContain('QG_FILES+=(-f "$REPO_ROOT/compose.copilot.yaml")');
+    expect(script).not.toMatch(/DEPLOY_SERVICES=.*copilot/);
+  });
+
   it('candidate validator resolves live config correctly from either main or a linked worktree', () => {
     const script = readFileSync(join(root, 'scripts', 'remote-owner-candidate-validate.sh'), 'utf8');
     expect(script).toContain('MAIN_ROOT="$ROOT"');

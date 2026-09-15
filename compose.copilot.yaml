@@ -1,0 +1,21 @@
+# A7 optional Copilot executor overlay. Source/config only; does not enable
+# Copilot in agents.yaml, build/pull images, or grant network destinations.
+services:
+  executor:
+    environment:
+      AGENT_COPILOT_RUNNER_IMAGE: "${AGENT_COPILOT_RUNNER_IMAGE:?set pinned Copilot runner image}"
+      AGENT_COPILOT_HELPER_IMAGE: "${AGENT_COPILOT_HELPER_IMAGE:?set pinned helper image}"
+      AGENT_COPILOT_KEY_PATH: "/run/secrets/copilot-github-token"
+      AGENT_COPILOT_MODEL: "${AGENT_COPILOT_MODEL:?set trusted Copilot model}"
+      AGENT_COPILOT_EGRESS_HOSTS: "${AGENT_COPILOT_EGRESS_HOSTS:?set owner-approved exact hostnames}"
+      AGENT_COPILOT_DRY_RUN: "${AGENT_COPILOT_DRY_RUN:-false}"
+    secrets:
+      - source: copilot_github_token
+        target: copilot-github-token
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+
+secrets:
+  copilot_github_token:
+    file: "${AGENT_COPILOT_KEY_FILE:?set host Copilot credential file}"

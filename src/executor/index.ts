@@ -20,13 +20,17 @@ import { resolveExecutorStartupPolicy } from './startupPolicy.js';
 import { validateImageRef } from '../shared/imageRef.js';
 import { checkReadiness } from './readiness.js';
 import { AgentJobStore } from './agents/jobStore.js';
-import { AgentJobEngine, type AgentBackendAdapter, type EvidenceReaderFactory } from './agents/jobEngine.js';
+import { AgentJobEngine, type AgentBackendAdapter, type EvidenceReaderFactory, type ResolvedSessionContext } from './agents/jobEngine.js';
 import { createDockerEvidenceReader } from './agents/artifactReader.js';
 import { registerAgentRoutes } from './agents/routes.js';
 import { RunnerSandbox } from './agents/sandboxRunner.js';
 import { CredentialManager } from './agents/credentialManager.js';
 import { createKiroBackendFactory } from './agents/kiroFactory.js';
 import { createOllamaBackendFactory } from './agents/ollamaFactory.js';
+import { createCopilotBackendFactory } from './agents/copilotFactory.js';
+import { CopilotCredentialManager } from './agents/copilotCredentialManager.js';
+import { resolveCopilotStartupPolicy } from './copilotConfig.js';
+import { composeRuntimeBackendFactories, type RuntimeBackendFactory } from './agents/backendFactoryChain.js';
 import { Ollama } from 'ollama';
 import { createDockerApplierIO } from './agents/applyEngine.js';
 import { runStartupEvidenceLifecycle } from './agents/evidenceCollector.js';
@@ -76,6 +80,15 @@ const EXPLICIT_HELPER_IMAGE = process.env.AGENT_HELPER_IMAGE ?? '';
 const EXPLICIT_STAGER_IMAGE = process.env.AGENT_STAGER_IMAGE ?? '';
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? '';
 const OLLAMA_MODEL_QUALIFIER = process.env.OLLAMA_MODEL_QUALIFIER ?? '';
+
+// A7 Copilot: trusted executor startup configuration only. No defaults grant
+// provider/network/credential authority; a disabled backend requires none.
+const COPILOT_RUNNER_IMAGE = process.env.AGENT_COPILOT_RUNNER_IMAGE ?? '';
+const COPILOT_HELPER_IMAGE = process.env.AGENT_COPILOT_HELPER_IMAGE ?? '';
+const COPILOT_KEY_PATH = process.env.AGENT_COPILOT_KEY_PATH ?? '';
+const COPILOT_MODEL = process.env.AGENT_COPILOT_MODEL ?? '';
+const COPILOT_EGRESS_HOSTS = process.env.AGENT_COPILOT_EGRESS_HOSTS ?? '';
+const COPILOT_DRY_RUN = process.env.AGENT_COPILOT_DRY_RUN ?? '';
 
 // GitHub App control plane (optional, fail closed when not configured).
 const GITHUB_CONFIG = process.env.GITHUB_CONFIG ?? '/config/github.yaml';
@@ -308,6 +321,7 @@ let server: ReturnType<typeof app.listen>;
     loadedAgentConfig = agentConfig;
 
     const ollamaBackend = agentConfig.backends.find((b) => b.id === 'ollama');
+    const copilotBackend = agentConfig.backends.find((b) => b.id === 'copilot');
     const startupPolicy = resolveExecutorStartupPolicy(ollamaBackend?.enabled === true, {
       agentRunnerImage: RUNNER_IMAGE,
       agentHelperImage: EXPLICIT_HELPER_IMAGE,
@@ -316,6 +330,19 @@ let server: ReturnType<typeof app.listen>;
       ollamaModelQualifier: OLLAMA_MODEL_QUALIFIER,
     });
     const kiroHelperImage = startupPolicy.kiroHelperImage;
+    const copilotPolicy = resolveCopilotStartupPolicy(
+      copilotBackend?.enabled === true,
+      copilotBackend?.profiles ?? [],
+      {
+        runnerImage: COPILOT_RUNNER_IMAGE,
+        helperImage: COPILOT_HELPER_IMAGE,
+        proxyImage: PROXY_IMAGE,
+        credentialPath: COPILOT_KEY_PATH,
+        model: COPILOT_MODEL,
+        egressHosts: COPILOT_EGRESS_HOSTS,
+        dryRun: COPILOT_DRY_RUN,
+      },
+    );
 
     // Step 1: construct + migrate DB.
     agentStore = new AgentJobStore(JOBS_DB);
@@ -334,14 +361,16 @@ let server: ReturnType<typeof app.listen>;
     // set into AgentJobEngine, so an explicitly requested provider that is not
     // wired fails closed and can never silently execute the deterministic fake.
     let backendFactory:
-      | ((job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null)
+      | ((job: AgentJobRow, policy: AgentResourcePolicy, session?: ResolvedSessionContext) => AgentBackendAdapter | null)
       | undefined;
     let kiroEnabled = false;
     let ollamaEnabled = false;
+    let copilotEnabled = false;
     const runtimeAvailableBackends = new Set<string>();
 
-    // Build composed factory chain (Ollama → Kiro → null)
-    const factories: Array<(job: AgentJobRow, policy: AgentResourcePolicy) => AgentBackendAdapter | null> = [];
+    // Build composed factory chain. Session context is forwarded intact so A8
+    // restoration semantics cannot be lost by composition.
+    const factories: RuntimeBackendFactory[] = [];
 
     if (startupPolicy.ollama.enabled) {
       if (!ollamaSandbox) {
@@ -358,6 +387,39 @@ let server: ReturnType<typeof app.listen>;
       factories.push(ollamaFactory);
       ollamaEnabled = true;
       runtimeAvailableBackends.add('ollama');
+    }
+
+    if (copilotPolicy.enabled) {
+      let runnerImageId: string;
+      let helperImageId: string;
+      let proxyImageId: string;
+      try {
+        [runnerImageId, helperImageId, proxyImageId] = await Promise.all([
+          inspectImage(copilotPolicy.runnerImage).then((image) => image.Id),
+          inspectImage(copilotPolicy.helperImage).then((image) => image.Id),
+          inspectImage(copilotPolicy.proxyImage).then((image) => image.Id),
+        ]);
+      } catch {
+        throw new BridgeError('PRECONDITION_FAILED', 'Copilot runtime image is not available locally', 503);
+      }
+      const copilotCredentialManager = new CopilotCredentialManager({
+        credentialPath: copilotPolicy.credentialPath,
+        helperImage: helperImageId,
+      });
+      copilotCredentialManager.verifyCredentialFile();
+      const copilotSandbox = new RunnerSandbox({ image: helperImageId });
+      factories.push(createCopilotBackendFactory(agentConfig.projects, copilotPolicy.model, {
+        runnerImage: runnerImageId,
+        helperImage: helperImageId,
+        proxyImage: proxyImageId,
+        proxyCmd: ['node', '/app/dist/executor/agents/egressProxyMain.js'],
+        egressHosts: copilotPolicy.egressHosts,
+        credentialManager: copilotCredentialManager,
+        sandbox: copilotSandbox,
+        dryRun: copilotPolicy.dryRun,
+      }));
+      copilotEnabled = true;
+      runtimeAvailableBackends.add('copilot');
     }
 
     if (startupPolicy.runnerImage && PROXY_IMAGE && KIRO_KEY_PATH) {
@@ -381,36 +443,12 @@ let server: ReturnType<typeof app.listen>;
       runtimeAvailableBackends.add('kiro');
     }
 
-    // Compose factories: try each real adapter in order. AgentJobEngine also
-    // receives runtimeAvailableBackends and treats any missing/null real adapter
-    // as PRECONDITION_FAILED in production.
+    // Compose factories with the exact A8 session context preserved. The engine
+    // independently fails closed if a runtime-enabled backend returns null.
     if (factories.length > 0) {
-      backendFactory = (job, policy) => {
-        // Explicit backend=ollama when Ollama is enabled requires Ollama factory success
-        if (job.backend === 'ollama' && ollamaEnabled) {
-          const ollamaFactory = factories[0];
-          if (!ollamaFactory) {
-            throw new BridgeError('PRECONDITION_FAILED', 'Ollama factory not configured', 500);
-          }
-          const ollamaBackend = ollamaFactory(job, policy);
-          if (ollamaBackend === null) {
-            throw new BridgeError(
-              'PRECONDITION_FAILED',
-              `backend=ollama explicitly requested but Ollama factory returned null (backend disabled or job.backend mismatch)`,
-              500,
-            );
-          }
-          return ollamaBackend;
-        }
-
-        // For other backends, try factories in order
-        for (const factory of factories) {
-          const backend = factory(job, policy);
-          if (backend !== null) return backend;
-        }
-        return null; // Production engine converts this to fail-closed for real backends
-      };
+      backendFactory = composeRuntimeBackendFactories(factories);
     }
+
 
     const evidenceReaderFactory: EvidenceReaderFactory | undefined = kiroHelperImage
       ? (volume, jobId) => createDockerEvidenceReader(volume, kiroHelperImage, jobId)
@@ -436,6 +474,7 @@ let server: ReturnType<typeof app.listen>;
       schemaVersion: agentStore.schemaVersion, recoveredJobs: recovered.length,
       kiroBackend: kiroEnabled ? (KIRO_DRY_RUN ? 'enabled(dry-run)' : 'enabled') : 'fake-only',
       ollamaBackend: ollamaEnabled ? 'enabled' : 'fake-only',
+      copilotBackend: copilotEnabled ? (copilotPolicy.enabled && copilotPolicy.dryRun ? 'enabled(dry-run)' : 'enabled') : 'disabled',
       applierConfigured: !!applierIO,
       abortedApplyAttempts: applyRecovery.abortedNoMutation.length,
       uncertainApplyAttempts: applyRecovery.uncertain.length,

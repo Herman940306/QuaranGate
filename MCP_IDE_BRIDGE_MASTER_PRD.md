@@ -257,7 +257,7 @@ A test count, verdict or architectural statement that was true at one checkpoint
 | Governed offline npm source build | **Available** | Lock-scoped bundle; canonical lock; source build network `none` |
 | O1 local Ollama backend | **Production deployed; full post-remediation acceptance pending** | Read-only local backend; source reliability/tooling fixes deployed, complete live matrix still required |
 | GitHub App Control Plane | **Deployed candidate; closeout human-gated** | 17 tools; no merge; statuses-only checks; `JustAGameZA` requires All repositories; source promotion blocked |
-| GitHub Copilot backend | **Future / owner-deferred, required before A9** | A7; no current subscription/test capability |
+| GitHub Copilot backend | **Source implemented/current-line qualification in progress; live provider acceptance owner-deferred, required before A9** | A7 |
 | Session continuity | **Available / source accepted** | A8 continuity and recovery source is integrated; provider-backed live qualification remains separate |
 | IDE Session Control | **Source substantially implemented / live closure open** | B1-B9, I2/I3 source and I6 hardening are converged; Kiro uses the owner-approved ACP path; primary live gates remain explicit |
 
@@ -1011,7 +1011,7 @@ The accepted offline build procedure is recorded in `docs/operations/OPERATIONS.
 | A4 | Kiro ACP read-only | Complete |
 | A5 | Kiro sandbox implementation | Complete |
 | A6 | Diff / apply / discard / retained-resource lifecycle | Complete |
-| A7 | GitHub Copilot backend | Owner-deferred until real test capability exists, but now **required before A9** |
+| A7 | GitHub Copilot backend | Source implementation proceeds without entitlement; live qualification owner-deferred until real test capability exists and **required before A9** |
 | A8 | Session continuity | Next active Agent Control Plane gate |
 | A9 | Production hardening + full E2E | Not started; may begin only after the pre-production productization gates below close |
 
@@ -1023,7 +1023,7 @@ The following are mandatory pre-A9 gates:
 
 | Gate | Purpose | Production entry requirement |
 |---|---|---|
-| A7 | GitHub Copilot backend | A real governed Copilot backend must be qualified when subscription/test capability is available; backend identity must never imply authority |
+| A7 | GitHub Copilot backend | A real governed Copilot backend source must be implemented and source-qualified without waiting for entitlement; live provider qualification occurs when subscription/test capability is available; backend identity must never imply authority |
 | I1-I6 | IDE Session Control | Required primary machine-facing paths and shared live-writer arbitration/recovery must close before A9; unsupported built-in Kiro chat control is not required, and I4/I5 remain secondary non-blocking feasibility targets |
 | U1 | QuaranGate Control Center | A user-friendly GUI must expose the product's normal capabilities without requiring Docker/MCP/YAML/WSL knowledge |
 | D1 | Guided installer + first-run setup | Click-install deployment with owner-visible setup questions, prerequisite detection and deliberate permission choices |
@@ -1041,7 +1041,7 @@ OH1 R4 live lifecycle recovery
   -> P11 v1.0 release/promotion
 ```
 
-A7 may remain deferred while there is genuinely no qualification capability, but **A9 is not authorized to close around that absence**. Any future sequencing adjustment remains an owner decision.
+A7 live-provider qualification may remain deferred while there is genuinely no qualification capability, but A7 source implementation is not deferred and **A9 is not authorized to close around the missing live evidence**. Any future sequencing adjustment remains an owner decision.
 
 U1 design must begin with a fresh forensic audit of the then-current repository and implemented capability surface. The UI must be designed from real accepted functionality, not from stale mockups or this document alone. The owner-approved baseline information architecture is recorded in `docs/frontend/CONTROL_CENTER.md`.
 
@@ -1163,7 +1163,7 @@ Unless the owner explicitly reopens them, the following are controlling decision
 - QuaranGate is the canonical product identity.
 - ChatGPT is the primary planning/orchestration collaborator in the intended user workflow.
 - Kiro is an implemented Agent Control Plane worker.
-- GitHub Copilot A7 remains future work and is owner-deferred because there is no current subscription/test capability, but it is now a mandatory pre-A9 gate.
+- GitHub Copilot A7 source implementation proceeds independently of subscription; live provider qualification remains owner-deferred while no real test capability exists and remains a mandatory pre-A9 gate.
 - Session continuity A8 is the next active Agent Control Plane gate.
 - Agent work is sandbox-first.
 - Completing a job never implies automatic live apply.
@@ -1218,7 +1218,7 @@ Current known limitations/debt include:
 - `validateResolvedUrl` could be defense-in-depth hardened against redundant double-slash registry paths even though exact-host validation plus mandatory SHA-512 prevents artifact substitution;
 - O1 hardened disposable container-runtime canary is accepted;
 - O1 production is deployed and the known staging/empty-result/tool-contract defects have source remediations in current main/runtime, but the full post-remediation live acceptance matrix remains pending;
-- GitHub Copilot backend A7 is future / owner-deferred because there is no current subscription/test capability, but it is required before A9;
+- GitHub Copilot backend A7 source implementation proceeds independently of subscription; live provider qualification is owner-deferred while no real test capability exists and is required before A9;
 - session continuity A8 is the next active Agent Control Plane gate;
 - A9 production hardening/E2E not complete;
 - IDE Session Control production adapters not implemented;

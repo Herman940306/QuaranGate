@@ -160,7 +160,7 @@ These boundaries are intentional and should be read as part of the product, not 
 | Raw Docker API exposed to MCP clients | **Not supported** |
 | Automatic application of agent-generated changes | **Not supported** |
 | Automatic cloud fallback | **Not supported** |
-| GitHub Copilot production backend | **Future / owner-deferred — A7; required before A9** (no current subscription/test capability) |
+| GitHub Copilot production backend | **Source implemented/current-line qualification in progress; live provider acceptance owner-deferred — A7; required before A9** |
 | Session resume/continuity | **Next active Agent Control Plane gate — A8** |
 | Full production hardening program | **Roadmap — A9; blocked until A7, I1-I6, U1, D1 and D2 close** |
 | Production IDE Session Control adapter | **Roadmap / qualification program** |
@@ -860,7 +860,7 @@ This is deliberately **not** the same as claiming that a completely empty machin
 | A4 | Kiro ACP read-only backend | ✅ Complete |
 | A5 | Kiro sandbox implementation | ✅ Complete |
 | A6 | Diff / guarded apply / discard + evidence lifecycle | ✅ Complete |
-| A7 | GitHub Copilot backend | ⏸️ Deferred until real qualification capability exists, but **required before A9** |
+| A7 | GitHub Copilot backend | 🛠️ Source implemented/current-line qualification; live provider acceptance deferred until real capability exists and **required before A9** |
 | A8 | Session continuity | ✅ Source/continuity acceptance complete; provider-backed live qualification remains separate |
 | A9 | Production hardening + complete E2E | 📋 Not started; gated on the pre-production productization program below |
 
@@ -868,7 +868,7 @@ This is deliberately **not** the same as claiming that a completely empty machin
 
 The owner has frozen a productization rule: **A9 hardens the release product, not an operator-only intermediate build.** Before A9 may begin, QuaranGate must close:
 
-1. **A7 — GitHub Copilot backend** once real subscription/test capability is available.
+1. **A7 — GitHub Copilot backend** source qualification/integration now; live provider qualification once real subscription/test capability is available.
 2. **I1-I6 — IDE Session Control**, using only supported machine-facing paths: VS Code/Cursor companion source plus concurrency/recovery/live-writer arbitration, and the owner-reconciled Kiro CLI/ACP architecture rather than unsupported built-in Kiro chat control. I4 Visual Studio and I5 Antigravity remain secondary non-blocking feasibility targets.
 3. **U1 — QuaranGate Control Center**, a nontechnical GUI designed after a fresh forensic audit of the then-current repository/capabilities.
 4. **D1 — Guided installer and first-run setup**, providing click-install deployment with explicit owner choices.
@@ -881,7 +881,7 @@ OH1 R4 live recovery -> P7 live closure -> D1/D2 (P9) -> SH-01..SH-15
 -> deferred provider-live gates when real capability exists -> P10/A9 -> P11/v1.0
 ```
 
-A8 source/continuity work and U1 are already accepted. A7 and other provider-backed live gates remain mandatory before production closeout when real subscription/test capability becomes available; their current external block does not justify fabricated acceptance.
+A8 source/continuity work and U1 are already accepted. A7 source work proceeds independently of entitlement; A7 and other provider-backed live gates remain mandatory before production closeout when real subscription/test capability becomes available. Their current external block does not justify fabricated acceptance.
 
 See [Control Center](docs/frontend/CONTROL_CENTER.md) and [Installer Productization](docs/operations/INSTALLER_PRODUCTIZATION.md).
 

@@ -66,6 +66,18 @@ if [[ "$ollama_expected" == 1 ]]; then
   QG_FILES+=(-f "$RUNTIME_ROOT/compose.ollama.yaml")
 fi
 
+# Preserve the optional A7 Copilot executor overlay whenever the trusted
+# runtime env explicitly selects a Copilot runner image. This is executor-only;
+# it creates no service, public port, or Docker authority.
+copilot_expected=0
+if grep -Eq '^AGENT_COPILOT_RUNNER_IMAGE=.+$' "$RUNTIME_ENV"; then copilot_expected=1; fi
+if [[ "$copilot_expected" == 1 ]]; then
+  copilot_overlay="$RUNTIME_ROOT/compose.copilot.yaml"
+  if [[ ! -f "$copilot_overlay" && -f "$REPO_ROOT/compose.copilot.yaml" ]]; then copilot_overlay="$REPO_ROOT/compose.copilot.yaml"; fi
+  [[ -f "$copilot_overlay" ]] || fail 'Copilot is configured but compose.copilot.yaml is missing'
+  QG_FILES+=(-f "$copilot_overlay")
+fi
+
 # Preserve GitHub App control when its trusted registry exists or the broker
 # already exists. Recovery never invents credentials, mappings, or egress.
 github_expected=0
