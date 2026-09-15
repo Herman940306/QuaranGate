@@ -444,10 +444,13 @@ describe('compose.yaml healthcheck + image provenance', () => {
     expect(probe).toContain('r.ok?0:1');
   });
 
-  it('I: the executor healthcheck probes /readyz (H1-2 Docker socket authority check)', () => {
+  it('I: the executor healthcheck authenticates its /readyz authority probe', () => {
     const probe = (compose.services.executor?.healthcheck?.test ?? []).join(' ');
     expect(probe).toContain('/readyz');
     expect(probe).not.toContain('/healthz');
+    expect(probe).toContain('x-internal-token');
+    expect(probe).toContain('process.env.INTERNAL_TOKEN');
+    expect(probe).not.toMatch(/x-internal-token['"]?\s*:\s*['"][^'"]+['"]/u);
   });
 
   it('J: gateway and executor images use independent env-var references', () => {

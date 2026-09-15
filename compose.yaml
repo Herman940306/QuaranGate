@@ -133,7 +133,7 @@ services:
     # A7 integration note: A7 may also touch executor healthcheck. If so, the
     # merge conflict is on this block only and the /readyz target MUST be kept.
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8990/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8990/readyz',{headers:{'x-internal-token':process.env.INTERNAL_TOKEN??''}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
