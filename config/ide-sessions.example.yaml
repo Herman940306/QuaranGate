@@ -22,8 +22,25 @@ enrollments:
       - cancel
       - observe_response
       - request_review
-    # Must exactly match the installed QuaranGate VS Code extension build.
+    # Must exactly match the installed QuaranGate extension build for this IDE.
     adapterVersion: 0.1.0
     # Stable, non-secret runtime identity. The executor creates this exact
     # directory on first start and recovers only this exact directory later.
     runtimeInstanceId: iderun_22222222222222222222222222222222
+
+  # Cursor uses a distinct enrollment/runtime identity. This example is
+  # source-ready for I3 but live Cursor qualification is environment-specific.
+  - principalId: chatgpt-browser
+    projectId: quarangate
+    worktreeId: forward
+    ideProduct: cursor
+    ideInstanceId: ide_33333333333333333333333333333333
+    workspaceFingerprint: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    baseRevision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    capabilities:
+      - prompt
+      - cancel
+      - observe_response
+      - request_review
+    adapterVersion: 0.1.0
+    runtimeInstanceId: iderun_44444444444444444444444444444444

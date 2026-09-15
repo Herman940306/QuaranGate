@@ -33,7 +33,7 @@ const enrollmentSchema = z.object({
   principalId: z.string().regex(IDE_PRINCIPAL_ID_PATTERN),
   projectId: z.string().regex(IDE_LOGICAL_ID_PATTERN),
   worktreeId: z.string().regex(IDE_LOGICAL_ID_PATTERN),
-  ideProduct: z.literal('vscode'),
+  ideProduct: z.enum(['vscode', 'cursor']),
   ideInstanceId: z.string().regex(IDE_INSTANCE_ID_PATTERN),
   workspaceFingerprint: z.string().regex(IDE_WORKSPACE_FINGERPRINT_PATTERN),
   baseRevision: z.string().regex(IDE_GIT_REVISION_PATTERN).optional(),

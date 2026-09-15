@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "outDir": "dist",
+    "types": ["node", "vscode"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "../../src/ide-adapters/cursor/**/*.ts",
+    "../../src/shared/ideCompanionAuth.ts",
+    "../../src/shared/ideCompanionHandshake.ts",
+    "../../src/shared/ideCompanionOperations.ts",
+    "../../src/shared/ideCompanionRemoteTransport.ts",
+    "../../src/shared/ideSessions.ts",
+    "../../src/shared/ideWorkspaceAttestation.ts"
+  ]
+}

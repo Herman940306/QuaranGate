@@ -19,7 +19,7 @@ function valid() {
   };
 }
 
-describe('P7 I2 trusted IDE session config', () => {
+describe('P7 trusted IDE session config for VS Code and Cursor', () => {
   it('accepts only the explicit review-only enrollment shape', () => {
     const parsed = validateIdeSessionConfig(valid());
     expect(parsed.version).toBe(1);
@@ -27,10 +27,14 @@ describe('P7 I2 trusted IDE session config', () => {
     expect(parsed.enrollments[0]!.capabilities).toEqual(['prompt', 'cancel', 'observe_response', 'request_review']);
   });
 
-  it('rejects unknown keys, unsupported products and implementation authority', () => {
+  it('accepts Cursor but rejects unknown keys, unsupported products and implementation authority', () => {
     expect(() => validateIdeSessionConfig({ ...valid(), extra: true })).toThrow(/unrecognized key/i);
-    const product = valid(); product.enrollments[0]!.ideProduct = 'cursor' as 'vscode';
-    expect(() => validateIdeSessionConfig(product)).toThrow();
+    const cursor = valid();
+    (cursor.enrollments[0] as unknown as Record<string, unknown>).ideProduct = 'cursor';
+    expect(validateIdeSessionConfig(cursor).enrollments[0]!.ideProduct).toBe('cursor');
+    const unsupported = valid();
+    (unsupported.enrollments[0] as unknown as Record<string, unknown>).ideProduct = 'kiro';
+    expect(() => validateIdeSessionConfig(unsupported)).toThrow();
     const implementation = valid(); implementation.enrollments[0]!.capabilities = ['request_review', 'request_implementation'];
     expect(() => validateIdeSessionConfig(implementation)).toThrow(/review-only base capability set/);
   });

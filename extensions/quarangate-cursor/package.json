@@ -1,0 +1,38 @@
+{
+  "name": "quarangate-cursor",
+  "displayName": "QuaranGate Cursor Companion",
+  "description": "Governed QuaranGate companion for Cursor Remote-WSL workspaces.",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": ["Other"],
+  "extensionKind": ["workspace"],
+  "main": "./dist/extensions/quarangate-cursor/src/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "configuration": {
+      "title": "QuaranGate Cursor Companion",
+      "properties": {
+        "quarangate.cursorRuntimeCredentialPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Owner-provisioned absolute path to the QuaranGate Cursor runtime credential."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.0",
+    "@types/vscode": "1.109.0",
+    "typescript": "5.9.2"
+  }
+}
