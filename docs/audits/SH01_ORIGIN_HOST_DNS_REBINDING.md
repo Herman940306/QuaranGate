@@ -100,3 +100,21 @@ inferred from mutable working bytes.
 This source gate does not change the existing Funnel configuration, publish a new
 port, alter Docker bindings, add a proxy trust setting or deploy/restart production.
 Live ingress qualification remains a later bounded runtime gate.
+
+## Owner-authorized source acceptance receipt
+
+Verdict: `OWNER_AUTHORIZED_SELF_AUDIT_PASS / SH01_SOURCE_ACCEPTED`.
+
+This is a source acceptance under the owner's standing strict self-audit exception; it is deliberately not represented as independent review and it does not claim live ingress deployment qualification.
+
+Immutable implementation source:
+
+- commit: `1808db1e27ffb473b5d6f5d64daea2eb24d4086b`;
+- parent: `5974e69171dad9a76885e5044b4959f99d387f13`;
+- subject: `fix(security): enforce gateway host origin admission`;
+- patch SHA-256: `7595a8aff9fc1983d19741dab6a4160e978b4fe484a4f5400c7ea4a076372120`;
+- path/status SHA-256: `20ead458c803d98c32a7a79dcf3d4c3718ed8a1693d1e90a8f023349982f9d4f`;
+- content-manifest SHA-256: `ffe1cf8d3cb313e57230902c4e5baca7d57fec9abd4a2f5c80ddbd58c712dc87`;
+- implementation path count: `7`.
+
+Immutable replay: focused `62/62`; repository unit `2762/2762` across `107/107`; typecheck/build/diff-check PASS; seven-path secret scan `0 findings`; worktree clean and staging empty after temporary dependency symlink removal.
