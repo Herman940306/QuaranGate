@@ -40,6 +40,8 @@ export interface RecoveryPayloadIdentity {
   relativePath: string;
   sizeBytes: number;
   digest: string;
+  /** Exact safe POSIX permission bits captured from the recovery source. */
+  mode: number;
 }
 
 export interface RecoveryAnchor {
@@ -66,6 +68,7 @@ export type LifecycleStepKind =
   | 'VERIFY_EXISTING_IDENTITY'
   | 'VERIFY_PRECONDITIONS'
   | 'CREATE_RECOVERY_ANCHOR'
+  | 'QUIESCE_RUNTIME'
   | 'MIGRATE_CONFIGURATION'
   | 'MIGRATE_STATE'
   | 'TRANSITION_COMPONENTS'
@@ -207,6 +210,19 @@ function validateRelativePayloadPath(value: string): void {
   }
 }
 
+function validateRecoveryPayloadPath(value: string): void {
+  validateRelativePayloadPath(value);
+  const allowed = value.startsWith('install/')
+    || value.startsWith('state/config/')
+    || value.startsWith('state/data/');
+  if (!allowed || value.startsWith('install/.quarangate-')) {
+    throw new LifecyclePlanError(
+      'ANCHOR_PAYLOAD_INVALID',
+      'Recovery payload path is outside the bounded install/config/data namespaces',
+    );
+  }
+}
+
 function anchorIdentity(anchor: RecoveryAnchor): Record<string, unknown> {
   const { anchorDigest: _anchorDigest, ...identity } = anchor;
   return identity;
@@ -223,8 +239,10 @@ export function createRecoveryAnchor(input: {
   }
   const manifest = validateInstallationManifest(input.manifest);
   const payloads = input.payloads.map((payload) => {
-    validateRelativePayloadPath(payload.relativePath);
-    if (!Number.isSafeInteger(payload.sizeBytes) || payload.sizeBytes < 0 || !SHA256.test(payload.digest)) {
+    validateRecoveryPayloadPath(payload.relativePath);
+    if (!Number.isSafeInteger(payload.sizeBytes) || payload.sizeBytes < 0 || !SHA256.test(payload.digest)
+      || !Number.isInteger(payload.mode) || payload.mode < 0 || payload.mode > 0o777
+      || (payload.mode & 0o200) === 0 || (payload.mode & 0o022) !== 0) {
       throw new LifecyclePlanError('ANCHOR_PAYLOAD_INVALID', 'Recovery payload identity is invalid');
     }
     return { ...payload };
@@ -250,8 +268,10 @@ export function verifyRecoveryAnchor(value: RecoveryAnchor): RecoveryAnchor {
     throw new LifecyclePlanError('ANCHOR_INVALID', 'Recovery anchor schema/identity is invalid');
   }
   for (const payload of value.payloads) {
-    validateRelativePayloadPath(payload.relativePath);
-    if (!Number.isSafeInteger(payload.sizeBytes) || payload.sizeBytes < 0 || !SHA256.test(payload.digest)) {
+    validateRecoveryPayloadPath(payload.relativePath);
+    if (!Number.isSafeInteger(payload.sizeBytes) || payload.sizeBytes < 0 || !SHA256.test(payload.digest)
+      || !Number.isInteger(payload.mode) || payload.mode < 0 || payload.mode > 0o777
+      || (payload.mode & 0o200) === 0 || (payload.mode & 0o022) !== 0) {
       throw new LifecyclePlanError('ANCHOR_PAYLOAD_INVALID', 'Recovery payload identity is invalid');
     }
   }
@@ -290,6 +310,7 @@ function stepsFor(request: LifecyclePlanRequest, noOp: boolean): LifecycleStep[]
       kinds = [
         ['VERIFY_PRECONDITIONS', false],
         ['CREATE_RECOVERY_ANCHOR', true],
+        ['QUIESCE_RUNTIME', true],
         ['MIGRATE_CONFIGURATION', true],
         ['MIGRATE_STATE', true],
         ['TRANSITION_COMPONENTS', true],
@@ -300,6 +321,8 @@ function stepsFor(request: LifecyclePlanRequest, noOp: boolean): LifecycleStep[]
     case 'REPAIR':
       kinds = [
         ['VERIFY_PRECONDITIONS', false],
+        ['CREATE_RECOVERY_ANCHOR', true],
+        ['QUIESCE_RUNTIME', true],
         ['RECONCILE_COMPONENTS', true],
         ['VERIFY_STARTUP_REGISTRATION', true],
         ['VERIFY_FINAL_IDENTITY_AND_HEALTH', false],
@@ -390,8 +413,11 @@ export function buildLifecyclePlan(
     recoveryAnchorRequired = true;
   }
 
-  if (request.action === 'REPAIR' && current && !['INSTALLED', 'REPAIR_REQUIRED'].includes(current.lifecycleState)) {
-    throw new LifecyclePlanError('REPAIR_STATE_INVALID', 'Repair requires an installed or repair-required identity');
+  if (request.action === 'REPAIR' && current) {
+    if (!['INSTALLED', 'REPAIR_REQUIRED'].includes(current.lifecycleState)) {
+      throw new LifecyclePlanError('REPAIR_STATE_INVALID', 'Repair requires an installed or repair-required identity');
+    }
+    recoveryAnchorRequired = true;
   }
 
   if (request.action === 'ROLLBACK') {

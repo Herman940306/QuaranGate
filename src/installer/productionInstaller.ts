@@ -16,6 +16,7 @@ import {
   type TargetRelease,
 } from '../lifecycle/planner.js';
 import {
+  assertFreshInstallRootsAvailable,
   ProductionLifecycleDriver,
   type ProductionLifecyclePlatform,
   type TrustedReleaseBundle,
@@ -25,6 +26,7 @@ import {
   type AuthorizedInstallPlan,
 } from './productInstaller.js';
 import { verifyTrustedReleaseBundle } from '../lifecycle/productionDriver.js';
+import type { ReleaseTrustPolicy, VerifiedReleasePackage } from './releasePackage.js';
 
 export interface ProductionInstallRelease {
   bundle: TrustedReleaseBundle;
@@ -55,11 +57,11 @@ function providerState(
 
 function installManifest(
   request: ProductionInstallRequest,
+  verified: VerifiedReleasePackage,
   now: string,
 ): InstallationManifest {
   const authorized = verifyAuthorizedInstallPlan(request.authorizedPlan);
   const plan = authorized.plan;
-  const verified = verifyTrustedReleaseBundle(request.release.bundle);
   if (verified.manifest.manifestDigest !== request.release.bundle.manifest.manifestDigest) {
     throw new LifecycleDriverError('RELEASE_IDENTITY_INVALID', 'Verified release identity changed unexpectedly', false);
   }
@@ -146,6 +148,7 @@ function installManifest(
 export async function executeProductionInstall(
   request: ProductionInstallRequest,
   platform: ProductionLifecyclePlatform,
+  trustPolicy: ReleaseTrustPolicy,
   now: () => string = () => new Date().toISOString(),
 ): Promise<ProductionInstallResult> {
   const authorized = verifyAuthorizedInstallPlan(request.authorizedPlan);
@@ -156,7 +159,7 @@ export async function executeProductionInstall(
       false,
     );
   }
-  const verified = verifyTrustedReleaseBundle(request.release.bundle);
+  const verified = verifyTrustedReleaseBundle(request.release.bundle, trustPolicy);
   if (authorized.plan.release.manifestDigest !== verified.manifest.manifestDigest
     || authorized.plan.release.productVersion !== verified.manifest.productVersion
     || authorized.plan.release.sourceCommit !== verified.manifest.sourceCommit) {
@@ -166,7 +169,9 @@ export async function executeProductionInstall(
     || verified.manifest.sourceCommit !== request.release.bundle.manifest.sourceCommit) {
     throw new LifecycleDriverError('RELEASE_IDENTITY_INVALID', 'Release verification did not preserve package identity', false);
   }
-  const template = installManifest(request, now());
+  const template = installManifest(request, verified, now());
+  // Refuse occupied unowned roots before the lifecycle store can create locks/journals.
+  assertFreshInstallRootsAvailable(template, false);
   const target: TargetRelease = {
     productVersion: template.productVersion,
     sourceCommit: template.sourceCommit,
@@ -201,6 +206,7 @@ export async function executeProductionInstall(
     projectRoots: authorized.plan.projects.map((project) => ({ id: project.id, path: project.path })),
     platform,
     release: request.release.bundle,
+    releaseTrustPolicy: trustPolicy,
     installTemplate: template,
     initialConfiguration: {
       installPlanDigest: authorized.plan.digest,

@@ -188,8 +188,8 @@ class FakeDriver implements LifecycleDriver {
 
   async captureRecoveryPayloads(): Promise<RecoveryPayloadIdentity[]> {
     return [
-      { relativePath: 'config/clients.yaml', sizeBytes: 10, digest: shaB },
-      { relativePath: 'state/database.sqlite', sizeBytes: 20, digest: shaC },
+      { relativePath: 'install/config/clients.yaml', sizeBytes: 10, digest: shaB, mode: 0o600 },
+      { relativePath: 'state/data/database.sqlite', sizeBytes: 20, digest: shaC, mode: 0o600 },
     ];
   }
 
@@ -533,7 +533,7 @@ describe('P9 D2 lifecycle execution integration', () => {
       anchorId: 'anchor-op-interrupted',
       createdAt: '2026-09-15T00:10:00.000Z',
       manifest: current,
-      payloads: [{ relativePath: 'state/database.sqlite', sizeBytes: 20, digest: shaC }],
+      payloads: [{ relativePath: 'state/data/database.sqlite', sizeBytes: 20, digest: shaC, mode: 0o600 }],
     });
     storage.writeRecoveryAnchor(anchor);
     storage.acquireLock('op-interrupted');

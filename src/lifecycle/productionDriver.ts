@@ -14,9 +14,10 @@ import {
   verifyReleasePackageManifest,
   verifyReleasePayload,
   verifyReleaseSignature,
+  verifyReleaseTrustPolicy,
   type ReleasePackageManifest,
   type ReleaseSignatureProof,
-  type TrustedReleaseKey,
+  type ReleaseTrustPolicy,
   type VerifiedReleasePackage,
 } from '../installer/releasePackage.js';
 import {
@@ -33,6 +34,7 @@ import {
   validateRootOwnership,
   type ProjectRoot,
 } from './pathOwnership.js';
+import { verifyRecoveryAnchor } from './planner.js';
 import type {
   AuthorizedLifecyclePlan,
   DataCategory,
@@ -90,16 +92,17 @@ export interface ProductionLifecyclePlatform {
 }
 
 export interface TrustedReleaseBundle {
+  /** Untrusted release material. Trust anchors are supplied independently. */
   payloadRoot: string;
   manifest: ReleasePackageManifest;
   signatureProof: ReleaseSignatureProof;
-  trustedKeys: TrustedReleaseKey[];
 }
 
 export interface ProductionLifecycleDriverOptions {
   projectRoots: ProjectRoot[];
   platform: ProductionLifecyclePlatform;
   release?: TrustedReleaseBundle;
+  releaseTrustPolicy?: ReleaseTrustPolicy;
   installTemplate?: InstallationManifest;
   initialConfiguration?: Record<string, string | number | boolean | null>;
   initialState?: Record<string, string | number | boolean | null>;
@@ -128,6 +131,62 @@ function ownerMarker(installationId: string, category: OwnerMarker['category']):
 
 function markerPath(root: string): string {
   return path.join(root, '.quarangate-owned.json');
+}
+
+function assertRealDirectory(target: string, code: string): void {
+  if (!existsSync(target)) return;
+  const stat = lstatSync(target);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new LifecycleDriverError(code, 'Lifecycle root must be a real directory', false);
+  }
+}
+
+function assertUnownedLeafEmpty(root: string): void {
+  if (!existsSync(root)) return;
+  assertRealDirectory(root, 'UNOWNED_ROOT_UNSAFE');
+  if (readdirSync(root).length !== 0) {
+    throw new LifecycleDriverError('UNOWNED_ROOT_OCCUPIED', 'Refusing to adopt a nonempty unowned lifecycle root', false);
+  }
+}
+
+/**
+ * Fresh install must never make pre-existing customer/foreign bytes lifecycle-owned.
+ * The state root may structurally contain its configured evidence/models/backups
+ * children; every leaf root must itself be empty. During coordinator execution,
+ * only the lifecycle journal directory may additionally exist under state.
+ */
+export function assertFreshInstallRootsAvailable(
+  manifestInput: InstallationManifest,
+  allowLifecycleMetadata = false,
+): void {
+  const manifest = createInstallationManifest(manifestInput);
+  const roots = manifest.roots;
+  validateRootOwnership({ install: roots.install, lifecycle: roots, projects: [] });
+  for (const leaf of [roots.install, roots.evidence, roots.models, roots.backups, roots.cache]) {
+    assertUnownedLeafEmpty(leaf);
+  }
+  if (!existsSync(roots.state)) return;
+  assertRealDirectory(roots.state, 'UNOWNED_ROOT_UNSAFE');
+
+  const childRoots = [roots.evidence, roots.models, roots.backups]
+    .map((child) => path.relative(roots.state, child))
+    .filter((relative) => relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    .map((relative) => relative.split(path.sep));
+
+  const walk = (directory: string, prefixes: string[][], atStateRoot: boolean): void => {
+    for (const entry of readdirSync(directory).sort()) {
+      if (atStateRoot && allowLifecycleMetadata && entry === 'lifecycle') continue;
+      const matching = prefixes.filter((parts) => parts[0] === entry);
+      if (matching.length === 0) {
+        throw new LifecycleDriverError('UNOWNED_ROOT_OCCUPIED', 'Refusing to adopt foreign content in the unowned state root', false);
+      }
+      const target = path.join(directory, entry);
+      assertRealDirectory(target, 'UNOWNED_ROOT_UNSAFE');
+      if (matching.some((parts) => parts.length === 1)) continue;
+      walk(target, matching.map((parts) => parts.slice(1)), false);
+    }
+  };
+  walk(roots.state, childRoots, true);
 }
 
 function assertSafeTreeEntry(target: string): void {
@@ -205,24 +264,41 @@ function relativePayloadPath(value: string): string {
 function readPackageFile(bundle: TrustedReleaseBundle, relativeInput: string): Buffer {
   const relative = relativePayloadPath(relativeInput);
   const root = path.resolve(bundle.payloadRoot);
-  const target = path.resolve(root, ...relative.split('/'));
-  if (!target.startsWith(`${root}${path.sep}`)) {
-    throw new LifecycleDriverError('PACKAGE_PATH_ESCAPE', 'Release payload escaped its trusted root', false);
+  if (!existsSync(root)) {
+    throw new LifecycleDriverError('PACKAGE_ROOT_UNSAFE', 'Release payload root is missing', false);
   }
-  const physicalRoot = path.resolve(bundle.payloadRoot);
-  const physicalTarget = path.resolve(target);
-  if (!physicalTarget.startsWith(`${physicalRoot}${path.sep}`)) {
-    throw new LifecycleDriverError('PACKAGE_PATH_ESCAPE', 'Release payload physical path escaped its trusted root', false);
+  const rootStat = lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new LifecycleDriverError('PACKAGE_ROOT_UNSAFE', 'Release payload root must be a real directory', false);
   }
-  const stat = lstatSync(target);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
-    throw new LifecycleDriverError('PACKAGE_FILE_UNSAFE', 'Release payload entry is not a single-link regular file', false);
+  const parts = relative.split('/');
+  let current = root;
+  for (let index = 0; index < parts.length; index++) {
+    current = path.join(current, parts[index]!);
+    if (!current.startsWith(`${root}${path.sep}`)) {
+      throw new LifecycleDriverError('PACKAGE_PATH_ESCAPE', 'Release payload escaped its trusted root', false);
+    }
+    if (!existsSync(current)) {
+      throw new LifecycleDriverError('PACKAGE_FILE_UNSAFE', 'Release payload path is missing', false);
+    }
+    const stat = lstatSync(current);
+    const final = index === parts.length - 1;
+    if (!final) {
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        throw new LifecycleDriverError('PACKAGE_PARENT_UNSAFE', 'Release payload contains a symlinked or non-directory parent', false);
+      }
+      continue;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+      throw new LifecycleDriverError('PACKAGE_FILE_UNSAFE', 'Release payload entry is not a single-link regular file', false);
+    }
   }
-  return readFileSync(target);
+  return readFileSync(current);
 }
 
-function verifyBundle(bundle: TrustedReleaseBundle): VerifiedReleasePackage {
-  const verified = verifyReleaseSignature(bundle.manifest, bundle.signatureProof, bundle.trustedKeys);
+function verifyBundle(bundle: TrustedReleaseBundle, trustPolicyInput: ReleaseTrustPolicy): VerifiedReleasePackage {
+  const trustPolicy = verifyReleaseTrustPolicy(trustPolicyInput);
+  const verified = verifyReleaseSignature(bundle.manifest, bundle.signatureProof, trustPolicy.trustedKeys);
   verifyReleasePayload(verified.manifest, (relative) => readPackageFile(bundle, relative));
   return verified;
 }
@@ -326,7 +402,53 @@ function snapshotWalk(
     throw new LifecycleDriverError('RECOVERY_PAYLOAD_LIMIT_EXCEEDED', 'Recovery payload exceeds bounded file/byte limits', false);
   }
   atomicWritePrivateFile(destinationRoot, anchorRelative, bytes);
-  records.push({ relativePath: anchorRelative, sizeBytes: bytes.length, digest: sha256(bytes) });
+  records.push({ relativePath: anchorRelative, sizeBytes: bytes.length, digest: sha256(bytes), mode: stat.mode & 0o777 });
+}
+
+function readVerifiedRecoveryPayloads(
+  payloadRoot: string,
+  payloads: RecoveryPayloadIdentity[],
+): Map<string, Buffer> {
+  const root = path.resolve(payloadRoot);
+  if (!existsSync(root)) {
+    throw new LifecycleDriverError('RECOVERY_PAYLOAD_UNSAFE', 'Recovery payload root is missing', false);
+  }
+  const rootStat = lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new LifecycleDriverError('RECOVERY_PAYLOAD_UNSAFE', 'Recovery payload root is unsafe', false);
+  }
+  const verified = new Map<string, Buffer>();
+  for (const payload of payloads) {
+    const relative = relativePayloadPath(payload.relativePath);
+    const parts = relative.split('/');
+    let current = root;
+    for (let index = 0; index < parts.length; index++) {
+      current = path.join(current, parts[index]!);
+      if (!current.startsWith(`${root}${path.sep}`)) {
+        throw new LifecycleDriverError('RECOVERY_PAYLOAD_UNSAFE', 'Recovery payload escaped its anchor root', false);
+      }
+      if (!existsSync(current)) {
+        throw new LifecycleDriverError('RECOVERY_PAYLOAD_UNSAFE', 'Recovery payload path is missing', false);
+      }
+      const stat = lstatSync(current);
+      const final = index === parts.length - 1;
+      if (!final) {
+        if (!stat.isDirectory() || stat.isSymbolicLink()) {
+          throw new LifecycleDriverError('RECOVERY_PAYLOAD_UNSAFE', 'Recovery payload parent is unsafe', false);
+        }
+        continue;
+      }
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+        throw new LifecycleDriverError('RECOVERY_PAYLOAD_UNSAFE', 'Recovery payload entry is unsafe', false);
+      }
+    }
+    const bytes = readFileSync(current);
+    if (bytes.length !== payload.sizeBytes || sha256(bytes) !== payload.digest) {
+      throw new LifecycleDriverError('RECOVERY_PAYLOAD_INTEGRITY_FAILED', 'Recovery payload integrity verification failed', false);
+    }
+    verified.set(payload.relativePath, bytes);
+  }
+  return verified;
 }
 
 function assertRuntimeIdentity(expected: InstallationManifest, actual: RuntimeInspection): boolean {
@@ -362,10 +484,10 @@ export class ProductionLifecycleDriver implements LifecycleDriver {
   }
 
   private requireRelease(plan: AuthorizedLifecyclePlan): VerifiedReleasePackage {
-    if (!this.options.release) {
-      throw new LifecycleDriverError('TRUSTED_RELEASE_PACKAGE_REQUIRED', 'Lifecycle action requires a cryptographically verified release package', false);
+    if (!this.options.release || !this.options.releaseTrustPolicy) {
+      throw new LifecycleDriverError('TRUSTED_RELEASE_PACKAGE_REQUIRED', 'Lifecycle action requires release material plus an independent trust policy', false);
     }
-    const verified = this.verifiedRelease ?? verifyBundle(this.options.release);
+    const verified = this.verifiedRelease ?? verifyBundle(this.options.release, this.options.releaseTrustPolicy);
     this.verifiedRelease = verified;
     const expectedDigest = plan.action === 'REPAIR'
       ? this.options.installTemplate?.releaseDigest
@@ -427,9 +549,10 @@ export class ProductionLifecycleDriver implements LifecycleDriver {
     const totals = { bytes: 0 };
     snapshotWalk(current.roots.install, current.roots.install, 'install', destination, records, totals);
     for (const relative of ['config', 'data']) {
+      const source = path.join(current.roots.state, relative);
       snapshotWalk(
-        current.roots.state,
-        path.join(current.roots.state, relative),
+        source,
+        source,
         `state/${relative}`,
         destination,
         records,
@@ -439,18 +562,28 @@ export class ProductionLifecycleDriver implements LifecycleDriver {
     return records.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
   }
 
-  private materializeRelease(plan: AuthorizedLifecyclePlan, current: InstallationManifest | null, repair: boolean): void {
+  private materializeRelease(plan: AuthorizedLifecyclePlan, current: InstallationManifest | null, _repair: boolean): void {
     const verified = this.requireRelease(plan);
     const manifest = this.installation(current);
     const root = manifest.roots.install;
-    if (!existsSync(markerPath(root))) createOwnedRoot(root, manifest.installationId, 'INSTALL');
-    else verifyOwnedRoot(root, manifest.installationId, 'INSTALL');
-    if (!repair) clearOwnedRoot(root, manifest.installationId, 'INSTALL');
-    for (const file of verified.manifest.files) {
+    // Re-read and re-hash the complete signed payload immediately before
+    // mutation so a package change after preflight cannot be installed.
+    const payloads = verified.manifest.files.map((file) => {
       if (file.path === '.quarangate-owned.json' || file.path.startsWith('.quarangate-')) {
         throw new LifecycleDriverError('PACKAGE_RESERVED_PATH', 'Release package may not replace lifecycle ownership metadata', false);
       }
       const bytes = readPackageFile(this.options.release!, file.path);
+      if (bytes.length !== file.sizeBytes || sha256(bytes) !== file.digest) {
+        throw new LifecycleDriverError('PACKAGE_PAYLOAD_INTEGRITY_FAILED', `Package payload integrity failed for ${file.path}`, false);
+      }
+      return { file, bytes };
+    });
+    if (!existsSync(markerPath(root))) createOwnedRoot(root, manifest.installationId, 'INSTALL');
+    else verifyOwnedRoot(root, manifest.installationId, 'INSTALL');
+    // INSTALL/UPGRADE/REPAIR all reconcile the lifecycle-owned install tree to
+    // the exact signed payload. Repair must not preserve obsolete executables.
+    clearOwnedRoot(root, manifest.installationId, 'INSTALL');
+    for (const { file, bytes } of payloads) {
       const target = atomicWritePrivateFile(root, file.path, bytes);
       chmodSync(target, file.mode);
     }
@@ -484,6 +617,9 @@ export class ProductionLifecycleDriver implements LifecycleDriver {
   }
 
   private ensureFreshRoots(manifest: InstallationManifest): void {
+    // The coordinator creates only state/lifecycle journal metadata before this
+    // mutation step. Any other unowned bytes make fresh installation unsafe.
+    assertFreshInstallRootsAvailable(manifest, true);
     const categories: Array<[keyof InstallationManifest['roots'], OwnerMarker['category']]> = [
       ['install', 'INSTALL'],
       ['state', 'STATE'],
@@ -556,6 +692,10 @@ export class ProductionLifecycleDriver implements LifecycleDriver {
     const manifest = this.installation(current);
     try {
       switch (step.kind) {
+        case 'QUIESCE_RUNTIME':
+          if (!current) throw new LifecycleDriverError('INSTALLATION_REQUIRED', 'Runtime quiesce requires current state', false);
+          await this.options.platform.stopRuntime(current);
+          return;
         case 'MIGRATE_CONFIGURATION':
           if (!current) throw new LifecycleDriverError('INSTALLATION_REQUIRED', 'Config migration requires current state', false);
           this.migrate('CONFIG', plan, current);
@@ -672,6 +812,9 @@ export class ProductionLifecycleDriver implements LifecycleDriver {
     manifest: InstallationManifest,
   ): Promise<boolean> {
     if (plan.action === 'UNINSTALL') {
+      const authority = await this.options.platform.inspectAuthority(manifest);
+      if (authority.duplicateAuthority || authority.staleRegistrations) return false;
+      if (manifest.startupRegistrations.some((registration) => registration.enabled)) return false;
       const inspection = await this.options.platform.inspectRuntime(manifest);
       return !inspection.running && manifest.lifecycleState === 'UNINSTALLED';
     }
@@ -681,11 +824,19 @@ export class ProductionLifecycleDriver implements LifecycleDriver {
     return assertRuntimeIdentity(manifest, runtime);
   }
 
-  async restoreRecoveryAnchor(anchor: RecoveryAnchor): Promise<void> {
+  async restoreRecoveryAnchor(anchorInput: RecoveryAnchor): Promise<void> {
+    const anchor = verifyRecoveryAnchor(anchorInput);
     const manifest = createInstallationManifest(anchor.manifest);
     this.attest(manifest);
-    const payloadRoot = path.join(manifest.roots.backups, 'anchors', anchor.anchorId, 'payloads');
     verifyOwnedRoot(manifest.roots.install, manifest.installationId, 'INSTALL');
+    verifyOwnedRoot(manifest.roots.backups, manifest.installationId, 'BACKUPS');
+    const payloadRoot = path.join(manifest.roots.backups, 'anchors', anchor.anchorId, 'payloads');
+    // Verify the complete rollback payload before stopping the live runtime or
+    // rewriting a single byte. A corrupt anchor must fail with zero mutation.
+    const verifiedPayloads = readVerifiedRecoveryPayloads(payloadRoot, anchor.payloads);
+    // A replacement runtime may have started before the failed transition.
+    // Quiesce it only after the recovery preimage is fully proven.
+    await this.options.platform.stopRuntime(manifest);
     clearOwnedRoot(manifest.roots.install, manifest.installationId, 'INSTALL');
     for (const relative of ['config', 'data']) {
       const target = path.join(manifest.roots.state, relative);
@@ -695,37 +846,40 @@ export class ProductionLifecycleDriver implements LifecycleDriver {
       }
     }
     for (const payload of anchor.payloads) {
-      const source = path.join(payloadRoot, ...relativePayloadPath(payload.relativePath).split('/'));
-      const stat = lstatSync(source);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
-        throw new LifecycleDriverError('RECOVERY_PAYLOAD_UNSAFE', 'Recovery payload entry is unsafe', true);
-      }
-      const bytes = readFileSync(source);
-      if (bytes.length !== payload.sizeBytes || sha256(bytes) !== payload.digest) {
-        throw new LifecycleDriverError('RECOVERY_PAYLOAD_INTEGRITY_FAILED', 'Recovery payload integrity verification failed', true);
+      const bytes = verifiedPayloads.get(payload.relativePath);
+      if (!bytes) {
+        throw new LifecycleDriverError('RECOVERY_PAYLOAD_INTEGRITY_FAILED', 'Verified recovery payload disappeared from the preflight set', true);
       }
       const [category, ...parts] = payload.relativePath.split('/');
       const root = category === 'install' ? manifest.roots.install : manifest.roots.state;
       const destination = atomicWritePrivateFile(root, parts.join('/'), bytes);
-      if (category === 'install') chmodSync(destination, 0o644);
+      chmodSync(destination, payload.mode);
     }
     await this.options.platform.startRuntime(manifest);
     await this.options.platform.reconcileStartup(manifest);
     this.result = manifest;
   }
 
-  async verifyRollback(anchor: RecoveryAnchor): Promise<boolean> {
+  async verifyRollback(anchorInput: RecoveryAnchor): Promise<boolean> {
+    const anchor = verifyRecoveryAnchor(anchorInput);
     const manifest = createInstallationManifest(anchor.manifest);
     const payloadRoot = path.join(manifest.roots.backups, 'anchors', anchor.anchorId, 'payloads');
+    let verifiedPayloads: Map<string, Buffer>;
+    try {
+      verifiedPayloads = readVerifiedRecoveryPayloads(payloadRoot, anchor.payloads);
+    } catch {
+      return false;
+    }
     for (const payload of anchor.payloads) {
-      const source = path.join(payloadRoot, ...relativePayloadPath(payload.relativePath).split('/'));
-      if (!existsSync(source)) return false;
-      const bytes = readFileSync(source);
-      if (bytes.length !== payload.sizeBytes || sha256(bytes) !== payload.digest) return false;
+      const bytes = verifiedPayloads.get(payload.relativePath);
+      if (!bytes) return false;
       const [category, ...parts] = payload.relativePath.split('/');
       const root = category === 'install' ? manifest.roots.install : manifest.roots.state;
       const restored = path.join(root, ...parts);
       if (!existsSync(restored)) return false;
+      const restoredStat = lstatSync(restored);
+      if (!restoredStat.isFile() || restoredStat.isSymbolicLink() || restoredStat.nlink !== 1
+        || (restoredStat.mode & 0o777) !== payload.mode) return false;
       const restoredBytes = readFileSync(restored);
       if (restoredBytes.length !== payload.sizeBytes || sha256(restoredBytes) !== payload.digest) return false;
     }
@@ -744,6 +898,7 @@ export function initializeProductionOwnedRoots(manifestInput: InstallationManife
     ['cache', 'CACHE'],
   ];
   validateRootOwnership({ install: manifest.roots.install, lifecycle: manifest.roots, projects: [] });
+  assertFreshInstallRootsAvailable(manifest, false);
   for (const [name, category] of categories) {
     mkdirSync(manifest.roots[name], { recursive: true, mode: 0o700 });
     chmodSync(manifest.roots[name], 0o700);
@@ -751,7 +906,10 @@ export function initializeProductionOwnedRoots(manifestInput: InstallationManife
   }
 }
 
-export function verifyTrustedReleaseBundle(bundle: TrustedReleaseBundle): VerifiedReleasePackage {
+export function verifyTrustedReleaseBundle(
+  bundle: TrustedReleaseBundle,
+  trustPolicy: ReleaseTrustPolicy,
+): VerifiedReleasePackage {
   verifyReleasePackageManifest(bundle.manifest);
-  return verifyBundle(bundle);
+  return verifyBundle(bundle, trustPolicy);
 }

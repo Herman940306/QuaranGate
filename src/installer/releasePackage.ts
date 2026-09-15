@@ -67,6 +67,13 @@ export interface TrustedReleaseKey {
   publicKeyPem: string;
 }
 
+/** Installer-owned trust policy. This is never accepted from release material. */
+export interface ReleaseTrustPolicy {
+  schemaVersion: 1;
+  policyId: string;
+  trustedKeys: TrustedReleaseKey[];
+}
+
 export interface VerifiedReleasePackage {
   manifest: ReleasePackageManifest;
   signingIdentity: {
@@ -213,6 +220,12 @@ function validateIdentity(
   if (components.some((value, index) => index > 0 && (components[index - 1] ?? '') >= value)) {
     throw new ReleasePackageError('PACKAGE_IMAGES_UNSORTED', 'Package image identities must be sorted and unique');
   }
+  if (JSON.stringify(components) !== JSON.stringify(identity.lifecycle.components)) {
+    throw new ReleasePackageError(
+      'PACKAGE_COMPONENT_IMAGE_MISMATCH',
+      'Release lifecycle components must exactly match OCI image component identities',
+    );
+  }
   return identity;
 }
 
@@ -299,6 +312,19 @@ function parseTrustedKey(value: unknown): TrustedReleaseKey {
     throw new ReleasePackageError('TRUSTED_RELEASE_KEY_INVALID', 'Trusted release key is malformed');
   }
   return key;
+}
+
+export function verifyReleaseTrustPolicy(value: ReleaseTrustPolicy): ReleaseTrustPolicy {
+  assertExactKeys(value, ['schemaVersion', 'policyId', 'trustedKeys'], 'Release trust policy');
+  if (value.schemaVersion !== 1 || !SAFE_ID.test(value.policyId)
+    || !Array.isArray(value.trustedKeys) || value.trustedKeys.length === 0) {
+    throw new ReleasePackageError('RELEASE_TRUST_POLICY_INVALID', 'Release trust policy is malformed');
+  }
+  const trustedKeys = value.trustedKeys.map(parseTrustedKey);
+  if (new Set(trustedKeys.map((key) => key.keyId)).size !== trustedKeys.length) {
+    throw new ReleasePackageError('TRUSTED_RELEASE_KEY_DUPLICATE', 'Trusted release key identities must be unique');
+  }
+  return { schemaVersion: 1, policyId: value.policyId, trustedKeys };
 }
 
 export function verifyReleaseSignature(

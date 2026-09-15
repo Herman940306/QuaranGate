@@ -375,7 +375,7 @@ export class LifecycleCoordinator {
         return { state: 'NO_MUTATION', operationId: plan.operationId, errorCode: code };
       }
 
-      if (anchor && plan.action === 'UPGRADE') {
+      if (anchor && ['UPGRADE', 'REPAIR'].includes(plan.action)) {
         try {
           await this.driver.restoreRecoveryAnchor(anchor);
           if (!(await this.driver.verifyRollback(anchor))) {

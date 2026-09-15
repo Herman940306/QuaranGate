@@ -184,99 +184,54 @@ src/lifecycle/safeFilesystem.ts provides:
 
 src/lifecycle/evidence.ts stores bounded identifiers, hashes safe paths instead of logging full path authority, and redacts bearer, token, GitHub, OpenAI-style and JWT credential shapes.
 
-## Test strategy and current evidence
+## Review remediation and current evidence
 
-The tests use deterministic fakes and disposable temporary roots only. They do not access real provider credentials, Task Scheduler, Docker, models, projects or production QuaranGate state.
+The initial source candidate received `FAIL_REVIEW / BOUNDED_REMEDIATION_REQUIRED` on nine concrete lifecycle/release findings. The current remediation closes all nine without weakening the safety model:
 
-Focused P9 results before broad validation:
+1. recovery state payloads preserve exact original state-relative paths instead of duplicating `config/` or `data/`;
+2. recovery payload identity binds safe POSIX mode and rollback restores/verifies it exactly;
+3. rollback quiesces any replacement runtime before prior filesystem bytes are restored;
+4. fresh install refuses occupied unowned roots before lifecycle metadata can adopt/delete foreign data;
+5. release payload reads reject every symlink/non-directory parent component and root escape;
+6. REPAIR reconciles the lifecycle-owned install tree exactly to the signed payload and removes obsolete files;
+7. UNINSTALL final verification proves runtime stopped, startup registrations disabled and no stale/duplicate authority remains;
+8. release lifecycle components and OCI image component identities must match exactly;
+9. release signing keys are supplied by a separately validated installer-owned `ReleaseTrustPolicy`; the untrusted package bundle cannot self-authenticate.
 
-- P9 unit tests: 50/50 PASS;
-- P9 integration tests: 14/14 PASS;
-- combined focused tests: 64/64 PASS;
-- TypeScript typecheck: PASS.
+Strict owner-authorized self-audit then found and remediated additional lifecycle-hardening gaps before freeze:
 
-Covered negative and recovery behavior includes:
+- REPAIR now requires a recovery anchor and participates in the same proven rollback path as UPGRADE;
+- UPGRADE/REPAIR execute an explicit `QUIESCE_RUNTIME` mutation before migration/install-tree changes;
+- recovery anchors accept only `install/**`, `state/config/**`, and `state/data/**` payload namespaces and refuse lifecycle ownership metadata targets;
+- all recovery payload files, digests, sizes, safe modes and parent-directory topology are verified before rollback stops the runtime or rewrites bytes;
+- release payload bytes are reverified immediately before clearing the owned install tree, closing the preflight-to-mutation package TOCTOU window;
+- corrupted recovery material fails before rollback mutation while the lifecycle operation remains honestly `UNCERTAIN` and locked for intervention.
 
-- missing/incompatible Docker and Compose;
-- unreachable daemon;
-- unsupported native Windows runtime;
-- inadequate resources;
-- permission and project authority consent;
-- guarded path and raw-secret refusal;
-- provider entitlement deferral;
-- P7-pending IDE binding;
-- GitHub wildcard refusal;
-- remote opt-in/out;
-- local AI resource bounds;
-- strict manifest validation;
-- malformed migration refusal;
-- recovery-anchor integrity mismatch;
-- idempotent install;
-- upgrade and schema/config migration;
-- preflight failure before mutation;
-- partial failure with proven rollback;
-- unprovable rollback -> UNCERTAIN;
-- preservation proof failure;
-- credential preservation or reauthorization;
-- final-health rollback;
-- repair/reconcile;
-- exact supported rollback;
-- uninstall preserve-data and remove-selected-data;
-- cancelled consent;
-- duplicate/stale authority refusal on reinstall;
-- interruption recovery;
-- traversal, symlink, hard-link and mode attacks;
-- release payload integrity mismatch;
-- secret redaction and evidence bounds.
+The tests use deterministic fakes and disposable temporary roots only. They do not access real provider credentials, Task Scheduler, Docker, models, customer projects or production QuaranGate state.
 
-Fresh broad validation results:
+Current exact validation on the latest remediation bytes:
 
-- full unit corpus: 2662/2662 PASS across 98/98 files;
-- relevant path/redaction/config/startup regression: 105/105 PASS across 5/5 files;
+- all P9 unit/integration tests: `92/92 PASS` across `9/9` files;
+- repository full unit corpus: `2673/2673 PASS` across `99/99` files;
 - TypeScript typecheck: PASS;
 - build: PASS;
-- git diff --check: PASS;
-- changed-path scope scan: PASS, zero out-of-scope paths;
-- production-source secret-pattern scan: PASS, zero hits;
-- synthetic secret strings exist only in negative redaction/refusal tests;
-- forbidden authority scan: PASS, zero Docker-socket, privileged, public-listener, firewall/port-proxy, hidden-elevation or capability-addition hits;
-- process-execution surface: one fixed host-readiness probe using spawnSync with shell=false and fixed executable/argument arrays;
-- dependency delta: NONE; package-lock.json unchanged and no dependency fields changed.
+- `git diff --check`: PASS;
+- added production source shell/child-process/Docker-socket/privileged surface scan: PASS;
+- package lock matches the accepted dependency tree byte-for-byte; validation used that existing local dependency tree only and performed no network install.
 
-The repository-wide integration command was also run and is truthfully not green in projects-work:
-
-- discovered tests: 95;
-- passed: 41;
-- skipped: 50;
-- failed: 4;
-- P9 lifecycle integration: 14/14 PASS;
-- ten Docker/image-backed suites were unavailable because projects-work has no Docker CLI/socket or required image;
-- five service-backed suites lacked their required KEYS_ENV/runtime;
-- four A6 evidence-lifecycle tests failed on the pre-existing worktreeId logical-id fixture contract.
-
-The same four A6 failures were reproduced directly at untouched accepted forward source d720f0f912ed24f876c9e24fa47b281a58dd87b2 (8/12 PASS, 4/12 FAIL), proving they were not introduced by the P9 delta. P9 did not modify A6/P7 code to hide or repair this unrelated accepted-base regression.
-
-This document cannot embed the SHA of the commit containing itself; the exact candidate commit and whole base..tip hashes are therefore returned as external immutable receipts without amending after handoff.
+Permanent regressions cover the nine original findings plus recoverable repair failure, runtime quiesce ordering, bounded recovery namespaces, verify-before-rollback mutation and signed-payload pre-mutation revalidation.
 
 ## Security impact
 
-Expected P9 delta:
+Current P9 remediation adds no Docker socket exposure, privileged container, public port, arbitrary host command API, raw-secret persistence, automatic remote exposure, capability addition or second authority system. The production release verification boundary now becomes stricter because signing trust is rooted in product/installer policy rather than release-supplied keys.
 
-- new Docker socket exposure: none;
-- new privileged container: none;
-- new public port default: none;
-- new arbitrary host command API: none;
-- new ungoverned mutation path: none;
-- new plaintext credential storage: none;
-- new automatic remote exposure: none;
-- new silent privilege escalation: none;
-- new second authority system: none.
+## Remaining qualification boundary
 
-## Known upstream/release dependencies
+Source remediation validation is complete but this document does not claim final product release qualification. Still pending:
 
-- final IDE adapter inventory and package binding: PENDING_UPSTREAM_P7;
-- signed Windows package build: DEFERRED_EXTERNAL_OWNER_CREDENTIAL and trusted packaging toolchain;
-- live Windows/WSL lifecycle rehearsal: NOT_RUN;
-- canonical/forward merge: NOT_AUTHORIZED;
-- production deployment: NOT_RUN;
-- independent ChatGPT review: PENDING.
+- immutable remediation freeze and owner-authorized strict self-audit receipt;
+- transplant/rebase onto the then-current accepted canonical source followed by full post-integration validation;
+- final release manifest/package regeneration against that accepted source;
+- trusted signed Windows package build using the owner release-signing credential/toolchain;
+- live Windows/WSL fresh-install, repair, upgrade, rollback, uninstall/reinstall and interruption-recovery rehearsal;
+- P10/A9 and P11 release qualification.

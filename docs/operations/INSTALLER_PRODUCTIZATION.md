@@ -1,6 +1,6 @@
 # QuaranGate Installer & Lifecycle Productization — D1/D2
 
-**Status:** Implemented as an isolated P9 D1/D2 source candidate; independent review, upstream P7 binding, signed Windows release packaging and live production qualification remain pending.
+**Status:** Source remediation implemented and fully validated in the isolated P9 review-remediation lane; immutable freeze/current-canonical integration are pending. Signed Windows release packaging and live production qualification remain pending.
 
 **Roadmap role:** D1 and D2 must close before A9 production hardening begins.
 
@@ -53,13 +53,13 @@ Before A9, qualification must cover a fresh/clean install, first run, restart/re
 
 ## Isolated P9 implementation architecture
 
-The isolated P9 candidate implements the source-level lifecycle boundary as:
+The current P9 remediation candidate implements the source-level lifecycle boundary as:
 
 - a native Windows Forms wizard source (scripts/windows/QuaranGate-Setup.ps1) with a RemoteSigned click launcher, explicit review and no unsigned-package mutation;
 - a fixed-argument WSL/Node planner (src/installer/cli.ts) which performs mechanical host probes and emits a digest-bound review plan;
 - a deterministic D1 policy layer (src/installer/productInstaller.ts) that maps human choices to the existing QuaranGate scopes rather than creating a second authority system;
-- a strict release-package manifest (src/installer/releasePackage.ts) binding every payload file and OCI image to immutable SHA-256 identity;
-- a versioned installation manifest plus D2 planner/coordinator (src/lifecycle/**) with plan-before-mutation, exact recovery anchors, credential preservation or reauthorization, fail-closed repair, supported rollback, preserve-by-default uninstall, reinstall attestation and interruption classification;
+- a strict release-package manifest (src/installer/releasePackage.ts) binding every payload file and OCI image to immutable SHA-256 identity, requiring exact lifecycle/image component-set agreement and an installer-owned release trust policy that is separate from untrusted package material;
+- a versioned installation manifest plus D2 planner/coordinator (src/lifecycle/**) with plan-before-mutation, exact path+mode-bound recovery anchors, runtime quiescing before upgrade/repair mutation, recoverable repair, credential preservation or reauthorization, supported rollback, preserve-by-default uninstall, reinstall attestation and interruption classification;
 - private atomic lifecycle persistence with traversal, symlink, junction-equivalent path alias, hard-link, permission and bounded-read defenses;
 - bounded/redacted lifecycle evidence.
 
@@ -74,4 +74,5 @@ The following remain outside this isolated parallel source qualification:
 - final accepted IDE adapter inventory and package payload: PENDING_UPSTREAM_P7;
 - final signed Windows package build: DEFERRED_EXTERNAL_OWNER_CREDENTIAL plus a trusted installer toolchain;
 - live Windows/WSL install, upgrade, rollback, repair, uninstall and reinstall rehearsal: NOT_RUN;
-- canonical integration and production deployment: NOT_AUTHORIZED.
+- immutable remediation freeze and current-canonical transplant: PENDING;
+- production deployment: NOT_RUN.

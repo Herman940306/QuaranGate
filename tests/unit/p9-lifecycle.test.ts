@@ -301,7 +301,7 @@ describe('P9 D2 plan before mutation', () => {
       anchorId: 'anchor-supported-rollback',
       createdAt: '2026-09-15T00:02:00.000Z',
       manifest: old,
-      payloads: [{ relativePath: 'state/database.sqlite', sizeBytes: 200, digest: shaC }],
+      payloads: [{ relativePath: 'state/data/database.sqlite', sizeBytes: 200, digest: shaC, mode: 0o600 }],
     });
     const plan = buildLifecyclePlan(current, {
       action: 'ROLLBACK',
@@ -362,8 +362,8 @@ describe('P9 D2 recovery anchor integrity', () => {
       createdAt: '2026-09-15T00:01:00.000Z',
       manifest: current,
       payloads: [
-        { relativePath: 'config/clients.yaml', sizeBytes: 100, digest: shaB },
-        { relativePath: 'state/database.sqlite', sizeBytes: 200, digest: shaC },
+        { relativePath: 'install/config/clients.yaml', sizeBytes: 100, digest: shaB, mode: 0o600 },
+        { relativePath: 'state/data/database.sqlite', sizeBytes: 200, digest: shaC, mode: 0o600 },
       ],
     });
     expect(verifyRecoveryAnchor(anchor)).toEqual(anchor);
@@ -375,7 +375,7 @@ describe('P9 D2 recovery anchor integrity', () => {
       anchorId: 'anchor-002',
       createdAt: '2026-09-15T00:01:00.000Z',
       manifest: manifest(),
-      payloads: [{ relativePath: 'config/bridge.yaml', sizeBytes: 50, digest: shaB }],
+      payloads: [{ relativePath: 'install/config/bridge.yaml', sizeBytes: 50, digest: shaB, mode: 0o600 }],
     });
     expect(() => verifyRecoveryAnchor({
       ...anchor,

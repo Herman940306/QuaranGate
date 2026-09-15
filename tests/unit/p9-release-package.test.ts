@@ -8,6 +8,7 @@ import {
   verifyReleasePackageManifest,
   verifyReleasePayload,
   verifyReleaseSignature,
+  verifyReleaseTrustPolicy,
 } from '../../src/installer/releasePackage.js';
 
 const shaA = 'a'.repeat(64);
@@ -79,6 +80,20 @@ describe('P9 deterministic release package', () => {
     })).toThrow(/mutable/u);
   });
 
+  it('requires the lifecycle component set to exactly match OCI image component identities', () => {
+    expect(() => createReleasePackageManifest({
+      schemaVersion: 1,
+      productVersion: '0.1.0',
+      sourceCommit: gitA,
+      createdAt: '2026-09-15T00:00:00.000Z',
+      architecture: 'WINDOWS_NATIVE_WIZARD_WSL_NODE_LIFECYCLE',
+      signing: 'DEFERRED_EXTERNAL_OWNER_CREDENTIAL',
+      lifecycle: lifecycle0,
+      files: [{ path: 'dist/index.js', sizeBytes: 1, digest: shaA, mode: 0o644 }],
+      images: [{ component: 'executor', reference: `executor:git-${gitA}`, digest: `sha256:${shaA}` }],
+    })).toThrow(/component.*image|image.*component/iu);
+  });
+
   it('re-hashes payload bytes and fails closed on size or digest mismatch', () => {
     const bytes = Buffer.from('payload', 'utf8');
     const digest = '239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5';
@@ -112,6 +127,22 @@ describe('P9 detached release signing trust', () => {
       images: [{ component: 'gateway', reference: `gateway:git-${gitA}`, digest: `sha256:${shaA}` }],
     });
   }
+
+  it('validates an installer-owned trust policy independently from release material', () => {
+    const { publicKey } = generateKeyPairSync('ed25519');
+    const policy = {
+      schemaVersion: 1 as const,
+      policyId: 'production-release-policy',
+      trustedKeys: [{
+        keyId: 'release-key-a',
+        algorithm: 'Ed25519' as const,
+        publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      }],
+    };
+    expect(verifyReleaseTrustPolicy(policy)).toEqual(policy);
+    expect(() => verifyReleaseTrustPolicy({ ...policy, trustedKeys: [] })).toThrow(/trust policy/iu);
+    expect(() => verifyReleaseTrustPolicy({ ...policy, unknown: true } as never)).toThrow(/unknown|fields/iu);
+  });
 
   it('refuses caller self-assertion of SIGNED and missing or malformed proof', () => {
     expect(() => createReleasePackageManifest({
