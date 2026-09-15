@@ -117,7 +117,7 @@ function driveToCompleted(id: string): void {
 function driveToApplied(id: string, attN: number): void {
   driveToCompleted(id);
   const attId = aid(attN);
-  store.startApplyAttempt({ attemptId: attId, jobId: id });
+  store.startApplyAttempt({ attemptId: attId, jobId: id, worktreeId: 'main' });
   store.transitionApplyAttempt(attId, 'STARTED', 'VERIFYING');
   store.transitionApplyAttempt(attId, 'VERIFYING', 'APPLYING');
   store.markApplySuccess(attId, id);
