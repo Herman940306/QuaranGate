@@ -2,7 +2,7 @@
 
 ## Status
 
-`SOURCE_CANDIDATE_IMPLEMENTED / LIVE_DEFERRED_EXTERNAL_CURSOR_ENVIRONMENT`
+`SOURCE_CANDIDATE_IMPLEMENTED / SELF_AUDIT_REMEDIATED / LIVE_BLOCKED_EXTERNAL_CURSOR_ENVIRONMENT`
 
 This batch implements a distinct Cursor-bound QuaranGate companion path without
 claiming VS Code compatibility by inheritance. The owner workstation used for
@@ -171,20 +171,60 @@ If Chat/LM public APIs are absent, classify them `NOT_SUPPORTED`; do not use a
 private Cursor Agent/Composer protocol, generic MCP bridge, shell, clipboard or
 UI automation as a fallback.
 
+## Forensic self-audit remediation
+
+The writer performed a strict red-team self-audit before freezing this lane. This is **not** an independent review. The audit attempted to falsify product identity, authority, qualification and recovery claims rather than trusting the original candidate report.
+
+The audit found and remediated six concrete issues:
+
+1. A known non-Cursor host could be classified `UNKNOWN` when the Cursor-specific namespace probe was unavailable. Product identity now returns `NOT_SUPPORTED` whenever `appName` / URI-scheme identity is definitively non-Cursor; `UNKNOWN` is reserved for an otherwise exact Cursor host whose namespace availability cannot be observed.
+2. Qualification evidence always recorded `liveQualificationExecuted=false`, even when a live runtime probe was supplied. It now records whether live runtime observations were actually supplied.
+3. The required isolated-executor restart/recovery scenario existed in this document but had no evidence step. `restart.recovery` is now explicit and can PASS only when enrollment/runtime recovery, stale prior authority, conservative active-operation handling, fresh generation and no duplicate enrollment are all proven.
+4. Review/cancellation evidence could be internally contradictory. A review or cancellation PASS now additionally requires the observed Cursor product/placement, B4, B6, B5, public Chat/LM API and ready model-access prerequisite chain. Claims that contradict unsupported/missing prerequisites fail instead of being promoted.
+5. The original document stated that no Cursor account was available without evidence. Account/entitlement status is now correctly `NOT_PROVEN`; local installation absence is reported only from the bounded host inspection actually performed.
+6. Cursor-specific source/tests retained stale I2 phase labels from the accepted security-mechanics template. Those labels were corrected to I3 so the final source does not obscure phase ownership.
+
+A production-composition regression was also added proving that a trusted `ideProduct=cursor` enrollment provisions the distinct `quarangate-cursor-companion` runtime while preserving review-only startup authority (no operation adapter, writer store or implementation adapter).
+
+### Self-audit validation receipts
+
+After remediation:
+
+- focused I3/runtime corpus: `96/96 PASS` across 10 files before the final contradictory-evidence regression;
+- full unit corpus: `2653/2653 PASS` across 98 files;
+- I2 + I3 qualification regression at that gate: `40/40 PASS`;
+- root TypeScript typecheck: `PASS`;
+- root build: `PASS`;
+- Cursor extension typecheck/build: `PASS`;
+- `git diff --check`: `PASS`.
+
+The final immutable-candidate receipts must be regenerated after this remediation is committed; these intermediate counts are evidence of the audit cycle, not the immutable final receipt.
+
 ## Current owner-environment classification
 
-`CURSOR_INSTALLED: NO`
+Bounded owner-host inspection job: `ohj_570ed94dce80cfdfcf263f8953d18d0f`.
 
-`CURSOR_ACCOUNT_AVAILABLE: NO`
+Observed:
 
-`LIVE_CURSOR_EXTENSION_PLACEMENT: DEFERRED_EXTERNAL_CURSOR_ENVIRONMENT`
+- common Windows Cursor executable locations checked: no file found;
+- WSL `cursor` CLI: absent;
+- `~/.cursor`: absent;
+- `~/.cursor-server`: absent.
 
-`LIVE_CURSOR_B6_B5: DEFERRED_EXTERNAL_CURSOR_ENVIRONMENT`
+Therefore:
 
-`LIVE_CURSOR_CHAT_API: DEFERRED_EXTERNAL_CURSOR_ENVIRONMENT`
+`CURSOR_INSTALLATION: NOT_FOUND_BOUNDED_HOST_CHECK`
 
-`LIVE_CURSOR_MODEL_API: DEFERRED_EXTERNAL_CURSOR_ENVIRONMENT`
+`CURSOR_ACCOUNT_OR_ENTITLEMENT: NOT_PROVEN`
 
-`LIVE_CURSOR_REVIEW/CANCEL: DEFERRED_EXTERNAL_CURSOR_ENVIRONMENT`
+`LIVE_CURSOR_EXTENSION_PLACEMENT: BLOCKED_EXTERNAL_CURSOR_ENVIRONMENT`
 
-This is an environment/ownership limitation, not source evidence of failure.
+`LIVE_CURSOR_B6_B5: BLOCKED_EXTERNAL_CURSOR_ENVIRONMENT`
+
+`LIVE_CURSOR_CHAT_API: BLOCKED_EXTERNAL_CURSOR_ENVIRONMENT`
+
+`LIVE_CURSOR_MODEL_API: BLOCKED_EXTERNAL_CURSOR_ENVIRONMENT`
+
+`LIVE_CURSOR_REVIEW/CANCEL: BLOCKED_EXTERNAL_CURSOR_ENVIRONMENT`
+
+No network acquisition or installation was authorized or attempted. This is an external environment prerequisite limitation, not source evidence of failure.

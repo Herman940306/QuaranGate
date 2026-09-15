@@ -26,9 +26,13 @@ describe('P7 I3 Cursor compatibility classification', () => {
   });
 
   it('requires exact Cursor product identity before binding authority', () => {
-    expect(classifyCursorCompatibility({ ...base, appName: 'Visual Studio Code', uriScheme: 'vscode' }).bindingState).toBe('BLOCKED_PRODUCT');
-    expect(classifyCursorCompatibility({ ...base, appName: 'Cursor Dev' }).bindingState).toBe('BLOCKED_PRODUCT');
-    expect(classifyCursorCompatibility({ ...base, uriScheme: 'vscode' }).bindingState).toBe('BLOCKED_PRODUCT');
+    expect(classifyCursorCompatibility({ ...base, appName: 'Visual Studio Code', uriScheme: 'vscode', cursorExtensionApi: undefined })).toMatchObject({
+      productIdentity: 'NOT_SUPPORTED',
+      bindingState: 'BLOCKED_PRODUCT',
+    });
+    expect(classifyCursorCompatibility({ ...base, appName: 'Cursor Dev' })).toMatchObject({ productIdentity: 'NOT_SUPPORTED', bindingState: 'BLOCKED_PRODUCT' });
+    expect(classifyCursorCompatibility({ ...base, uriScheme: 'vscode' })).toMatchObject({ productIdentity: 'NOT_SUPPORTED', bindingState: 'BLOCKED_PRODUCT' });
+    expect(classifyCursorCompatibility({ ...base, cursorExtensionApi: undefined })).toMatchObject({ productIdentity: 'UNKNOWN', bindingState: 'BLOCKED_PRODUCT' });
   });
 
   it('requires one WSL workspace extension host', () => {

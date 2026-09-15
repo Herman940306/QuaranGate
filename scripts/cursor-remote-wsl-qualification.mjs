@@ -140,6 +140,7 @@ export function evaluateRuntimeProbe(probe) {
       'transport.disconnect',
       'transport.backpressure',
       'reconnect.generation',
+      'restart.recovery',
     ]) steps.push(absent(id));
     return steps;
   }
@@ -234,15 +235,34 @@ export function evaluateRuntimeProbe(probe) {
     steps.push(step('cursor.model_access', result, { state: typeof state === 'string' ? state : null }));
   }
 
+  const reviewPrerequisites = product?.appName === 'Cursor'
+    && product?.uriScheme === 'cursor'
+    && product?.cursorExtensionApi === true
+    && placement?.extensionHostKind === 'workspace'
+    && placement?.remoteName === 'wsl'
+    && b4?.credentialOwnerVerified === true
+    && b4?.credentialModeVerified === true
+    && b4?.bindingMatches === true
+    && b6?.authenticated === true
+    && typeof b6?.sessionId === 'string' && b6.sessionId.length > 0
+    && Number.isSafeInteger(b6?.generation) && b6.generation >= 1
+    && b5?.workspaceMatched === true
+    && b5?.gitIdentityMatched === true
+    && chatApi?.publicApiAvailable === true
+    && modelApi?.publicApiAvailable === true
+    && modelAccess?.state === 'READY';
+
   const review = probe.reviewExecution;
   if (!review || review.attempted !== true) steps.push(absent('review.execution'));
   else {
-    const pass = review.operationIdBound === true
+    const pass = reviewPrerequisites
+      && review.operationIdBound === true
       && review.boundedOutput === true
       && review.zeroWorkspaceMutation === true
       && review.terminalState === 'COMPLETED';
     steps.push(step('review.execution', pass ? 'PASS' : 'FAIL', {
       attempted: true,
+      prerequisitesSatisfied: reviewPrerequisites,
       operationIdBound: review.operationIdBound === true,
       boundedOutput: review.boundedOutput === true,
       zeroWorkspaceMutation: review.zeroWorkspaceMutation === true,
@@ -253,12 +273,14 @@ export function evaluateRuntimeProbe(probe) {
   const cancellation = probe.cancellation;
   if (!cancellation || cancellation.attempted !== true) steps.push(absent('review.cancellation'));
   else {
-    const pass = cancellation.operationBound === true
+    const pass = reviewPrerequisites
+      && cancellation.operationBound === true
       && cancellation.cancellationObserved === true
       && cancellation.lateOutputObserved === false
       && cancellation.settledOnce === true;
     steps.push(step('review.cancellation', pass ? 'PASS' : 'FAIL', {
       attempted: true,
+      prerequisitesSatisfied: reviewPrerequisites,
       operationBound: cancellation.operationBound === true,
       cancellationObserved: cancellation.cancellationObserved === true,
       lateOutputObserved: cancellation.lateOutputObserved === true,
@@ -299,6 +321,30 @@ export function evaluateRuntimeProbe(probe) {
       generationAdvanced: reconnect.generationAdvanced === true,
       staleGenerationRejected: reconnect.staleGenerationRejected === true,
       staleOperationRejected: reconnect.staleOperationRejected === true,
+    }));
+  }
+
+  const restart = probe.restartRecovery;
+  if (!restart || restart.attempted !== true) steps.push(absent('restart.recovery'));
+  else {
+    const pass = restart.executorRestarted === true
+      && restart.enrollmentRecovered === true
+      && restart.runtimeInstanceRecovered === true
+      && restart.priorSessionStaled === true
+      && restart.priorControllerCleared === true
+      && restart.activeOperationConservative === true
+      && restart.freshGenerationEstablished === true
+      && restart.duplicateEnrollmentObserved === false;
+    steps.push(step('restart.recovery', pass ? 'PASS' : 'FAIL', {
+      attempted: true,
+      executorRestarted: restart.executorRestarted === true,
+      enrollmentRecovered: restart.enrollmentRecovered === true,
+      runtimeInstanceRecovered: restart.runtimeInstanceRecovered === true,
+      priorSessionStaled: restart.priorSessionStaled === true,
+      priorControllerCleared: restart.priorControllerCleared === true,
+      activeOperationConservative: restart.activeOperationConservative === true,
+      freshGenerationEstablished: restart.freshGenerationEstablished === true,
+      duplicateEnrollmentObserved: restart.duplicateEnrollmentObserved === true,
     }));
   }
 
@@ -402,7 +448,7 @@ export async function buildQualificationEvidence(options = {}) {
       node: process.version,
       platform: process.platform,
       architecture: process.arch,
-      liveQualificationExecuted: false,
+      liveQualificationExecuted: options.runtimeProbe !== null && options.runtimeProbe !== undefined,
     },
     steps,
   });

@@ -50,5 +50,8 @@
   },
   "reconnectGeneration": {
     "attempted": false
+  },
+  "restartRecovery": {
+    "attempted": false
   }
 }

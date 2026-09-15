@@ -3,7 +3,7 @@
  *
  * This module can make an enrolled Cursor workspace AVAILABLE. It deliberately
  * sends no controller/operation frame and exposes no review/implementation
- * start method. Later I2 slices may add QuaranGate-originated command delivery
+ * start method. Later I3 composition may add QuaranGate-originated command delivery
  * without giving the extension ambient operation authority.
  */
 import { randomBytes } from 'node:crypto';

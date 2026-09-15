@@ -182,6 +182,60 @@ describe('P7 I3 Cursor qualification infrastructure', () => {
     expect(steps.find((step) => step.id === 'cursor.remote_placement')?.result).toBe('PASS');
     expect(steps.find((step) => step.id === 'cursor.model_access')?.result).toBe('BLOCKED_ENVIRONMENT');
     expect(steps.find((step) => step.id === 'review.execution')?.result).toBe('NOT_RUN');
+    expect(steps.find((step) => step.id === 'restart.recovery')?.result).toBe('NOT_RUN');
+  });
+
+  it('refuses contradictory review/cancellation PASS claims unless the complete live Cursor public-API prerequisite chain is proven', () => {
+    const claimedReview = { attempted: true, operationIdBound: true, boundedOutput: true, zeroWorkspaceMutation: true, terminalState: 'COMPLETED' };
+    const claimedCancel = { attempted: true, operationBound: true, cancellationObserved: true, lateOutputObserved: false, settledOnce: true };
+    const contradictory = evaluateRuntimeProbe({
+      productIdentity: { appName: 'Cursor', uriScheme: 'cursor', cursorExtensionApi: true },
+      remotePlacement: { extensionHostKind: 'workspace', remoteName: 'wsl' },
+      b4RuntimeBinding: { credentialOwnerVerified: true, credentialModeVerified: true, bindingMatches: true },
+      b6AuthenticatedSession: { authenticated: true, sessionId: 'ides_fixture', generation: 1 },
+      b5WorkspaceIdentity: { workspaceMatched: true, gitIdentityMatched: true },
+      chatApi: { publicApiAvailable: false },
+      modelApi: { publicApiAvailable: false },
+      modelAccess: { state: 'API_UNSUPPORTED' },
+      reviewExecution: claimedReview,
+      cancellation: claimedCancel,
+    });
+    expect(contradictory.find((step) => step.id === 'review.execution')).toMatchObject({ result: 'FAIL', detail: { prerequisitesSatisfied: false } });
+    expect(contradictory.find((step) => step.id === 'review.cancellation')).toMatchObject({ result: 'FAIL', detail: { prerequisitesSatisfied: false } });
+
+    const coherent = evaluateRuntimeProbe({
+      productIdentity: { appName: 'Cursor', uriScheme: 'cursor', cursorExtensionApi: true },
+      remotePlacement: { extensionHostKind: 'workspace', remoteName: 'wsl' },
+      b4RuntimeBinding: { credentialOwnerVerified: true, credentialModeVerified: true, bindingMatches: true },
+      b6AuthenticatedSession: { authenticated: true, sessionId: 'ides_fixture', generation: 1 },
+      b5WorkspaceIdentity: { workspaceMatched: true, gitIdentityMatched: true },
+      chatApi: { publicApiAvailable: true },
+      modelApi: { publicApiAvailable: true },
+      modelAccess: { state: 'READY' },
+      reviewExecution: claimedReview,
+      cancellation: claimedCancel,
+    });
+    expect(coherent.find((step) => step.id === 'review.execution')?.result).toBe('PASS');
+    expect(coherent.find((step) => step.id === 'review.cancellation')?.result).toBe('PASS');
+  });
+
+  it('records executor restart/recovery only when every conservative recovery property is proven', () => {
+    const good = evaluateRuntimeProbe({
+      restartRecovery: {
+        attempted: true, executorRestarted: true, enrollmentRecovered: true, runtimeInstanceRecovered: true,
+        priorSessionStaled: true, priorControllerCleared: true, activeOperationConservative: true,
+        freshGenerationEstablished: true, duplicateEnrollmentObserved: false,
+      },
+    });
+    expect(good.find((step) => step.id === 'restart.recovery')?.result).toBe('PASS');
+    const bad = evaluateRuntimeProbe({
+      restartRecovery: {
+        attempted: true, executorRestarted: true, enrollmentRecovered: true, runtimeInstanceRecovered: true,
+        priorSessionStaled: true, priorControllerCleared: false, activeOperationConservative: true,
+        freshGenerationEstablished: true, duplicateEnrollmentObserved: false,
+      },
+    });
+    expect(bad.find((step) => step.id === 'restart.recovery')?.result).toBe('FAIL');
   });
 
   it('builds evidence without executing live qualification', async () => {
@@ -198,6 +252,18 @@ describe('P7 I3 Cursor qualification infrastructure', () => {
     expect(sourceStep?.result).toBe(sourceStep?.detail.clean ? 'PASS' : 'FAIL');
     expect(manifest.steps.find((step) => step.id === 'environment.wsl')?.result).toBe('BLOCKED_ENVIRONMENT');
     expect(manifest.steps.find((step) => step.id === 'review.execution')?.result).toBe('NOT_RUN');
+  });
+
+  it('marks live qualification executed only when a live runtime probe is actually supplied', async () => {
+    const manifest = await buildQualificationEvidence({
+      fixtureSeed: SEED,
+      runId: 'integration-live-probe',
+      environment: { env: { WSL_DISTRO_NAME: 'Ubuntu-24.04' }, release: 'linux' },
+      runtimeProbe: { chatApi: { publicApiAvailable: false }, modelApi: { publicApiAvailable: false } },
+    });
+    expect(manifest.environment).toMatchObject({ liveQualificationExecuted: true });
+    expect(manifest.steps.find((step) => step.id === 'cursor.chat_api')?.result).toBe('NOT_SUPPORTED');
+    expect(manifest.steps.find((step) => step.id === 'cursor.model_api')?.result).toBe('NOT_SUPPORTED');
   });
 
   it('fails closed on malformed qualification status instead of coercing it', () => {

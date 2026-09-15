@@ -41,13 +41,14 @@ function capability(value: boolean | undefined): CursorCapabilityState {
  * deliberately updated; it must not silently become trusted by substring.
  */
 export function classifyCursorCompatibility(facts: CursorRuntimeFacts): CursorCompatibilityResult {
-  const productIdentity: CursorCapabilityState = facts.appName === 'Cursor'
-    && facts.uriScheme === 'cursor'
-    && facts.cursorExtensionApi === true
-    ? 'PASS'
-    : facts.cursorExtensionApi === undefined
-      ? 'UNKNOWN'
-      : 'NOT_SUPPORTED';
+  const hostIdentityMatches = facts.appName === 'Cursor' && facts.uriScheme === 'cursor';
+  const productIdentity: CursorCapabilityState = !hostIdentityMatches
+    ? 'NOT_SUPPORTED'
+    : facts.cursorExtensionApi === true
+      ? 'PASS'
+      : facts.cursorExtensionApi === false
+        ? 'NOT_SUPPORTED'
+        : 'UNKNOWN';
   const remoteWslPlacement: CursorCapabilityState = facts.remoteName === 'wsl'
     && facts.extensionHostKind === 'workspace'
     && facts.workspaceFolderCount === 1

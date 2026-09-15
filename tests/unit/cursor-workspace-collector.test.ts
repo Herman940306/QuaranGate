@@ -49,7 +49,7 @@ afterEach(() => {
   while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
-describe('P7 I2.1 Cursor Remote-WSL workspace evidence collector', () => {
+describe('P7 I3 Cursor Remote-WSL workspace evidence collector', () => {
   it('collects exact case-sensitive WSL + ordinary Git identity without shell commands', async () => {
     const base = root();
     const workspace = join(base, 'workspace');

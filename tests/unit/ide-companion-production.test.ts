@@ -71,6 +71,33 @@ describe('P7 I2 IDE companion production composition', () => {
     expect(existsSync(bootstrap.credentialPath)).toBe(true);
   });
 
+  it('provisions a Cursor enrollment as the distinct quarangate-cursor-companion without widening review-only startup authority', async () => {
+    const l = tempLayout();
+    const cursorEntry = entry({
+      ideProduct: 'cursor',
+      ideInstanceId: `ide_${'3'.repeat(32)}`,
+      runtimeInstanceId: `iderun_${'4'.repeat(32)}`,
+    });
+    writeConfig(l.configPath, cursorEntry);
+    let captured: ConstructorParameters<typeof IdeCompanionListener>[0] | undefined;
+    const runtime = await startIdeCompanionProduction({
+      configPath: l.configPath, databasePath: l.databasePath, runtimeRoot: l.runtimeRoot,
+      listenerFactory: (opts) => { captured = opts; return new IdeCompanionListener(opts); },
+    });
+    expect(runtime.state).toBe('AVAILABLE_NOT_LIVE_QUALIFIED');
+    expect(captured?.runtime.ideProduct).toBe('cursor');
+    expect(captured?.runtime.adapterId).toBe('quarangate-cursor-companion');
+    expect(captured?.userReviewIntents).toBe(true);
+    expect(captured?.operationAdapter).toBeUndefined();
+    expect(captured?.writerStore).toBeUndefined();
+    expect(captured?.implementationAdapter).toBeUndefined();
+    const bootstrap = runtime.bootstrapBindings[0]!;
+    const raw = JSON.parse(readFileSync(bootstrap.credentialPath, 'utf8')) as Record<string, unknown>;
+    expect(raw).toMatchObject({ ideProduct: 'cursor', adapterId: 'quarangate-cursor-companion', adapterVersion: '0.1.0' });
+    expect(JSON.stringify(raw)).not.toContain('request_implementation');
+    await runtime.stop();
+  });
+
   it('recovers the same durable runtime/enrollment on ordinary restart without re-enrollment', async () => {
     const l = tempLayout(); writeConfig(l.configPath);
     const first = await startIdeCompanionProduction({ configPath: l.configPath, databasePath: l.databasePath, runtimeRoot: l.runtimeRoot });

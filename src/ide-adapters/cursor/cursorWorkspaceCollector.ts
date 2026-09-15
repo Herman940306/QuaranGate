@@ -1,5 +1,5 @@
 /**
- * I2.1 mechanical Cursor/Remote-WSL workspace evidence collection.
+ * I3 mechanical Cursor/Remote-WSL workspace evidence collection.
  *
  * This collector uses no shell command and accepts no project/worktree ID.
  * It turns extension-host facts plus OS/Git metadata into B5 physical evidence;
