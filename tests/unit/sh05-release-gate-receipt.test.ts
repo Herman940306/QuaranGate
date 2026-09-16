@@ -7,6 +7,7 @@ import {
   pathIsWithinRoot,
   unavailableReceipt,
   validateSourceBindingReceipt,
+  vitestGateInvocation,
 } from '../../scripts/release-gate-receipt.mjs';
 
 const source = {
@@ -22,6 +23,17 @@ describe('SH-05 fixed release gate receipt executor', () => {
     expect(gateDefinition('typecheck').commandId).toBe('typescript-typecheck');
     expect(gateDefinition('integration').commandId).toBe('vitest-integration');
     expect(() => gateDefinition('rm -rf /')).toThrow(/unsupported fixed release gate/u);
+  });
+
+  it('routes fixed unit/integration execution through the self-cleaning Vitest wrapper', () => {
+    const unit = vitestGateInvocation(gateDefinition('unit'), '/external/unit.json');
+    expect(unit.binary).toBe(process.execPath);
+    expect(unit.args).toEqual([
+      'scripts/run-vitest-clean.mjs', 'tests/unit', '--no-file-parallelism', '--reporter=json', '--outputFile=/external/unit.json',
+    ]);
+    const integration = vitestGateInvocation(gateDefinition('integration'), '/external/integration.json');
+    expect(integration.args[1]).toBe('tests/integration');
+    expect(() => vitestGateInvocation(gateDefinition('typecheck') as any, '/external/nope.json')).toThrow(/Vitest gate definition/u);
   });
 
   it('marks E2E unavailable until a canonical entry point is integrated', () => {

@@ -126,6 +126,17 @@ export function integrationPrerequisites({ env = process.env, exists = existsSyn
   return missing;
 }
 
+export function vitestGateInvocation(definition, reportPath) {
+  if (!definition?.vitest || typeof definition.scope !== 'string' || !definition.scope) {
+    throw new Error('Vitest gate definition is invalid');
+  }
+  if (typeof reportPath !== 'string' || !reportPath) throw new Error('Vitest report path is required');
+  return {
+    binary: process.execPath,
+    args: ['scripts/run-vitest-clean.mjs', definition.scope, '--no-file-parallelism', '--reporter=json', `--outputFile=${reportPath}`],
+  };
+}
+
 export function gateDefinition(gate) {
   if (!SUPPORTED_GATES.includes(gate)) throw new Error(`unsupported fixed release gate: ${gate}`);
   if (gate === 'e2e') return { unavailable: true, reason: 'CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED' };
@@ -186,7 +197,8 @@ export function main(argv = process.argv.slice(2)) {
     let artifact;
     if (definition.vitest) {
       const reportPath = join(temp, 'vitest.json');
-      result = run(resolve('node_modules/.bin/vitest'), ['run', '--configLoader', 'native', definition.scope, '--no-file-parallelism', '--reporter=json', `--outputFile=${reportPath}`]);
+      const invocation = vitestGateInvocation(definition, reportPath);
+      result = run(invocation.binary, invocation.args);
       if (result.status === 0 && existsSync(reportPath)) testCounts = parseVitestReport(readJson(reportPath, 'Vitest report'));
     } else if (definition.sbom) {
       if (!artifactOutput) throw new Error('--artifact-output is required for sbom gate');
