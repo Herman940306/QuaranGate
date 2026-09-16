@@ -10,3 +10,7 @@ data/
 config/agents.yaml
 config/github.yaml
 .npm-offline-artifacts/
+
+# Release-browser dependencies are pre-provisioned/verified runtime artifacts, never source.
+e2e/node_modules/
+e2e/node_modules

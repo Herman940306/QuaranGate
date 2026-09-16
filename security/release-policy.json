@@ -32,6 +32,10 @@
       "name": "vitest",
       "version": "3.2.7"
     },
+    "e2e": {
+      "name": "@playwright/test",
+      "version": "1.63.0"
+    },
     "authority-invariants": {
       "name": "quarangate-security-invariants",
       "version": "1"
@@ -85,9 +89,8 @@
   },
   "gateContracts": {
     "e2e": {
-      "state": "NOT_INTEGRATED",
-      "passAllowed": false,
-      "failureCode": "CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED"
+      "state": "INTEGRATED",
+      "passAllowed": true
     }
   }
 }

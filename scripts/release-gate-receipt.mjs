@@ -60,6 +60,72 @@ export function parseVitestReport(report) {
   return { files: report.testResults.length, tests: report.numTotalTests, failed: report.numFailedTests };
 }
 
+export function parsePlaywrightReport(report) {
+  const projects = report?.config?.projects;
+  const stats = report?.stats;
+  if (!report || typeof report !== 'object' || Array.isArray(report)
+    || !Array.isArray(report.errors) || report.errors.length !== 0
+    || report.config?.workers !== 1 || report.config?.forbidOnly !== true || report.config?.fullyParallel !== false
+    || !Array.isArray(projects) || projects.length !== 2
+    || JSON.stringify(projects.map((project) => project?.name)) !== JSON.stringify(['chromium-workstation', 'chromium-narrow'])
+    || projects.some((project) => project?.retries !== 0)
+    || !stats || !Number.isInteger(stats.expected) || stats.expected <= 0
+    || stats.skipped !== 0 || stats.unexpected !== 0 || stats.flaky !== 0) {
+    throw new Error('Playwright report is not an exact rendered all-passing, zero-skip/zero-flaky report');
+  }
+
+  const files = new Set();
+  let tests = 0;
+  function walk(suites = []) {
+    for (const suite of suites) {
+      for (const spec of Array.isArray(suite?.specs) ? suite.specs : []) {
+        if (typeof spec?.file === 'string' && spec.file) files.add(spec.file);
+        for (const test of Array.isArray(spec?.tests) ? spec.tests : []) {
+          tests += 1;
+          if (test?.expectedStatus !== 'passed' || test?.status !== 'expected'
+            || !Array.isArray(test?.results) || test.results.length !== 1 || test.results[0]?.status !== 'passed') {
+            throw new Error('Playwright report contains a non-passing or retried test');
+          }
+        }
+      }
+      walk(Array.isArray(suite?.suites) ? suite.suites : []);
+    }
+  }
+  walk(Array.isArray(report.suites) ? report.suites : []);
+  if (files.size <= 0 || tests !== stats.expected) throw new Error('Playwright report test/file counts are inconsistent');
+  return { files: files.size, tests, failed: 0 };
+}
+
+function lockedPackageVersion(lockPath, name) {
+  const lock = readJson(resolve(lockPath), `${lockPath} package lock`);
+  const version = lock?.packages?.[`node_modules/${name}`]?.version;
+  if (typeof version !== 'string' || !version) throw new Error(`locked package version is unavailable: ${name}`);
+  return version;
+}
+
+export function e2ePrerequisites({
+  exists = existsSync,
+  installedVersion = () => {
+    const path = resolve('e2e/node_modules/@playwright/test/package.json');
+    return exists(path) ? readJson(path, '@playwright/test package metadata').version : null;
+  },
+  probeBrowser = () => run(process.execPath, ['e2e/scripts/browser-readiness.mjs']),
+} = {}) {
+  const expectedVersion = lockedPackageVersion('e2e/package-lock.json', '@playwright/test');
+  const observedVersion = installedVersion();
+  if (observedVersion === null) return ['E2E_DEPENDENCIES_UNAVAILABLE'];
+  if (observedVersion !== expectedVersion) return ['E2E_DEPENDENCY_VERSION_MISMATCH'];
+  const browser = probeBrowser();
+  if (browser?.errorCode || browser?.status !== 0) {
+    try {
+      const parsed = JSON.parse(String(browser?.stdout ?? '').trim());
+      if (['BROWSER_EXECUTABLE_UNAVAILABLE', 'BROWSER_RUNTIME_UNAVAILABLE'].includes(parsed?.code)) return [parsed.code];
+    } catch { /* fall through to bounded generic classification */ }
+    return ['BROWSER_RUNTIME_UNAVAILABLE'];
+  }
+  return [];
+}
+
 export function executionEvidence(result, commandId) {
   return {
     commandId,
@@ -139,7 +205,7 @@ export function vitestGateInvocation(definition, reportPath) {
 
 export function gateDefinition(gate) {
   if (!SUPPORTED_GATES.includes(gate)) throw new Error(`unsupported fixed release gate: ${gate}`);
-  if (gate === 'e2e') return { unavailable: true, reason: 'CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED' };
+  if (gate === 'e2e') return { e2e: true, tool: { name: '@playwright/test', version: lockedPackageVersion('e2e/package-lock.json', '@playwright/test') }, commandId: 'playwright-e2e' };
   if (gate === 'typecheck') return { binary: resolve('node_modules/.bin/tsc'), args: ['-p', 'tsconfig.json', '--noEmit'], tool: { name: 'typescript', version: packageVersion('typescript') }, commandId: 'typescript-typecheck' };
   if (gate === 'build') return { binary: resolve('node_modules/.bin/tsc'), args: ['-p', 'tsconfig.json'], tool: { name: 'typescript', version: packageVersion('typescript') }, commandId: 'typescript-build' };
   if (gate === 'unit') return { vitest: true, scope: 'tests/unit', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-unit' };
@@ -159,6 +225,7 @@ export function unavailableReceipt(gate, source, definition) {
     gate,
     status: 'UNAVAILABLE',
     source,
+    ...(definition.tool ? { tool: definition.tool } : {}),
     failureCode: definition.reason,
     ...(Array.isArray(definition.missingPrerequisites) ? { missingPrerequisites: [...definition.missingPrerequisites].sort() } : {}),
   };
@@ -185,6 +252,12 @@ export function main(argv = process.argv.slice(2)) {
       definition = { ...definition, unavailable: true, reason: 'INTEGRATION_PREREQUISITES_UNAVAILABLE', missingPrerequisites };
     }
   }
+  if (gate === 'e2e') {
+    const missingPrerequisites = e2ePrerequisites();
+    if (missingPrerequisites.length) {
+      definition = { ...definition, unavailable: true, reason: 'E2E_PREREQUISITES_UNAVAILABLE', missingPrerequisites };
+    }
+  }
   if (definition.unavailable) {
     writeReceipt(output, unavailableReceipt(gate, source, definition));
     return 4;
@@ -195,7 +268,14 @@ export function main(argv = process.argv.slice(2)) {
     let result;
     let testCounts;
     let artifact;
-    if (definition.vitest) {
+    if (definition.e2e) {
+      const reportPath = join(temp, 'playwright.json');
+      const cli = resolve('e2e/node_modules/@playwright/test/cli.js');
+      result = run(process.execPath, [cli, 'test', '--config=e2e/playwright.config.ts'], {
+        env: { ...process.env, QG_E2E_EVIDENCE_DIR: temp },
+      });
+      if (result.status === 0 && existsSync(reportPath)) testCounts = parsePlaywrightReport(readJson(reportPath, 'Playwright report'));
+    } else if (definition.vitest) {
       const reportPath = join(temp, 'vitest.json');
       const invocation = vitestGateInvocation(definition, reportPath);
       result = run(invocation.binary, invocation.args);
@@ -224,7 +304,7 @@ export function main(argv = process.argv.slice(2)) {
 
     const after = currentSource();
     if (!sameSource(source, after)) throw new Error('release gate mutated or drifted exact Git source');
-    const status = result.status === 0 && !result.errorCode && (definition.vitest ? Boolean(testCounts) : true) && (definition.sbom ? Boolean(artifact) : true) ? 'PASS' : 'FAIL';
+    const status = result.status === 0 && !result.errorCode && ((definition.vitest || definition.e2e) ? Boolean(testCounts) : true) && (definition.sbom ? Boolean(artifact) : true) ? 'PASS' : 'FAIL';
     const receipt = {
       schemaVersion: 1,
       gate,

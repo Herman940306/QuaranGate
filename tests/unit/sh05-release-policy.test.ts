@@ -74,14 +74,16 @@ describe('SH-05 release security policy', () => {
     expect(report.source).toEqual(source); expect(report.sourceBinding.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it('production policy forbids an E2E PASS until a canonical E2E entry point is integrated', () => {
+  it('fails closed when any gate contract explicitly forbids a PASS', () => {
     const f = fixture();
-    writeFileSync(f.policyPath, JSON.stringify(productionPolicy));
+    const forbiddenPolicy = structuredClone(productionPolicy);
+    forbiddenPolicy.gateContracts.e2e = { state: 'TEST_FORBIDDEN', passAllowed: false, failureCode: 'TEST_E2E_PASS_FORBIDDEN' };
+    writeFileSync(f.policyPath, JSON.stringify(forbiddenPolicy));
     const r = evaluate(f);
     expect(r.status).toBe(3);
     const failures = JSON.parse(r.stdout).failures;
     expect(failures).toContainEqual(expect.objectContaining({
-      gate: 'e2e', code: 'GATE_PASS_NOT_ALLOWED', failureCode: 'CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED',
+      gate: 'e2e', code: 'GATE_PASS_NOT_ALLOWED', failureCode: 'TEST_E2E_PASS_FORBIDDEN',
     }));
   });
 

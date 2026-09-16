@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  e2ePrerequisites,
   executionEvidence,
   gateDefinition,
   integrationPrerequisites,
+  parsePlaywrightReport,
   parseVitestReport,
   pathIsWithinRoot,
   unavailableReceipt,
@@ -36,12 +38,56 @@ describe('SH-05 fixed release gate receipt executor', () => {
     expect(() => vitestGateInvocation(gateDefinition('typecheck') as any, '/external/nope.json')).toThrow(/Vitest gate definition/u);
   });
 
-  it('marks E2E unavailable until a canonical entry point is integrated', () => {
+  it('binds E2E to the canonical pinned Playwright entry point', () => {
     const definition = gateDefinition('e2e');
-    expect(definition).toEqual({ unavailable: true, reason: 'CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED' });
-    expect(unavailableReceipt('e2e', source, definition)).toEqual(expect.objectContaining({
-      gate: 'e2e', status: 'UNAVAILABLE', source, failureCode: 'CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED',
-    }));
+    expect(definition).toEqual({
+      e2e: true,
+      tool: { name: '@playwright/test', version: '1.63.0' },
+      commandId: 'playwright-e2e',
+    });
+  });
+
+  it('classifies E2E dependencies/browser readiness without inventing a PASS', () => {
+    expect(e2ePrerequisites({
+      installedVersion: () => null,
+      probeBrowser: () => { throw new Error('must not probe without dependencies'); },
+    })).toEqual(['E2E_DEPENDENCIES_UNAVAILABLE']);
+    expect(e2ePrerequisites({
+      installedVersion: () => '1.62.0',
+      probeBrowser: () => { throw new Error('must not probe mismatched dependency'); },
+    })).toEqual(['E2E_DEPENDENCY_VERSION_MISMATCH']);
+    expect(e2ePrerequisites({
+      installedVersion: () => '1.63.0',
+      probeBrowser: () => ({ status: 2, errorCode: null, stdout: '{"ok":false,"code":"BROWSER_EXECUTABLE_UNAVAILABLE"}' }),
+    })).toEqual(['BROWSER_EXECUTABLE_UNAVAILABLE']);
+    expect(e2ePrerequisites({
+      installedVersion: () => '1.63.0',
+      probeBrowser: () => ({ status: 0, errorCode: null, stdout: '{"ok":true}' }),
+    })).toEqual([]);
+  });
+
+  it('accepts only rendered all-passing Playwright reports with zero skips/flakes/retries', () => {
+    const passing = {
+      config: {
+        workers: 1, forbidOnly: true, fullyParallel: false,
+        projects: [
+          { name: 'chromium-workstation', retries: 0 },
+          { name: 'chromium-narrow', retries: 0 },
+        ],
+      },
+      errors: [],
+      stats: { expected: 2, skipped: 0, unexpected: 0, flaky: 0 },
+      suites: [{ title: 'browser', specs: [
+        { file: 'a.spec.ts', tests: [{ expectedStatus: 'passed', status: 'expected', results: [{ status: 'passed' }] }] },
+        { file: 'b.spec.ts', tests: [{ expectedStatus: 'passed', status: 'expected', results: [{ status: 'passed' }] }] },
+      ] }],
+    };
+    expect(parsePlaywrightReport(passing)).toEqual({ files: 2, tests: 2, failed: 0 });
+    expect(() => parsePlaywrightReport({ ...passing, stats: { ...passing.stats, skipped: 1, expected: 1 } })).toThrow(/zero-skip/u);
+    expect(() => parsePlaywrightReport({ ...passing, stats: { ...passing.stats, flaky: 1 } })).toThrow(/zero-skip/u);
+    const retried = structuredClone(passing);
+    retried.suites[0].specs[0].tests[0].results.push({ status: 'passed' });
+    expect(() => parsePlaywrightReport(retried)).toThrow(/retried/u);
   });
 
   it('classifies missing full-integration prerequisites without exposing secret values', () => {
