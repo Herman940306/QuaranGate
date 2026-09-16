@@ -2,17 +2,21 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { externalOutputPath } from './release-path-safety.mjs';
 
 const args = process.argv.slice(2);
 const valueAfter = (flag) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };
 const evidenceDir = valueAfter('--evidence-dir');
 const sourceBindingPath = valueAfter('--source-binding');
 const output = valueAfter('--output');
+const SOURCE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const policyPath = valueAfter('--policy') ?? 'security/release-policy.json';
 const baselinePath = valueAfter('--baseline') ?? 'security/release-baseline.json';
 const exceptionsPath = valueAfter('--exceptions') ?? 'security/release-exceptions.json';
 const atRaw = valueAfter('--at') ?? new Date().toISOString();
 if (!evidenceDir) throw new Error('--evidence-dir is required');
+if (output) externalOutputPath(SOURCE_ROOT, output, '--output');
 if (!sourceBindingPath || !existsSync(sourceBindingPath)) throw new Error('--source-binding requires an existing source-binding receipt');
 const evaluatedAt = new Date(atRaw);
 if (!Number.isFinite(evaluatedAt.getTime())) throw new Error('--at must be a valid ISO timestamp');
@@ -90,6 +94,14 @@ function validateReceiptEvidence(gate, receipt, sourceBindingSha256) {
       || !SHA256.test(scan.toolchainReportSha256 ?? '') || scan.sourceBindingSha256 !== sourceBindingSha256
       || !Number.isInteger(scan.normalizedFindingCount) || scan.normalizedFindingCount !== findings.length
       || receipt.scanError !== undefined) errors.push('INVALID_SCAN_EVIDENCE');
+    if (gate === 'image-scan') {
+      const images = receipt.images;
+      if (!SHA256.test(scan?.imageIdentitiesSha256 ?? '') || !Array.isArray(images) || images.length === 0
+        || images.some((image, index) => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(image?.component ?? '')
+          || (typeof image?.reference !== 'string' || !image.reference || /\s|@|(?:^|:)latest$/iu.test(image.reference))
+          || !/^sha256:[0-9a-f]{64}$/u.test(image?.digest ?? '')
+          || (index > 0 && images[index - 1].component >= image.component))) errors.push('INVALID_IMAGE_SCAN_IDENTITY');
+    }
   }
   if (gate === 'provenance') {
     const statement = receipt.statement; const bundle = receipt.bundle; const publicKey = receipt.publicKey;
@@ -151,7 +163,11 @@ for (const gate of policy.requiredGates) {
   if (expectedTool && (receipt.tool?.name !== expectedTool.name || receipt.tool?.version !== expectedTool.version)) {
     failures.push({ gate, code: 'TOOL_VERSION_MISMATCH', expected: expectedTool, observed: receipt.tool ?? null });
   }
-  for (const code of validateReceiptEvidence(gate, receipt, sha256(readFileSync(sourceBindingPath)))) failures.push({ gate, code });
+  // UNAVAILABLE is an honest prerequisite classification, not a claimed execution PASS.
+  // It still blocks release, but PASS-only proof fields are intentionally absent.
+  if (receipt.status !== 'UNAVAILABLE') {
+    for (const code of validateReceiptEvidence(gate, receipt, sha256(readFileSync(sourceBindingPath)))) failures.push({ gate, code });
+  }
   for (const finding of Array.isArray(receipt.findings) ? receipt.findings : []) {
     if (typeof finding.fingerprint !== 'string' || !finding.fingerprint) {
       failures.push({ gate, code: 'FINDING_WITHOUT_FINGERPRINT' });

@@ -2,9 +2,10 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { externalOutputPath, pathIsWithinRoot as sharedPathIsWithinRoot } from './release-path-safety.mjs';
 
 const SHA1 = /^[0-9a-f]{40}$/u;
 const SUPPORTED_GATES = Object.freeze(['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'sbom']);
@@ -163,14 +164,11 @@ function sameSource(a, b) {
   return a?.clean === true && b?.clean === true && a?.repository === b?.repository && a?.branch === b?.branch && a?.commit === b?.commit && a?.tree === b?.tree;
 }
 
-export function pathIsWithinRoot(root, candidate) {
-  const rel = relative(resolve(root), resolve(candidate));
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && !rel.startsWith('\\'));
-}
+export const pathIsWithinRoot = sharedPathIsWithinRoot;
 
 function requireExternalEvidencePath(path, label) {
   const worktreeRoot = git(['rev-parse', '--show-toplevel']);
-  if (pathIsWithinRoot(worktreeRoot, path)) throw new Error(`${label} must be outside the Git worktree`);
+  externalOutputPath(worktreeRoot, path, label);
 }
 
 function packageVersion(name) {

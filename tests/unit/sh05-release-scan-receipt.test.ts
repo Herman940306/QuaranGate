@@ -8,15 +8,19 @@ const source = { repository: 'https://github.com/Herman940306/QuaranGate.git', b
 const versions: Record<string,string> = { semgrep: '1.177.0', gitleaks: '8.30.0', 'osv-scanner': '2.6.0', trivy: '0.74.0' };
 function fixture(raw: unknown) {
   const root = mkdtempSync(join(tmpdir(), 'qg-scan-receipt-')); mkdirSync(join(root, 'out'));
-  const input = join(root, 'raw.json'); const binding = join(root, 'binding.json'); const toolchain = join(root, 'toolchain.json'); const output = join(root, 'out', 'receipt.json');
+  const input = join(root, 'raw.json'); const binding = join(root, 'binding.json'); const toolchain = join(root, 'toolchain.json'); const imageIdentities = join(root, 'images.json'); const output = join(root, 'out', 'receipt.json');
   writeFileSync(input, JSON.stringify(raw));
   writeFileSync(binding, JSON.stringify({ schemaVersion: 1, gate: 'source-binding', status: 'PASS', source }));
   writeFileSync(toolchain, JSON.stringify({ schemaVersion: 1, ok: true, tools: Object.entries(versions).map(([id, expectedVersion]) => ({ id, expectedVersion, status: 'PASS', ...(id === 'gitleaks' ? { functionalCanary: { status: 'PASS', findingCount: 1 } } : {}) })) }));
-  return { input, binding, toolchain, output };
+  const digest = `sha256:${'c'.repeat(64)}`;
+  writeFileSync(imageIdentities, JSON.stringify({ schemaVersion: 1, images: [{ component: 'gateway', reference: 'quarangate-gateway:git-test', digest }] }));
+  return { input, binding, toolchain, imageIdentities, output };
 }
 function run(gate: string, raw: unknown, exitCode: number, mutate?: (f: ReturnType<typeof fixture>) => void) {
   const f = fixture(raw); mutate?.(f);
-  const r = spawnSync(process.execPath, ['scripts/release-scan-receipt.mjs', '--gate', gate, '--input', f.input, '--source-binding', f.binding, '--toolchain-report', f.toolchain, '--scanner-exit-code', String(exitCode), '--output', f.output], { encoding: 'utf8' });
+  const args = ['scripts/release-scan-receipt.mjs', '--gate', gate, '--input', f.input, '--source-binding', f.binding, '--toolchain-report', f.toolchain, '--scanner-exit-code', String(exitCode), '--output', f.output];
+  if (gate === 'image-scan') args.push('--image-identities', f.imageIdentities);
+  const r = spawnSync(process.execPath, args, { encoding: 'utf8' });
   const receipt = (() => { try { return JSON.parse(readFileSync(f.output, 'utf8')); } catch { return null; } })();
   return { r, receipt };
 }
@@ -67,9 +71,12 @@ describe('SH-05 scanner report normalization', () => {
     ]));
   });
 
-  it('normalizes Trivy image vulnerabilities and secrets without copying secret material', () => {
-    const raw = { SchemaVersion: 2, Results: [{ Target: 'quarangate@sha256:abc', Vulnerabilities: [{ VulnerabilityID: 'CVE-2026-0001', PkgName: 'libx', InstalledVersion: '1.2.3', Severity: 'CRITICAL', Title: 'critical vuln' }], Secrets: [{ RuleID: 'private-key', StartLine: 3, Title: 'private key', Match: 'SENSITIVE' }] }] };
-    const { r, receipt } = run('image-scan', raw, 1); expect(r.status, r.stderr).toBe(0); expect(receipt.findings).toEqual(expect.arrayContaining([expect.objectContaining({ category: 'dependency', severity: 'CRITICAL' }), expect.objectContaining({ category: 'secret', severity: 'HIGH' })])); expect(JSON.stringify(receipt)).not.toContain('SENSITIVE');
+  it('binds Trivy image findings to exact immutable release image identities without copying secret material', () => {
+    const digest = `sha256:${'c'.repeat(64)}`; const reference = 'quarangate-gateway:git-test'; const scanTarget = `${reference}@${digest}`; const repoDigest = `quarangate-gateway@${digest}`;
+    const raw = [{ SchemaVersion: 2, ArtifactName: scanTarget, ArtifactType: 'container_image', Metadata: { RepoDigests: [repoDigest] }, Results: [{ Target: 'quarangate-gateway', Vulnerabilities: [{ VulnerabilityID: 'CVE-2026-0001', PkgName: 'libx', InstalledVersion: '1.2.3', Severity: 'CRITICAL', Title: 'critical vuln' }], Secrets: [{ RuleID: 'private-key', StartLine: 3, Title: 'private key', Match: 'SENSITIVE' }] }] }];
+    let { r, receipt } = run('image-scan', raw, 1); expect(r.status, r.stderr).toBe(0); expect(receipt.images).toEqual([{ component: 'gateway', reference, digest }]); expect(receipt.scan.imageIdentitiesSha256).toMatch(/^[0-9a-f]{64}$/u); expect(receipt.findings).toEqual(expect.arrayContaining([expect.objectContaining({ category: 'dependency', severity: 'CRITICAL' }), expect.objectContaining({ category: 'secret', severity: 'HIGH' })])); expect(JSON.stringify(receipt)).not.toContain('SENSITIVE');
+    ({ r, receipt } = run('image-scan', [{ ...raw[0], ArtifactName: `other@${digest}` }], 1)); expect(r.status).toBe(4); expect(receipt.scanError).toContain('exact release image identity');
+    ({ r, receipt } = run('image-scan', [{ ...raw[0], Metadata: { RepoDigests: [] } }], 1)); expect(r.status).toBe(4); expect(receipt.scanError).toContain('exact release image identity');
   });
 
   it('fails closed if the toolchain report cannot prove the pinned scanner version', () => {

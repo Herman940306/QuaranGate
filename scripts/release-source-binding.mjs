@@ -2,12 +2,14 @@
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { externalOutputPath } from './release-path-safety.mjs';
 
 const args = process.argv.slice(2);
 const valueAfter = (flag) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };
 const repository = resolve(valueAfter('--repository') ?? '.');
 const output = valueAfter('--output');
 if (!output) throw new Error('--output is required');
+externalOutputPath(repository, output, '--output');
 
 function git(argv, options = {}) {
   const result = spawnSync('git', ['-C', repository, ...argv], { encoding: 'utf8', ...options });

@@ -2,6 +2,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { externalOutputPath } from './release-path-safety.mjs';
 
 const args = process.argv.slice(2);
 const valueAfter = (flag) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };
@@ -11,6 +13,8 @@ const sourceBindingPath = valueAfter('--source-binding');
 const toolchainReportPath = valueAfter('--toolchain-report');
 const exitCodeRaw = valueAfter('--scanner-exit-code');
 const output = valueAfter('--output');
+const SOURCE_ROOT = fileURLToPath(new URL('../', import.meta.url));
+const imageIdentitiesPath = valueAfter('--image-identities');
 const allowedGates = new Set(['sast', 'secrets', 'sca', 'config-scan', 'image-scan']);
 if (!allowedGates.has(gate)) throw new Error('--gate must be one of sast,secrets,sca,config-scan,image-scan');
 if (!input || !existsSync(input)) throw new Error('--input requires an existing scanner JSON report');
@@ -18,7 +22,9 @@ if (!sourceBindingPath || !existsSync(sourceBindingPath)) throw new Error('--sou
 if (!toolchainReportPath || !existsSync(toolchainReportPath)) throw new Error('--toolchain-report requires an existing toolchain report');
 if (!/^-?\d+$/u.test(exitCodeRaw ?? '')) throw new Error('--scanner-exit-code requires an integer');
 if (!output) throw new Error('--output is required');
+if (output) externalOutputPath(SOURCE_ROOT, output, '--output');
 const scannerExitCode = Number(exitCodeRaw);
+if (gate === 'image-scan' && (!imageIdentitiesPath || !existsSync(imageIdentitiesPath))) throw new Error('--image-identities requires an existing identity file for image-scan');
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const readJson = (path, label) => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { throw new Error(`${label} is malformed JSON`); } };
@@ -50,6 +56,27 @@ if (!tool || tool.status !== 'PASS' || tool.expectedVersion !== expectedTool.ver
 }
 if (toolId === 'gitleaks' && tool.functionalCanary?.status !== 'PASS') {
   throw new Error('toolchain report does not prove the Gitleaks functional canary');
+}
+
+const IMAGE_DIGEST = /^sha256:[0-9a-f]{64}$/u;
+function imageRepository(reference) {
+  const slash = reference.lastIndexOf('/'); const colon = reference.lastIndexOf(':');
+  return colon > slash ? reference.slice(0, colon) : reference;
+}
+let imageIdentities = null;
+let imageIdentitiesBytes = null;
+if (gate === 'image-scan') {
+  imageIdentitiesBytes = readFileSync(imageIdentitiesPath);
+  const identityDoc = readJson(imageIdentitiesPath, 'image identities');
+  if (identityDoc?.schemaVersion !== 1 || !Array.isArray(identityDoc.images) || identityDoc.images.length === 0) throw new Error('image identities are invalid');
+  imageIdentities = identityDoc.images.map((image) => {
+    const keys = image && typeof image === 'object' && !Array.isArray(image) ? Object.keys(image).sort() : [];
+    if (keys.join(',') !== 'component,digest,reference'
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(image.component ?? '')
+      || typeof image.reference !== 'string' || !image.reference || /\s|@|(?:^|:)latest$/iu.test(image.reference) || !IMAGE_DIGEST.test(image.digest ?? '')) throw new Error('image identity is invalid or mutable');
+    return { component: image.component, reference: image.reference, digest: image.digest };
+  });
+  if (imageIdentities.some((image, index) => index > 0 && imageIdentities[index - 1].component >= image.component)) throw new Error('image identities must be sorted and unique');
 }
 
 const rawBytes = readFileSync(input);
@@ -140,9 +167,25 @@ if (gate === 'sast') {
     else if (![0, 1].includes(scannerExitCode)) scanError = `OSV-Scanner non-result/error exit ${scannerExitCode}`;
   }
 } else {
-  if (!raw || raw.SchemaVersion !== 2 || !Array.isArray(raw.Results)) scanError = 'invalid Trivy JSON shape';
+  const reports = gate === 'image-scan' ? (Array.isArray(raw) ? raw : [raw]) : [raw];
+  if (!reports.length || reports.some((report) => !report || report.SchemaVersion !== 2 || !Array.isArray(report.Results))) scanError = 'invalid Trivy JSON shape';
   else {
-    for (const result of raw.Results) {
+    if (gate === 'image-scan') {
+      if (reports.length !== imageIdentities.length) scanError = 'Trivy image report count does not match exact image identities';
+      else {
+        for (let index = 0; index < reports.length; index += 1) {
+          const report = reports[index]; const identity = imageIdentities[index];
+          const scanTarget = `${identity.reference}@${identity.digest}`;
+          const exactRepoDigest = `${imageRepository(identity.reference)}@${identity.digest}`;
+          const digests = Array.isArray(report?.Metadata?.RepoDigests) ? report.Metadata.RepoDigests : [];
+          if (report.ArtifactType !== 'container_image' || report.ArtifactName !== scanTarget || !digests.includes(exactRepoDigest)) {
+            scanError = `Trivy image report is not bound to exact release image identity: ${identity.component}`;
+            break;
+          }
+        }
+      }
+    }
+    for (const report of reports) for (const result of report.Results) {
       const target = result?.Target;
       // Normalize every supported Trivy finding class even if a future/incorrect runner enables
       // more scanners than the nominal gate. Unexpected findings must never disappear at receipt time.
@@ -188,7 +231,9 @@ const receipt = {
     toolchainReportSha256: sha256(readFileSync(toolchainReportPath)),
     sourceBindingSha256: sha256(readFileSync(sourceBindingPath)),
     normalizedFindingCount: findings.length,
+    ...(imageIdentitiesBytes ? { imageIdentitiesSha256: sha256(imageIdentitiesBytes) } : {}),
   },
+  ...(imageIdentities ? { images: imageIdentities } : {}),
   findings,
   ...(scanError ? { scanError } : {}),
 };

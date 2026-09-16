@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { posix, relative, resolve } from 'node:path';
+import { posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { externalOutputPath, pathIsWithinRoot as sharedPathIsWithinRoot } from './release-path-safety.mjs';
 
 export const STATEMENT_TYPE = 'https://in-toto.io/Statement/v1';
 export const PREDICATE_TYPE = 'https://slsa.dev/provenance/v1';
@@ -176,14 +177,11 @@ function sameSource(a, b) {
   return a?.clean === true && b?.clean === true && a?.repository === b?.repository && a?.branch === b?.branch && a?.commit === b?.commit && a?.tree === b?.tree;
 }
 
-export function pathIsWithinRoot(root, candidate) {
-  const rel = relative(resolve(root), resolve(candidate));
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && !rel.startsWith('\\'));
-}
+export const pathIsWithinRoot = sharedPathIsWithinRoot;
 
 function requireExternalOutput(path, label) {
   const root = git(['rev-parse', '--show-toplevel']);
-  if (pathIsWithinRoot(root, path)) throw new Error(`${label} must be outside the Git worktree`);
+  externalOutputPath(root, path, label);
 }
 
 export function buildProvenanceStatement({ source, sourceBindingBytes, manifest, manifestBytes, sbomBytes, policyBytes, toolchainBytes }) {

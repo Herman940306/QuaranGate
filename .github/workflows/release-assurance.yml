@@ -1,0 +1,47 @@
+name: QuaranGate Release Assurance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [integrate/quarangate-forward]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quarangate-release-assurance
+  cancel-in-progress: false
+
+jobs:
+  release-assurance:
+    runs-on: [self-hosted, linux, x64, quarangate-release]
+    timeout-minutes: 90
+    steps:
+      - name: Prove pre-provisioned exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/release-assurance.mjs
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - name: Run no-download release assurance
+        shell: bash
+        env:
+          QG_TRIVY_CACHE_DIR: ${{ vars.QG_TRIVY_CACHE_DIR }}
+          OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: ${{ vars.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY }}
+          KEYS_ENV: ${{ vars.QG_RELEASE_KEYS_ENV }}
+          QG_RELEASE_IMAGE_INPUTS: ${{ vars.QG_RELEASE_IMAGE_INPUTS }}
+          QG_RELEASE_MANIFEST: ${{ vars.QG_RELEASE_MANIFEST }}
+          QG_RELEASE_SIGSTORE_BUNDLE: ${{ vars.QG_RELEASE_SIGSTORE_BUNDLE }}
+          QG_RELEASE_PUBLIC_KEY: ${{ vars.QG_RELEASE_PUBLIC_KEY }}
+          QG_RELEASE_EVIDENCE_ROOT: ${{ vars.QG_RELEASE_EVIDENCE_ROOT }}
+        run: |
+          set -euo pipefail
+          test -n "$QG_RELEASE_EVIDENCE_ROOT"
+          mkdir -p -m 0700 "$QG_RELEASE_EVIDENCE_ROOT"
+          evidence="$QG_RELEASE_EVIDENCE_ROOT/quarangate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$evidence"
+          mkdir -m 0700 "$evidence"
+          node scripts/release-assurance.mjs --evidence-dir "$evidence"
+          printf 'QUARANGATE_RELEASE_EVIDENCE=%s\n' "$evidence"

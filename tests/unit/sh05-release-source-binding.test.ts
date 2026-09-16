@@ -19,8 +19,10 @@ function repo() {
   writeFileSync(join(root, '.gitignore'), 'node_modules\ndist/\n');
   writeFileSync(join(root, 'source.txt'), 'accepted\n');
   git(root, 'add', '.'); git(root, 'commit', '-m', 'fixture');
-  const output = join(root, 'dist', 'source-binding.json'); mkdirSync(join(root, 'dist'));
-  return { root, output };
+  mkdirSync(join(root, 'dist'));
+  const evidence = mkdtempSync(join(tmpdir(), 'qg-source-binding-evidence-'));
+  const output = join(evidence, 'source-binding.json');
+  return { root, output, evidence };
 }
 
 function run(f: ReturnType<typeof repo>) {
@@ -49,6 +51,13 @@ describe('SH-05 Git-derived release source binding', () => {
   it('fails closed for non-ignored untracked bytes', () => {
     const f = repo(); writeFileSync(join(f.root, 'unexpected.ts'), 'untracked\n');
     const r = run(f); expect(r.status).not.toBe(0); expect(r.stderr).toContain('non-ignored untracked source bytes present: unexpected.ts');
+  });
+
+
+  it('refuses to write the source-binding receipt inside the Git source even when the path is ignored', () => {
+    const f = repo(); const inside = join(f.root, 'dist', 'source-binding.json');
+    const r = spawnSync(process.execPath, ['scripts/release-source-binding.mjs', '--repository', f.root, '--output', inside], { encoding: 'utf8' });
+    expect(r.status).not.toBe(0); expect(r.stderr).toContain('must be outside the Git worktree');
   });
 
   it('permits ignored dependency/build artifacts and a node_modules symlink without weakening source identity', () => {

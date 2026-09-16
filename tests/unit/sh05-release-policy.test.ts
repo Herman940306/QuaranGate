@@ -34,6 +34,10 @@ function validReceipt(gate: string, sourceBindingSha256: string, findings: any[]
     scannerExitCode: findings.length ? 1 : 0, rawReportSha256: digest, rawReportBytes: 100, toolchainReportSha256: digest,
     sourceBindingSha256, normalizedFindingCount: findings.length,
   };
+  if (gate === 'image-scan') {
+    receipt.scan.imageIdentitiesSha256 = digest;
+    receipt.images = [{ component: 'gateway', reference: 'quarangate-gateway:git-test', digest: `sha256:${'c'.repeat(64)}` }];
+  }
   if (gate === 'provenance') {
     receipt.statement = { predicateType: 'https://slsa.dev/provenance/v1', sha256: digest, bytes: 100, subjectCount: 3, releaseManifestSha256: digest, releaseManifestDigest: digest, sbomSha256: digest };
     receipt.bundle = { sha256: digest, bytes: 100, mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json', signedStatementSha256: digest, signedStatementBytes: 90 };

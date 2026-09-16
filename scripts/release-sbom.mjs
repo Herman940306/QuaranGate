@@ -2,6 +2,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { externalOutputPath } from './release-path-safety.mjs';
 
 // Production npm release components: core plus the shipped VS Code/Cursor extensions.
 // The ide-chat-spike tree is preserved feasibility evidence and is not a release component.
@@ -14,7 +16,9 @@ const DEFAULT_RELEASE_LOCKS = [
 const args = process.argv.slice(2);
 const outAt = args.indexOf('--output');
 const output = outAt >= 0 ? args[outAt + 1] : undefined;
+const SOURCE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 if (outAt >= 0 && !output) throw new Error('--output requires a path');
+if (output) externalOutputPath(SOURCE_ROOT, output, '--output');
 
 const requestedLocks = [];
 for (let i = 0; i < args.length; i++) {

@@ -1,0 +1,43 @@
+rules:
+  - id: quarangate.no-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Dynamic eval is forbidden in QuaranGate production source.
+    pattern: 'eval(...)'
+    paths:
+      include: [src/**, scripts/**, console/**, extensions/**]
+  - id: quarangate.no-function-constructor
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Dynamic Function construction is forbidden in QuaranGate production source.
+    pattern: 'new Function(...)'
+    paths:
+      include: [src/**, scripts/**, console/**, extensions/**]
+  - id: quarangate.no-shell-true
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Child processes must never opt into shell interpolation.
+    pattern: '$F($...ARGS, { ..., shell: true, ... })'
+    paths:
+      include: [src/**, scripts/**, console/**, extensions/**]
+  - id: quarangate.no-tls-disable
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: TLS certificate verification must not be disabled.
+    pattern: '$X = { ..., rejectUnauthorized: false, ... }'
+    paths:
+      include: [src/**, scripts/**, console/**, extensions/**]
+  - id: quarangate.no-child-process-exec
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Shell-string child_process exec is forbidden; use fixed executable/argument arrays.
+    pattern-either:
+      - pattern: 'exec(...)'
+      - pattern: 'execSync(...)'
+  - id: quarangate.no-node-tls-disable-env
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Disabling Node TLS verification through the environment is forbidden.
+    pattern-either:
+      - pattern: 'process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"'
+      - pattern: "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'"

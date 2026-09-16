@@ -32,7 +32,8 @@
     "release:source-binding": "node scripts/release-source-binding.mjs",
     "release:scan-receipt": "node scripts/release-scan-receipt.mjs",
     "release:gate-receipt": "node scripts/release-gate-receipt.mjs",
-    "release:provenance": "node scripts/release-provenance.mjs"
+    "release:provenance": "node scripts/release-provenance.mjs",
+    "release:assurance": "node scripts/release-assurance.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

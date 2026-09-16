@@ -3,13 +3,17 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { externalOutputPath } from './release-path-safety.mjs';
 
 const config = JSON.parse(readFileSync('security/release-toolchain.json', 'utf8'));
 const args = process.argv.slice(2);
 const reportOnly = args.includes('--report-only');
 const outAt = args.indexOf('--output');
 const output = outAt >= 0 ? args[outAt + 1] : undefined;
+const SOURCE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 if (outAt >= 0 && !output) throw new Error('--output requires a path');
+if (output) externalOutputPath(SOURCE_ROOT, output, '--output');
 
 function exactVersionPresent(outputText, version) {
   const escapedVersion = String(version).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

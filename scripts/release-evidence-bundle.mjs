@@ -2,6 +2,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, posix, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { externalOutputPath } from './release-path-safety.mjs';
 
 const args = process.argv.slice(2);
 const valueAfter = (flag) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };
@@ -11,12 +13,14 @@ const releaseManifestPath = valueAfter('--release-manifest');
 const sbomPath = valueAfter('--sbom');
 const policyReportPath = valueAfter('--policy-report');
 const output = valueAfter('--output');
+const SOURCE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 if (!evidenceDir) throw new Error('--evidence-dir is required');
 if (!sourceBindingPath || !existsSync(sourceBindingPath)) throw new Error('--source-binding requires an existing source-binding receipt');
 if (!releaseManifestPath || !existsSync(releaseManifestPath)) throw new Error('--release-manifest requires an existing P9 release manifest');
 if (!sbomPath || !existsSync(sbomPath)) throw new Error('--sbom requires an existing SPDX JSON file');
 if (!policyReportPath || !existsSync(policyReportPath)) throw new Error('--policy-report requires an existing release-policy report');
 if (!output) throw new Error('--output is required');
+if (output) externalOutputPath(SOURCE_ROOT, output, '--output');
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const readJson = (path, label) => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { throw new Error(`${label} is malformed JSON`); } };
@@ -184,6 +188,15 @@ function assertReceiptEvidence(gate, receipt) {
     if (!scan || !Number.isInteger(scan.scannerExitCode) || !SHA256.test(scan.rawReportSha256 ?? '') || !Number.isInteger(scan.rawReportBytes) || scan.rawReportBytes <= 0
       || !SHA256.test(scan.toolchainReportSha256 ?? '') || scan.sourceBindingSha256 !== sha256(sourceBindingBytes)
       || !Number.isInteger(scan.normalizedFindingCount) || scan.normalizedFindingCount !== findings.length || receipt.scanError !== undefined) throw new Error(`scan receipt lacks valid raw/toolchain/source evidence: ${gate}`);
+    if (gate === 'image-scan') {
+      const images = receipt.images;
+      if (!SHA256.test(scan?.imageIdentitiesSha256 ?? '') || !Array.isArray(images) || images.length === 0
+        || images.some((image, index) => !SAFE_ID.test(image?.component ?? '')
+          || typeof image?.reference !== 'string' || !image.reference || /\s|@|(?:^|:)latest$/iu.test(image.reference)
+          || !/^sha256:[0-9a-f]{64}$/u.test(image?.digest ?? '')
+          || (index > 0 && images[index - 1].component >= image.component))) throw new Error('image-scan receipt lacks exact immutable image identities');
+      if (JSON.stringify(images) !== JSON.stringify(releaseIdentity.images)) throw new Error('image-scan receipt does not bind the exact release manifest images');
+    }
   }
   if (gate === 'provenance') {
     const statement = receipt.statement; const bundle = receipt.bundle; const publicKey = receipt.publicKey;

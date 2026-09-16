@@ -1,0 +1,13 @@
+# SH-05 Release Runner Contract
+
+The release-assurance workflow is deliberately **pre-provisioned and no-download**. It does not use `actions/checkout`, third-party Actions, `npm install`, package managers, `curl`, `wget`, `docker pull`, scanner database refresh, or browser installation.
+
+The dedicated `quarangate-release` self-hosted runner must be isolated from ordinary worker authority and must provision the exact GitHub event SHA before the job starts. The first workflow step fails unless `HEAD == GITHUB_SHA` and the source worktree is clean. The runner must provide the exact scanner versions frozen in `security/release-toolchain.json`, the exact project dependencies, the pinned E2E dependencies/browser runtime, the OSV offline database through `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY`, and the Trivy offline cache through `QG_TRIVY_CACHE_DIR`.
+
+Untrusted pull-request code is intentionally not a trigger for this self-hosted release runner. Release-image scans additionally require an explicit sorted image-input document containing `{component, reference, digest}` for immutable local images; final P11 provenance requires the P9 release manifest, Sigstore bundle, and public key. Missing external prerequisites produce `BLOCKED_ENVIRONMENT`, never PASS.
+
+The workflow accepts only runner-local paths through repository variables: `QG_RELEASE_KEYS_ENV`, `QG_RELEASE_IMAGE_INPUTS`, `QG_RELEASE_MANIFEST`, `QG_RELEASE_SIGSTORE_BUNDLE`, `QG_RELEASE_PUBLIC_KEY`, and `QG_RELEASE_EVIDENCE_ROOT`. These values are paths, not credential contents. The orchestrator also accepts the corresponding explicit CLI flags, which take precedence. Missing paths remain `UNAVAILABLE`; a missing Docker CLI/runtime on an otherwise image-scan-capable release runner is classified `BLOCKED_ENVIRONMENT`. Missing or mismatched exact candidate images after Docker is available are scanner/release failures, not silently downgraded environment blocks.
+
+The workflow must not grant Docker authority to normal QuaranGate workers. If local image scanning is enabled on the dedicated release runner, that runner is an owner-managed release surface and Trivy is constrained to `--image-src docker` with exact digest targets and all remote/update paths disabled.
+
+A PASS run writes the complete release-assurance receipts and `release-evidence-bundle.json` under the unique owner-managed evidence directory and prints that directory path. The workflow refuses an already-existing run directory, does not store release evidence inside Git source, and does not depend on a network artifact-upload Action.

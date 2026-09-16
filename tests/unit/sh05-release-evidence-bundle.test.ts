@@ -46,6 +46,10 @@ function validReceipt(gate: string, sourceBindingSha256: string, manifestBytes: 
   if (['sast', 'secrets', 'sca', 'config-scan', 'image-scan'].includes(gate)) receipt.scan = {
     scannerExitCode: 0, rawReportSha256: digest, rawReportBytes: 100, toolchainReportSha256: digest, sourceBindingSha256, normalizedFindingCount: 0,
   };
+  if (gate === 'image-scan') {
+    receipt.scan.imageIdentitiesSha256 = digest;
+    receipt.images = manifest.images;
+  }
   if (gate === 'provenance') {
     receipt.statement = { predicateType: 'https://slsa.dev/provenance/v1', sha256: digest, bytes: 100, subjectCount: 3, releaseManifestSha256: sha256(manifestBytes), releaseManifestDigest: manifest.manifestDigest, sbomSha256: sha256(sbomBytes) };
     receipt.bundle = { sha256: digest, bytes: 100, mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json', signedStatementSha256: digest, signedStatementBytes: 90 };
@@ -154,6 +158,14 @@ describe('SH-05 release evidence bundle', () => {
     const bytes = Buffer.from(`${JSON.stringify(receipt)}\n`); writeFileSync(p, bytes);
     const report = JSON.parse(readFileSync(f.policyReport, 'utf8')); report.evidence.find((x: any) => x.gate === 'provenance').sha256 = sha256(bytes); writeFileSync(f.policyReport, `${JSON.stringify(report)}\n`);
     const r = run(f); expect(r.status).not.toBe(0); expect(r.stderr).toContain('provenance receipt does not bind the exact release manifest/SBOM/verified bundle');
+  });
+
+  it('fails closed when image-scan evidence is for a different immutable release image set', () => {
+    const f = fixture(); const p = join(f.evidence, 'image-scan.json'); const receipt = JSON.parse(readFileSync(p, 'utf8'));
+    receipt.images[0].digest = `sha256:${'9'.repeat(64)}`;
+    const bytes = Buffer.from(`${JSON.stringify(receipt)}\n`); writeFileSync(p, bytes);
+    const report = JSON.parse(readFileSync(f.policyReport, 'utf8')); report.evidence.find((x: any) => x.gate === 'image-scan').sha256 = sha256(bytes); writeFileSync(f.policyReport, `${JSON.stringify(report)}\n`);
+    const r = run(f); expect(r.status).not.toBe(0); expect(r.stderr).toContain('image-scan receipt does not bind the exact release manifest images');
   });
 
   it('fails closed for a non-PASS policy verdict', () => {
