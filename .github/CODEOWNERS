@@ -1,0 +1,12 @@
+# Default owner
+* @Herman940306
+
+# Security- and release-sensitive surfaces
+/.github/ @Herman940306
+/Dockerfile @Herman940306
+/compose*.yaml @Herman940306
+/config/ @Herman940306
+/security/ @Herman940306
+/scripts/release-* @Herman940306
+/scripts/security-* @Herman940306
+/docs/security/ @Herman940306

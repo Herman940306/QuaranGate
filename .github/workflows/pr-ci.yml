@@ -1,0 +1,86 @@
+name: PR CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: never
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify offline dependency bundle when provisioned
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${QUARANGATE_NPM_ARTIFACT_ROOT:-}" ]; then
+            npm run deps:verify
+          else
+            printf '%s\n' \
+              'QUARANGATE_NPM_ARTIFACT_ROOT is not provisioned on GitHub-hosted PR CI; offline bundle verification remains a separate release-assurance gate.'
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Security invariants when available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); process.exit(p.scripts?.['security:invariants'] ? 0 : 1)"; then
+            npm run security:invariants
+          else
+            printf '%s\n' 'security:invariants script not present on this source line; skipped.'
+          fi
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Generated-change guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            printf '%s\n' 'CI commands modified the checked-out source tree.'
+            exit 1
+          fi

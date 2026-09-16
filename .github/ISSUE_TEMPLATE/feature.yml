@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a bounded capability or product improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        QuaranGate prioritizes governed authority, evidence, and fail-closed behavior. Describe the user problem first; avoid proposing authority expansion as the default solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user or operator problem exists today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result, not only a preferred implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Gateway / MCP
+        - Executor / targets
+        - Agent Control Plane
+        - IDE Session Control
+        - GitHub Control Plane
+        - Console / frontend
+        - Installer / lifecycle
+        - Security / release assurance
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: authority
+    attributes:
+      label: Authority and security impact
+      description: Does this add a new writer, host path, network destination, credential, Docker capability, provider authority, or promotion path? If none, say so.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What deterministic evidence should prove this feature complete?
+    validations:
+      required: true
