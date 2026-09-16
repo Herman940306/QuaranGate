@@ -1,6 +1,7 @@
 /** Pure, fail-closed A7 Copilot startup configuration. */
 import type { AgentProfileId } from '../shared/agents.js';
 import { validateImageRef } from '../shared/imageRef.js';
+import { normalizeExactEgressHostname } from '../shared/egressPolicy.js';
 
 export const COPILOT_SUPPORTED_PROFILES: readonly AgentProfileId[] = ['audit', 'plan', 'review'];
 
@@ -34,17 +35,12 @@ function requireValue(value: string | undefined, name: string): string {
 }
 
 export function parseCopilotEgressHosts(value: string): string[] {
-  const hosts = value.split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
-  if (hosts.length === 0) throw new Error('AGENT_COPILOT_EGRESS_HOSTS must contain owner-approved exact hostnames');
-  const unique = [...new Set(hosts)];
-  for (const host of unique) {
-    if (host.includes('*') || host.includes('/') || host.includes(':')
-      || !/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(host)
-      || host.includes('..') || !host.includes('.')) {
-      throw new Error(`AGENT_COPILOT_EGRESS_HOSTS contains invalid exact hostname: ${host}`);
-    }
+  const raw = value.split(',').map((host) => host.trim()).filter(Boolean);
+  if (raw.length === 0) throw new Error('AGENT_COPILOT_EGRESS_HOSTS must contain owner-approved exact hostnames');
+  try { return [...new Set(raw.map(normalizeExactEgressHostname))]; }
+  catch (error) {
+    throw new Error(`AGENT_COPILOT_EGRESS_HOSTS contains invalid exact hostname: ${error instanceof Error ? error.message : String(error)}`);
   }
-  return unique;
 }
 
 export function assertCopilotProfiles(profiles: readonly AgentProfileId[]): void {

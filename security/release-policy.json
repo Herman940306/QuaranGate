@@ -9,6 +9,7 @@
     "authority-invariants",
     "security-fuzz",
     "security-chaos",
+    "security-egress",
     "sast",
     "secrets",
     "sca",
@@ -75,6 +76,10 @@
       "version": "1"
     },
     "security-chaos": {
+      "name": "vitest",
+      "version": "3.2.7"
+    },
+    "security-egress": {
       "name": "vitest",
       "version": "3.2.7"
     }

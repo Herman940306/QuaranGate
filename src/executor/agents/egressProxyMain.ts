@@ -16,20 +16,15 @@
  * The proxy never sees the Kiro API key, never mounts the project or /jobs, and
  * never receives docker.sock. TLS stays end-to-end (CONNECT passthrough).
  */
-import { EgressProxy } from './egressProxy.js';
+import { EgressProxy, parseEgressProxyEnvironment } from './egressProxy.js';
 
-const port = Number(process.env.EGRESS_PROXY_PORT ?? 8080);
-const extra = (process.env.EGRESS_PROXY_ALLOWLIST ?? '')
-  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-const exact = (process.env.EGRESS_PROXY_EXACT_ALLOWLIST ?? '')
-  .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-
-const proxy = new EgressProxy({
-  listenHost: '0.0.0.0',
-  listenPort: port,
-  additionalHosts: exact.length === 0 ? extra : undefined,
-  allowedHosts: exact.length > 0 ? exact : undefined,
-});
+let proxy: EgressProxy;
+try {
+  proxy = new EgressProxy(parseEgressProxyEnvironment(process.env));
+} catch (error) {
+  console.error(JSON.stringify({ level: 'fatal', msg: 'egress proxy configuration invalid', error: error instanceof Error ? error.message : String(error) }));
+  process.exit(1);
+}
 
 proxy.start()
   .then((addr) => {

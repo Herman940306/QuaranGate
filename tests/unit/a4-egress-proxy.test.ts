@@ -21,7 +21,7 @@ describe('egress proxy — private address detection', () => {
   });
 
   it('allows genuine public addresses', () => {
-    for (const ip of ['8.8.8.8', '1.1.1.1', '52.94.236.100', '203.0.113.1']) {
+    for (const ip of ['8.8.8.8', '1.1.1.1', '52.94.236.100']) {
       expect(isPrivateAddress(ip), ip).toBe(false);
     }
     expect(isPrivateAddress('172.15.0.1')).toBe(false);
@@ -39,8 +39,8 @@ describe('egress proxy — private address detection', () => {
     for (const ip of ['::ffff:127.0.0.1', '::ffff:10.0.0.1', '::ffff:169.254.169.254', '64:ff9b::192.168.1.1']) {
       expect(isPrivateAddress(ip), ip).toBe(true);
     }
-    // A mapped PUBLIC address is fine.
-    expect(isPrivateAddress('::ffff:8.8.8.8')).toBe(false);
+    // Mapped IPv4 forms are rejected entirely; native A answers remain available.
+    expect(isPrivateAddress('::ffff:8.8.8.8')).toBe(true);
   });
 });
 

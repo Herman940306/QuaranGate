@@ -45,6 +45,15 @@ describe('SH-05 fixed release gate receipt executor', () => {
     });
   });
 
+  it('binds SH-10 SSRF/egress qualification to the fixed Vitest corpus', () => {
+    expect(gateDefinition('security-egress')).toEqual({
+      vitest: true,
+      scope: 'tests/unit/sh10',
+      tool: { name: 'vitest', version: '3.2.7' },
+      commandId: 'vitest-security-egress',
+    });
+  });
+
   it('routes fixed unit/integration execution through the self-cleaning Vitest wrapper', () => {
     const unit = vitestGateInvocation(gateDefinition('unit'), '/external/unit.json');
     expect(unit.binary).toBe(process.execPath);
@@ -55,6 +64,8 @@ describe('SH-05 fixed release gate receipt executor', () => {
     expect(integration.args[1]).toBe('tests/integration');
     const chaos = vitestGateInvocation(gateDefinition('security-chaos'), '/external/chaos.json');
     expect(chaos.args[1]).toBe('tests/unit/sh09');
+    const egress = vitestGateInvocation(gateDefinition('security-egress'), '/external/egress.json');
+    expect(egress.args[1]).toBe('tests/unit/sh10');
     expect(() => vitestGateInvocation(gateDefinition('typecheck') as any, '/external/nope.json')).toThrow(/Vitest gate definition/u);
   });
 

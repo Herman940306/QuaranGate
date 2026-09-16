@@ -30,6 +30,7 @@
 import net from 'node:net';
 import dns from 'node:dns/promises';
 import { BridgeError } from '../../shared/errors.js';
+import { isUnsafeEgressAddress, normalizeExactEgressHostname } from '../../shared/egressPolicy.js';
 import { SANDBOX_LABEL_NS } from './sandboxSpec.js';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,9 @@ const MAX_CONNECTION_LIFETIME_MS = 10 * 60 * 1000;
 
 /** Maximum concurrent connections per proxy instance. */
 const MAX_CONCURRENT_CONNECTIONS = 32;
+const MAX_CONNECT_HEADER_BYTES = 8 * 1024;
+const MAX_EARLY_TUNNEL_BYTES = 64 * 1024;
+const UPSTREAM_CONNECT_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
 // Private address detection
@@ -83,49 +87,7 @@ const MAX_CONCURRENT_CONNECTIONS = 32;
  * or otherwise unsafe for egress.
  */
 export function isPrivateAddress(ip: string): boolean {
-  // IPv4 checks
-  const parts = ip.split('.').map(Number);
-  if (parts.length === 4 && parts.every((p) => Number.isInteger(p) && p >= 0 && p <= 255)) {
-    const [a, b] = parts;
-    // Loopback: 127.0.0.0/8
-    if (a === 127) return true;
-    // Private: 10.0.0.0/8
-    if (a === 10) return true;
-    // Private: 172.16.0.0/12
-    if (a === 172 && b !== undefined && b >= 16 && b <= 31) return true;
-    // Private: 192.168.0.0/16
-    if (a === 192 && b === 168) return true;
-    // Link-local: 169.254.0.0/16 (includes the 169.254.169.254 metadata endpoint)
-    if (a === 169 && b === 254) return true;
-    // Carrier-grade NAT: 100.64.0.0/10 (defense in depth)
-    if (a === 100 && b !== undefined && b >= 64 && b <= 127) return true;
-    // Unspecified 0.0.0.0/8 and broadcast 255.255.255.255
-    if (a === 0) return true;
-    if (a === 255) return true;
-    // Docker default bridge 172.17.0.0/16 is already covered by 172.16-31.
-    return false;
-  }
-
-  const lower = ip.toLowerCase();
-
-  // IPv4-mapped / -embedded IPv6 (e.g. ::ffff:127.0.0.1, ::ffff:10.0.0.1,
-  // 64:ff9b::a.b.c.d): if a dotted-quad is embedded, validate it as IPv4. This
-  // closes the mapped-address bypass of the checks above.
-  const mapped = lower.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (mapped) {
-    return isPrivateAddress(mapped[1]!);
-  }
-
-  // Loopback: ::1
-  if (lower === '::1' || lower === '0000:0000:0000:0000:0000:0000:0000:0001') return true;
-  // Unspecified: ::
-  if (lower === '::' || lower === '0000:0000:0000:0000:0000:0000:0000:0000') return true;
-  // Link-local: fe80::/10
-  if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true;
-  // Unique local: fc00::/7
-  if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
-
-  return false;
+  return isUnsafeEgressAddress(ip);
 }
 
 /**
@@ -136,34 +98,21 @@ export function validateConnectTarget(
   port: number,
   allowedHosts: ReadonlySet<string> | readonly string[] = KIRO_PROVIDER_ALLOWLIST,
 ): string | null {
-  // Port must be 443.
   if (port !== ALLOWED_PORT) {
     return `port ${port} not allowed; only ${ALLOWED_PORT} is permitted`;
   }
-
-  // Reject IP literals (both IPv4 and IPv6).
-  if (net.isIP(host)) {
-    return 'IP literals are not allowed; use hostnames';
-  }
-
-  // Reject userinfo in the host.
-  if (host.includes('@')) {
-    return 'userinfo in host is not allowed';
-  }
-
-  // Reject localhost variants.
+  if (net.isIP(host)) return 'IP literals are not allowed; use hostnames';
+  if (host.includes('@')) return 'userinfo in host is not allowed';
   const lower = host.toLowerCase();
-  if (lower === 'localhost' || lower.endsWith('.localhost')) {
-    return 'localhost connections are not allowed';
-  }
-
-  // Check allowlist (exact match). A caller may provide a stricter dedicated
-  // set (for example the GitHub-only proxy) without changing Kiro defaults.
-  const allowed = Array.from(allowedHosts).includes(lower);
-  if (!allowed) {
-    return `host "${lower}" is not in the egress allowlist`;
-  }
-
+  if (lower === 'localhost' || lower.endsWith('.localhost')) return 'localhost connections are not allowed';
+  let normalized: string;
+  try { normalized = normalizeExactEgressHostname(host); }
+  catch { return 'hostname is malformed or not an exact Internet hostname'; }
+  const normalizedAllowed = new Set(Array.from(allowedHosts, (value) => {
+    try { return normalizeExactEgressHostname(value); }
+    catch { return ''; }
+  }).filter(Boolean));
+  if (!normalizedAllowed.has(normalized)) return `host "${normalized}" is not in the egress allowlist`;
   return null;
 }
 
@@ -171,34 +120,87 @@ export function validateConnectTarget(
  * Resolve a hostname and validate all returned addresses are non-private.
  * DNS resolution happens in the trusted proxy, not in the untrusted runner.
  */
-export async function resolveAndValidate(host: string): Promise<string> {
-  let addresses: { address: string; family: number }[];
+export type EgressLookup = (host: string) => Promise<Array<{ address: string; family: number }>>;
+
+const DEFAULT_DNS_TIMEOUT_MS = 5_000;
+
+async function defaultLookup(host: string): Promise<Array<{ address: string; family: number }>> {
+  return dns.lookup(host, { all: true, verbatim: true });
+}
+
+export async function resolveAndValidate(
+  host: string,
+  lookup: EgressLookup = defaultLookup,
+  timeoutMs = DEFAULT_DNS_TIMEOUT_MS,
+): Promise<string> {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) {
+    throw new BridgeError('SANDBOX_FAILED', 'egress proxy: DNS timeout policy is invalid', 500);
+  }
+  let timer: NodeJS.Timeout | undefined;
+  let addresses: Array<{ address: string; family: number }>;
   try {
-    addresses = await dns.lookup(host, { all: true });
+    addresses = await Promise.race([
+      lookup(host),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new BridgeError('SANDBOX_FAILED', `egress proxy: DNS resolution timed out for ${host}`, 502)), timeoutMs);
+      }),
+    ]);
   } catch (e) {
+    if (e instanceof BridgeError) throw e;
     throw new BridgeError('SANDBOX_FAILED',
       `egress proxy: DNS resolution failed for ${host}: ${(e as Error).message}`, 502);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-
-  if (addresses.length === 0) {
+  if (!Array.isArray(addresses) || addresses.length === 0) {
     throw new BridgeError('SANDBOX_FAILED', `egress proxy: no addresses for ${host}`, 502);
   }
-
-  // Validate ALL resolved addresses are non-private.
   for (const addr of addresses) {
-    if (isPrivateAddress(addr.address)) {
+    const family = net.isIP(addr?.address ?? '');
+    if ((family !== 4 && family !== 6) || addr.family !== family) {
+      throw new BridgeError('SANDBOX_FAILED', `egress proxy: ${host} returned malformed DNS address data`, 502);
+    }
+    if (isUnsafeEgressAddress(addr.address)) {
       throw new BridgeError('SANDBOX_FAILED',
-        `egress proxy: ${host} resolved to private address (blocked)`, 403);
+        `egress proxy: ${host} resolved to non-global address (blocked)`, 403);
     }
   }
-
-  // Return the first valid address.
   return addresses[0]!.address;
 }
 
 // ---------------------------------------------------------------------------
 // Proxy Server
 // ---------------------------------------------------------------------------
+
+export interface EgressProxyEnvironment {
+  EGRESS_PROXY_PORT?: string;
+  EGRESS_PROXY_ALLOWLIST?: string;
+  EGRESS_PROXY_EXACT_ALLOWLIST?: string;
+}
+
+function parseHostList(raw: string | undefined): string[] {
+  if (raw === undefined || raw === '') return [];
+  const values = raw.split(',').map((value) => value.trim()).filter(Boolean).map(normalizeExactEgressHostname);
+  return [...new Set(values)];
+}
+
+export function parseEgressProxyEnvironment(env: EgressProxyEnvironment): EgressProxyOptions {
+  const rawPort = env.EGRESS_PROXY_PORT ?? '8080';
+  if (!/^[0-9]{1,5}$/u.test(rawPort)) throw new Error('EGRESS_PROXY_PORT must be an integer 1..65535');
+  const port = Number(rawPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('EGRESS_PROXY_PORT must be an integer 1..65535');
+  const hasExact = Object.prototype.hasOwnProperty.call(env, 'EGRESS_PROXY_EXACT_ALLOWLIST');
+  const exact = parseHostList(env.EGRESS_PROXY_EXACT_ALLOWLIST);
+  const extra = parseHostList(env.EGRESS_PROXY_ALLOWLIST);
+  if (hasExact && exact.length === 0) throw new Error('EGRESS_PROXY_EXACT_ALLOWLIST was provided but contains no valid hosts');
+  if (hasExact && extra.length > 0) throw new Error('exact and additive egress allowlists cannot be combined');
+  return {
+    listenHost: '0.0.0.0',
+    listenPort: port,
+    ...(hasExact ? { allowedHosts: exact } : {}),
+    ...(!hasExact && extra.length > 0 ? { additionalHosts: extra } : {}),
+  };
+}
 
 export interface EgressProxyOptions {
   /** Listen address (should be on the job-scoped Docker network). */
@@ -218,10 +220,10 @@ export class EgressProxy {
   private closed = false;
 
   constructor(private readonly opts: EgressProxyOptions = {}) {
-    const exact = opts.allowedHosts?.map((h) => h.trim().toLowerCase()).filter(Boolean);
-    this.allowlist = new Set(exact && exact.length > 0
-      ? exact
-      : [...KIRO_PROVIDER_ALLOWLIST, ...(opts.additionalHosts ?? [])]);
+    const selected = opts.allowedHosts !== undefined
+      ? [...opts.allowedHosts]
+      : [...KIRO_PROVIDER_ALLOWLIST, ...(opts.additionalHosts ?? [])];
+    this.allowlist = new Set(selected.map(normalizeExactEgressHostname));
   }
 
   /** Start the proxy server. Returns the actual listen address. */
@@ -271,36 +273,44 @@ export class EgressProxy {
     this.connections.add(clientSocket);
     clientSocket.on('close', () => this.connections.delete(clientSocket));
 
-    // Set connection lifetime limit.
-    const lifeTimer = setTimeout(() => {
-      clientSocket.destroy();
-    }, MAX_CONNECTION_LIFETIME_MS);
+    const lifeTimer = setTimeout(() => clientSocket.destroy(), MAX_CONNECTION_LIFETIME_MS);
     clientSocket.on('close', () => clearTimeout(lifeTimer));
 
-    let buffer = '';
+    let pending = Buffer.alloc(0);
     const onData = (chunk: Buffer) => {
-      buffer += chunk.toString('utf8');
-
-      // Look for the end of the CONNECT request headers.
-      const headerEnd = buffer.indexOf('\r\n\r\n');
+      const combined = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+      const headerEnd = combined.indexOf('\r\n\r\n');
       if (headerEnd === -1) {
-        // Bound the buffer to prevent memory attacks.
-        if (buffer.length > 8192) {
+        if (combined.length > MAX_CONNECT_HEADER_BYTES) {
+          clientSocket.removeListener('data', onData);
           clientSocket.end('HTTP/1.1 400 Request Too Large\r\n\r\n');
+          return;
         }
+        pending = Buffer.from(combined);
         return;
       }
-
+      if (headerEnd + 4 > MAX_CONNECT_HEADER_BYTES) {
+        clientSocket.removeListener('data', onData);
+        clientSocket.end('HTTP/1.1 400 Request Too Large\r\n\r\n');
+        return;
+      }
+      const earlyData = combined.subarray(headerEnd + 4);
+      if (earlyData.length > MAX_EARLY_TUNNEL_BYTES) {
+        clientSocket.removeListener('data', onData);
+        clientSocket.end('HTTP/1.1 400 Early Tunnel Data Too Large\r\n\r\n');
+        return;
+      }
       clientSocket.removeListener('data', onData);
-      const header = buffer.slice(0, headerEnd);
-      this.handleConnect(clientSocket, header);
+      clientSocket.pause();
+      const header = combined.subarray(0, headerEnd).toString('utf8');
+      void this.handleConnect(clientSocket, header, earlyData);
     };
 
     clientSocket.on('data', onData);
     clientSocket.on('error', () => { clientSocket.destroy(); });
   }
 
-  private async handleConnect(clientSocket: net.Socket, header: string): Promise<void> {
+  private async handleConnect(clientSocket: net.Socket, header: string, earlyData: Buffer): Promise<void> {
     // Parse CONNECT request.
     const firstLine = header.split('\r\n')[0] ?? '';
     const match = firstLine.match(/^CONNECT\s+([^\s:]+):(\d+)\s+HTTP\/1\.[01]$/i);
@@ -331,16 +341,28 @@ export class EgressProxy {
       return;
     }
 
-    // Connect to the resolved address.
-    const upstream = net.connect({ host: resolvedIp, port }, () => {
+    // Connect to the validated pinned address; never resolve the hostname again.
+    const upstream = net.connect({ host: resolvedIp, port });
+    let established = false;
+    const connectTimer = setTimeout(() => {
+      if (established) return;
+      upstream.destroy();
+      clientSocket.end('HTTP/1.1 504 Gateway Timeout\r\n\r\n');
+    }, UPSTREAM_CONNECT_TIMEOUT_MS);
+    upstream.once('connect', () => {
+      established = true;
+      clearTimeout(connectTimer);
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      // Bidirectional pipe: TLS passthrough, no interception.
+      if (earlyData.length > 0) upstream.write(earlyData);
       clientSocket.pipe(upstream);
       upstream.pipe(clientSocket);
+      clientSocket.resume();
     });
 
     upstream.on('error', () => {
-      clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      clearTimeout(connectTimer);
+      if (!established) clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      else clientSocket.destroy();
     });
 
     clientSocket.on('error', () => {
@@ -352,6 +374,7 @@ export class EgressProxy {
     });
 
     upstream.on('close', () => {
+      clearTimeout(connectTimer);
       clientSocket.destroy();
     });
   }
