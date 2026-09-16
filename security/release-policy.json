@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "requiredGates": [
+    "typecheck",
+    "build",
+    "unit",
+    "integration",
+    "e2e",
+    "authority-invariants",
+    "sast",
+    "secrets",
+    "sca",
+    "config-scan",
+    "image-scan",
+    "sbom",
+    "provenance"
+  ],
+  "expectedTools": {
+    "authority-invariants": { "name": "quarangate-security-invariants", "version": "1" },
+    "sast": { "name": "semgrep", "version": "1.177.0" },
+    "secrets": { "name": "gitleaks", "version": "8.30.1" },
+    "sca": { "name": "osv-scanner", "version": "2.6.0" },
+    "config-scan": { "name": "trivy", "version": "0.74.0" },
+    "image-scan": { "name": "trivy", "version": "0.74.0" },
+    "sbom": { "name": "quarangate-release-sbom", "version": "2" },
+    "provenance": { "name": "cosign", "version": "3.1.3" }
+  },
+  "findingPolicy": {
+    "alwaysBlockSeverities": ["CRITICAL"],
+    "baselineEligibleSeverities": ["HIGH"],
+    "alwaysBlockCategories": ["authority", "integrity", "secret"]
+  },
+  "exceptionPolicy": {
+    "requireOwnerApproval": true,
+    "requireExpiry": true,
+    "requireReason": true
+  }
+}

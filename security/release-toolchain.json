@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-09-16",
+  "acquisitionPolicy": "NO_AUTO_DOWNLOAD_OWNER_PROVIDED_VERIFIED_ARTIFACTS_ONLY",
+  "tools": [
+    { "id": "semgrep", "binary": "semgrep", "version": "1.177.0", "versionArgs": ["--version"], "gate": "sast", "required": true, "upstream": "semgrep/semgrep@v1.177.0" },
+    { "id": "gitleaks", "binary": "gitleaks", "version": "8.30.1", "versionArgs": ["version"], "gate": "secrets", "required": true, "upstream": "gitleaks/gitleaks@v8.30.1" },
+    { "id": "osv-scanner", "binary": "osv-scanner", "version": "2.6.0", "versionArgs": ["--version"], "gate": "sca", "required": true, "upstream": "google/osv-scanner@v2.6.0" },
+    { "id": "trivy", "binary": "trivy", "version": "0.74.0", "versionArgs": ["--version"], "gate": "config-scan,image-scan", "required": true, "upstream": "aquasecurity/trivy@v0.74.0" },
+    { "id": "cosign", "binary": "cosign", "version": "3.1.3", "versionArgs": ["version"], "gate": "provenance", "required": true, "upstream": "sigstore/cosign@v3.1.3" }
+  ]
+}
