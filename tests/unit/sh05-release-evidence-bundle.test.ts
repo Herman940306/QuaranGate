@@ -37,11 +37,12 @@ function validReceipt(gate: string, sourceBindingSha256: string, manifestBytes: 
   const receipt: any = { schemaVersion: 1, gate, status: 'PASS', source, tool: policy.expectedTools[gate] ?? { name: 'test-runner', version: '1' }, findings: [] };
   const ids: Record<string, string> = {
     typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration', e2e: 'playwright-e2e',
-    'authority-invariants': 'authority-invariants', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
+    'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
   };
   if (ids[gate]) receipt.execution = execution(ids[gate]);
   if (['unit', 'integration', 'e2e'].includes(gate)) receipt.testCounts = { files: 2, tests: 10, failed: 0 };
   if (gate === 'authority-invariants') receipt.artifact = { rulesChecked: 12, composeFilesChecked: 10, dockerfilesChecked: 7 };
+  if (gate === 'security-fuzz') receipt.artifact = { targetCount: 15, totalExecutions: 30060, coverageRanges: 106, iterationsPerTarget: 2000, maxInputBytes: 1024, maxCorpus: 256, maxRuntimeMs: 20000, coverageSampleInterval: 16, seed: 0x51f08a11 };
   if (gate === 'sbom') receipt.artifact = { kind: 'spdx-json', sha256: sha256(sbomBytes), bytes: sbomBytes.length };
   if (['sast', 'secrets', 'sca', 'config-scan', 'image-scan'].includes(gate)) receipt.scan = {
     scannerExitCode: 0, rawReportSha256: digest, rawReportBytes: 100, toolchainReportSha256: digest, sourceBindingSha256, normalizedFindingCount: 0,

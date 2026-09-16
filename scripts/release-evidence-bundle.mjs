@@ -159,7 +159,7 @@ if (sbom.spdxVersion !== 'SPDX-2.3' || sbom.SPDXID !== 'SPDXRef-DOCUMENT') throw
 const executionCommandIds = {
   typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration',
   e2e: 'playwright-e2e',
-  'authority-invariants': 'authority-invariants', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
+  'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
 };
 function validDigestEvidence(value) {
   return value && SHA256.test(value.sha256 ?? '') && Number.isInteger(value.bytes) && value.bytes >= 0;
@@ -173,11 +173,19 @@ function validExecution(value, expectedCommandId) {
     && validDigestEvidence(value.stdout) && validDigestEvidence(value.stderr);
 }
 function assertReceiptEvidence(gate, receipt) {
-  if (['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'sbom', 'provenance'].includes(gate)
+  if (['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'sbom', 'provenance'].includes(gate)
     && !validExecution(receipt.execution, executionCommandIds[gate])) throw new Error(`gate receipt lacks valid execution evidence: ${gate}`);
   if (gate === 'authority-invariants') {
     const a = receipt.artifact;
     if (!a || !Number.isInteger(a.rulesChecked) || a.rulesChecked <= 0 || !Number.isInteger(a.composeFilesChecked) || a.composeFilesChecked <= 0 || !Number.isInteger(a.dockerfilesChecked) || a.dockerfilesChecked <= 0) throw new Error('authority-invariants receipt lacks valid invariant evidence');
+  }
+  if (gate === 'security-fuzz') {
+    const a = receipt.artifact;
+    if (!a || !Number.isInteger(a.targetCount) || a.targetCount <= 0 || !Number.isInteger(a.totalExecutions) || a.totalExecutions <= a.targetCount
+      || !Number.isInteger(a.coverageRanges) || a.coverageRanges <= 0 || a.iterationsPerTarget !== 2000
+      || a.maxInputBytes !== 1024 || a.maxCorpus !== 256 || a.maxRuntimeMs !== 20000 || a.coverageSampleInterval !== 16 || !Number.isInteger(a.seed) || a.seed <= 0) {
+      throw new Error('security-fuzz receipt lacks valid bounded fuzz evidence');
+    }
   }
   if (gate === 'sbom') {
     const a = receipt.artifact;

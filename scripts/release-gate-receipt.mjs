@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { externalOutputPath, pathIsWithinRoot as sharedPathIsWithinRoot } from './release-path-safety.mjs';
 
 const SHA1 = /^[0-9a-f]{40}$/u;
-const SUPPORTED_GATES = Object.freeze(['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'sbom']);
+const SUPPORTED_GATES = Object.freeze(['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'sbom']);
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -209,6 +209,7 @@ export function gateDefinition(gate) {
   if (gate === 'unit') return { vitest: true, scope: 'tests/unit', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-unit' };
   if (gate === 'integration') return { vitest: true, scope: 'tests/integration', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-integration' };
   if (gate === 'authority-invariants') return { binary: process.execPath, args: ['scripts/security-invariants.mjs'], tool: { name: 'quarangate-security-invariants', version: '1' }, commandId: 'authority-invariants' };
+  if (gate === 'security-fuzz') return { binary: process.execPath, args: ['scripts/security-fuzz.mjs', '--build', '--iterations', '2000', '--max-input-bytes', '1024', '--max-corpus', '256', '--max-runtime-ms', '20000'], tool: { name: 'quarangate-security-fuzz', version: '1' }, commandId: 'security-fuzz' };
   return { sbom: true, binary: process.execPath, tool: { name: 'quarangate-release-sbom', version: '2' }, commandId: 'release-sbom' };
 }
 
@@ -298,11 +299,33 @@ export function main(argv = process.argv.slice(2)) {
         }
         artifact = { rulesChecked: parsed.rulesChecked, composeFilesChecked: parsed.composeFilesChecked, dockerfilesChecked: parsed.dockerfilesChecked };
       }
+      if (gate === 'security-fuzz' && result.status === 0) {
+        const parsed = JSON.parse(result.stdout);
+        if (parsed?.schemaVersion !== 1 || parsed?.status !== 'PASS' || !Number.isInteger(parsed.targetCount) || parsed.targetCount <= 0
+          || !Number.isInteger(parsed.totalExecutions) || parsed.totalExecutions <= parsed.targetCount
+          || !Number.isInteger(parsed.coverageRanges) || parsed.coverageRanges <= 0
+          || !Number.isInteger(parsed.iterationsPerTarget) || parsed.iterationsPerTarget !== 2000
+          || parsed.maxInputBytes !== 1024 || parsed.maxCorpus !== 256 || parsed.maxRuntimeMs !== 20000 || parsed.coverageSampleInterval !== 16
+          || !Number.isInteger(parsed.seed) || parsed.seed <= 0
+          || !Array.isArray(parsed.targets) || parsed.targets.length !== parsed.targetCount
+          || parsed.targets.some((target) => !target || typeof target.name !== 'string' || !target.name
+            || !Number.isInteger(target.executed) || target.executed <= parsed.iterationsPerTarget
+            || !Number.isInteger(target.accepted) || target.accepted <= 0
+            || !Number.isInteger(target.coverageRanges) || target.coverageRanges <= 0
+            || !Number.isInteger(target.corpusSize) || target.corpusSize <= 0 || target.corpusSize > parsed.maxCorpus)) {
+          throw new Error('security fuzz output is not an exact bounded PASS report');
+        }
+        artifact = {
+          targetCount: parsed.targetCount, totalExecutions: parsed.totalExecutions, coverageRanges: parsed.coverageRanges,
+          iterationsPerTarget: parsed.iterationsPerTarget, maxInputBytes: parsed.maxInputBytes, maxCorpus: parsed.maxCorpus,
+          maxRuntimeMs: parsed.maxRuntimeMs, coverageSampleInterval: parsed.coverageSampleInterval, seed: parsed.seed,
+        };
+      }
     }
 
     const after = currentSource();
     if (!sameSource(source, after)) throw new Error('release gate mutated or drifted exact Git source');
-    const status = result.status === 0 && !result.errorCode && ((definition.vitest || definition.e2e) ? Boolean(testCounts) : true) && (definition.sbom ? Boolean(artifact) : true) ? 'PASS' : 'FAIL';
+    const status = result.status === 0 && !result.errorCode && ((definition.vitest || definition.e2e) ? Boolean(testCounts) : true) && (definition.sbom || gate === 'security-fuzz' ? Boolean(artifact) : true) ? 'PASS' : 'FAIL';
     const receipt = {
       schemaVersion: 1,
       gate,

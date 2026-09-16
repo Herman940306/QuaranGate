@@ -54,6 +54,7 @@ const executionCommandIds = {
   integration: 'vitest-integration',
   e2e: 'playwright-e2e',
   'authority-invariants': 'authority-invariants',
+  'security-fuzz': 'security-fuzz',
   sbom: 'release-sbom',
   provenance: 'cosign-verify-blob-attestation',
 };
@@ -70,7 +71,7 @@ function validExecution(value, expectedCommandId) {
 }
 function validateReceiptEvidence(gate, receipt, sourceBindingSha256) {
   const errors = [];
-  const executionGate = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'sbom', 'provenance'].includes(gate);
+  const executionGate = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'sbom', 'provenance'].includes(gate);
   if (executionGate && !validExecution(receipt.execution, executionCommandIds[gate])) errors.push('INVALID_EXECUTION_EVIDENCE');
   if (['unit', 'integration', 'e2e'].includes(gate)) {
     const counts = receipt.testCounts;
@@ -81,6 +82,14 @@ function validateReceiptEvidence(gate, receipt, sourceBindingSha256) {
     if (!artifact || !Number.isInteger(artifact.rulesChecked) || artifact.rulesChecked <= 0
       || !Number.isInteger(artifact.composeFilesChecked) || artifact.composeFilesChecked <= 0
       || !Number.isInteger(artifact.dockerfilesChecked) || artifact.dockerfilesChecked <= 0) errors.push('INVALID_AUTHORITY_EVIDENCE');
+  }
+  if (gate === 'security-fuzz') {
+    const artifact = receipt.artifact;
+    if (!artifact || !Number.isInteger(artifact.targetCount) || artifact.targetCount <= 0
+      || !Number.isInteger(artifact.totalExecutions) || artifact.totalExecutions <= artifact.targetCount
+      || !Number.isInteger(artifact.coverageRanges) || artifact.coverageRanges <= 0
+      || artifact.iterationsPerTarget !== 2000 || artifact.maxInputBytes !== 1024 || artifact.maxCorpus !== 256 || artifact.maxRuntimeMs !== 20000 || artifact.coverageSampleInterval !== 16
+      || !Number.isInteger(artifact.seed) || artifact.seed <= 0) errors.push('INVALID_FUZZ_EVIDENCE');
   }
   if (gate === 'sbom') {
     const artifact = receipt.artifact;

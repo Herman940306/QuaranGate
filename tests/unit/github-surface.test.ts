@@ -74,8 +74,8 @@ describe('GitHub public authority surface', () => {
   it('uses trusted-account repository identifiers for remote mutations and keeps direct push local-project driven', () => {
     const tools = readFileSync(join(root, 'src', 'gateway', 'githubTools.ts'), 'utf8');
     const config = readFileSync(join(root, 'src', 'gateway', 'config.ts'), 'utf8');
-    expect(tools).toContain('inputSchema: { project, expectedHead:');
-    expect(tools).toContain('inputSchema: { repository, head: branch');
+    expect(tools).toContain('inputSchema: z.strictObject({ project, expectedHead:');
+    expect(tools).toContain('inputSchema: z.strictObject({ repository, head: branch');
     expect(tools).toContain("principalCanGithubAccount");
     expect(config).toContain('githubAccounts?: string[]');
     expect(tools).not.toMatch(/inputSchema:\s*\{[^}]*owner:/);

@@ -132,8 +132,8 @@ export function buildServer(): McpServer {
   server.registerTool('targets_list', {
     title: 'List authorized targets',
     description: 'List Docker target containers this client is authorized to use.',
-    inputSchema: {},
-    outputSchema: { targets: z.array(z.object(TARGET_SUMMARY_SCHEMA)) },
+    inputSchema: z.strictObject({}),
+    outputSchema: z.strictObject({ targets: z.array(z.strictObject(TARGET_SUMMARY_SCHEMA)) }),
     annotations: READ,
   }, guarded('targets_list', async () => {
     const p = currentPrincipal()!;
@@ -149,8 +149,8 @@ export function buildServer(): McpServer {
   server.registerTool('target_inspect', {
     title: 'Inspect a target',
     description: 'Show status, workspace and image for one authorized target.',
-    inputSchema: { target: z.string() },
-    outputSchema: TARGET_INSPECT_SCHEMA,
+    inputSchema: z.strictObject({ target: z.string() }),
+    outputSchema: z.strictObject(TARGET_INSPECT_SCHEMA),
     annotations: READ,
   }, guarded('target_inspect', async ({ target }) => {
     require2('targets:read', target);
@@ -161,8 +161,8 @@ export function buildServer(): McpServer {
   server.registerTool('target_logs', {
     title: 'Read bounded target logs',
     description: 'Read bounded stdout/stderr logs from one explicitly authorized manual target. This never exposes raw Docker selection or host paths.',
-    inputSchema: { target: z.string(), maxBytes: z.number().int().min(1024).max(262_144).optional() },
-    outputSchema: TARGET_LOGS_SCHEMA,
+    inputSchema: z.strictObject({ target: z.string(), maxBytes: z.number().int().min(1024).max(262_144).optional() }),
+    outputSchema: z.strictObject(TARGET_LOGS_SCHEMA),
     annotations: READ,
   }, guarded('target_logs', async ({ target, maxBytes }) => {
     require2('targets:logs', target);
@@ -173,8 +173,8 @@ export function buildServer(): McpServer {
     server.registerTool(name, {
       title: name,
       description,
-      inputSchema: { target: z.string() },
-      outputSchema: TARGET_CONTROL_SCHEMA,
+      inputSchema: z.strictObject({ target: z.string() }),
+      outputSchema: z.strictObject(TARGET_CONTROL_SCHEMA),
       annotations: DESTRUCTIVE,
     }, guarded(name, async ({ target }) => {
       require2('targets:control', target);
@@ -188,8 +188,8 @@ export function buildServer(): McpServer {
   server.registerTool('fs_list', {
     title: 'List directory',
     description: 'List entries under a workspace-relative directory.',
-    inputSchema: { target: z.string(), path: z.string().default(''), maxDepth: z.number().int().min(1).max(5).optional() },
-    outputSchema: { entries: z.array(z.string()) },
+    inputSchema: z.strictObject({ target: z.string(), path: z.string().default(''), maxDepth: z.number().int().min(1).max(5).optional() }),
+    outputSchema: z.strictObject({ entries: z.array(z.string()) }),
     annotations: READ,
   }, guarded('fs_list', async ({ target, path, maxDepth }) => {
     require2('files:read', target);
@@ -199,8 +199,8 @@ export function buildServer(): McpServer {
   server.registerTool('fs_stat', {
     title: 'Stat path',
     description: 'Return type/size/mode/mtime for a workspace-relative path.',
-    inputSchema: { target: z.string(), path: z.string() },
-    outputSchema: FILE_STAT_SCHEMA,
+    inputSchema: z.strictObject({ target: z.string(), path: z.string() }),
+    outputSchema: z.strictObject(FILE_STAT_SCHEMA),
     annotations: READ,
   }, guarded('fs_stat', async ({ target, path }) => {
     require2('files:read', target);
@@ -210,8 +210,8 @@ export function buildServer(): McpServer {
   server.registerTool('fs_read', {
     title: 'Read file',
     description: 'Read a UTF-8/binary file (base64) from the workspace.',
-    inputSchema: { target: z.string(), path: z.string() },
-    outputSchema: { path: z.string(), bytes: z.number().int().nonnegative(), content: z.string() },
+    inputSchema: z.strictObject({ target: z.string(), path: z.string() }),
+    outputSchema: z.strictObject({ path: z.string(), bytes: z.number().int().nonnegative(), content: z.string() }),
     annotations: READ,
   }, guarded('fs_read', async ({ target, path }) => {
     require2('files:read', target);
@@ -222,8 +222,8 @@ export function buildServer(): McpServer {
   server.registerTool('fs_search', {
     title: 'Search files',
     description: 'Fixed-string recursive search under a workspace-relative path.',
-    inputSchema: { target: z.string(), query: z.string().min(1), path: z.string().default(''), maxResults: z.number().int().min(1).max(1000).optional() },
-    outputSchema: { matches: z.array(z.string()) },
+    inputSchema: z.strictObject({ target: z.string(), query: z.string().min(1), path: z.string().default(''), maxResults: z.number().int().min(1).max(1000).optional() }),
+    outputSchema: z.strictObject({ matches: z.array(z.string()) }),
     annotations: READ,
   }, guarded('fs_search', async ({ target, query, path, maxResults }) => {
     require2('files:read', target);
@@ -233,8 +233,8 @@ export function buildServer(): McpServer {
   server.registerTool('fs_write', {
     title: 'Write file',
     description: 'Create or overwrite a file at a workspace-relative path.',
-    inputSchema: { target: z.string(), path: z.string(), content: z.string() },
-    outputSchema: OK_PATH_SCHEMA,
+    inputSchema: z.strictObject({ target: z.string(), path: z.string(), content: z.string() }),
+    outputSchema: z.strictObject(OK_PATH_SCHEMA),
     annotations: WRITE,
   }, guarded('fs_write', async ({ target, path, content }) => {
     require2('files:write', target);
@@ -245,8 +245,8 @@ export function buildServer(): McpServer {
   server.registerTool('fs_patch', {
     title: 'Patch file',
     description: 'Replace a unique exact substring (oldText) with newText in a file.',
-    inputSchema: { target: z.string(), path: z.string(), oldText: z.string(), newText: z.string() },
-    outputSchema: OK_PATH_SCHEMA,
+    inputSchema: z.strictObject({ target: z.string(), path: z.string(), oldText: z.string(), newText: z.string() }),
+    outputSchema: z.strictObject(OK_PATH_SCHEMA),
     annotations: WRITE,
   }, guarded('fs_patch', async ({ target, path, oldText, newText }) => {
     require2('files:write', target);
@@ -257,8 +257,8 @@ export function buildServer(): McpServer {
   server.registerTool('fs_delete', {
     title: 'Delete path',
     description: 'Delete a file, or a directory when recursive=true. Destructive.',
-    inputSchema: { target: z.string(), path: z.string(), recursive: z.boolean().default(false) },
-    outputSchema: OK_PATH_SCHEMA,
+    inputSchema: z.strictObject({ target: z.string(), path: z.string(), recursive: z.boolean().default(false) }),
+    outputSchema: z.strictObject(OK_PATH_SCHEMA),
     annotations: DESTRUCTIVE,
   }, guarded('fs_delete', async ({ target, path, recursive }) => {
     require2('files:delete', target);
@@ -269,13 +269,13 @@ export function buildServer(): McpServer {
   server.registerTool('terminal_exec', {
     title: 'Run a shell command in the target',
     description: 'Execute a shell command inside the authorized target container, confined to the workspace. Bounded by timeout and output size.',
-    inputSchema: {
+    inputSchema: z.strictObject({
       target: z.string(),
       command: z.string().min(1),
       cwd: z.string().optional(),
       timeoutMs: z.number().int().min(1000).max(600_000).optional(),
-    },
-    outputSchema: EXEC_RESULT_SCHEMA,
+    }),
+    outputSchema: z.strictObject(EXEC_RESULT_SCHEMA),
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   }, guarded('terminal_exec', async ({ target, command, cwd, timeoutMs }) => {
     const p = require2('terminal:exec', target);
@@ -286,8 +286,8 @@ export function buildServer(): McpServer {
   const gitTool = (name: string, argv: (path?: string) => string[], desc: string) =>
     server.registerTool(name, {
       title: name, description: desc,
-      inputSchema: { target: z.string() },
-      outputSchema: EXEC_RESULT_SCHEMA,
+      inputSchema: z.strictObject({ target: z.string() }),
+      outputSchema: z.strictObject(EXEC_RESULT_SCHEMA),
       annotations: READ,
     }, guarded(name, async ({ target }) => {
       const p = require2('git:read', target);
@@ -302,8 +302,8 @@ export function buildServer(): McpServer {
   server.registerTool('process_list', {
     title: 'List processes',
     description: 'List running processes in the target container.',
-    inputSchema: { target: z.string() },
-    outputSchema: EXEC_RESULT_SCHEMA,
+    inputSchema: z.strictObject({ target: z.string() }),
+    outputSchema: z.strictObject(EXEC_RESULT_SCHEMA),
     annotations: READ,
   }, guarded('process_list', async ({ target }) => {
     const p = require2('process:read', target);

@@ -33,7 +33,8 @@
     "release:scan-receipt": "node scripts/release-scan-receipt.mjs",
     "release:gate-receipt": "node scripts/release-gate-receipt.mjs",
     "release:provenance": "node scripts/release-provenance.mjs",
-    "release:assurance": "node scripts/release-assurance.mjs"
+    "release:assurance": "node scripts/release-assurance.mjs",
+    "security:fuzz": "node scripts/security-fuzz.mjs --build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

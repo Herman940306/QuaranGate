@@ -27,6 +27,15 @@ describe('SH-05 fixed release gate receipt executor', () => {
     expect(() => gateDefinition('rm -rf /')).toThrow(/unsupported fixed release gate/u);
   });
 
+  it('binds security-fuzz to the fixed bounded no-download runner contract', () => {
+    expect(gateDefinition('security-fuzz')).toEqual({
+      binary: process.execPath,
+      args: ['scripts/security-fuzz.mjs', '--build', '--iterations', '2000', '--max-input-bytes', '1024', '--max-corpus', '256', '--max-runtime-ms', '20000'],
+      tool: { name: 'quarangate-security-fuzz', version: '1' },
+      commandId: 'security-fuzz',
+    });
+  });
+
   it('routes fixed unit/integration execution through the self-cleaning Vitest wrapper', () => {
     const unit = vitestGateInvocation(gateDefinition('unit'), '/external/unit.json');
     expect(unit.binary).toBe(process.execPath);

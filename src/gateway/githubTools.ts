@@ -90,11 +90,11 @@ export function registerGitHubTools(server: McpServer): void {
   server.registerTool('github_repositories', {
     title: 'List governed GitHub repositories',
     description: 'Discover repositories available to QuaranHUB across this client\'s trusted GitHub accounts. Results come from GitHub App installations, not caller-supplied URLs.',
-    inputSchema: {},
-    outputSchema: { repositories: z.array(z.object({
+    inputSchema: z.strictObject({}),
+    outputSchema: z.strictObject({ repositories: z.array(z.strictObject({
       repository: z.string(), owner: z.string(), repo: z.string(), private: z.boolean(), archived: z.boolean(),
       localProject: z.string().optional(), protectedBranches: z.array(z.string()),
-    })) },
+    })) }),
     annotations: READ,
   }, guarded('github_repositories', async () => {
     const p = requireGithub('github:read');
@@ -104,84 +104,84 @@ export function registerGitHubTools(server: McpServer): void {
 
   server.registerTool('github_repository', {
     title: 'Read GitHub repository metadata', description: 'Read bounded metadata for one repository on a trusted GitHub account.',
-    inputSchema: { repository }, outputSchema: REPOSITORY_SCHEMA, annotations: READ,
+    inputSchema: z.strictObject({ repository }), outputSchema: z.strictObject(REPOSITORY_SCHEMA), annotations: READ,
   }, guarded('github_repository', async ({ repository }) => { requireGithub('github:read', { repository }); return { target: repository, result: await executor.githubRepository(repository) }; }));
 
   server.registerTool('github_branches', {
     title: 'List GitHub branches', description: 'List up to 100 branches for one repository on a trusted GitHub account.',
-    inputSchema: { repository, maxItems }, outputSchema: { branches: z.array(z.object({ name: z.string(), sha: z.string(), protected: z.boolean() })) }, annotations: READ,
+    inputSchema: z.strictObject({ repository, maxItems }), outputSchema: z.strictObject({ branches: z.array(z.strictObject({ name: z.string(), sha: z.string(), protected: z.boolean() })) }), annotations: READ,
   }, guarded('github_branches', async ({ repository, maxItems }) => { requireGithub('github:read', { repository }); return { target: repository, result: { branches: await executor.githubBranches(repository, maxItems) } }; }));
 
   server.registerTool('github_commits', {
     title: 'List GitHub commits', description: 'List bounded commit metadata from a trusted repository branch or exact commit ref.',
-    inputSchema: { repository, ref, maxItems },
-    outputSchema: { commits: z.array(z.object({ sha: z.string(), message: z.string(), authorName: z.string().optional(), authoredAt: z.string().optional(), htmlUrl: z.string().optional() })) }, annotations: READ,
+    inputSchema: z.strictObject({ repository, ref, maxItems }),
+    outputSchema: z.strictObject({ commits: z.array(z.strictObject({ sha: z.string(), message: z.string(), authorName: z.string().optional(), authoredAt: z.string().optional(), htmlUrl: z.string().optional() })) }), annotations: READ,
   }, guarded('github_commits', async ({ repository, ref, maxItems }) => { requireGithub('github:read', { repository }); return { target: repository, result: { commits: await executor.githubCommits(repository, ref, maxItems) } }; }));
 
   server.registerTool('github_pull_requests', {
     title: 'List GitHub pull requests', description: 'List bounded pull-request metadata for one repository on a trusted GitHub account.',
-    inputSchema: { repository, state: z.enum(['open', 'closed', 'all']).optional(), maxItems }, outputSchema: { pulls: z.array(z.object(PULL_SCHEMA)) }, annotations: READ,
+    inputSchema: z.strictObject({ repository, state: z.enum(['open', 'closed', 'all']).optional(), maxItems }), outputSchema: z.strictObject({ pulls: z.array(z.strictObject(PULL_SCHEMA)) }), annotations: READ,
   }, guarded('github_pull_requests', async ({ repository, state, maxItems }) => { requireGithub('github:read', { repository }); return { target: repository, result: { pulls: await executor.githubPulls(repository, state, maxItems) } }; }));
 
   server.registerTool('github_pull_request', {
     title: 'Read a GitHub pull request', description: 'Read bounded metadata for one pull request on a trusted GitHub account.',
-    inputSchema: { repository, number: prNumber }, outputSchema: PULL_SCHEMA, annotations: READ,
+    inputSchema: z.strictObject({ repository, number: prNumber }), outputSchema: z.strictObject(PULL_SCHEMA), annotations: READ,
   }, guarded('github_pull_request', async ({ repository, number }) => { requireGithub('github:read', { repository }); return { target: repository, result: await executor.githubPull(repository, number) }; }));
 
   server.registerTool('github_pull_request_files', {
     title: 'Review GitHub pull-request files', description: 'Read a bounded page of changed files and bounded patch text for a pull request.',
-    inputSchema: { repository, number: prNumber, maxItems },
-    outputSchema: { files: z.array(z.object({ filename: z.string(), status: z.string(), additions: z.number().int(), deletions: z.number().int(), changes: z.number().int(), patch: z.string().optional() })) }, annotations: READ,
+    inputSchema: z.strictObject({ repository, number: prNumber, maxItems }),
+    outputSchema: z.strictObject({ files: z.array(z.strictObject({ filename: z.string(), status: z.string(), additions: z.number().int(), deletions: z.number().int(), changes: z.number().int(), patch: z.string().optional() })) }), annotations: READ,
   }, guarded('github_pull_request_files', async ({ repository, number, maxItems }) => { requireGithub('github:read', { repository }); return { target: repository, result: { files: await executor.githubPullFiles(repository, number, maxItems) } }; }));
 
   server.registerTool('github_issues', {
     title: 'List GitHub issues', description: 'List bounded issue metadata for one repository on a trusted GitHub account. Pull requests are excluded from this issue list.',
-    inputSchema: { repository, state: z.enum(['open', 'closed', 'all']).optional(), maxItems }, outputSchema: { issues: z.array(z.object(ISSUE_SCHEMA)) }, annotations: READ,
+    inputSchema: z.strictObject({ repository, state: z.enum(['open', 'closed', 'all']).optional(), maxItems }), outputSchema: z.strictObject({ issues: z.array(z.strictObject(ISSUE_SCHEMA)) }), annotations: READ,
   }, guarded('github_issues', async ({ repository, state, maxItems }) => { requireGithub('github:read', { repository }); return { target: repository, result: { issues: await executor.githubIssues(repository, state, maxItems) } }; }));
 
   server.registerTool('github_issue', {
     title: 'Read a GitHub issue', description: 'Read bounded issue metadata and body for one issue on a trusted GitHub account.',
-    inputSchema: { repository, number: prNumber }, outputSchema: { ...ISSUE_SCHEMA, body: z.string().optional(), locked: z.boolean() }, annotations: READ,
+    inputSchema: z.strictObject({ repository, number: prNumber }), outputSchema: z.strictObject({ ...ISSUE_SCHEMA, body: z.string().optional(), locked: z.boolean() }), annotations: READ,
   }, guarded('github_issue', async ({ repository, number }) => { requireGithub('github:read', { repository }); return { target: repository, result: await executor.githubIssue(repository, number) }; }));
 
   server.registerTool('github_issue_comments', {
     title: 'Read GitHub issue comments', description: 'Read up to 100 bounded comments for one issue on a trusted GitHub account.',
-    inputSchema: { repository, number: prNumber, maxItems }, outputSchema: { comments: z.array(z.object(COMMENT_SCHEMA)) }, annotations: READ,
+    inputSchema: z.strictObject({ repository, number: prNumber, maxItems }), outputSchema: z.strictObject({ comments: z.array(z.strictObject(COMMENT_SCHEMA)) }), annotations: READ,
   }, guarded('github_issue_comments', async ({ repository, number, maxItems }) => { requireGithub('github:read', { repository }); return { target: repository, result: { comments: await executor.githubIssueComments(repository, number, maxItems) } }; }));
 
   server.registerTool('github_pull_request_reviews', {
     title: 'Read GitHub pull-request reviews', description: 'Read up to 100 submitted reviews for one pull request on a trusted GitHub account.',
-    inputSchema: { repository, number: prNumber, maxItems }, outputSchema: { reviews: z.array(z.object(REVIEW_SCHEMA)) }, annotations: READ,
+    inputSchema: z.strictObject({ repository, number: prNumber, maxItems }), outputSchema: z.strictObject({ reviews: z.array(z.strictObject(REVIEW_SCHEMA)) }), annotations: READ,
   }, guarded('github_pull_request_reviews', async ({ repository, number, maxItems }) => { requireGithub('github:read', { repository }); return { target: repository, result: { reviews: await executor.githubPullReviews(repository, number, maxItems) } }; }));
 
   server.registerTool('github_pull_request_review_comments', {
     title: 'Read GitHub pull-request review comments', description: 'Read up to 100 bounded code-review comments for one pull request on a trusted GitHub account.',
-    inputSchema: { repository, number: prNumber, maxItems }, outputSchema: { comments: z.array(z.object({ ...COMMENT_SCHEMA, path: z.string(), line: z.number().int().optional(), side: z.string().optional(), commitId: z.string().optional() })) }, annotations: READ,
+    inputSchema: z.strictObject({ repository, number: prNumber, maxItems }), outputSchema: z.strictObject({ comments: z.array(z.strictObject({ ...COMMENT_SCHEMA, path: z.string(), line: z.number().int().optional(), side: z.string().optional(), commitId: z.string().optional() })) }), annotations: READ,
   }, guarded('github_pull_request_review_comments', async ({ repository, number, maxItems }) => { requireGithub('github:read', { repository }); return { target: repository, result: { comments: await executor.githubPullReviewComments(repository, number, maxItems) } }; }));
 
   server.registerTool('github_checks', {
     title: 'Read GitHub commit statuses', description: 'Read bounded commit-status state for a branch or exact commit ref. checkRuns is retained for response compatibility and is empty because QuaranHUB does not request GitHub Checks permission.',
-    inputSchema: { repository, ref },
-    outputSchema: { ref: z.string(), checkRuns: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().optional(), htmlUrl: z.string().optional() })), statuses: z.array(z.object({ context: z.string(), state: z.string(), description: z.string().optional(), targetUrl: z.string().optional() })) }, annotations: READ,
+    inputSchema: z.strictObject({ repository, ref }),
+    outputSchema: z.strictObject({ ref: z.string(), checkRuns: z.array(z.strictObject({ name: z.string(), status: z.string(), conclusion: z.string().optional(), htmlUrl: z.string().optional() })), statuses: z.array(z.strictObject({ context: z.string(), state: z.string(), description: z.string().optional(), targetUrl: z.string().optional() })) }), annotations: READ,
   }, guarded('github_checks', async ({ repository, ref }) => { requireGithub('github:read', { repository }); return { target: repository, result: await executor.githubChecks(repository, ref) }; }));
 
   server.registerTool('github_push_branch', {
     title: 'Publish an exact local commit to a GitHub branch',
     description: 'Push one exact current HEAD from an explicitly mapped local QuaranGate project to its trusted non-protected remote branch. Force-push, arbitrary remote URLs, default/protected branch pushes, tag pushes, deletes, and Docker options are not expressible.',
-    inputSchema: { project, expectedHead: z.string().regex(GITHUB_COMMIT_PATTERN), remoteBranch: branch },
-    outputSchema: { project: z.string(), remoteBranch: z.string(), sha: z.string() }, annotations: REMOTE_WRITE,
+    inputSchema: z.strictObject({ project, expectedHead: z.string().regex(GITHUB_COMMIT_PATTERN), remoteBranch: branch }),
+    outputSchema: z.strictObject({ project: z.string(), remoteBranch: z.string(), sha: z.string() }), annotations: REMOTE_WRITE,
   }, guarded('github_push_branch', async ({ project, expectedHead, remoteBranch }) => { requireGithub('github:write', { project }); return { target: project, result: await executor.githubPush(project, expectedHead, remoteBranch) }; }));
 
   server.registerTool('github_pull_request_create', {
     title: 'Create a GitHub pull request', description: 'Create a pull request in one repository on a trusted GitHub account. This cannot merge the pull request.',
-    inputSchema: { repository, head: branch, base: branch, title: z.string().min(1).max(GITHUB_MAX_TITLE_CHARS), body: z.string().max(GITHUB_MAX_BODY_CHARS).optional(), draft: z.boolean().optional() },
-    outputSchema: PULL_SCHEMA, annotations: REMOTE_WRITE,
+    inputSchema: z.strictObject({ repository, head: branch, base: branch, title: z.string().min(1).max(GITHUB_MAX_TITLE_CHARS), body: z.string().max(GITHUB_MAX_BODY_CHARS).optional(), draft: z.boolean().optional() }),
+    outputSchema: z.strictObject(PULL_SCHEMA), annotations: REMOTE_WRITE,
   }, guarded('github_pull_request_create', async ({ repository, ...req }) => { requireGithub('github:write', { repository }); return { target: repository, result: await executor.githubPullCreate(repository, req) }; }));
 
   server.registerTool('github_pull_request_update', {
     title: 'Update a GitHub pull request', description: 'Update title/body or open/closed state for a pull request on a trusted GitHub account. Merge is not supported.',
-    inputSchema: { repository, number: prNumber, title: z.string().min(1).max(GITHUB_MAX_TITLE_CHARS).optional(), body: z.string().max(GITHUB_MAX_BODY_CHARS).optional(), state: z.enum(['open', 'closed']).optional() },
-    outputSchema: PULL_SCHEMA, annotations: REMOTE_WRITE,
+    inputSchema: z.strictObject({ repository, number: prNumber, title: z.string().min(1).max(GITHUB_MAX_TITLE_CHARS).optional(), body: z.string().max(GITHUB_MAX_BODY_CHARS).optional(), state: z.enum(['open', 'closed']).optional() }),
+    outputSchema: z.strictObject(PULL_SCHEMA), annotations: REMOTE_WRITE,
   }, guarded('github_pull_request_update', async ({ repository, ...req }) => {
     requireGithub('github:write', { repository });
     if (req.title === undefined && req.body === undefined && req.state === undefined) throw new BridgeError('MALFORMED_REQUEST', 'at least one PR update field is required', 400);
@@ -190,7 +190,7 @@ export function registerGitHubTools(server: McpServer): void {
 
   server.registerTool('github_pull_request_review', {
     title: 'Submit a GitHub pull-request review', description: 'Submit COMMENT, APPROVE, or REQUEST_CHANGES on a trusted-account pull request. This cannot merge or alter repository settings.',
-    inputSchema: { repository, number: prNumber, event: z.enum(['COMMENT', 'APPROVE', 'REQUEST_CHANGES']), body: z.string().max(GITHUB_MAX_BODY_CHARS).optional() },
-    outputSchema: { id: z.number().int(), state: z.string(), htmlUrl: z.string().optional() }, annotations: REMOTE_WRITE,
+    inputSchema: z.strictObject({ repository, number: prNumber, event: z.enum(['COMMENT', 'APPROVE', 'REQUEST_CHANGES']), body: z.string().max(GITHUB_MAX_BODY_CHARS).optional() }),
+    outputSchema: z.strictObject({ id: z.number().int(), state: z.string(), htmlUrl: z.string().optional() }), annotations: REMOTE_WRITE,
   }, guarded('github_pull_request_review', async ({ repository, ...req }) => { requireGithub('github:review', { repository }); return { target: repository, result: await executor.githubPullReview(repository, req) }; }));
 }

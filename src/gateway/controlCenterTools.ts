@@ -221,7 +221,7 @@ export function registerControlCenterTools(server: McpServer): void {
   server.registerTool('control_center_query', {
     title: 'Query bounded QuaranGate Control Center metadata',
     description: 'Read metadata-only operational views for the current authenticated principal. Never returns prompts, file contents, command output, credentials, Docker options or raw tool payloads.',
-    inputSchema: {
+    inputSchema: z.strictObject({
       view: z.enum(VIEWS),
       limit: z.number().int().min(1).max(200).optional(),
       sinceMs: z.number().int().min(60_000).max(86_400_000).optional(),
@@ -232,8 +232,8 @@ export function registerControlCenterTools(server: McpServer): void {
       profile: z.string().max(128).optional(),
       githubAccount: z.string().max(128).optional(),
       githubProject: z.string().max(256).optional(),
-    },
-    outputSchema: { view: z.enum(VIEWS), generatedAt: z.string(), data: z.record(z.unknown()) },
+    }),
+    outputSchema: z.strictObject({ view: z.enum(VIEWS), generatedAt: z.string(), data: z.record(z.unknown()) }),
     annotations: READ,
   }, async (args: any) => {
     const reqId = newReqId();
