@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { managedIdentity, validateAuthorityRequest, validateManagedContainerCreate } from '../../src/docker-authority/policy.js';
 
-const labels = { 'io.quarangate.managed': 'true', 'io.quarangate.resource': 'runner', 'io.quarangate.job': 'job-1' };
-const safe = { Labels: labels, HostConfig: { Privileged:false, CapAdd:[], CapDrop:['ALL'], SecurityOpt:['no-new-privileges:true'], NetworkMode:'none', Binds:[], Devices:[] } };
+const labels = { 'io.quarangate.managed': 'true', 'io.quarangate.resource': 'runner', 'io.quarangate.job': `job_${'1'.repeat(32)}` };
+const safe = { Image: `sha256:${'a'.repeat(64)}`, Labels: labels, HostConfig: { AutoRemove:false, Privileged:false, ReadonlyRootfs:true, CapAdd:[], CapDrop:['ALL'], SecurityOpt:['no-new-privileges:true'], NetworkMode:'none', Binds:[], Devices:[], Memory:64*1024*1024, PidsLimit:8 } };
 
 describe('SH-02 docker authority policy', () => {
   it('accepts a minimally hardened managed container', () => expect(() => validateManagedContainerCreate(safe)).not.toThrow());

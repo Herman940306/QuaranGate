@@ -311,6 +311,7 @@ export function buildRunnerCreateBody(opts: {
   homeVolume: string;
   controlVolume: string;
   providerSessionVolume: string;
+  providerBinding: string;
   internalNetwork: string;
   proxyUrl: string;
   memoryBytes: number;
@@ -353,6 +354,7 @@ export function buildRunnerCreateBody(opts: {
       [LABEL_MANAGED]: 'true',
       [LABEL_RESOURCE]: 'runner',
       [LABEL_JOB]: opts.jobId,
+      [PROVIDER_BINDING_LABEL]: opts.providerBinding,
     },
     HostConfig: {
       AutoRemove: false,
@@ -932,6 +934,7 @@ export class KiroBackend {
       secretVolume: this.secretVolume,
       homeVolume: this.homeVolume,
       providerSessionVolume: this.providerStateVolume,
+      providerBinding: providerBindingHash(this.job),
       controlVolume: this.controlVolume,
       internalNetwork: this.intNet,
       proxyUrl: `http://${EGRESS_PROXY_ALIAS}:${EGRESS_PROXY_PORT}`,

@@ -37,10 +37,10 @@ function validReceipt(gate: string, sourceBindingSha256: string, manifestBytes: 
   const receipt: any = { schemaVersion: 1, gate, status: 'PASS', source, tool: policy.expectedTools[gate] ?? { name: 'test-runner', version: '1' }, findings: [] };
   const ids: Record<string, string> = {
     typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration', e2e: 'playwright-e2e',
-    'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', 'security-chaos': 'vitest-security-chaos', 'security-egress': 'vitest-security-egress', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
+    'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', 'security-chaos': 'vitest-security-chaos', 'security-egress': 'vitest-security-egress', 'security-docker': 'vitest-security-docker', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
   };
   if (ids[gate]) receipt.execution = execution(ids[gate]);
-  if (['unit', 'integration', 'e2e', 'security-chaos', 'security-egress'].includes(gate)) receipt.testCounts = { files: 2, tests: 10, failed: 0 };
+  if (['unit', 'integration', 'e2e', 'security-chaos', 'security-egress', 'security-docker'].includes(gate)) receipt.testCounts = { files: 2, tests: 10, failed: 0 };
   if (gate === 'authority-invariants') receipt.artifact = { rulesChecked: 12, composeFilesChecked: 10, dockerfilesChecked: 7 };
   if (gate === 'security-fuzz') receipt.artifact = { targetCount: 15, totalExecutions: 30060, coverageRanges: 106, iterationsPerTarget: 2000, maxInputBytes: 1024, maxCorpus: 256, maxRuntimeMs: 20000, coverageSampleInterval: 16, seed: 0x51f08a11 };
   if (gate === 'sbom') receipt.artifact = { kind: 'spdx-json', sha256: sha256(sbomBytes), bytes: sbomBytes.length };
@@ -87,7 +87,7 @@ describe('SH-05 release evidence bundle', () => {
       { component: 'gateway', reference: `quarangate-gateway:git-${commit}`, digest: imageB },
     ]);
     expect(one.evidence).toHaveLength(policy.requiredGates.length);
-    expect(one.testCounts).toEqual({ unit: { files: 2, tests: 10, failed: 0 }, integration: { files: 2, tests: 10, failed: 0 }, e2e: { files: 2, tests: 10, failed: 0 }, 'security-chaos': { files: 2, tests: 10, failed: 0 }, 'security-egress': { files: 2, tests: 10, failed: 0 } });
+    expect(one.testCounts).toEqual({ unit: { files: 2, tests: 10, failed: 0 }, integration: { files: 2, tests: 10, failed: 0 }, e2e: { files: 2, tests: 10, failed: 0 }, 'security-chaos': { files: 2, tests: 10, failed: 0 }, 'security-egress': { files: 2, tests: 10, failed: 0 }, 'security-docker': { files: 2, tests: 10, failed: 0 } });
     expect(one.bundleBindingSha256).toBe(two.bundleBindingSha256);
   });
 

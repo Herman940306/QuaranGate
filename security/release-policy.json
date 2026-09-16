@@ -10,6 +10,7 @@
     "security-fuzz",
     "security-chaos",
     "security-egress",
+    "security-docker",
     "sast",
     "secrets",
     "sca",
@@ -80,6 +81,10 @@
       "version": "3.2.7"
     },
     "security-egress": {
+      "name": "vitest",
+      "version": "3.2.7"
+    },
+    "security-docker": {
       "name": "vitest",
       "version": "3.2.7"
     }

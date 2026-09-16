@@ -5,7 +5,7 @@ QuaranGate is designed around **governed authority**, not trust in an AI model's
 A prompt can ask an agent to behave safely. QuaranGate's security model assumes that prompt instructions alone are not enough. Access decisions are enforced through authenticated principals, explicit grants, path confinement, isolated containers, bounded execution, stored evidence and separate promotion authority.
 
 > [!WARNING]
-> The private executor holds `/var/run/docker.sock`. Docker socket access is effectively host-level authority. The architecture reduces where that authority is exposed; it does not make Docker authority low risk.
+> Raw `/var/run/docker.sock` access is confined to the private `docker-authority` broker. The executor holds an authenticated credential for the broker's named operations, not the raw daemon socket. That credential remains high-impact authority and must be protected; the broker narrows Docker capability but does not make it low risk.
 
 ---
 
@@ -62,7 +62,8 @@ flowchart LR
     end
 
     subgraph PRIV["Private privileged zone"]
-        E["Executor<br/>trusted config · Docker authority<br/><b>no published ports</b>"]
+        E["Executor<br/>trusted config · named Docker operations<br/><b>no published ports</b>"]
+        D["Docker-authority broker<br/>raw Docker socket · independent policy<br/><b>private only</b>"]
         DB[("Job/evidence metadata<br/>executor-owned SQLite")]
     end
 
@@ -78,14 +79,15 @@ flowchart LR
     C -->|"API key or OAuth bearer"| G
     G -->|"private authenticated executor API"| E
     E --> DB
-    E --> T
-    E --> R
+    E -->|"authenticated named operations"| D
+    D --> T
+    D --> R
     R -.->|"sandbox snapshot"| P
 ```
 
 ### Why this split exists
 
-The gateway is the component that may accept external MCP traffic. The executor is the component that needs Docker control. Giving both responsibilities to one process would make compromise of the public boundary much more dangerous.
+The gateway is the component that may accept external MCP traffic. The executor resolves trusted product intent and calls a separate private Docker-authority broker. Only that broker receives the raw Docker socket. Giving the network-facing gateway direct daemon authority would make compromise of the public boundary much more dangerous.
 
 A compromised gateway does **not** automatically gain raw Docker or arbitrary host authority. It remains mediated by the executor's narrow API, trusted target/project configuration and independent validation.
 
@@ -576,7 +578,7 @@ The table below summarizes the important current threats and the control that li
 | Malformed tool input | Strict schemas, typed errors, fail closed | Parser/runtime bugs remain possible |
 | Path traversal | Gateway/executor validation + in-target canonicalization | Narrow symlink TOCTOU window remains |
 | Wrong/ambiguous target | Logical IDs + trusted resolver + ambiguity refusal | Misconfiguration remains an operator risk |
-| Arbitrary Docker control | Raw socket kept in private executor; narrow API | Executor compromise is high impact |
+| Arbitrary Docker control | Raw socket confined to private Docker-authority broker; executor uses authenticated named operations with independent policy | Executor/broker credential compromise remains high impact within those named operations |
 | Agent reaches host files | Sandbox volume, no host binds, no Docker socket | Kernel/container-runtime vulnerability remains possible |
 | Two writers race on one project | Writer policy + apply/live-writer arbitration | Future concurrency features must preserve the invariant |
 | Stale patch | Recorded base-state verification | User must regenerate/reconcile work after legitimate source drift |
@@ -595,19 +597,18 @@ The table below summarizes the important current threats and the control that li
 
 This is the primary structural residual risk.
 
-The executor's Docker socket access is required for the current target/runner architecture. If the executor itself is compromised, the impact may be severe despite its container hardening.
+The raw Docker socket is mounted only into the private Docker-authority broker. The executor reaches that broker with an authenticated internal credential and can request only named operations. The broker independently rejects generic method/path forwarding, privileged/host-namespace/device/port-publish/custom-runtime creation, ungoverned host binds, unauthorized cross-job managed-volume attachment (with only the provider-binding-verified session-resume exception), cross-job network attachment, unsafe Docker exec options, and other Docker-world authority not represented by the product contract.
 
 Mitigations reduce exposure:
 
-- no public port;
-- private service path;
-- internal token;
-- non-root process;
-- read-only filesystem;
-- dropped capabilities;
-- narrow application API.
+- raw socket only in the unpublished private broker;
+- authenticated named-operation RPC;
+- independent managed-resource/host-bind/network policy;
+- immutable runtime image IDs for managed container creation;
+- non-root/read-only/drop-cap hardening where each trusted role permits it;
+- no generic raw Docker method/path tunnel.
 
-They do not turn Docker authority into a low-privilege capability.
+These controls do **not** turn the executor-to-broker credential into a low-privilege capability. A fully compromised executor can still exercise the product's legitimate named Docker operations against authorized targets/resources. SH-11 proves that hostile Docker request shapes and resource attachment attempts cannot use those operations to request raw daemon passthrough or the explicitly forbidden host-escape features; it does not claim the broker credential is safe to disclose to an attacker.
 
 ## Authorized terminal power
 
