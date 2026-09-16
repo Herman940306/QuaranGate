@@ -620,6 +620,32 @@ describe('A6-B5 apply engine', () => {
       fileStore.close();
     });
 
+    it('SH-07 evidence tamper cannot cross the apply boundary into applier I/O', async () => {
+      const artifact = makeArtifact(
+        [{ path: 'a.txt', kind: 'file', mode: 0o644, content: Buffer.from('before') }],
+        [{ path: 'a.txt', kind: 'file', mode: 0o644, content: Buffer.from('after') }],
+      );
+      insertCompletedJob(store);
+      publishArtifact(store, artifact);
+
+      // Corrupt the persisted evidence after publication while leaving the
+      // durable expected artifact hash untouched. Apply must re-verify those
+      // exact bytes before creating any mutation-capable applier resources.
+      artifact.evidenceStore.set('artifact-manifest.json', Buffer.from('{"tampered":true}\n'));
+      const applier = new FakeApplierIO(artifact.evidenceStore);
+      const code = await expectCode(attempt(store, applier, artifact));
+
+      expect(code).toBe('ARTIFACT_STORAGE_INTEGRITY_FAILED');
+      expect(applier.controlVolumes.size).toBe(0);
+      expect(applier.execCalls).toEqual([]);
+      expect(applier.removedContainers).toEqual([]);
+      const attempts = store.listApplyAttemptsForJob(JOB_ID);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]!.state).toBe('ARTIFACT_INVALID');
+      expect(store.listApplyJournalForAttempt(attempts[0]!.attemptId)).toEqual([]);
+      expect(store.get(JOB_ID)!.status).toBe('COMPLETED');
+    });
+
     it('refuses apply when the artifact is not applicable', async () => {
       const artifact = makeArtifact(
         [{ path: 'a.txt', kind: 'file', mode: 0o644, content: Buffer.from('x') }],
