@@ -27,7 +27,8 @@
     "security:invariants": "node scripts/security-invariants.mjs",
     "release:sbom": "node scripts/release-sbom.mjs",
     "security:toolchain": "node scripts/security-toolchain.mjs",
-    "release:policy": "node scripts/release-security-policy.mjs"
+    "release:policy": "node scripts/release-security-policy.mjs",
+    "release:evidence-bundle": "node scripts/release-evidence-bundle.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
