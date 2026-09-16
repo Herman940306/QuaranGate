@@ -97,6 +97,15 @@ export class CopilotAgentFailure extends Error {
   override name = 'CopilotAgentFailure';
 }
 
+const SAFE_RESULT_TOKEN = /^[A-Za-z0-9._:/-]{1,64}$/u;
+const TRUSTED_RUNNER_ERRORS = new Set([
+  'failed to read trusted Copilot control',
+  'Copilot ACP spawn failed',
+  'Copilot ACP initialize failed',
+  'Copilot ACP session failed',
+  'Copilot ACP prompt failed',
+]);
+
 /** Pure hardened runner spec: volume-only mounts, RO workspace, no Docker socket. */
 export function buildCopilotRunnerCreateBody(opts: {
   jobId: string;
@@ -163,24 +172,40 @@ export function buildCopilotRunnerCreateBody(opts: {
   };
 }
 
-export function parseCopilotRunnerResult(stdout: string): CopilotRunnerResult | null {
-  const line = stdout.split('\n').reverse().find((candidate) => candidate.startsWith(COPILOT_RESULT_MARKER));
-  if (!line) return null;
+export function parseCopilotRunnerResult(stdout: string, expectedDryRun?: boolean): CopilotRunnerResult | null {
+  const lines = stdout.split('\n').filter((line) => line.length > 0);
+  if (lines.length !== 1 || !lines[0]!.startsWith(COPILOT_RESULT_MARKER)) return null;
   try {
-    const value = JSON.parse(line.slice(COPILOT_RESULT_MARKER.length)) as CopilotRunnerResult;
+    const raw = JSON.parse(lines[0]!.slice(COPILOT_RESULT_MARKER.length)) as unknown;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const value = raw as CopilotRunnerResult & Record<string, unknown>;
+    const allowedKeys = new Set(['ok','dryRun','protocolVersion','agentInfo','sessionId','toolCalls','assistantText','stopReason','refusedRequestCount','error']);
+    if (Object.keys(value).some((key) => !allowedKeys.has(key))) return null;
     if (typeof value.ok !== 'boolean' || typeof value.dryRun !== 'boolean'
+      || (expectedDryRun !== undefined && value.dryRun !== expectedDryRun)
       || !Array.isArray(value.toolCalls) || value.toolCalls.length > 512
       || typeof value.assistantText !== 'string' || Buffer.byteLength(value.assistantText, 'utf8') > 16 * 1024
-      || typeof value.stopReason !== 'string' || value.stopReason.length > 64
+      || typeof value.stopReason !== 'string' || !SAFE_RESULT_TOKEN.test(value.stopReason)
       || !Number.isSafeInteger(value.refusedRequestCount) || value.refusedRequestCount < 0 || value.refusedRequestCount > 512) return null;
     let totalToolCalls = 0;
     for (const toolCall of value.toolCalls) {
-      if (!toolCall || typeof toolCall.kind !== 'string' || toolCall.kind.length < 1 || toolCall.kind.length > 64
-        || (toolCall.status !== undefined && (typeof toolCall.status !== 'string' || toolCall.status.length > 64))
+      if (!toolCall || typeof toolCall.kind !== 'string' || !SAFE_RESULT_TOKEN.test(toolCall.kind)
+        || (toolCall.status !== undefined && (typeof toolCall.status !== 'string' || !SAFE_RESULT_TOKEN.test(toolCall.status)))
         || !Number.isSafeInteger(toolCall.count) || toolCall.count < 1) return null;
       totalToolCalls += toolCall.count;
       if (totalToolCalls > 512) return null;
     }
+    if (value.protocolVersion !== undefined && (!Number.isSafeInteger(value.protocolVersion) || Number(value.protocolVersion) < 0 || Number(value.protocolVersion) > 1024)) return null;
+    if (value.sessionId !== undefined && (typeof value.sessionId !== 'string' || value.sessionId.length < 1 || Buffer.byteLength(value.sessionId, 'utf8') > 512 || /[\x00-\x1f\x7f]/u.test(value.sessionId))) return null;
+    if (value.agentInfo !== undefined) {
+      if (!value.agentInfo || typeof value.agentInfo !== 'object' || Array.isArray(value.agentInfo)) return null;
+      const info = value.agentInfo as unknown as Record<string, unknown>;
+      if (Object.keys(info).some((key) => !['name','version'].includes(key))) return null;
+      if (typeof info.name !== 'string' || info.name.length < 1 || Buffer.byteLength(info.name, 'utf8') > 256) return null;
+      if (typeof info.version !== 'string' || info.version.length < 1 || Buffer.byteLength(info.version, 'utf8') > 256) return null;
+    }
+    if (value.error !== undefined && (typeof value.error !== 'string' || !TRUSTED_RUNNER_ERRORS.has(value.error))) return null;
+    if ((value.ok && value.error !== undefined) || (!value.ok && value.error === undefined)) return null;
     return value;
   } catch {
     return null;
@@ -190,11 +215,12 @@ export function parseCopilotRunnerResult(stdout: string): CopilotRunnerResult | 
 export function assertCopilotRunnerExecution(
   waited: { statusCode: number | null; timedOut: boolean },
   logs: { stdout: string; truncated: boolean },
+  expectedDryRun?: boolean,
 ): CopilotRunnerResult {
   if (waited.timedOut) throw new CopilotAgentFailure('Copilot runner exceeded maxRuntimeMs');
   if (waited.statusCode !== 0) throw new CopilotAgentFailure('Copilot runner exited unsuccessfully');
   if (logs.truncated) throw new CopilotAgentFailure('Copilot runner output exceeded maxOutputBytes');
-  const parsed = parseCopilotRunnerResult(logs.stdout);
+  const parsed = parseCopilotRunnerResult(logs.stdout, expectedDryRun);
   if (!parsed?.ok) throw new CopilotAgentFailure(parsed?.error ?? 'Copilot runner produced no valid ACP result');
   return parsed;
 }
@@ -209,7 +235,7 @@ export function assertCopilotReadonlyResult(result: CopilotRunnerResult): void {
   }
   if (!result.dryRun) {
     if (result.stopReason !== 'end_turn') {
-      throw new CopilotAgentFailure(`Copilot did not complete normally (stopReason=${result.stopReason})`);
+      throw new CopilotAgentFailure('Copilot did not complete normally');
     }
     if (result.assistantText.trim() === '') {
       throw new CopilotAgentFailure('Copilot completed without a usable assistant response');
@@ -392,7 +418,7 @@ export class CopilotBackend {
     await startContainer(this.runnerContainerId);
     const waited = await this.waitBounded(this.runnerContainerId, limits.maxRuntimeMs, signal);
     const logs = await getContainerLogs(this.runnerContainerId, limits.maxOutputBytes);
-    this.turnResult = assertCopilotRunnerExecution(waited, logs);
+    this.turnResult = assertCopilotRunnerExecution(waited, logs, Boolean(this.opts.dryRun));
   }
 
   private async waitBounded(containerId: string, timeoutMs: number, signal: AbortSignal) {

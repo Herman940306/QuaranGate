@@ -35,7 +35,8 @@
     "release:provenance": "node scripts/release-provenance.mjs",
     "release:assurance": "node scripts/release-assurance.mjs",
     "security:fuzz": "node scripts/security-fuzz.mjs --build",
-    "security:egress": "node scripts/run-vitest-clean.mjs tests/unit/sh10 --no-file-parallelism"
+    "security:egress": "node scripts/run-vitest-clean.mjs tests/unit/sh10 --no-file-parallelism",
+    "security:prompt-injection": "node scripts/run-vitest-clean.mjs tests/unit/sh12 --no-file-parallelism"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

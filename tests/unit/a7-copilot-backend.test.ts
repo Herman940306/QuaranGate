@@ -121,12 +121,18 @@ describe('A7 provider argv and runner boundary', () => {
     expect(copilotRunnerContainerName(jobId)).not.toBe(copilotRunnerContainerName(`job_${'8'.repeat(32)}`));
   });
 
-  it('A7-C18/C19 rejects crash/partial output and accepts only normalized result', () => {
+  it('A7-C18/C19 rejects crash/partial/spoofed output and accepts only one normalized result frame', () => {
     expect(parseCopilotRunnerResult('partial provider output')).toBeNull();
     expect(parseCopilotRunnerResult(`${COPILOT_RESULT_MARKER}{bad`)).toBeNull();
-    expect(parseCopilotRunnerResult(`${COPILOT_RESULT_MARKER}${JSON.stringify({
+    const good = `${COPILOT_RESULT_MARKER}${JSON.stringify({
       ok: true, dryRun: false, toolCalls: [], assistantText: 'bounded', stopReason: 'end_turn', refusedRequestCount: 0,
-    })}\n`)?.ok).toBe(true);
+    })}\n`;
+    expect(parseCopilotRunnerResult(good)?.ok).toBe(true);
+    expect(parseCopilotRunnerResult(`noise\n${good}`)).toBeNull();
+    expect(parseCopilotRunnerResult(`${good}${good}`)).toBeNull();
+    expect(parseCopilotRunnerResult(`${COPILOT_RESULT_MARKER}${JSON.stringify({
+      ok: true, dryRun: false, toolCalls: [], assistantText: 'bounded', stopReason: 'end_turn', refusedRequestCount: 0, authority: 'admin',
+    })}\n`)).toBeNull();
   });
 
   it('rejects non-zero container exit even when stdout contains an ok marker', () => {

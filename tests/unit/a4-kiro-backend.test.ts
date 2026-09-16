@@ -213,17 +213,23 @@ describe('buildRunnerCreateBody — hardened Docker Engine API body (no CLI)', (
 });
 
 describe('parseRunnerResult — bounded result-line extraction', () => {
-  it('parses the last __ACP_RESULT__ line and ignores other stdout', () => {
-    const stdout = 'noise line\n__ACP_RESULT__{"ok":true,"dryRun":true,"toolCalls":[],'
-      + '"assistantText":"","stopReason":"dry_run","refusedRequestCount":0,"sessionId":"s1"}\n';
-    const r = parseRunnerResult(stdout);
+  const good = `${'__ACP_RESULT__'}${JSON.stringify({
+    ok:true,dryRun:true,toolCalls:[],assistantText:'',stopReason:'dry_run',refusedRequestCount:0,sessionId:'s1',
+  })}\n`;
+
+  it('accepts exactly one marker-framed bounded result', () => {
+    const r = parseRunnerResult(good);
     expect(r?.ok).toBe(true);
     expect(r?.sessionId).toBe('s1');
     expect(r?.stopReason).toBe('dry_run');
   });
 
-  it('returns null when no result marker is present', () => {
+  it('fails closed on missing, prefixed, duplicate, or schema-invalid result frames', () => {
     expect(parseRunnerResult('just some logs\n')).toBeNull();
+    expect(parseRunnerResult(`noise:${good}`)).toBeNull();
+    expect(parseRunnerResult(`noise\n${good}`)).toBeNull();
+    expect(parseRunnerResult(`${good}${good}`)).toBeNull();
+    expect(parseRunnerResult(`__ACP_RESULT__${JSON.stringify({ok:true,dryRun:true,toolCalls:[],assistantText:'',stopReason:'dry_run',refusedRequestCount:0,authority:'admin'})}\n`)).toBeNull();
   });
 });
 

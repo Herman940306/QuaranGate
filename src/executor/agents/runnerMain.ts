@@ -84,11 +84,31 @@ export interface RunnerResult {
   stopReason: string;
   refusedRequestCount: number;
   error?: string;
-  stderrTail?: string;
 }
 
 const DEFAULT_PROMPT_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_ASSISTANT_BYTES = 16 * 1024;
+
+/** UTF-8 byte-safe truncation for untrusted provider text crossing the runner boundary. */
+export function truncateUtf8(text: string, maxBytes: number): string {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new TypeError('maxBytes must be a non-negative safe integer');
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= maxBytes) return text;
+  return bytes.subarray(0, maxBytes).toString('utf8').replace(/\uFFFD$/u, '');
+}
+
+/** Convert any control-file read/parse failure into a non-sensitive result. */
+export function normalizeRunnerControlFailure(_error: unknown): RunnerResult {
+  return {
+    ok: false,
+    dryRun: false,
+    toolCalls: [],
+    assistantText: '',
+    stopReason: 'error',
+    refusedRequestCount: 0,
+    error: 'failed to read trusted Kiro control',
+  };
+}
 
 /**
  * Drive one ACP job to at most a single completed turn (or stop after
@@ -123,8 +143,10 @@ export async function runAcpJob(control: RunnerControl): Promise<RunnerResult> {
   // observe it as a normal rejection of the pending request instead.
   driver.on('error', () => { /* surfaced via the awaited request rejection */ });
 
+  let stage: 'spawn' | 'initialize' | 'session' | 'prompt' = 'spawn';
   driver.spawn();
   try {
+    stage = 'initialize';
     const init = await driver.initialize();
     base.protocolVersion = init.protocolVersion;
     base.agentInfo = init.agentInfo ? { name: init.agentInfo.name, version: init.agentInfo.version } : undefined;
@@ -135,6 +157,7 @@ export async function runAcpJob(control: RunnerControl): Promise<RunnerResult> {
     // capability-gates sessionLoad() on agentCapabilities.loadSession=true and
     // fails closed if unsupported/malformed/dead. There is NEVER fallback to
     // session/new for a resume request.
+    stage = 'session';
     if (control.resumeSessionId) {
       const loaded = await driver.sessionLoad(control.resumeSessionId, control.cwd);
       base.sessionId = control.resumeSessionId;
@@ -154,6 +177,7 @@ export async function runAcpJob(control: RunnerControl): Promise<RunnerResult> {
       return base;
     }
 
+    stage = 'prompt';
     const turn = await driver.prompt({
       prompt: control.prompt,
       timeoutMs: control.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS,
@@ -172,14 +196,18 @@ export async function runAcpJob(control: RunnerControl): Promise<RunnerResult> {
 
     base.ok = true;
     base.toolCalls = [...counts.values()];
-    base.assistantText = turn.assistantText.slice(0, control.maxAssistantBytes ?? DEFAULT_MAX_ASSISTANT_BYTES);
+    base.assistantText = truncateUtf8(
+      turn.assistantText,
+      control.maxAssistantBytes ?? DEFAULT_MAX_ASSISTANT_BYTES,
+    );
     base.stopReason = turn.stopReason;
     base.refusedRequestCount = driver.getRefusedRequestCount();
     return base;
-  } catch (e) {
+  } catch {
     base.ok = false;
-    base.error = (e instanceof Error ? e.message : String(e)).slice(0, 500);
-    base.stderrTail = driver.getStderr().slice(-2000);
+    // Never return provider stderr/protocol/error prose across the runner boundary:
+    // hostile model/provider text may contain prompts, file content, or credentials.
+    base.error = `Kiro ACP ${stage} failed`;
     base.refusedRequestCount = driver.getRefusedRequestCount();
     return base;
   } finally {
@@ -193,11 +221,8 @@ async function main(): Promise<void> {
   let control: RunnerControl;
   try {
     control = JSON.parse(readFileSync(controlPath, 'utf8')) as RunnerControl;
-  } catch (e) {
-    process.stdout.write(`${RESULT_MARKER}${JSON.stringify({
-      ok: false, dryRun: false, toolCalls: [], assistantText: '', stopReason: 'error',
-      refusedRequestCount: 0, error: `failed to read control: ${(e as Error).message}`,
-    } satisfies RunnerResult)}\n`);
+  } catch (error) {
+    process.stdout.write(`${RESULT_MARKER}${JSON.stringify(normalizeRunnerControlFailure(error))}\n`);
     process.exit(1);
     return;
   }

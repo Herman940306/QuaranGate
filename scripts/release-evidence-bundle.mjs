@@ -159,7 +159,7 @@ if (sbom.spdxVersion !== 'SPDX-2.3' || sbom.SPDXID !== 'SPDXRef-DOCUMENT') throw
 const executionCommandIds = {
   typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration',
   e2e: 'playwright-e2e',
-  'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', 'security-chaos': 'vitest-security-chaos', 'security-egress': 'vitest-security-egress', 'security-docker': 'vitest-security-docker', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
+  'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', 'security-chaos': 'vitest-security-chaos', 'security-egress': 'vitest-security-egress', 'security-docker': 'vitest-security-docker', 'security-prompt-injection': 'vitest-security-prompt-injection', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
 };
 function validDigestEvidence(value) {
   return value && SHA256.test(value.sha256 ?? '') && Number.isInteger(value.bytes) && value.bytes >= 0;
@@ -173,7 +173,7 @@ function validExecution(value, expectedCommandId) {
     && validDigestEvidence(value.stdout) && validDigestEvidence(value.stderr);
 }
 function assertReceiptEvidence(gate, receipt) {
-  if (['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'sbom', 'provenance'].includes(gate)
+  if (['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom', 'provenance'].includes(gate)
     && !validExecution(receipt.execution, executionCommandIds[gate])) throw new Error(`gate receipt lacks valid execution evidence: ${gate}`);
   if (gate === 'authority-invariants') {
     const a = receipt.artifact;
@@ -230,7 +230,7 @@ for (const gate of policy.requiredGates) {
   const expectedTool = policy.expectedTools?.[gate];
   if (expectedTool && (receipt.tool?.name !== expectedTool.name || receipt.tool?.version !== expectedTool.version)) throw new Error(`gate receipt tool binding mismatch: ${gate}`);
   assertReceiptEvidence(gate, receipt);
-  if (['unit', 'integration', 'e2e', 'security-chaos', 'security-egress', 'security-docker'].includes(gate)) {
+  if (['unit', 'integration', 'e2e', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection'].includes(gate)) {
     const counts = receipt.testCounts;
     if (!counts || !Number.isInteger(counts.files) || counts.files <= 0 || !Number.isInteger(counts.tests) || counts.tests <= 0 || !Number.isInteger(counts.failed) || counts.failed !== 0) throw new Error(`gate receipt lacks valid passing test counts: ${gate}`);
     testCounts[gate] = { files: counts.files, tests: counts.tests, failed: counts.failed };

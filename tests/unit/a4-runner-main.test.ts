@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { runAcpJob, type RunnerControl } from '../../src/executor/agents/runnerMain.js';
+import { normalizeRunnerControlFailure, runAcpJob, truncateUtf8, type RunnerControl } from '../../src/executor/agents/runnerMain.js';
 import { newBridgeAgentName } from '../../src/executor/agents/acpDriver.js';
 
 const MOCK = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'mock-acp-server.mjs');
@@ -62,6 +62,13 @@ describe('runAcpJob — full turn (aggregation + bounds)', () => {
     expect(r.assistantText.length).toBeLessThanOrEqual(4);
   });
 
+  it('enforces assistant text bounds in UTF-8 bytes, not JavaScript code units', () => {
+    const out = truncateUtf8('😀😀😀', 5);
+    expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(5);
+    expect(out).toBe('😀');
+    expect(truncateUtf8('abc', 3)).toBe('abc');
+  });
+
   it('reports non-read-only tool kinds so the backend can reject them', async () => {
     const r = await runAcpJob(control({ dryRun: false, prompt: 'WIDEN' }));
     expect(r.toolCalls.map((t) => t.kind)).toContain('bash');
@@ -91,7 +98,15 @@ describe('runAcpJob — failure surfaces cleanly', () => {
   it('returns ok:false with a bounded error when the ACP process cannot start', async () => {
     const r = await runAcpJob(control({ acpCommand: '/nonexistent/kiro-cli-xyz', acpPrefixArgs: [] }));
     expect(r.ok).toBe(false);
-    expect(typeof r.error).toBe('string');
+    expect(r.error).toBe('Kiro ACP initialize failed');
+    expect(r.stderrTail).toBeUndefined();
     expect(r.stopReason).toBe('error');
+  });
+
+  it('does not copy control parse diagnostics or prompt fragments into the runner result', () => {
+    const result = normalizeRunnerControlFailure(new SyntaxError('Unexpected token near hostile prompt and secret'));
+    expect(result.error).toBe('failed to read trusted Kiro control');
+    expect(JSON.stringify(result)).not.toContain('hostile prompt');
+    expect(JSON.stringify(result)).not.toContain('secret');
   });
 });

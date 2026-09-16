@@ -337,7 +337,18 @@ describe('P7 B6 authenticated AF_UNIX listener foundation', () => {
       const rebound = lstatSync(ctx.runtime.socketPath);
       expect(rebound.isSocket()).toBe(true);
       expect(rebound.mode & 0o777).toBe(0o600);
-      expect(rebound.ino).not.toBe(occupied.ino);
+      // Filesystems may immediately reuse the unlinked orphan's inode number.
+      // Prove that the path was rebound to this listener by completing its
+      // authenticated handshake instead of treating inode inequality as a
+      // socket-lifetime guarantee.
+      const started = await begin(ctx);
+      const readyFrame = await complete(ctx, started);
+      expect(readyFrame).toMatchObject({
+        version: 1,
+        type: 'ready',
+        sessionId: started.hello.sessionId,
+        connectionGeneration: 1,
+      });
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     }

@@ -45,6 +45,7 @@ export const OLLAMA_O1_EXECUTION_LIMITS = Object.freeze({
 
 const { MAX_TURNS, MAX_TOOL_CALLS_TOTAL, MAX_TOOL_CALLS_PER_TURN } = OLLAMA_O1_EXECUTION_LIMITS;
 export const MAX_OLLAMA_CHAT_ENVELOPE_BYTES = 48 * 1024;
+export const MAX_OLLAMA_PROVIDER_RESULT_BYTES = 48 * 1024;
 const MAX_RESULT_SUMMARY_CHARS = 16_384;
 
 export const OLLAMA_O1_SYSTEM_MESSAGE = [
@@ -496,6 +497,7 @@ export class OllamaBackend implements AgentBackendAdapter {
       // §9: stream: true as required by O1 spec
       let fullContent = '';
       let contentBytes = 0;
+      let toolCallBytes = 0;
       let thinkingBytes = 0;
       let done = false;
       let doneReason: string | null = null;
@@ -542,14 +544,29 @@ export class OllamaBackend implements AgentBackendAdapter {
         for await (const chunk of stream) {
           this.checkAbort(signal);
           if (chunk.message.content) {
+            const nextContentBytes = contentBytes + Buffer.byteLength(chunk.message.content, 'utf8');
+            if (nextContentBytes > MAX_OLLAMA_PROVIDER_RESULT_BYTES) {
+              throw new OllamaAgentOutputError('ollama backend assistant output exceeded fixed byte limit');
+            }
             fullContent += chunk.message.content;
-            contentBytes += Buffer.byteLength(chunk.message.content, 'utf8');
+            contentBytes = nextContentBytes;
           }
           if (chunk.message.thinking) {
             thinkingBytes += Buffer.byteLength(chunk.message.thinking, 'utf8');
           }
           if (chunk.message.tool_calls) {
             for (const tc of chunk.message.tool_calls) {
+              if (toolCalls.length >= MAX_TOOL_CALLS_PER_TURN) {
+                throw new OllamaAgentOutputError('ollama backend tool-call result exceeded fixed count limit');
+              }
+              const encoded = JSON.stringify(tc);
+              if (typeof encoded !== 'string') {
+                throw new OllamaAgentOutputError('ollama backend returned an invalid tool-call result');
+              }
+              toolCallBytes += Buffer.byteLength(encoded, 'utf8');
+              if (toolCallBytes > MAX_OLLAMA_PROVIDER_RESULT_BYTES) {
+                throw new OllamaAgentOutputError('ollama backend tool-call result exceeded fixed byte limit');
+              }
               toolCalls.push(tc as { function: { name: string; arguments: Record<string, unknown> } });
             }
           }

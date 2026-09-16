@@ -8,7 +8,7 @@ import { validateOfflinePrerequisites } from './release-scanner-run.mjs';
 import { externalPrivateEvidenceDirectory } from './release-path-safety.mjs';
 
 const SOURCE_ROOT = realpathSync(resolve(fileURLToPath(new URL('../', import.meta.url))));
-const INTRINSIC_GATES = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'sbom'];
+const INTRINSIC_GATES = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom'];
 const SCANNER_GATES = ['sast', 'secrets', 'sca', 'config-scan', 'image-scan'];
 const TOOL_IDS = { sast: 'semgrep', secrets: 'gitleaks', sca: 'osv-scanner', 'config-scan': 'trivy', 'image-scan': 'trivy' };
 const EXIT = { PASS: 0, BLOCKED_ENVIRONMENT: 4, FAIL: 5 };

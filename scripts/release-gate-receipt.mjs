@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { externalOutputPath, pathIsWithinRoot as sharedPathIsWithinRoot } from './release-path-safety.mjs';
 
 const SHA1 = /^[0-9a-f]{40}$/u;
-const SUPPORTED_GATES = Object.freeze(['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'sbom']);
+const SUPPORTED_GATES = Object.freeze(['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom']);
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -213,6 +213,7 @@ export function gateDefinition(gate) {
   if (gate === 'security-chaos') return { vitest: true, scope: 'tests/unit/sh09', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-security-chaos' };
   if (gate === 'security-egress') return { vitest: true, scope: 'tests/unit/sh10', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-security-egress' };
   if (gate === 'security-docker') return { vitest: true, scope: 'tests/unit/sh11', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-security-docker' };
+  if (gate === 'security-prompt-injection') return { vitest: true, scope: 'tests/unit/sh12', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-security-prompt-injection' };
   return { sbom: true, binary: process.execPath, tool: { name: 'quarangate-release-sbom', version: '2' }, commandId: 'release-sbom' };
 }
 

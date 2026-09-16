@@ -11,6 +11,7 @@
     "security-chaos",
     "security-egress",
     "security-docker",
+    "security-prompt-injection",
     "sast",
     "secrets",
     "sca",
@@ -85,6 +86,10 @@
       "version": "3.2.7"
     },
     "security-docker": {
+      "name": "vitest",
+      "version": "3.2.7"
+    },
+    "security-prompt-injection": {
       "name": "vitest",
       "version": "3.2.7"
     }

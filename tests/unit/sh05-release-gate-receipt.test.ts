@@ -58,6 +58,12 @@ describe('SH-05 fixed release gate receipt executor', () => {
       tool: { name: 'vitest', version: '3.2.7' },
       commandId: 'vitest-security-docker',
     });
+    expect(gateDefinition('security-prompt-injection')).toEqual({
+      vitest: true,
+      scope: 'tests/unit/sh12',
+      tool: { name: 'vitest', version: '3.2.7' },
+      commandId: 'vitest-security-prompt-injection',
+    });
   });
 
   it('routes fixed unit/integration execution through the self-cleaning Vitest wrapper', () => {
@@ -72,7 +78,10 @@ describe('SH-05 fixed release gate receipt executor', () => {
     expect(chaos.args[1]).toBe('tests/unit/sh09');
     const egress = vitestGateInvocation(gateDefinition('security-egress'), '/external/egress.json');
     const docker = vitestGateInvocation(gateDefinition('security-docker'), '/external/docker.json');
+    const promptInjection = vitestGateInvocation(gateDefinition('security-prompt-injection'), '/external/prompt-injection.json');
     expect(egress.args[1]).toBe('tests/unit/sh10');
+    expect(docker.args[1]).toBe('tests/unit/sh11');
+    expect(promptInjection.args[1]).toBe('tests/unit/sh12');
     expect(() => vitestGateInvocation(gateDefinition('typecheck') as any, '/external/nope.json')).toThrow(/Vitest gate definition/u);
   });
 

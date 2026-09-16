@@ -561,24 +561,82 @@ class KiroAgentFailure extends Error {
   constructor(message: string) { super(message); this.name = 'KiroAgentFailure'; }
 }
 
+const SAFE_RESULT_TOKEN = /^[A-Za-z0-9._:/-]{1,64}$/u;
+const TRUSTED_RUNNER_ERRORS = new Set([
+  'failed to read trusted Kiro control',
+  'Kiro ACP spawn failed',
+  'Kiro ACP initialize failed',
+  'Kiro ACP session failed',
+  'Kiro ACP prompt failed',
+]);
+
 function log(msg: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ level: 'info', msg, ...fields }));
 }
 
-/** Extract the single bounded normalized result line the runner driver emits. */
-export function parseRunnerResult(stdout: string): RunnerResult | null {
-  const lines = stdout.split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i] ?? '';
-    const idx = line.indexOf(RESULT_MARKER);
-    if (idx === -1) continue;
-    try {
-      return JSON.parse(line.slice(idx + RESULT_MARKER.length)) as RunnerResult;
-    } catch {
-      return null;
+/** Extract and strictly validate the runner's single bounded normalized result frame. */
+export function parseRunnerResult(stdout: string, expectedDryRun?: boolean): RunnerResult | null {
+  const lines = stdout.split('\n').filter((line) => line.length > 0);
+  if (lines.length !== 1 || !lines[0]!.startsWith(RESULT_MARKER)) return null;
+  try {
+    const raw = JSON.parse(lines[0]!.slice(RESULT_MARKER.length)) as unknown;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const value = raw as Record<string, unknown>;
+    const allowedKeys = new Set([
+      'ok','dryRun','protocolVersion','agentInfo','kiroVersion','sessionId','models','modes',
+      'toolCalls','assistantText','stopReason','refusedRequestCount','error',
+    ]);
+    if (Object.keys(value).some((key) => !allowedKeys.has(key))) return null;
+    if (typeof value.ok !== 'boolean' || typeof value.dryRun !== 'boolean') return null;
+    if (expectedDryRun !== undefined && value.dryRun !== expectedDryRun) return null;
+    if (!Array.isArray(value.toolCalls) || value.toolCalls.length > 512) return null;
+    if (typeof value.assistantText !== 'string' || Buffer.byteLength(value.assistantText, 'utf8') > MAX_ASSISTANT_BYTES) return null;
+    if (typeof value.stopReason !== 'string' || !SAFE_RESULT_TOKEN.test(value.stopReason)) return null;
+    if (!Number.isSafeInteger(value.refusedRequestCount) || Number(value.refusedRequestCount) < 0 || Number(value.refusedRequestCount) > 512) return null;
+    if (value.protocolVersion !== undefined && (!Number.isSafeInteger(value.protocolVersion) || Number(value.protocolVersion) < 0 || Number(value.protocolVersion) > 1024)) return null;
+    if (value.kiroVersion !== undefined && (typeof value.kiroVersion !== 'string' || Buffer.byteLength(value.kiroVersion, 'utf8') > 256)) return null;
+    if (value.sessionId !== undefined && (typeof value.sessionId !== 'string' || value.sessionId.length < 1 || Buffer.byteLength(value.sessionId, 'utf8') > 512 || /[\x00-\x1f\x7f]/u.test(value.sessionId))) return null;
+    if (value.agentInfo !== undefined) {
+      if (!value.agentInfo || typeof value.agentInfo !== 'object' || Array.isArray(value.agentInfo)) return null;
+      const info = value.agentInfo as Record<string, unknown>;
+      if (Object.keys(info).some((key) => !['name','version'].includes(key))) return null;
+      if (typeof info.name !== 'string' || info.name.length < 1 || Buffer.byteLength(info.name, 'utf8') > 256) return null;
+      if (typeof info.version !== 'string' || info.version.length < 1 || Buffer.byteLength(info.version, 'utf8') > 256) return null;
     }
+    if (value.error !== undefined && (typeof value.error !== 'string' || !TRUSTED_RUNNER_ERRORS.has(value.error))) return null;
+    if ((value.ok && value.error !== undefined) || (!value.ok && value.error === undefined)) return null;
+    for (const opaque of ['models','modes'] as const) {
+      if (value[opaque] !== undefined && Buffer.byteLength(JSON.stringify(value[opaque]), 'utf8') > 32 * 1024) return null;
+    }
+    let totalToolCalls = 0;
+    for (const item of value.toolCalls) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const tool = item as Record<string, unknown>;
+      if (Object.keys(tool).some((key) => !['kind','status','count'].includes(key))) return null;
+      if (typeof tool.kind !== 'string' || !SAFE_RESULT_TOKEN.test(tool.kind)) return null;
+      if (tool.status !== undefined && (typeof tool.status !== 'string' || !SAFE_RESULT_TOKEN.test(tool.status))) return null;
+      if (!Number.isSafeInteger(tool.count) || Number(tool.count) < 1) return null;
+      totalToolCalls += Number(tool.count);
+      if (totalToolCalls > 512) return null;
+    }
+    return raw as RunnerResult;
+  } catch {
+    return null;
   }
-  return null;
+}
+
+export function assertKiroRunnerExecution(
+  waited: { statusCode: number | null; timedOut: boolean },
+  logs: { stdout: string; truncated: boolean },
+  expectedDryRun: boolean,
+): RunnerResult {
+  if (waited.timedOut) throw new KiroAgentFailure('kiro runner exceeded maxRuntimeMs');
+  if (logs.truncated) throw new KiroAgentFailure('kiro runner output exceeded maxOutputBytes');
+  const parsed = parseRunnerResult(logs.stdout, expectedDryRun);
+  if (!parsed) throw new KiroAgentFailure('kiro runner produced no valid ACP result');
+  if (!parsed.ok) throw new KiroAgentFailure(`kiro ACP failed: ${parsed.error}`);
+  if (waited.statusCode !== 0) throw new KiroAgentFailure('kiro runner exited unsuccessfully');
+  return parsed;
 }
 
 export class KiroBackend {
@@ -957,16 +1015,10 @@ export class KiroBackend {
     const info = await inspectContainerFull(this.runnerContainerId).catch(() => null);
     this.imageId = info?.Image ?? null;
 
-    if (waited.timedOut) {
-      throw new KiroAgentFailure('kiro runner exceeded maxRuntimeMs');
-    }
-    const parsed = parseRunnerResult(logs.stdout);
-    if (!parsed) {
-      throw new KiroAgentFailure(`kiro runner produced no ACP result (stderr: ${logs.stderr.slice(0, 400)})`);
-    }
-    if (!parsed.ok) {
-      throw new KiroAgentFailure(`kiro ACP failed: ${parsed.error ?? 'unknown'}`);
-    }
+    // The normalized frame is still an untrusted process boundary. Bind its
+    // dry-run echo to trusted construction-time policy, require complete logs
+    // and a successful container exit, and accept only enumerated safe errors.
+    const parsed = assertKiroRunnerExecution(waited, logs, Boolean(this.opts.dryRun));
     this.turnResult = parsed;
     log('kiro backend: turn complete', {
       jobId: this.job.jobId, stopReason: parsed.stopReason,

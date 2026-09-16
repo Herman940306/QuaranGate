@@ -57,6 +57,8 @@ const executionCommandIds = {
   'security-fuzz': 'security-fuzz',
   'security-chaos': 'vitest-security-chaos',
   'security-egress': 'vitest-security-egress',
+  'security-docker': 'vitest-security-docker',
+  'security-prompt-injection': 'vitest-security-prompt-injection',
   sbom: 'release-sbom',
   provenance: 'cosign-verify-blob-attestation',
 };
@@ -73,9 +75,9 @@ function validExecution(value, expectedCommandId) {
 }
 function validateReceiptEvidence(gate, receipt, sourceBindingSha256) {
   const errors = [];
-  const executionGate = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'sbom', 'provenance'].includes(gate);
+  const executionGate = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom', 'provenance'].includes(gate);
   if (executionGate && !validExecution(receipt.execution, executionCommandIds[gate])) errors.push('INVALID_EXECUTION_EVIDENCE');
-  if (['unit', 'integration', 'e2e', 'security-chaos', 'security-egress'].includes(gate)) {
+  if (['unit', 'integration', 'e2e', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection'].includes(gate)) {
     const counts = receipt.testCounts;
     if (!counts || !Number.isInteger(counts.files) || counts.files <= 0 || !Number.isInteger(counts.tests) || counts.tests <= 0 || counts.failed !== 0) errors.push('INVALID_TEST_COUNTS');
   }

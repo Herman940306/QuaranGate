@@ -146,6 +146,8 @@ describe('P7 I2 IDE companion production composition', () => {
       }
       if (!ready) throw new Error(`orphan socket helper did not become ready: ${childStderr.trim() || 'no child diagnostic'}`);
       const orphan = lstatSync(socketPath);
+      expect(orphan.isSocket()).toBe(true);
+      expect(orphan.mode & 0o777).toBe(0o600);
       child.kill('SIGKILL');
       await new Promise<void>((resolve) => child.once('exit', () => resolve()));
       expect(existsSync(socketPath)).toBe(true);
@@ -154,7 +156,10 @@ describe('P7 I2 IDE companion production composition', () => {
       const rebound = lstatSync(socketPath);
       expect(rebound.isSocket()).toBe(true);
       expect(rebound.mode & 0o777).toBe(0o600);
-      expect(rebound.ino).not.toBe(orphan.ino);
+      // POSIX does not promise a distinct inode number after unlink/rebind;
+      // successful production startup at the occupied path proves that the
+      // exact orphan was reclaimed and a live listener was rebound.
+      expect(second.state).toBe('AVAILABLE_NOT_LIVE_QUALIFIED');
       expect(readFileSync(credentialPath, 'utf8')).toBe(credentialBefore);
       await second.stop();
     } finally {
