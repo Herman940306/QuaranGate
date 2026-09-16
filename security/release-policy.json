@@ -8,6 +8,7 @@
     "e2e",
     "authority-invariants",
     "security-fuzz",
+    "security-chaos",
     "sast",
     "secrets",
     "sca",
@@ -72,6 +73,10 @@
     "security-fuzz": {
       "name": "quarangate-security-fuzz",
       "version": "1"
+    },
+    "security-chaos": {
+      "name": "vitest",
+      "version": "3.2.7"
     }
   },
   "findingPolicy": {

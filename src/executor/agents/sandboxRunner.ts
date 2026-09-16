@@ -250,9 +250,11 @@ export class RunnerSandbox {
   /**
    * Startup/recovery reconciliation. Only resources carrying the EXACT bridge
    * ownership label are candidates — never name/image/age/status. Any managed
-   * runner/stager container or workspace volume found is an orphan (A3 runners
-   * are ephemeral and not attachable) and is failed closed: containers are
-   * killed+removed, workspace volumes removed.
+   * runner/stager/applier container or non-durable managed volume found is an
+   * orphan (A3 runners and A6 appliers are ephemeral and not attachable) and is
+   * failed closed: inventory failures propagate, container/volume/network
+   * removal must succeed, and startup never reports an orphan reconciled while
+   * the underlying Docker resource may still exist.
    */
   async reconcileOrphans(opts: { preserveManagedVolumeNames?: ReadonlySet<string> } = {}): Promise<{ removedContainers: string[]; removedVolumes: string[]; removedNetworks: string[] }> {
     const removedContainers: string[] = [];
@@ -264,14 +266,17 @@ export class RunnerSandbox {
     // results are de-duplicated because a resource may carry two namespaces.
     const containersById = new Map<string, ContainerSummary>();
     for (const filter of managedLabelFilters()) {
-      for (const c of await listContainersByFilter(filter, true).catch(() => [])) {
+      for (const c of await listContainersByFilter(filter, true)) {
         containersById.set(c.Id, c);
       }
     }
     for (const c of containersById.values()) {
       if (!isBridgeManaged(c.Labels)) continue; // defense in depth: verify the label locally
       await stopContainer(c.Id, 2).catch(() => {});
-      await removeContainer(c.Id, true).catch(() => {});
+      // Stop is advisory: an already-stopped container may reject stop but can
+      // still be removed. Removal itself is the security proof and MUST succeed
+      // before startup may report this mutation-capable resource reconciled.
+      await removeContainer(c.Id, true);
       removedContainers.push(c.Id);
       log('sandbox orphan container reconciled', {
         containerId: c.Id,
@@ -282,7 +287,7 @@ export class RunnerSandbox {
 
     const volumesByName = new Map<string, VolumeSummary>();
     for (const filter of managedLabelFilters()) {
-      for (const v of await listVolumesByFilter(filter).catch(() => [])) {
+      for (const v of await listVolumesByFilter(filter)) {
         volumesByName.set(v.Name, v);
       }
     }
@@ -309,7 +314,9 @@ export class RunnerSandbox {
         log('sandbox orphan volume retained (resource label not provable)', { volume: v.Name });
         continue;
       }
-      await removeVolume(v.Name, true).catch(() => {});
+      // A stale applier control volume may belong to a crash-interrupted apply.
+      // Never report it removed unless Docker confirms removal.
+      await removeVolume(v.Name, true);
       removedVolumes.push(v.Name);
       log('sandbox orphan volume reconciled', { volume: v.Name, job: ownershipLabelValue(v.Labels, 'job') });
     }
@@ -328,7 +335,7 @@ export class RunnerSandbox {
     // If any label is absent, contradictory, or unreadable: RETAIN (fail-safe).
     const networksById = new Map<string, NetworkSummary>();
     for (const filter of managedLabelFilters()) {
-      for (const n of await listNetworksByFilter(filter).catch(() => [])) {
+      for (const n of await listNetworksByFilter(filter)) {
         networksById.set(n.Id, n);
       }
     }
@@ -368,7 +375,7 @@ export class RunnerSandbox {
         continue;
       }
 
-      await removeNetwork(n.Id).catch(() => {});
+      await removeNetwork(n.Id);
       removedNetworks.push(n.Id);
       log('sandbox orphan network reconciled', {
         networkId: n.Id, networkName: n.Name, job: jobId, resource,

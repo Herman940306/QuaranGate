@@ -214,6 +214,8 @@ vi.mock('../../src/executor/docker.js', async () => {
     putArchive: vi.fn().mockResolvedValue(undefined),
     listContainersByFilter: vi.fn().mockResolvedValue([]),
     listVolumesByFilter: vi.fn().mockResolvedValue([]),
+    listNetworksByFilter: vi.fn().mockResolvedValue([]),
+    removeNetwork: vi.fn().mockResolvedValue(undefined),
     stopContainer: vi.fn().mockResolvedValue(undefined),
     killContainer: vi.fn().mockResolvedValue(undefined),
   };

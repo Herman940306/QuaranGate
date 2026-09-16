@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { externalOutputPath, pathIsWithinRoot as sharedPathIsWithinRoot } from './release-path-safety.mjs';
 
 const SHA1 = /^[0-9a-f]{40}$/u;
-const SUPPORTED_GATES = Object.freeze(['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'sbom']);
+const SUPPORTED_GATES = Object.freeze(['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'sbom']);
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -210,6 +210,7 @@ export function gateDefinition(gate) {
   if (gate === 'integration') return { vitest: true, scope: 'tests/integration', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-integration' };
   if (gate === 'authority-invariants') return { binary: process.execPath, args: ['scripts/security-invariants.mjs'], tool: { name: 'quarangate-security-invariants', version: '1' }, commandId: 'authority-invariants' };
   if (gate === 'security-fuzz') return { binary: process.execPath, args: ['scripts/security-fuzz.mjs', '--build', '--iterations', '2000', '--max-input-bytes', '1024', '--max-corpus', '256', '--max-runtime-ms', '20000'], tool: { name: 'quarangate-security-fuzz', version: '1' }, commandId: 'security-fuzz' };
+  if (gate === 'security-chaos') return { vitest: true, scope: 'tests/unit/sh09', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-security-chaos' };
   return { sbom: true, binary: process.execPath, tool: { name: 'quarangate-release-sbom', version: '2' }, commandId: 'release-sbom' };
 }
 

@@ -36,6 +36,15 @@ describe('SH-05 fixed release gate receipt executor', () => {
     });
   });
 
+  it('binds SH-09 crash/chaos to the fixed no-network Vitest corpus', () => {
+    expect(gateDefinition('security-chaos')).toEqual({
+      vitest: true,
+      scope: 'tests/unit/sh09',
+      tool: { name: 'vitest', version: '3.2.7' },
+      commandId: 'vitest-security-chaos',
+    });
+  });
+
   it('routes fixed unit/integration execution through the self-cleaning Vitest wrapper', () => {
     const unit = vitestGateInvocation(gateDefinition('unit'), '/external/unit.json');
     expect(unit.binary).toBe(process.execPath);
@@ -44,6 +53,8 @@ describe('SH-05 fixed release gate receipt executor', () => {
     ]);
     const integration = vitestGateInvocation(gateDefinition('integration'), '/external/integration.json');
     expect(integration.args[1]).toBe('tests/integration');
+    const chaos = vitestGateInvocation(gateDefinition('security-chaos'), '/external/chaos.json');
+    expect(chaos.args[1]).toBe('tests/unit/sh09');
     expect(() => vitestGateInvocation(gateDefinition('typecheck') as any, '/external/nope.json')).toThrow(/Vitest gate definition/u);
   });
 

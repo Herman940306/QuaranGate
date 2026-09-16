@@ -24,10 +24,10 @@ function validReceipt(gate: string, sourceBindingSha256: string, findings: any[]
   const receipt: any = { schemaVersion: 1, gate, status: 'PASS', source, tool: expectedTool(gate), findings };
   const commandIds: Record<string, string> = {
     typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration',
-    e2e: 'playwright-e2e', 'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
+    e2e: 'playwright-e2e', 'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', 'security-chaos': 'vitest-security-chaos', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
   };
   if (commandIds[gate]) receipt.execution = execution(commandIds[gate]);
-  if (['unit', 'integration', 'e2e'].includes(gate)) receipt.testCounts = { files: 2, tests: 10, failed: 0 };
+  if (['unit', 'integration', 'e2e', 'security-chaos'].includes(gate)) receipt.testCounts = { files: 2, tests: 10, failed: 0 };
   if (gate === 'authority-invariants') receipt.artifact = { rulesChecked: 12, composeFilesChecked: 10, dockerfilesChecked: 7 };
   if (gate === 'security-fuzz') receipt.artifact = { targetCount: 15, totalExecutions: 30060, coverageRanges: 106, iterationsPerTarget: 2000, maxInputBytes: 1024, maxCorpus: 256, maxRuntimeMs: 20000, coverageSampleInterval: 16, seed: 0x51f08a11 };
   if (gate === 'sbom') receipt.artifact = { kind: 'spdx-json', sha256: digest, bytes: 100 };
@@ -75,7 +75,7 @@ describe('SH-05 release security policy', () => {
   it('passes a complete evidence set bound to the exact mechanical source receipt', () => {
     const f = fixture(); const r = evaluate(f); expect(r.status, r.stderr || r.stdout).toBe(0);
     const report = JSON.parse(r.stdout);
-    expect(report.verdict).toBe('PASS'); expect(report.requiredGateCount).toBe(14); expect(report.evidence).toHaveLength(14);
+    expect(report.verdict).toBe('PASS'); expect(report.requiredGateCount).toBe(15); expect(report.evidence).toHaveLength(15);
     expect(report.source).toEqual(source); expect(report.sourceBinding.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
