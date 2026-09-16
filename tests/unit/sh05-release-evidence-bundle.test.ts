@@ -29,19 +29,43 @@ function releaseManifest() {
   });
 }
 
+const digest = 'f'.repeat(64);
+function execution(commandId: string) {
+  return { commandId, exitCode: 0, signal: null, durationMs: 1, stdout: { sha256: digest, bytes: 0 }, stderr: { sha256: digest, bytes: 0 } };
+}
+function validReceipt(gate: string, sourceBindingSha256: string, manifestBytes: Buffer, manifest: any, sbomBytes: Buffer) {
+  const receipt: any = { schemaVersion: 1, gate, status: 'PASS', source, tool: policy.expectedTools[gate] ?? { name: 'test-runner', version: '1' }, findings: [] };
+  const ids: Record<string, string> = {
+    typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration', e2e: 'playwright-e2e',
+    'authority-invariants': 'authority-invariants', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
+  };
+  if (ids[gate]) receipt.execution = execution(ids[gate]);
+  if (['unit', 'integration', 'e2e'].includes(gate)) receipt.testCounts = { files: 2, tests: 10, failed: 0 };
+  if (gate === 'authority-invariants') receipt.artifact = { rulesChecked: 12, composeFilesChecked: 10, dockerfilesChecked: 7 };
+  if (gate === 'sbom') receipt.artifact = { kind: 'spdx-json', sha256: sha256(sbomBytes), bytes: sbomBytes.length };
+  if (['sast', 'secrets', 'sca', 'config-scan', 'image-scan'].includes(gate)) receipt.scan = {
+    scannerExitCode: 0, rawReportSha256: digest, rawReportBytes: 100, toolchainReportSha256: digest, sourceBindingSha256, normalizedFindingCount: 0,
+  };
+  if (gate === 'provenance') {
+    receipt.statement = { predicateType: 'https://slsa.dev/provenance/v1', sha256: digest, bytes: 100, subjectCount: 3, releaseManifestSha256: sha256(manifestBytes), releaseManifestDigest: manifest.manifestDigest, sbomSha256: sha256(sbomBytes) };
+    receipt.bundle = { sha256: digest, bytes: 100, mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json', signedStatementSha256: digest, signedStatementBytes: 90 };
+    receipt.publicKey = { sha256: digest, bytes: 32 };
+  }
+  return receipt;
+}
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'qg-release-bundle-')); const evidence = join(root, 'evidence'); mkdirSync(evidence);
   const policyReport = join(root, 'policy.json'); const sbom = join(root, 'sbom.json'); const output = join(root, 'bundle.json'); const sourceBinding = join(root, 'source-binding.json'); const manifestPath = join(root, 'release-manifest.json');
   const sourceBindingBytes = Buffer.from(`${JSON.stringify({ schemaVersion: 1, gate: 'source-binding', status: 'PASS', source })}\n`); writeFileSync(sourceBinding, sourceBindingBytes);
+  const sbomBytes = Buffer.from(`${JSON.stringify({ spdxVersion: 'SPDX-2.3', SPDXID: 'SPDXRef-DOCUMENT', packages: [] })}\n`); writeFileSync(sbom, sbomBytes);
+  const manifest = releaseManifest(); const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`); writeFileSync(manifestPath, manifestBytes);
   const hashes: { gate: string; sha256: string }[] = [];
   for (const gate of policy.requiredGates) {
-    const receipt: any = { schemaVersion: 1, gate, status: 'PASS', source, tool: policy.expectedTools[gate] ?? { name: 'test-runner', version: '1' }, findings: [] };
-    if (['unit', 'integration', 'e2e'].includes(gate)) receipt.testCounts = { files: 2, tests: 10, failed: 0 };
+    const receipt = validReceipt(gate, sha256(sourceBindingBytes), manifestBytes, manifest, sbomBytes);
     const bytes = Buffer.from(`${JSON.stringify(receipt)}\n`); writeFileSync(join(evidence, `${gate}.json`), bytes); hashes.push({ gate, sha256: sha256(bytes) });
   }
   writeFileSync(policyReport, `${JSON.stringify({ schemaVersion: 1, source, sourceBinding: { sha256: sha256(sourceBindingBytes) }, ok: true, verdict: 'PASS', evidence: hashes })}\n`);
-  writeFileSync(sbom, `${JSON.stringify({ spdxVersion: 'SPDX-2.3', SPDXID: 'SPDXRef-DOCUMENT', packages: [] })}\n`);
-  writeFileSync(manifestPath, `${JSON.stringify(releaseManifest(), null, 2)}\n`);
   return { evidence, policyReport, sbom, output, sourceBinding, manifestPath };
 }
 function run(f: ReturnType<typeof fixture>) {
@@ -114,6 +138,22 @@ describe('SH-05 release evidence bundle', () => {
   it('fails closed when test receipts omit trustworthy counts', () => {
     const f = fixture(); const p = join(f.evidence, 'integration.json'); const receipt = JSON.parse(readFileSync(p, 'utf8')); delete receipt.testCounts; writeFileSync(p, JSON.stringify(receipt));
     const r = run(f); expect(r.status).not.toBe(0); expect(r.stderr).toContain('gate receipt lacks valid passing test counts: integration');
+  });
+
+  it('rejects an E2E PASS receipt whose execution identity is not the frozen E2E command contract', () => {
+    const f = fixture(); const p = join(f.evidence, 'e2e.json'); const receipt = JSON.parse(readFileSync(p, 'utf8'));
+    receipt.execution.commandId = 'arbitrary-green-command';
+    const bytes = Buffer.from(`${JSON.stringify(receipt)}\n`); writeFileSync(p, bytes);
+    const report = JSON.parse(readFileSync(f.policyReport, 'utf8')); report.evidence.find((x: any) => x.gate === 'e2e').sha256 = sha256(bytes); writeFileSync(f.policyReport, `${JSON.stringify(report)}\n`);
+    const r = run(f); expect(r.status).not.toBe(0); expect(r.stderr).toContain('gate receipt lacks valid execution evidence: e2e');
+  });
+
+  it('fails closed when provenance claims a different release manifest/SBOM even if policy evidence hashes are recomputed', () => {
+    const f = fixture(); const p = join(f.evidence, 'provenance.json'); const receipt = JSON.parse(readFileSync(p, 'utf8'));
+    receipt.statement.releaseManifestSha256 = '9'.repeat(64); receipt.statement.sbomSha256 = '8'.repeat(64);
+    const bytes = Buffer.from(`${JSON.stringify(receipt)}\n`); writeFileSync(p, bytes);
+    const report = JSON.parse(readFileSync(f.policyReport, 'utf8')); report.evidence.find((x: any) => x.gate === 'provenance').sha256 = sha256(bytes); writeFileSync(f.policyReport, `${JSON.stringify(report)}\n`);
+    const r = run(f); expect(r.status).not.toBe(0); expect(r.stderr).toContain('provenance receipt does not bind the exact release manifest/SBOM/verified bundle');
   });
 
   it('fails closed for a non-PASS policy verdict', () => {

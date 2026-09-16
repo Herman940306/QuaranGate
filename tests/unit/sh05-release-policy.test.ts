@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,9 +10,37 @@ const tree = 'e'.repeat(40);
 const fixedAt = '2026-09-16T12:00:00.000Z';
 const repository = 'https://github.com/Herman940306/QuaranGate.git';
 const source = { repository, branch: 'release/test', commit, tree, clean: true };
-const policy = JSON.parse(readFileSync('security/release-policy.json', 'utf8'));
+const productionPolicy = JSON.parse(readFileSync('security/release-policy.json', 'utf8'));
+const policy = structuredClone(productionPolicy);
+policy.gateContracts = { ...policy.gateContracts, e2e: { state: 'TEST_FIXTURE_INTEGRATED', passAllowed: true, failureCode: 'TEST_ONLY' } };
 
 function expectedTool(gate: string) { return policy.expectedTools[gate] ?? { name: 'test-runner', version: '1' }; }
+const digest = 'f'.repeat(64);
+const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+function execution(commandId: string) {
+  return { commandId, exitCode: 0, signal: null, durationMs: 1, stdout: { sha256: digest, bytes: 0 }, stderr: { sha256: digest, bytes: 0 } };
+}
+function validReceipt(gate: string, sourceBindingSha256: string, findings: any[]) {
+  const receipt: any = { schemaVersion: 1, gate, status: 'PASS', source, tool: expectedTool(gate), findings };
+  const commandIds: Record<string, string> = {
+    typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration',
+    e2e: 'playwright-e2e', 'authority-invariants': 'authority-invariants', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
+  };
+  if (commandIds[gate]) receipt.execution = execution(commandIds[gate]);
+  if (['unit', 'integration', 'e2e'].includes(gate)) receipt.testCounts = { files: 2, tests: 10, failed: 0 };
+  if (gate === 'authority-invariants') receipt.artifact = { rulesChecked: 12, composeFilesChecked: 10, dockerfilesChecked: 7 };
+  if (gate === 'sbom') receipt.artifact = { kind: 'spdx-json', sha256: digest, bytes: 100 };
+  if (['sast', 'secrets', 'sca', 'config-scan', 'image-scan'].includes(gate)) receipt.scan = {
+    scannerExitCode: findings.length ? 1 : 0, rawReportSha256: digest, rawReportBytes: 100, toolchainReportSha256: digest,
+    sourceBindingSha256, normalizedFindingCount: findings.length,
+  };
+  if (gate === 'provenance') {
+    receipt.statement = { predicateType: 'https://slsa.dev/provenance/v1', sha256: digest, bytes: 100, subjectCount: 3, releaseManifestSha256: digest, releaseManifestDigest: digest, sbomSha256: digest };
+    receipt.bundle = { sha256: digest, bytes: 100, mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json', signedStatementSha256: digest, signedStatementBytes: 90 };
+    receipt.publicKey = { sha256: digest, bytes: 32 };
+  }
+  return receipt;
+}
 function fixture(findings: Record<string, any[]> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'qg-release-policy-'));
   const evidence = join(dir, 'evidence'); mkdirSync(evidence);
@@ -22,9 +51,11 @@ function fixture(findings: Record<string, any[]> = {}) {
   writeFileSync(policyPath, JSON.stringify(policy));
   writeFileSync(baselinePath, JSON.stringify({ schemaVersion: 1, findings: [] }));
   writeFileSync(exceptionsPath, JSON.stringify({ schemaVersion: 1, exceptions: [] }));
-  writeFileSync(sourceBindingPath, JSON.stringify({ schemaVersion: 1, gate: 'source-binding', status: 'PASS', source }));
+  const sourceBindingBytes = Buffer.from(JSON.stringify({ schemaVersion: 1, gate: 'source-binding', status: 'PASS', source }));
+  writeFileSync(sourceBindingPath, sourceBindingBytes);
+  const sourceBindingSha256 = sha256(sourceBindingBytes);
   for (const gate of policy.requiredGates) {
-    writeFileSync(join(evidence, `${gate}.json`), JSON.stringify({ schemaVersion: 1, gate, status: 'PASS', source, tool: expectedTool(gate), findings: findings[gate] ?? [] }));
+    writeFileSync(join(evidence, `${gate}.json`), JSON.stringify(validReceipt(gate, sourceBindingSha256, findings[gate] ?? [])));
   }
   return { evidence, policyPath, baselinePath, exceptionsPath, sourceBindingPath };
 }
@@ -41,6 +72,29 @@ describe('SH-05 release security policy', () => {
     const report = JSON.parse(r.stdout);
     expect(report.verdict).toBe('PASS'); expect(report.requiredGateCount).toBe(13); expect(report.evidence).toHaveLength(13);
     expect(report.source).toEqual(source); expect(report.sourceBinding.sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('production policy forbids an E2E PASS until a canonical E2E entry point is integrated', () => {
+    const f = fixture();
+    writeFileSync(f.policyPath, JSON.stringify(productionPolicy));
+    const r = evaluate(f);
+    expect(r.status).toBe(3);
+    const failures = JSON.parse(r.stdout).failures;
+    expect(failures).toContainEqual(expect.objectContaining({
+      gate: 'e2e', code: 'GATE_PASS_NOT_ALLOWED', failureCode: 'CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED',
+    }));
+  });
+
+  it('rejects structurally minimal hand-authored PASS receipts that do not prove gate execution', () => {
+    const f = fixture();
+    writeFileSync(join(f.evidence, 'unit.json'), JSON.stringify({ schemaVersion: 1, gate: 'unit', status: 'PASS', source, tool: expectedTool('unit'), findings: [], testCounts: { files: 1, tests: 1, failed: 0 } }));
+    writeFileSync(join(f.evidence, 'sast.json'), JSON.stringify({ schemaVersion: 1, gate: 'sast', status: 'PASS', source, tool: expectedTool('sast'), findings: [] }));
+    writeFileSync(join(f.evidence, 'provenance.json'), JSON.stringify({ schemaVersion: 1, gate: 'provenance', status: 'PASS', source, tool: expectedTool('provenance'), findings: [] }));
+    const r = evaluate(f); expect(r.status).toBe(3);
+    const failures = JSON.parse(r.stdout).failures;
+    expect(failures).toContainEqual(expect.objectContaining({ gate: 'unit', code: 'INVALID_EXECUTION_EVIDENCE' }));
+    expect(failures).toContainEqual(expect.objectContaining({ gate: 'sast', code: 'INVALID_SCAN_EVIDENCE' }));
+    expect(failures).toContainEqual(expect.objectContaining({ gate: 'provenance', code: 'INVALID_PROVENANCE_EVIDENCE' }));
   });
 
   it('fails closed for invalid source-binding identity', () => {

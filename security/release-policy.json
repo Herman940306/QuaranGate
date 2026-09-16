@@ -16,6 +16,22 @@
     "provenance"
   ],
   "expectedTools": {
+    "typecheck": {
+      "name": "typescript",
+      "version": "5.9.3"
+    },
+    "build": {
+      "name": "typescript",
+      "version": "5.9.3"
+    },
+    "unit": {
+      "name": "vitest",
+      "version": "3.2.7"
+    },
+    "integration": {
+      "name": "vitest",
+      "version": "3.2.7"
+    },
     "authority-invariants": {
       "name": "quarangate-security-invariants",
       "version": "1"
@@ -66,5 +82,12 @@
     "requireOwnerApproval": true,
     "requireExpiry": true,
     "requireReason": true
+  },
+  "gateContracts": {
+    "e2e": {
+      "state": "NOT_INTEGRATED",
+      "passAllowed": false,
+      "failureCode": "CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED"
+    }
   }
 }

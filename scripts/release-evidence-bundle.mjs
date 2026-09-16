@@ -152,6 +152,50 @@ const sbomBytes = readFileSync(sbomPath);
 const sbom = readJson(sbomPath, 'SBOM');
 if (sbom.spdxVersion !== 'SPDX-2.3' || sbom.SPDXID !== 'SPDXRef-DOCUMENT') throw new Error('SBOM is not the expected SPDX-2.3 document');
 
+const executionCommandIds = {
+  typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration',
+  e2e: 'playwright-e2e',
+  'authority-invariants': 'authority-invariants', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
+};
+function validDigestEvidence(value) {
+  return value && SHA256.test(value.sha256 ?? '') && Number.isInteger(value.bytes) && value.bytes >= 0;
+}
+function validExecution(value, expectedCommandId) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && typeof value.commandId === 'string' && value.commandId.length > 0
+    && (!expectedCommandId || value.commandId === expectedCommandId)
+    && value.exitCode === 0 && value.signal === null
+    && Number.isInteger(value.durationMs) && value.durationMs >= 0
+    && validDigestEvidence(value.stdout) && validDigestEvidence(value.stderr);
+}
+function assertReceiptEvidence(gate, receipt) {
+  if (['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'sbom', 'provenance'].includes(gate)
+    && !validExecution(receipt.execution, executionCommandIds[gate])) throw new Error(`gate receipt lacks valid execution evidence: ${gate}`);
+  if (gate === 'authority-invariants') {
+    const a = receipt.artifact;
+    if (!a || !Number.isInteger(a.rulesChecked) || a.rulesChecked <= 0 || !Number.isInteger(a.composeFilesChecked) || a.composeFilesChecked <= 0 || !Number.isInteger(a.dockerfilesChecked) || a.dockerfilesChecked <= 0) throw new Error('authority-invariants receipt lacks valid invariant evidence');
+  }
+  if (gate === 'sbom') {
+    const a = receipt.artifact;
+    if (!a || a.kind !== 'spdx-json' || a.sha256 !== sha256(sbomBytes) || a.bytes !== sbomBytes.length) throw new Error('SBOM receipt does not bind the exact release SBOM bytes');
+  }
+  if (['sast', 'secrets', 'sca', 'config-scan', 'image-scan'].includes(gate)) {
+    const scan = receipt.scan; const findings = Array.isArray(receipt.findings) ? receipt.findings : [];
+    if (!scan || !Number.isInteger(scan.scannerExitCode) || !SHA256.test(scan.rawReportSha256 ?? '') || !Number.isInteger(scan.rawReportBytes) || scan.rawReportBytes <= 0
+      || !SHA256.test(scan.toolchainReportSha256 ?? '') || scan.sourceBindingSha256 !== sha256(sourceBindingBytes)
+      || !Number.isInteger(scan.normalizedFindingCount) || scan.normalizedFindingCount !== findings.length || receipt.scanError !== undefined) throw new Error(`scan receipt lacks valid raw/toolchain/source evidence: ${gate}`);
+  }
+  if (gate === 'provenance') {
+    const statement = receipt.statement; const bundle = receipt.bundle; const publicKey = receipt.publicKey;
+    if (!statement || statement.predicateType !== 'https://slsa.dev/provenance/v1'
+      || !SHA256.test(statement.sha256 ?? '') || !Number.isInteger(statement.bytes) || statement.bytes <= 0 || !Number.isInteger(statement.subjectCount) || statement.subjectCount < 2
+      || statement.releaseManifestSha256 !== sha256(releaseManifestBytes) || statement.releaseManifestDigest !== releaseIdentity.manifestDigest || statement.sbomSha256 !== sha256(sbomBytes)
+      || !bundle || bundle.mediaType !== 'application/vnd.dev.sigstore.bundle.v0.3+json' || !SHA256.test(bundle.sha256 ?? '') || !Number.isInteger(bundle.bytes) || bundle.bytes <= 0
+      || !SHA256.test(bundle.signedStatementSha256 ?? '') || !Number.isInteger(bundle.signedStatementBytes) || bundle.signedStatementBytes <= 0
+      || !publicKey || !SHA256.test(publicKey.sha256 ?? '') || !Number.isInteger(publicKey.bytes) || publicKey.bytes <= 0) throw new Error('provenance receipt does not bind the exact release manifest/SBOM/verified bundle');
+  }
+}
+
 const evidence = [];
 const testCounts = {};
 for (const gate of policy.requiredGates) {
@@ -164,6 +208,7 @@ for (const gate of policy.requiredGates) {
   if (!sameSource(receipt.source, source)) throw new Error(`gate receipt source binding mismatch: ${gate}`);
   const expectedTool = policy.expectedTools?.[gate];
   if (expectedTool && (receipt.tool?.name !== expectedTool.name || receipt.tool?.version !== expectedTool.version)) throw new Error(`gate receipt tool binding mismatch: ${gate}`);
+  assertReceiptEvidence(gate, receipt);
   if (['unit', 'integration', 'e2e'].includes(gate)) {
     const counts = receipt.testCounts;
     if (!counts || !Number.isInteger(counts.files) || counts.files <= 0 || !Number.isInteger(counts.tests) || counts.tests <= 0 || !Number.isInteger(counts.failed) || counts.failed !== 0) throw new Error(`gate receipt lacks valid passing test counts: ${gate}`);
