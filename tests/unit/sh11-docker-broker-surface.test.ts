@@ -26,6 +26,15 @@ describe('SH-11 Docker broker hostile-world wiring', () => {
     expect(policy).toContain("const allowed = new Set(['AttachStdout','AttachStderr','Tty','Cmd','WorkingDir','Env','User'])");
   });
 
+
+  it('applies resource-role policy to managed exec/archive after Docker-state inspection', () => {
+    expect(server).toContain('const identity=managedIdentityFromTrustedContainer(c);if(identity)validateManagedExecForIdentity(identity,body)');
+    expect(server).toContain("if(identity)validateManagedArchivePath(identity,'write',p.path)");
+    expect(server).toContain("if(identity)validateManagedArchivePath(identity,'read',p.path)");
+    expect(policy).toContain("if (identity.resource !== 'applier') deny('Docker exec is forbidden for this managed resource role')");
+    expect(policy).toContain("managed archive write path is outside the resource role contract");
+  });
+
   it('keeps raw daemon forwarding unavailable and the socket confined to broker source', () => {
     expect(server).not.toMatch(/q\.body\.(method|path)|payload\.(method|path)/u);
     for (const file of ['src/executor/docker.ts','src/docker-authority/client.ts']) {

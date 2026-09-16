@@ -3,13 +3,15 @@ import {
   managedIdentity,
   validateManagedContainerCreate,
   validateManagedExecCreate,
+  validateManagedExecForIdentity,
+  validateManagedArchivePath,
   validateManagedNetworkAttachment,
   validateManagedNetworkCreate,
   validateManagedVolumeAttachment,
   validateManagedVolumeCreate,
   type ManagedVolumeMount,
 } from '../../src/docker-authority/policy.js';
-import { buildApplierCreateBody, toRunnerLimits } from '../../src/executor/agents/sandboxSpec.js';
+import { APPLY_MUTATION_SCRIPT, GIT_HOST_CHECK_SCRIPT, LIVE_STAT_SCRIPT, MOUNTINFO_CHECK_SCRIPT, buildApplierCreateBody, toRunnerLimits } from '../../src/executor/agents/sandboxSpec.js';
 import { buildRunnerCreateBody, PROVIDER_BINDING_LABEL } from '../../src/executor/agents/kiroBackend.js';
 
 const JOB_A = `job_${'a'.repeat(32)}`;
@@ -197,5 +199,57 @@ describe('SH-11 production builder parity', () => {
     const push=buildGitHubPushHelperSpec({image:IMAGE,hostPath:'/workspace/project',secretVolume:'gh-secret',controlNetwork:'quarangate-github-control',operationId:op,owner:'Owner',repo:'repo',expectedHead:'a'.repeat(40),remoteBranch:'feature'});
     expect(() => validateManagedContainerCreate(head, ['/workspace/project'])).not.toThrow();
     expect(() => validateManagedContainerCreate(push, ['/workspace/project'])).not.toThrow();
+  });
+});
+
+
+describe('SH-11 managed post-create authority', () => {
+  const execBody = (cmd: string[], env?: string[]) => ({
+    AttachStdout:true, AttachStderr:true, Tty:false, Cmd:cmd, User:'0:0', ...(env ? { Env: env } : {}),
+  });
+
+  it('denies generic exec on managed roles that never need exec', () => {
+    for (const resource of ['runner','proxy','stager','evidence-io','evidence-read','post-capture']) {
+      expect(() => validateManagedExecForIdentity(managedIdentity(labels(resource)), execBody(['id']))).toThrow();
+    }
+  });
+
+  it('allows only git argv on git-helper and rejects shell/env escape attempts', () => {
+    const id = managedIdentity(labels('git-helper'));
+    expect(() => validateManagedExecForIdentity(id, execBody(['git','rev-parse','HEAD']))).not.toThrow();
+    expect(() => validateManagedExecForIdentity(id, execBody(['/bin/sh','-c','id']))).toThrow();
+    expect(() => validateManagedExecForIdentity(id, execBody(['git','status'], ['X=1']))).toThrow();
+  });
+
+  it('allows only the exact applier scripts and confines live-stat relative paths', () => {
+    const id = managedIdentity(labels('applier', JOB_A, { 'io.quarangate.attempt': ATTEMPT }));
+    for (const cmd of [
+      ['node','-e',MOUNTINFO_CHECK_SCRIPT],
+      ['sh','-c',GIT_HOST_CHECK_SCRIPT],
+      ['node','-e',APPLY_MUTATION_SCRIPT],
+    ]) expect(() => validateManagedExecForIdentity(id, execBody(cmd))).not.toThrow();
+    expect(() => validateManagedExecForIdentity(id, execBody(['node','-e',LIVE_STAT_SCRIPT], ['STAT_TARGET_PATH=src/index.ts']))).not.toThrow();
+    expect(() => validateManagedExecForIdentity(id, execBody(['node','-e','require("child_process").execSync("id")']))).toThrow();
+    expect(() => validateManagedExecForIdentity(id, execBody(['node','-e',LIVE_STAT_SCRIPT], ['STAT_TARGET_PATH=../../etc/passwd']))).toThrow();
+    expect(() => validateManagedExecForIdentity(id, execBody(['node','-e',LIVE_STAT_SCRIPT], ['STAT_TARGET_PATH=/etc/passwd']))).toThrow();
+  });
+
+  it('confines managed archive writes to exact mounted roots', () => {
+    expect(() => validateManagedArchivePath(managedIdentity(labels('secret')), 'write', '/run/secrets')).not.toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('home')), 'write', '/home/runner')).not.toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('control')), 'write', '/run/control')).not.toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('evidence-io')), 'write', '/evidence')).not.toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('applier', JOB_A, { 'io.quarangate.attempt': ATTEMPT })), 'write', '/control')).not.toThrow();
+    for (const bad of ['/','/etc','/project','/evidence/../etc']) {
+      expect(() => validateManagedArchivePath(managedIdentity(labels('evidence-io')), 'write', bad)).toThrow();
+    }
+  });
+
+  it('confines managed archive reads to the role mount subtree', () => {
+    expect(() => validateManagedArchivePath(managedIdentity(labels('post-capture')), 'read', '/workspace')).not.toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('evidence-read')), 'read', '/evidence/files/a.txt')).not.toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('applier', JOB_A, { 'io.quarangate.attempt': ATTEMPT })), 'read', '/project/src/a.ts')).not.toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('post-capture')), 'read', '/etc/passwd')).toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('evidence-read')), 'read', '/evidence/../etc/passwd')).toThrow();
   });
 });

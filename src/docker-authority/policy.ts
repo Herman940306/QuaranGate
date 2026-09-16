@@ -1,6 +1,7 @@
 /** SH-02/SH-11 Docker authority broker policy. Pure validation; no Docker I/O. */
 import path from 'node:path';
 import { BridgeError } from '../shared/errors.js';
+import { APPLY_MUTATION_SCRIPT, GIT_HOST_CHECK_SCRIPT, LIVE_STAT_SCRIPT, MOUNTINFO_CHECK_SCRIPT } from '../executor/agents/sandboxSpec.js';
 
 const CURRENT_NS = 'io.quarangate';
 const LEGACY_NS = ['io.mcp-ide-bridge', 'io.mcp-bridge'] as const;
@@ -318,6 +319,61 @@ export function validateManagedExecCreate(bodyValue: unknown): void {
     if (env.length > 256 || env.some(x => x.includes('\0') || Buffer.byteLength(x,'utf8') > 8192) || env.reduce((n,x)=>n+Buffer.byteLength(x,'utf8'),0) > 64*1024) deny('Docker exec environment exceeds bounds');
   }
   if (body.User !== undefined && (typeof body.User !== 'string' || !/^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$/u.test(body.User) || body.User.length > 128)) deny('Docker exec user is invalid');
+}
+
+export function validateManagedExecForIdentity(identity: ManagedIdentity, bodyValue: unknown): void {
+  validateManagedExecCreate(bodyValue);
+  const body = record(bodyValue);
+  if (identity.scope !== 'sandbox') deny('managed GitHub helpers do not permit Docker exec');
+  const cmd = body.Cmd as string[];
+  const env = body.Env === undefined ? [] : stringArray(body.Env, 'Docker exec Env');
+  if (identity.resource === 'git-helper') {
+    if (body.User !== '0:0' || body.WorkingDir !== undefined || env.length !== 0 || cmd[0] !== 'git') {
+      deny('git-helper exec is restricted to root git argv without env/working-dir override');
+    }
+    return;
+  }
+  if (identity.resource !== 'applier') deny('Docker exec is forbidden for this managed resource role');
+  if (body.User !== '0:0' || body.WorkingDir !== undefined) deny('applier exec requires exact root identity without working-dir override');
+  const isExact = (expected: readonly string[]): boolean => cmd.length === expected.length && cmd.every((v, i) => v === expected[i]);
+  if (isExact(['node','-e',MOUNTINFO_CHECK_SCRIPT]) || isExact(['sh','-c',GIT_HOST_CHECK_SCRIPT]) || isExact(['node','-e',APPLY_MUTATION_SCRIPT])) {
+    if (env.length !== 0) deny('applier fixed script exec may not carry environment overrides');
+    return;
+  }
+  if (isExact(['node','-e',LIVE_STAT_SCRIPT])) {
+    if (env.length !== 1 || !env[0]!.startsWith('STAT_TARGET_PATH=')) deny('live-stat exec requires exactly STAT_TARGET_PATH');
+    const rel = env[0]!.slice('STAT_TARGET_PATH='.length);
+    if (!rel || rel.length > 4096 || rel.includes('\0') || path.posix.isAbsolute(rel) || path.posix.normalize(rel) !== rel || rel === '..' || rel.startsWith('../')) {
+      deny('STAT_TARGET_PATH must be a canonical project-relative path');
+    }
+    return;
+  }
+  deny('applier Docker exec command is outside the fixed apply contract');
+}
+
+export function validateManagedArchivePath(identity: ManagedIdentity, action: 'read' | 'write', pathValue: unknown): void {
+  if (typeof pathValue !== 'string' || pathValue.length < 1 || pathValue.length > 4096 || pathValue.includes('\0') || !pathValue.startsWith('/') || path.posix.normalize(pathValue) !== pathValue) {
+    deny('managed archive path must be an absolute canonical bounded path');
+  }
+  if (identity.scope === 'github') {
+    if (action === 'write' && identity.resource === 'push-secret' && pathValue === '/secrets') return;
+    deny('managed GitHub helper archive operation is not permitted');
+  }
+  if (action === 'write') {
+    const exact: Record<string, string> = {
+      secret: '/run/secrets', home: '/home/runner', control: '/run/control',
+      'before-capture': '/evidence', 'evidence-io': '/evidence', applier: '/control',
+    };
+    if (exact[identity.resource] === pathValue) return;
+    deny('managed archive write path is outside the resource role contract');
+  }
+  const roots: Record<string, string> = {
+    'before-capture': '/workspace', 'post-capture': '/workspace',
+    'evidence-io': '/evidence', 'evidence-read': '/evidence', applier: '/project',
+  };
+  const root = roots[identity.resource];
+  if (root && (pathValue === root || pathValue.startsWith(`${root}/`))) return;
+  deny('managed archive read path is outside the resource role contract');
 }
 
 export function validateManagedVolumeAttachment(container: ManagedIdentity, volume: ManagedIdentity, mount: ManagedVolumeMount): void {

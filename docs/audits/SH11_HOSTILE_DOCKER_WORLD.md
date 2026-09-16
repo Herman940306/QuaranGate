@@ -32,6 +32,11 @@ expose the Docker socket outside the existing private broker.
    existing principal/project/backend/profile SHA-256 provider binding is now
    propagated onto the runner identity and enforced at the broker for the one
    permitted cross-job session-volume mount.
+7. Managed post-create exec/archive operations previously reused only the generic
+   managed/trusted-container check. SH-11 now applies resource-role policy after
+   inspecting Docker state: only git-helper/applier may exec, applier commands
+   are exact source-controlled scripts with confined live-stat paths, and managed
+   archive read/write paths are restricted to each helper's mounted root.
 
 ## Fail-closed invariants
 
@@ -45,6 +50,9 @@ expose the Docker socket outside the existing private broker.
   with only the provider-binding-verified Kiro session-resume exception;
 - job networks have deterministic names/internal policy and cross-job network
   attachment is denied;
+- managed helper exec/archive operations are constrained by resource role, exact
+  command contract, and mounted path root; configured product targets retain their
+  separately governed terminal/filesystem capability;
 - generic Docker method/path forwarding remains absent;
 - raw `/var/run/docker.sock` remains broker-only.
 
@@ -61,16 +69,9 @@ not be represented as PASS where owner-host Docker authority is unavailable.
 
 ## Mutable-tree audit before freeze
 
-- dedicated SH-11 policy/surface: 52/52 PASS;
-- release-policy compatibility: 115/115 PASS;
-- widened Docker/provider/apply matrix: 379/379 PASS;
-- complete unit corpus: 142/142 files, 3009/3009 tests PASS;
-- typecheck PASS; build PASS; diff-check PASS;
-- authority invariants: 15/15 PASS across 10 Compose files and 7 Dockerfiles;
-- SH-08 fixed-seed fuzz: PASS, 15 targets / 30,067 executions / 395 covered ranges;
-- SH-09 + SH-10 regression slice: 26/26 PASS;
-- `/tmp/q` absent after validation; cgroup `oom_kill` unchanged 17 -> 17.
-
-These are pre-freeze results. Final source acceptance requires re-running the
-qualification against an immutable commit and binding the `security-docker`
-release receipt to that exact clean source identity.
+The original pre-freeze matrix attached to `3c9f0ad` was superseded by the
+post-create exec/archive remediation found during strict review. Current exact
+counts are intentionally not claimed here until the widened audit below is rerun
+on the remediated bytes. Final source acceptance requires complete mutable-tree
+qualification, immutable requalification, and a source-bound `security-docker`
+release receipt.
