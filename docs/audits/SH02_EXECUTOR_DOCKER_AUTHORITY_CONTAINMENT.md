@@ -73,3 +73,16 @@ Source validation after cutover:
 - diff-check PASS.
 
 A worker-side `docker compose config` runtime/static expansion attempt could not execute because the governed `projects-work` worker image has no Docker CLI (`docker: not found`). This is classified `BLOCKED_ENVIRONMENT` for live/CLI Compose proof only; it is not converted into fabricated runtime evidence. YAML/source acceptance remains covered by the static Compose regression tests. Live runtime proof remains a separate owner-host qualification gate.
+
+## Owner-authorized strict self-audit — source acceptance
+
+Independent reviewer execution is not available in this lane, so this acceptance uses the owner-authorized strict self-audit path and is explicitly labeled as such.
+
+Accepted implementation candidate: `a58584113e12427e4da32eb0354daac49ecebdd1` (base `9fd2f6a1b0c8bcbea524a72cae202b5c99447167`). Candidate binary diff SHA-256: `cd9ab0435690d9bfa2405540108604e286fdb837bc4e37036ed3403b0d92c175`.
+
+Fresh acceptance rerun on the exact candidate: unit 110/110 files and 2784/2784 tests PASS; typecheck PASS; build PASS; diff-check PASS. Static authority scan confirms executor production source has no raw Docker daemon transport; the only daemon transport is `src/docker-authority/server.ts`, while `sandboxSpec.ts` contains only the negative runtime probe and broker policy contains only explicit socket-bind denial.
+
+The widened integration command was also attempted. It is not accepted as a PASS: the governed worker has no Docker CLI/runtime harness and no integration gateway/key environment, so Docker-backed and live-gateway suites cannot execute here. The resulting failures are classified `BLOCKED_ENVIRONMENT`, with live runtime qualification retained as a separate owner-host gate rather than fabricated.
+
+**SH-02 SOURCE VERDICT: PASS — OWNER-AUTHORIZED STRICT SELF-AUDIT.**  
+**SH-02 LIVE RUNTIME VERDICT: BLOCKED_ENVIRONMENT / NOT YET QUALIFIED.**
