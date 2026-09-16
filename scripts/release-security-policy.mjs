@@ -6,20 +6,36 @@ import { join, resolve } from 'node:path';
 const args = process.argv.slice(2);
 const valueAfter = (flag) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };
 const evidenceDir = valueAfter('--evidence-dir');
-const commit = valueAfter('--commit');
+const sourceBindingPath = valueAfter('--source-binding');
 const output = valueAfter('--output');
 const policyPath = valueAfter('--policy') ?? 'security/release-policy.json';
 const baselinePath = valueAfter('--baseline') ?? 'security/release-baseline.json';
 const exceptionsPath = valueAfter('--exceptions') ?? 'security/release-exceptions.json';
 const atRaw = valueAfter('--at') ?? new Date().toISOString();
 if (!evidenceDir) throw new Error('--evidence-dir is required');
-if (!commit || !/^[0-9a-f]{40}$/u.test(commit)) throw new Error('--commit requires an exact 40-hex Git commit');
+if (!sourceBindingPath || !existsSync(sourceBindingPath)) throw new Error('--source-binding requires an existing source-binding receipt');
 const evaluatedAt = new Date(atRaw);
 if (!Number.isFinite(evaluatedAt.getTime())) throw new Error('--at must be a valid ISO timestamp');
 
-const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
-const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
-const exceptions = JSON.parse(readFileSync(exceptionsPath, 'utf8'));
+function readJson(path, label) {
+  try { return JSON.parse(readFileSync(path, 'utf8')); }
+  catch { throw new Error(`${label} is malformed JSON`); }
+}
+function validSource(source) {
+  return source?.clean === true && /^[0-9a-f]{40}$/u.test(source?.commit ?? '') && /^[0-9a-f]{40}$/u.test(source?.tree ?? '');
+}
+function sameSource(a, b) {
+  return a?.clean === true && b?.clean === true && a?.commit === b?.commit && a?.tree === b?.tree && a?.repository === b?.repository;
+}
+
+const sourceBinding = readJson(sourceBindingPath, 'source-binding receipt');
+if (sourceBinding.schemaVersion !== 1 || sourceBinding.gate !== 'source-binding' || sourceBinding.status !== 'PASS' || !validSource(sourceBinding.source)) {
+  throw new Error('source-binding receipt is not a valid exact clean source receipt');
+}
+const source = sourceBinding.source;
+const policy = readJson(policyPath, 'release policy');
+const baseline = readJson(baselinePath, 'release baseline');
+const exceptions = readJson(exceptionsPath, 'release exceptions');
 const baselineEntries = Array.isArray(baseline.findings) ? baseline.findings : [];
 const exceptionEntries = Array.isArray(exceptions.exceptions) ? exceptions.exceptions : [];
 const receipts = [];
@@ -63,7 +79,7 @@ for (const gate of policy.requiredGates) {
   catch { failures.push({ gate, code: 'MALFORMED_EVIDENCE' }); continue; }
   receipts.push({ gate, path: file, sha256: sha256(bytes) });
   if (receipt.schemaVersion !== 1 || receipt.gate !== gate) failures.push({ gate, code: 'INVALID_RECEIPT_IDENTITY' });
-  if (receipt.source?.commit !== commit || receipt.source?.clean !== true) failures.push({ gate, code: 'STALE_OR_DIRTY_SOURCE_BINDING' });
+  if (!sameSource(receipt.source, source)) failures.push({ gate, code: 'STALE_OR_DIRTY_SOURCE_BINDING' });
   if (receipt.status !== 'PASS') failures.push({ gate, code: 'GATE_NOT_PASS', status: receipt.status ?? null });
   const expectedTool = policy.expectedTools?.[gate];
   if (expectedTool && (receipt.tool?.name !== expectedTool.name || receipt.tool?.version !== expectedTool.version)) {
@@ -80,8 +96,6 @@ for (const gate of policy.requiredGates) {
     const sensitive = policy.findingPolicy.alwaysBlockCategories.includes(category);
     const baselineEligible = policy.findingPolicy.baselineEligibleSeverities.includes(severity);
     if (critical || sensitive) {
-      // Critical and authority/integrity/secret findings are absolute release blockers.
-      // They cannot be normalized by a baseline or waived by an exception file.
       failures.push({ gate, code: 'BLOCKING_FINDING', fingerprint: finding.fingerprint, severity, category });
       continue;
     }
@@ -97,7 +111,8 @@ const ok = failures.length === 0;
 const report = {
   schemaVersion: 1,
   evaluatedAt: evaluatedAt.toISOString(),
-  commit,
+  source,
+  sourceBinding: { sha256: sha256(readFileSync(sourceBindingPath)) },
   ok,
   verdict: ok ? 'PASS' : 'FAIL',
   requiredGateCount: policy.requiredGates.length,
