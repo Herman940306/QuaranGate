@@ -23,7 +23,7 @@ services:
 
   # Ollama inference service (internal network only, no host ports)
   ollama:
-    image: "${OLLAMA_IMAGE:?set OLLAMA_IMAGE in .env (digest or exact version, never :latest)}"
+    image: "${OLLAMA_IMAGE:?set digest-pinned OLLAMA_IMAGE in .env (@sha256 required)}"
     pull_policy: never  # Fail closed if image not pre-pulled
     container_name: quarangate-ollama
     restart: unless-stopped

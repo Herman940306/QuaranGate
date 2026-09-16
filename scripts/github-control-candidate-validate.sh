@@ -39,6 +39,7 @@ npm run build
 printf '%s\n' '=== GITHUB OVERLAY COMPOSE PARSE ==='
 INTERNAL_TOKEN=validation-only \
 GATEWAY_IMAGE=quarangate:gateway-validation \
+DOCKER_AUTHORITY_IMAGE=quarangate:docker-authority-validation \
 EXECUTOR_IMAGE=quarangate:executor-validation \
 GITHUB_APP_CLIENT_ID=Iv1234567890abcdef \
 GITHUB_GIT_HELPER_IMAGE=quarangate:git-helper-validation \

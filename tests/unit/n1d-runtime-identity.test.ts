@@ -15,6 +15,7 @@ const compose = YAML.parse(fs.readFileSync(composePath, 'utf8')) as {
   name: string;
   services: Record<string, {
     image: string;
+    pull_policy?: string;
     build?: { args?: Record<string, string> };
     volumes?: string[];
     secrets?: unknown[];
@@ -48,9 +49,11 @@ describe('N1D Compose runtime identity', () => {
     expect(compose.volumes['bridge-jobs'].name).toBe('mcp-bridge-jobs');
   });
 
-  it('defaults both service images to the QuaranGate family', () => {
-    expect(compose.services.gateway.image).toBe('${GATEWAY_IMAGE:-quarangate:latest}');
-    expect(compose.services.executor.image).toBe('${EXECUTOR_IMAGE:-quarangate:latest}');
+  it('requires explicit immutable selections for all primary QuaranGate service images', () => {
+    expect(compose.services.gateway.image).toBe('${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}');
+    expect(compose.services['docker-authority'].image).toBe('${DOCKER_AUTHORITY_IMAGE:?set immutable QuaranGate Docker-authority image}');
+    expect(compose.services.executor.image).toBe('${EXECUTOR_IMAGE:?set immutable QuaranGate executor image}');
+    for (const svc of ['gateway', 'docker-authority', 'executor']) expect(compose.services[svc]?.pull_policy).toBe('never');
   });
 
   it('defaults the host secret to the QuaranGate path (DECISION-4)', () => {

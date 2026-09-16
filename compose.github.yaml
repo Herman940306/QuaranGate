@@ -25,6 +25,7 @@ services:
 
   github-broker:
     image: "${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}"
+    pull_policy: never
     command: ["node", "dist/github-broker/index.js"]
     environment:
       GITHUB_BROKER_PORT: "8789"
@@ -64,6 +65,7 @@ services:
 
   github-egress-proxy:
     image: "${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}"
+    pull_policy: never
     command: ["node", "dist/executor/agents/egressProxyMain.js"]
     environment:
       EGRESS_PROXY_PORT: "8080"

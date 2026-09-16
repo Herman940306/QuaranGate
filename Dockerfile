@@ -1,5 +1,5 @@
 # Single image, two entrypoints (gateway / executor) selected by compose command.
-FROM node:24-alpine AS build
+FROM node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY scripts/npm-offline-bundle.mjs ./scripts/npm-offline-bundle.mjs
@@ -30,7 +30,7 @@ RUN --network=none \
     && npm prune --omit=dev --offline --ignore-scripts --no-audit --no-fund \
       --cache=/tmp/quarangate-npm-prune-cache
 
-FROM node:24-alpine AS runtime
+FROM node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 AS runtime
 # G4 build-time provenance. Supplied per build and never baked into source, so
 # every production image records the exact commit it was built from:
 #   docker build --build-arg GIT_REVISION="$(git rev-parse HEAD)" ...

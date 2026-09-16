@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url';
 export const SCHEMA_VERSION = 1;
 export const ALLOWED_HOST = 'registry.npmjs.org';
 export const ALLOWED_HOSTS = [`${ALLOWED_HOST}:443`];
-export const DEFAULT_IMAGE = 'node:24-alpine';
+export const DEFAULT_IMAGE = 'node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81';
 export const BUNDLE_ENV = 'QUARANGATE_NPM_ARTIFACT_ROOT';
 export const PREPARATION_MARKER_ENV = 'QUARANGATE_NPM_PREPARATION_CONTAINER';
 

@@ -40,7 +40,9 @@ describe('remote owner projects-work hard boundary', () => {
   it('candidate deployment builds one local artifact, preserves rollback state, and never pulls', () => {
     const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
     expect(script).toContain('build --no-cache gateway');
+    expect(script).toContain('docker tag "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE"');
     expect(script).toContain('docker tag "$NEW_GATEWAY_IMAGE" "$NEW_EXECUTOR_IMAGE"');
+    expect(script).toContain("BASE_IMAGE='node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81'");
     expect(script).toContain('rollback_attempted');
     expect(script).toContain('--no-build --pull never');
     expect(script).toContain('compose.ollama.yaml');
@@ -56,13 +58,29 @@ describe('remote owner projects-work hard boundary', () => {
     expect(deploy).toContain('$MAIN_ROOT/config/bridge.yaml');
   });
 
-  it('persisted image verification is immune to stale inherited image exports and rollback is verified', () => {
+  it('persists and verifies exact service tags plus immutable image IDs and verifies rollback by ID', () => {
     const deploy = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
-    expect(deploy).toContain("expected = {'GATEWAY_IMAGE': sys.argv[2], 'EXECUTOR_IMAGE': sys.argv[3]}");
-    expect(deploy).toContain('GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE"');
+    for (const key of [
+      'GATEWAY_IMAGE', 'GATEWAY_IMAGE_ID',
+      'DOCKER_AUTHORITY_IMAGE', 'DOCKER_AUTHORITY_IMAGE_ID',
+      'EXECUTOR_IMAGE', 'EXECUTOR_IMAGE_ID',
+    ]) expect(deploy).toContain(`'${key}'`);
+    expect(deploy).toContain('GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$NEW_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE"');
+    expect(deploy).toContain('persisted image tag was retargeted before deployment commit');
     expect(deploy).toContain('REMOTE_OWNER_ROLLBACK=PASS');
-    expect(deploy).toContain('rollback_gateway_image');
-    expect(deploy).toContain('rollback_executor_image');
+    expect(deploy).toContain('rollback_gateway_image_id');
+    expect(deploy).toContain('rollback_authority_image_id');
+    expect(deploy).toContain('rollback_executor_image_id');
+  });
+
+  it('unattended recovery refuses a retargeted primary tag and enforces exact live image IDs', () => {
+    const start = readFileSync(join(root, 'scripts', 'remote-owner-start.sh'), 'utf8');
+    for (const key of ['GATEWAY_IMAGE_ID', 'DOCKER_AUTHORITY_IMAGE_ID', 'EXECUTOR_IMAGE_ID']) {
+      expect(start).toContain(key);
+    }
+    expect(start).toContain('runtime image tag-to-ID binding mismatch');
+    expect(start).toContain('live image identity mismatch');
+    expect(start).toContain('OLLAMA_IMAGE must be digest-pinned with @sha256');
   });
 
   it('linked-worktree recovery resolves the operator runtime root before composing QuaranGate', () => {

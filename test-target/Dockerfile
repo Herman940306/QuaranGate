@@ -1,6 +1,6 @@
 # Disposable bridge-owned integration target. Alpine + git + a workspace,
 # a secret outside the workspace, and symlink escape fixtures.
-FROM alpine:3.20
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 RUN apk add --no-cache git coreutils grep findutils procps \
  && git config --system user.email test@bridge.local \
  && git config --system user.name "bridge test" \

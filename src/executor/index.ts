@@ -327,7 +327,34 @@ let server: ReturnType<typeof app.listen>;
       ollamaHost: OLLAMA_HOST,
       ollamaModelQualifier: OLLAMA_MODEL_QUALIFIER,
     });
-    const kiroHelperImage = startupPolicy.kiroHelperImage;
+    // SH-06: trusted runtime image refs are configuration selectors only. Resolve
+    // every image that can actually be used by a backend/helper to the exact
+    // local Docker content ID before any factory is made available. Later local
+    // retagging can therefore never change the bytes executed by this process.
+    const resolvedImageIds = new Map<string, string>();
+    const resolveRuntimeImageId = async (ref: string, field: string): Promise<string> => {
+      const refError = validateImageRef(ref);
+      if (refError) throw new BridgeError('PRECONDITION_FAILED', `${field}: ${refError}`, 503);
+      const cached = resolvedImageIds.get(ref);
+      if (cached) return cached;
+      let id: string;
+      try {
+        id = (await inspectImage(ref)).Id;
+      } catch {
+        throw new BridgeError('PRECONDITION_FAILED', `${field} is not available locally`, 503);
+      }
+      if (!/^sha256:[0-9a-f]{64}$/.test(id)) {
+        throw new BridgeError('PRECONDITION_FAILED', `${field} resolved to an invalid Docker image ID`, 503);
+      }
+      resolvedImageIds.set(ref, id);
+      return id;
+    };
+
+    let kiroRunnerImage = startupPolicy.runnerImage;
+    let kiroHelperImage = startupPolicy.kiroHelperImage;
+    let ollamaHelperImage = '';
+    let ollamaStagerImage = '';
+
     const copilotPolicy = resolveCopilotStartupPolicy(
       copilotBackend?.enabled === true,
       copilotBackend?.profiles ?? [],
@@ -342,16 +369,27 @@ let server: ReturnType<typeof app.listen>;
       },
     );
 
-    // Step 1: construct + migrate DB.
+    // Step 1: construct + migrate DB. Preserve the accepted recovery ordering:
+    // durable state is opened/migrated before any asynchronous image preflight.
     agentStore = new AgentJobStore(JOBS_DB);
-    const sandbox = new RunnerSandbox({ image: startupPolicy.runnerImage });
+
+    if (kiroRunnerImage) kiroRunnerImage = await resolveRuntimeImageId(kiroRunnerImage, 'AGENT_RUNNER_IMAGE');
+    if (kiroHelperImage) kiroHelperImage = await resolveRuntimeImageId(kiroHelperImage, 'AGENT_HELPER_IMAGE');
+    if (startupPolicy.ollama.enabled) {
+      [ollamaHelperImage, ollamaStagerImage] = await Promise.all([
+        resolveRuntimeImageId(startupPolicy.ollama.helperImage, 'AGENT_HELPER_IMAGE'),
+        resolveRuntimeImageId(startupPolicy.ollama.stagerImage, 'AGENT_STAGER_IMAGE'),
+      ]);
+    }
+
+    const sandbox = new RunnerSandbox({ image: kiroRunnerImage });
 
     // O1 R2 architectural change: Create dedicated sandbox for O1 staging operations.
     // O1 uses its own sandbox from AGENT_STAGER_IMAGE, independent of the Kiro runner.
     // This sandbox is used exclusively for O1-specific staging (parsing job config,
     // preparing prompt artifacts) and is NOT shared with Kiro's execution sandbox.
     const ollamaSandbox = startupPolicy.ollama.enabled
-      ? new RunnerSandbox({ image: startupPolicy.ollama.stagerImage })
+      ? new RunnerSandbox({ image: ollamaStagerImage })
       : null;
 
     // A4/P3: wire real provider adapters only when their trusted runtime
@@ -377,7 +415,7 @@ let server: ReturnType<typeof app.listen>;
       const ollamaFactory = createOllamaBackendFactory({
         ollamaHost: startupPolicy.ollama.host,
         modelQualifier: startupPolicy.ollama.modelQualifier,
-        helperImage: startupPolicy.ollama.helperImage,
+        helperImage: ollamaHelperImage,
         sandbox: ollamaSandbox,
         projects: agentConfig.projects,
         OllamaClass: Ollama,
@@ -420,17 +458,13 @@ let server: ReturnType<typeof app.listen>;
       runtimeAvailableBackends.add('copilot');
     }
 
-    if (startupPolicy.runnerImage && PROXY_IMAGE && KIRO_KEY_PATH) {
-      // H1-1: validate runner and proxy images using the central validator before wiring.
-      const runnerImgErr = validateImageRef(startupPolicy.runnerImage);
-      if (runnerImgErr) throw new BridgeError('PRECONDITION_FAILED', `AGENT_RUNNER_IMAGE: ${runnerImgErr}`, 503);
-      const proxyImgErr = validateImageRef(PROXY_IMAGE);
-      if (proxyImgErr) throw new BridgeError('PRECONDITION_FAILED', `AGENT_PROXY_IMAGE: ${proxyImgErr}`, 503);
+    if (kiroRunnerImage && PROXY_IMAGE && KIRO_KEY_PATH) {
+      const kiroProxyImage = await resolveRuntimeImageId(PROXY_IMAGE, 'AGENT_PROXY_IMAGE');
       const credentialManager = new CredentialManager({ credentialPath: KIRO_KEY_PATH, helperImage: kiroHelperImage });
       const kiroFactory = createKiroBackendFactory(agentConfig.projects, {
-        runnerImage: startupPolicy.runnerImage,
+        runnerImage: kiroRunnerImage,
         helperImage: kiroHelperImage,
-        proxyImage: PROXY_IMAGE,
+        proxyImage: kiroProxyImage,
         proxyCmd: ['node', '/app/dist/executor/agents/egressProxyMain.js'],
         credentialManager,
         sandbox,

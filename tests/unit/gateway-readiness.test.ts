@@ -433,7 +433,7 @@ describe('compose.yaml healthcheck + image provenance', () => {
   const composePath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'compose.yaml');
   const composeText = readFileSync(composePath, 'utf8');
   const compose = YAML.parse(composeText, { merge: true }) as {
-    services: Record<string, { image: string; healthcheck?: { test: string[] } }>;
+    services: Record<string, { image: string; pull_policy?: string; healthcheck?: { test: string[] } }>;
   };
 
   it('I: the gateway healthcheck probes /readyz, not /healthz', () => {
@@ -453,19 +453,20 @@ describe('compose.yaml healthcheck + image provenance', () => {
     expect(probe).not.toMatch(/x-internal-token['"]?\s*:\s*['"][^'"]+['"]/u);
   });
 
-  it('J: gateway and executor images use independent env-var references', () => {
-    expect(compose.services.gateway?.image).toBe('${GATEWAY_IMAGE:-quarangate:latest}');
-    expect(compose.services.executor?.image).toBe('${EXECUTOR_IMAGE:-quarangate:latest}');
-    expect(compose.services.gateway?.image).not.toBe(compose.services.executor?.image);
+  it('J: all primary service images are mandatory and service-specific', () => {
+    expect(compose.services.gateway?.image).toBe('${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}');
+    expect(compose.services['docker-authority']?.image).toBe('${DOCKER_AUTHORITY_IMAGE:?set immutable QuaranGate Docker-authority image}');
+    expect(compose.services.executor?.image).toBe('${EXECUTOR_IMAGE:?set immutable QuaranGate executor image}');
+    expect(new Set(['gateway', 'docker-authority', 'executor'].map((svc) => compose.services[svc]?.image)).size).toBe(3);
   });
 
-  it('K: both defaults are the QuaranGate dev tag, never authoritative for production', () => {
-    // N1D moved the dev default from mcp-ide-bridge:latest to quarangate:latest.
-    // Production still MUST override with an immutable quarangate:<svc>-<sha> tag.
-    for (const svc of ['gateway', 'executor'] as const) {
+  it('K: primary runtime images never fall back to mutable tags or implicit pulls', () => {
+    for (const svc of ['gateway', 'docker-authority', 'executor'] as const) {
       const image = compose.services[svc]?.image ?? '';
-      const match = /^\$\{[A-Z_]+:-(?<def>[^}]+)\}$/.exec(image);
-      expect(match?.groups?.def, svc).toBe('quarangate:latest');
+      expect(image, svc).toContain(':?set immutable QuaranGate');
+      expect(image, svc).not.toContain(':-');
+      expect(image, svc).not.toContain(':latest');
+      expect(compose.services[svc]?.pull_policy, svc).toBe('never');
     }
   });
 

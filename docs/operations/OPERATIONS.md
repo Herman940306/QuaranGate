@@ -353,12 +353,12 @@ This is an operator choice, not a Dockerfile constant. Another Linux/WSL/macOS h
 
 ### Controlled preparation — networked but source-free
 
-Preparation requires the `node:24-alpine` image to already exist locally. The tool intentionally uses `--pull=never`; it will stop rather than silently pulling the image.
+Preparation requires the exact digest-pinned base `node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81` to already exist locally. The tool intentionally uses `--pull=never`; it will stop rather than silently pulling or substituting a tag target.
 
 Check first:
 
 ```bash
-docker image inspect node:24-alpine >/dev/null
+docker image inspect node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 >/dev/null
 ```
 
 If this fails, decide how the approved base image will be provisioned. In an online bootstrap that may be an explicit operator-controlled image acquisition. In an offline installation it must be imported/pre-provisioned from trusted media or an approved local registry/cache. Do not hide that acquisition inside the source build.
@@ -404,10 +404,13 @@ Set provenance and image references according to the deployment gate, then build
 ```bash
 export GIT_REVISION="$(git rev-parse HEAD)"
 export GATEWAY_IMAGE="quarangate:gateway-$GIT_REVISION"
+export DOCKER_AUTHORITY_IMAGE="quarangate:docker-authority-$GIT_REVISION"
 export EXECUTOR_IMAGE="quarangate:executor-$GIT_REVISION"
 export QUARANGATE_NPM_BUNDLE_PATH
 
-docker compose build
+docker compose build gateway
+docker tag "$GATEWAY_IMAGE" "$DOCKER_AUTHORITY_IMAGE"
+docker tag "$GATEWAY_IMAGE" "$EXECUTOR_IMAGE"
 ```
 
 Both gateway and executor build definitions use the same named `npm_deps` context, build network `none`, and `pull: false`.
@@ -470,27 +473,17 @@ live stack mutation:         none
 
 The acceptance driver creates/removes only bounded temporary acceptance resources; it does not deploy the resulting image into the live QuaranGate stack.
 
-## Base-image limitation
+## Base-image governance
 
-The current Dockerfile uses:
-
-```text
-node:24-alpine
-```
-
-N1 proves a current-machine offline build against an already-local image identity. The source does not yet bind `FROM` to an immutable cross-machine digest.
-
-Therefore:
+SH-06 binds the main source build and npm preparation helper to the exact reviewed base:
 
 ```text
-current-machine rebuild with approved local base image:
-can be proven
-
-cross-machine bit-for-bit base-image reproducibility:
-not yet proven by the tag alone
+node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81
 ```
 
-Do not claim otherwise.
+All tracked Dockerfiles now pin external `FROM` inputs by SHA-256 digest, and `security:invariants` fails if a later tag-only external base is introduced. The source build remains offline (`build.network=none`, `pull: false`) and refuses if the approved digest is not already local.
+
+This proves the **base-image identity selected by source**. It does not prove an empty machine has that artifact, that owner-host provisioning has already occurred, or that every downstream build step is bit-for-bit reproducible across platforms. Those remain deployment/qualification evidence, not assumptions.
 
 ## Dependency update workflow
 
@@ -617,12 +610,13 @@ Current naming convention:
 
 ```text
 quarangate:gateway-<full-reviewed-sha>
+quarangate:docker-authority-<full-reviewed-sha>
 quarangate:executor-<full-reviewed-sha>
 ```
 
-Both are built from the same source/Dockerfile but are independently selectable deployment references.
+All three service tags intentionally point to the same reviewed QuaranGate artifact. `remote-owner-deploy-candidate.sh` persists each service-specific tag **and** its exact Docker `sha256:` image ID. `remote-owner-start.sh` refuses recovery if any tag has been retargeted, if any persisted image ID is absent/malformed, or if the live container does not match both the expected service tag and immutable image ID.
 
-The unset/development fallback `quarangate:latest` is not production provenance.
+`compose.yaml` has no `quarangate:latest` or unset production image fallback. Gateway, Docker-authority and executor image selections are mandatory and all use `pull_policy: never`.
 
 Build candidates carry OCI labels including:
 

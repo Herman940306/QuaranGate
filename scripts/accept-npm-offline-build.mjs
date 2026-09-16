@@ -10,7 +10,7 @@ import { canonicalJson } from './npm-offline-bundle.mjs';
 
 const EXPECTED_LOCK_SHA256 = '31688b0a46cb5051e069ff049bbafd34752ace10dfb9dac3a60c9a3fef5258e5';
 const EXPECTED_TINI_SHA256 = '1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc';
-const BASE_IMAGE = 'node:24-alpine';
+const BASE_IMAGE = 'node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81';
 
 class AcceptanceError extends Error {}
 
@@ -184,6 +184,7 @@ async function composeValidation(bundlePath) {
     QUARANGATE_NPM_BUNDLE_PATH: bundlePath,
     GIT_REVISION: 'npm-offline-acceptance',
     GATEWAY_IMAGE: 'quarangate:npm-offline-acceptance-gateway-config-only',
+    DOCKER_AUTHORITY_IMAGE: 'quarangate:npm-offline-acceptance-docker-authority-config-only',
     EXECUTOR_IMAGE: 'quarangate:npm-offline-acceptance-executor-config-only',
     AGENT_KIRO_KEY_FILE: '/tmp/npm-offline-acceptance-nonexistent-key',
   };

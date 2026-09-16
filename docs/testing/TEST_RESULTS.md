@@ -96,7 +96,7 @@ Separately, historical N1 evidence includes:
 The N1 checkpoint did **not** prove:
 
 - a completely empty machine can build with no pre-provisioned artifacts;
-- cross-machine bit-for-bit base-image reproducibility, because the Dockerfile still uses `node:24-alpine` rather than an immutable digest in `FROM`;
+- at the historical N1 checkpoint, immutable cross-machine base selection was not yet proven because `FROM node:24-alpine` was tag-only; **SH-06 later closes that source-level gap with reviewed SHA-256 digest pins, while owner-host artifact provisioning remains separately qualified**;
 - kernel-level egress filtering for the preparation container; its registry restriction is enforced by application URL policy;
 - O1 container deployment is accepted or enabled;
 - macOS production support;

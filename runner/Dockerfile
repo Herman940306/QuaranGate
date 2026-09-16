@@ -14,7 +14,7 @@
 #     volume first mounted there inherits node ownership — both the non-root
 #     stager and the non-root runner can then write to the workspace without any
 #     capability (no CAP_CHOWN, no root). See docs/audits/PHASE_A3_RUNNER_SANDBOX.md.
-FROM node:24-alpine
+FROM node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81
 RUN apk add --no-cache git \
  && mkdir -p /workspace \
  && chown node:node /workspace \

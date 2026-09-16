@@ -33,7 +33,7 @@
 # alpine/musl base cannot load its interpreter (/lib64/ld-linux-x86-64.so.2).
 # ca-certificates is required for TLS to the Kiro endpoints.
 
-FROM node:24-slim
+FROM node:24-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553
 
 # git gives Kiro repo awareness; ca-certificates for TLS. Create the isolated
 # runner dir skeleton. The `node` user in this image is already uid:gid 1000.

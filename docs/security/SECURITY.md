@@ -525,7 +525,7 @@ The Tini package-download dependency has already been replaced by an exact local
 
 N1 completed the npm offline-source-build remediation. The dependency preparation phase is source-free and validates the complete lock before the first download; the real Docker build then uses a verified lock-scoped bundle, a fresh tmpfs npm cache and `npm ci --offline --ignore-scripts` under build network `none`.
 
-The accepted claim is **offline source build with approved pre-provisioned inputs**. It is not an empty-machine/no-artifact claim. The preparation container currently uses ordinary Docker bridge networking and relies on exact application-level URL validation (`registry.npmjs.org:443` only) plus mandatory SHA-512 verification rather than kernel-level egress filtering. The Dockerfile also still uses the mutable `node:24-alpine` tag, so cross-machine bit-for-bit base-image reproducibility remains separate hardening work.
+The accepted claim is **offline source build with approved pre-provisioned inputs**. It is not an empty-machine/no-artifact claim. The preparation container currently uses ordinary Docker bridge networking and relies on exact application-level URL validation (`registry.npmjs.org:443` only) plus mandatory SHA-512 verification rather than kernel-level egress filtering. SH-06 now pins all tracked external Dockerfile `FROM` inputs by SHA-256 digest; the main source build and dependency-preparation helper both require `node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81`. This closes mutable-base selection in source, but owner-host presence/import of those exact artifacts remains deployment evidence and is not inferred from source acceptance.
 
 ---
 

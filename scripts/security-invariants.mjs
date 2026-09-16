@@ -47,6 +47,48 @@ for (const p of composeFiles) {
 for (const p of dockerfiles) {
   const s = text(p);
   if (/^\s*USER\s+root\s*$/mi.test(s) && !/^\s*USER\s+(?!root\b)\S+/mi.test(s)) fail('NO_ROOT_FINAL_IMAGE_USER', p, 'Dockerfile never leaves root user');
+
+  // SH-06: every external Dockerfile base is content-addressed. Preserve
+  // legitimate stage-to-stage FROM aliases while refusing tag-only registry
+  // inputs, including apparently versioned tags whose content can be replaced.
+  const aliases = new Set();
+  for (const [index, line] of s.split(/\r?\n/u).entries()) {
+    const m = /^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?\s*$/iu.exec(line);
+    if (!m) continue;
+    const image = m[1];
+    if (!aliases.has(image) && !/@sha256:[0-9a-f]{64}$/u.test(image)) {
+      fail('IMMUTABLE_DOCKERFILE_BASE', p, `line ${index + 1} external base is not sha256 digest-pinned: ${image}`);
+    }
+    if (m[2]) aliases.add(m[2]);
+  }
+}
+
+// SH-06 production Compose policy. Dev/test target compose files intentionally
+// remain local tooling surfaces; production/runtime graphs must fail closed on
+// image selection and must never pull implicitly.
+const productionCompose = new Map([
+  ['compose.yaml', {
+    gateway: '${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}',
+    'docker-authority': '${DOCKER_AUTHORITY_IMAGE:?set immutable QuaranGate Docker-authority image}',
+    executor: '${EXECUTOR_IMAGE:?set immutable QuaranGate executor image}',
+  }],
+  ['compose.github.yaml', {
+    'github-broker': '${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}',
+    'github-egress-proxy': '${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}',
+  }],
+  ['compose.ollama.yaml', {
+    ollama: '${OLLAMA_IMAGE:?set digest-pinned OLLAMA_IMAGE in .env (@sha256 required)}',
+  }],
+]);
+for (const [p, expected] of productionCompose) {
+  if (!files.includes(p)) { fail('PRODUCTION_COMPOSE_PRESENT', p, 'production compose surface missing'); continue; }
+  let doc;
+  try { doc = YAML.parse(text(p)); } catch { continue; }
+  for (const [service, image] of Object.entries(expected)) {
+    const actual = doc?.services?.[service];
+    if (!actual || actual.image !== image) fail('PRODUCTION_IMAGE_SELECTION_REQUIRED', p, `${service} image selection is not the required fail-closed expression`);
+    if (actual?.pull_policy !== 'never') fail('PRODUCTION_PULL_NEVER', p, `${service} must set pull_policy: never`);
+  }
 }
 
 for (const p of files.filter((p) => /^(?:src|runner)\/.*\.(?:ts|js|mjs|cjs)$/.test(p))) {
@@ -59,6 +101,6 @@ for (const p of files.filter((p) => /^(?:src|runner)\/.*\.(?:ts|js|mjs|cjs)$/.te
 }
 
 failures.sort((a,b) => `${a.rule}\0${a.path}\0${a.detail}`.localeCompare(`${b.rule}\0${b.path}\0${b.detail}`));
-const result = { ok: failures.length === 0, rulesChecked: 12, composeFilesChecked: composeFiles.length, dockerfilesChecked: dockerfiles.length, failures };
+const result = { ok: failures.length === 0, rulesChecked: 15, composeFilesChecked: composeFiles.length, dockerfilesChecked: dockerfiles.length, failures };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 if (failures.length) process.exit(1);

@@ -2,7 +2,7 @@
 # Does NOT touch existing project stacks.
 #
 # N1D runtime identity cutover (MCP_IDE_BRIDGE_MASTER_PRD.md §47.11): the Compose
-# project, networks, gateway data volume, image defaults and host secret path now
+# project, networks, gateway data volume, image selections and host secret path now
 # carry the QuaranGate identity. Two physical identifiers are deliberately
 # retained for compatibility, each under an approved decision:
 #   - volume `mcp-bridge-jobs` — §47.13 DECISION-2 (durable job/evidence store;
@@ -33,8 +33,9 @@ services:
         GIT_REVISION: "${GIT_REVISION:-unknown}"
     # One shared build artifact, independently taggable per service. Production
     # must pin an immutable service-specific tag (quarangate:gateway-<sha>);
-    # the :latest default is a dev convenience and is never authoritative.
-    image: ${GATEWAY_IMAGE:-quarangate:latest}
+    # image selection is mandatory; production runtime never falls back to a mutable tag.
+    image: ${GATEWAY_IMAGE:?set immutable QuaranGate gateway image}
+    pull_policy: never
     command: ["node", "dist/gateway/index.js"]
     environment:
       BRIDGE_PORT: "8787"
@@ -69,7 +70,8 @@ services:
 
   docker-authority:
     <<: *hardening
-    image: ${DOCKER_AUTHORITY_IMAGE:-quarangate:latest}
+    image: ${DOCKER_AUTHORITY_IMAGE:?set immutable QuaranGate Docker-authority image}
+    pull_policy: never
     command: ["node", "dist/docker-authority/server.js"]
     environment:
       DOCKER_AUTHORITY_PORT: "8991"
@@ -99,7 +101,8 @@ services:
     <<: *hardening
     # Same shared build artifact as the gateway, tagged independently
     # (quarangate:executor-<sha> in production).
-    image: ${EXECUTOR_IMAGE:-quarangate:latest}
+    image: ${EXECUTOR_IMAGE:?set immutable QuaranGate executor image}
+    pull_policy: never
     build:
       context: .
       additional_contexts:

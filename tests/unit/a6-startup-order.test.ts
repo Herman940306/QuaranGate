@@ -30,12 +30,14 @@ const h = vi.hoisted(() => {
   const fail: { stage: string | null } = { stage: null };
   const startupPolicyCalls: Array<[boolean, Record<string, unknown>]> = [];
   const orphanArgs: unknown[] = [];
+  const imageInspectRefs: string[] = [];
+  const imageIdentity = { value: `sha256:${'a'.repeat(64)}` };
   /** Record a stage, and throw from it when this test asked that stage to fail. */
   const stage = (name: string): void => {
     order.push(name);
     if (fail.stage === name) throw new Error(`simulated global failure in ${name}`);
   };
-  return { order, fail, startupPolicyCalls, orphanArgs, stage };
+  return { order, fail, startupPolicyCalls, orphanArgs, imageInspectRefs, imageIdentity, stage };
 });
 
 // ---------------------------------------------------------------------------
@@ -72,6 +74,10 @@ vi.mock('../../src/executor/targets.js', async (importOriginal) => ({
 vi.mock('../../src/executor/docker.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/executor/docker.js')>()),
   ping: async () => true,
+  inspectImage: async (ref: string) => {
+    h.imageInspectRefs.push(ref);
+    return { Id: h.imageIdentity.value };
+  },
 }));
 
 vi.mock('../../src/executor/agentConfig.js', async (importOriginal) => ({
@@ -189,6 +195,8 @@ beforeEach(() => {
   h.fail.stage = null;
   h.startupPolicyCalls.length = 0;
   h.orphanArgs.length = 0;
+  h.imageInspectRefs.length = 0;
+  h.imageIdentity.value = `sha256:${'a'.repeat(64)}`;
   exitCodes = [];
 
   const dir = mkdtempSync(join(tmpdir(), 'mcpb-startup-'));
@@ -279,7 +287,7 @@ describe('executor startup ordering — success path', () => {
     });
   });
 
-  it('does not source the O1 stager image from runner or helper environment values', async () => {
+  it('does not source the O1 stager image from runner/helper values and resolves configured runtime refs to immutable IDs', async () => {
     process.env.AGENT_RUNNER_IMAGE = 'kiro-runner:v1';
     process.env.AGENT_HELPER_IMAGE = 'o1-read-helper:v1';
     delete process.env.AGENT_STAGER_IMAGE;
@@ -292,6 +300,21 @@ describe('executor startup ordering — success path', () => {
       agentHelperImage: 'o1-read-helper:v1',
       agentStagerImage: '',
     });
+    expect(h.imageInspectRefs).toEqual(['kiro-runner:v1', 'o1-read-helper:v1']);
+    expect(h.order.indexOf('jobStore:construct+migrate')).toBeLessThan(h.order.indexOf('sandbox.reconcileOrphans'));
+  });
+
+  it('fails closed before listen when a configured runtime image does not resolve to a sha256 Docker image ID', async () => {
+    process.env.AGENT_RUNNER_IMAGE = 'kiro-runner:v1';
+    h.imageIdentity.value = 'not-an-immutable-image-id';
+
+    await runStartup();
+
+    expect(h.imageInspectRefs).toEqual(['kiro-runner:v1']);
+    expect(h.order).toContain('jobStore:construct+migrate');
+    expect(h.order).not.toContain('sandbox.reconcileOrphans');
+    expect(h.order).not.toContain('listen');
+    expect(exitCodes).toEqual([1]);
   });
 });
 

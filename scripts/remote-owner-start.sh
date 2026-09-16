@@ -29,19 +29,33 @@ fi
 [[ -f "$RUNTIME_ENV" ]] || fail 'runtime .env not found'
 
 # Compose gives inherited shell variables higher precedence than --env-file.
-# Production image selection is owned by the persisted runtime .env, so pin
-# gateway/executor from that file explicitly and refuse ambiguous/missing keys.
-# This prevents a stale interactive export from silently rolling the runtime
-# backward or forward during recovery.
-for key in GATEWAY_IMAGE EXECUTOR_IMAGE; do
+# SH-06 persists both the service-specific local tag and the immutable Docker
+# image ID. Recovery trusts neither ambient exports nor a tag by itself: all six
+# keys must exist exactly once and every tag must still resolve to its persisted
+# content ID before Compose is allowed to start anything.
+for key in GATEWAY_IMAGE DOCKER_AUTHORITY_IMAGE EXECUTOR_IMAGE; do
   count="$(grep -c "^${key}=" "$RUNTIME_ENV" || true)"
   [[ "$count" == 1 ]] || fail "runtime .env must contain exactly one ${key}"
   value="$(sed -n "s/^${key}=//p" "$RUNTIME_ENV")"
   [[ -n "$value" ]] || fail "runtime .env ${key} is empty"
   [[ "$value" != *:latest ]] || fail "runtime .env ${key} must not use :latest"
+  [[ "$value" != *[[:space:]]* ]] || fail "runtime .env ${key} contains whitespace"
   export "$key=$value"
 done
-unset key count value
+for key in GATEWAY_IMAGE_ID DOCKER_AUTHORITY_IMAGE_ID EXECUTOR_IMAGE_ID; do
+  count="$(grep -c "^${key}=" "$RUNTIME_ENV" || true)"
+  [[ "$count" == 1 ]] || fail "runtime .env must contain exactly one ${key}"
+  value="$(sed -n "s/^${key}=//p" "$RUNTIME_ENV")"
+  [[ "$value" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "runtime .env ${key} is not an immutable Docker image ID"
+  export "$key=$value"
+done
+for pair in GATEWAY_IMAGE:GATEWAY_IMAGE_ID DOCKER_AUTHORITY_IMAGE:DOCKER_AUTHORITY_IMAGE_ID EXECUTOR_IMAGE:EXECUTOR_IMAGE_ID; do
+  ref_key="${pair%%:*}"; id_key="${pair#*:}"
+  ref="${!ref_key}"; expected_id="${!id_key}"
+  actual_id="$(docker image inspect "$ref" --format '{{.Id}}' 2>/dev/null || true)"
+  [[ "$actual_id" == "$expected_id" ]] || fail "runtime image tag-to-ID binding mismatch for ${ref_key}"
+done
+unset key count value pair ref_key id_key ref expected_id actual_id
 
 # A linked candidate worktree does not carry ignored runtime config files.
 # Resolve the real operator runtime root separately so Compose always mounts
@@ -63,6 +77,10 @@ if grep -q '^OLLAMA_MODEL_QUALIFIER=' "$RUNTIME_ENV"; then ollama_expected=1; fi
 if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=ollama --format '{{.ID}}' | grep -q .; then ollama_expected=1; fi
 if [[ "$ollama_expected" == 1 ]]; then
   [[ -f "$RUNTIME_ROOT/compose.ollama.yaml" ]] || fail 'O1 is configured but compose.ollama.yaml is missing'
+  ollama_image_count="$(grep -c '^OLLAMA_IMAGE=' "$RUNTIME_ENV" || true)"
+  [[ "$ollama_image_count" == 1 ]] || fail 'O1 runtime requires exactly one OLLAMA_IMAGE'
+  ollama_image="$(sed -n 's/^OLLAMA_IMAGE=//p' "$RUNTIME_ENV")"
+  [[ "$ollama_image" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || fail 'OLLAMA_IMAGE must be digest-pinned with @sha256'
   QG_FILES+=(-f "$RUNTIME_ROOT/compose.ollama.yaml")
 fi
 
@@ -126,6 +144,29 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 [[ "$healthy" == 1 ]] || fail 'gateway did not become healthy after 120 seconds'
+
+# SH-06: prove Compose actually started the exact persisted primary artifacts.
+for spec in \
+  "gateway|$GATEWAY_IMAGE|$GATEWAY_IMAGE_ID" \
+  "docker-authority|$DOCKER_AUTHORITY_IMAGE|$DOCKER_AUTHORITY_IMAGE_ID" \
+  "executor|$EXECUTOR_IMAGE|$EXECUTOR_IMAGE_ID"; do
+  service="${spec%%|*}"; rest="${spec#*|}"; expected_ref="${rest%%|*}"; expected_id="${rest#*|}"
+  cid="$("${QG[@]}" ps -q "$service")"
+  [[ -n "$cid" ]] || fail "${service} container missing after start"
+  live_ref="$(docker inspect "$cid" --format '{{.Config.Image}}')"
+  live_id="$(docker inspect "$cid" --format '{{.Image}}')"
+  [[ "$live_ref" == "$expected_ref" && "$live_id" == "$expected_id" ]] || fail "${service} live image identity mismatch"
+done
+if [[ "$github_expected" == 1 ]]; then
+  for service in github-broker github-egress-proxy; do
+    cid="$("${QG[@]}" ps -q "$service")"
+    [[ -n "$cid" ]] || fail "${service} container missing after start"
+    live_ref="$(docker inspect "$cid" --format '{{.Config.Image}}')"
+    live_id="$(docker inspect "$cid" --format '{{.Image}}')"
+    [[ "$live_ref" == "$GATEWAY_IMAGE" && "$live_id" == "$GATEWAY_IMAGE_ID" ]] || fail "${service} live image identity mismatch"
+  done
+fi
+unset spec service rest expected_ref expected_id cid live_ref live_id
 
 QUARANGATE_RUNTIME_ENV="$RUNTIME_ENV" "$REPO_ROOT/scripts/remote-owner-health.sh"
 printf '%s\n' 'REMOTE_OWNER_START=PASS'
