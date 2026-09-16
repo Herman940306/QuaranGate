@@ -14,7 +14,7 @@ Use the Documentation issue form for inaccurate, stale, missing, or confusing cu
 
 ## Security vulnerabilities
 
-Do **not** open a public issue containing vulnerability or exploit details. Use GitHub's private vulnerability reporting entry in the repository Security tab once enabled. If private reporting is temporarily unavailable, contact the maintainer through an established private channel and share only enough public information to arrange private disclosure.
+Do **not** open a public issue containing vulnerability or exploit details. Use GitHub's private vulnerability reporting entry in the repository Security tab when that option is available. If private reporting is temporarily unavailable, contact the maintainer through an established private channel and share only enough public information to arrange private disclosure.
 
 ## What not to post
 

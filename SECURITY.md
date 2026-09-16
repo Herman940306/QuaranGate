@@ -10,7 +10,7 @@ QuaranGate is currently pre-1.0. Security fixes target the current accepted deve
 
 Do **not** open a public GitHub issue for a suspected vulnerability.
 
-Use **Report a vulnerability** from the repository's Security tab once private vulnerability reporting is enabled. Include:
+Use **Report a vulnerability** from the repository's Security tab when that option is available. Include:
 
 - affected version or exact commit SHA;
 - affected component and trust boundary;
