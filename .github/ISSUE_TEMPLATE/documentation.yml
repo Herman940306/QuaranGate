@@ -1,0 +1,29 @@
+name: Documentation issue
+description: Report inaccurate, stale, missing, or confusing documentation.
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Document / section
+      placeholder: docs/security/SECURITY.md — Residual risks
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Explain what is inaccurate, missing, stale, or unclear.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Supporting evidence
+      description: Link to source, commit, runtime evidence, or accepted project record where possible.
+  - type: textarea
+    id: correction
+    attributes:
+      label: Suggested correction
+      description: Optional wording or scope correction.
