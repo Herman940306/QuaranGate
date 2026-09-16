@@ -1,0 +1,77 @@
+name: Bug report
+description: Report a reproducible QuaranGate defect without including secrets.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a defect. Do **not** include credentials, tokens, private source, exploit details, or sensitive host information. Security vulnerabilities must be reported privately through the repository Security tab.
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Release version or exact commit SHA where the problem was observed.
+      placeholder: v0.x.y or 40-char SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Gateway / MCP
+        - Executor / targets
+        - Agent Control Plane
+        - IDE Session Control
+        - GitHub Control Plane
+        - Console / frontend
+        - Installer / lifecycle
+        - Security / release assurance
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Docker/Compose, Node.js, browser/IDE, and deployment mode as relevant. Redact sensitive paths or identifiers.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Minimal deterministic steps that reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Relevant logs, test output, request IDs, or screenshots. Remove secrets and private project content.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Reporter checks
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed credentials, tokens, private source, and other sensitive information.
+          required: true
+        - label: This is not a security vulnerability requiring private disclosure.
+          required: true
