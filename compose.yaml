@@ -67,6 +67,34 @@ services:
     mem_limit: 512m
     pids_limit: 256
 
+  docker-authority:
+    <<: *hardening
+    image: ${DOCKER_AUTHORITY_IMAGE:-quarangate:latest}
+    command: ["node", "dist/docker-authority/server.js"]
+    environment:
+      DOCKER_AUTHORITY_PORT: "8991"
+      DOCKER_AUTHORITY_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
+      DOCKER_SOCK: "/var/run/docker.sock"
+      BRIDGE_CONFIG: "/config/bridge.yaml"
+      AGENTS_CONFIG: "/config/agents.yaml"
+      GITHUB_CONFIG: "/config/github.yaml"
+    group_add:
+      - "${DOCKER_GID:-1001}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config:/config:ro
+    tmpfs:
+      - /tmp
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8991/readyz',{headers:{'x-internal-token':process.env.DOCKER_AUTHORITY_TOKEN??''}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    pids_limit: 128
+
   executor:
     <<: *hardening
     # Same shared build artifact as the gateway, tagged independently
@@ -85,7 +113,8 @@ services:
       EXECUTOR_PORT: "8990"
       INTERNAL_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
       BRIDGE_CONFIG: "/config/bridge.yaml"
-      DOCKER_SOCK: "/var/run/docker.sock"
+      DOCKER_AUTHORITY_URL: "http://docker-authority:8991"
+      DOCKER_AUTHORITY_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
       # Agent Control Plane (A2): optional trusted config + durable job store.
       AGENTS_CONFIG: "/config/agents.yaml"
       JOBS_DB: "/jobs/agents.db"
@@ -101,11 +130,8 @@ services:
       AGENT_KIRO_KEY_PATH: "${AGENT_KIRO_KEY_PATH:-}"
       # Zero-inference verification switch (stop after ACP session/new).
       AGENT_KIRO_DRY_RUN: "${AGENT_KIRO_DRY_RUN:-}"
-    # Access to the docker socket is confined to THIS private service only.
-    group_add:
-      - "${DOCKER_GID:-1001}"
+    # SH-02: executor has no Docker socket/group; all authority crosses the named-operation broker.
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./config:/config:ro
       # Executor-owned agent job persistence. NOT mounted into the gateway or
       # any target; separate trust domain from the gateway OAuth /data volume.
@@ -132,6 +158,8 @@ services:
     # socket path — /healthz would still pass (process alive) but /readyz fails.
     # A7 integration note: A7 may also touch executor healthcheck. If so, the
     # merge conflict is on this block only and the /readyz target MUST be kept.
+    depends_on:
+      - docker-authority
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8990/readyz',{headers:{'x-internal-token':process.env.INTERNAL_TOKEN??''}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s

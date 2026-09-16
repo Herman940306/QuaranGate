@@ -3,30 +3,9 @@
  * Only the endpoints the executor needs are implemented — the executor's API
  * surface can never express arbitrary Docker calls.
  */
-import { Pool } from 'undici';
+import { authorityCall, authorityStream } from '../docker-authority/client.js';
 import { PassThrough, Readable } from 'node:stream';
 import { BridgeError } from '../shared/errors.js';
-
-const SOCKET = process.env.DOCKER_SOCK ?? '/var/run/docker.sock';
-// A Pool (multiple connections) — a long-lived streaming exec must not block
-// concurrent control calls (e.g. the timeout-kill exec) on the same socket.
-const client = new Pool('http://localhost', { socketPath: SOCKET, connections: 16 });
-
-async function dockerJson<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
-  const opts: Parameters<typeof client.request>[0] = { method, path };
-  if (body !== undefined) {
-    opts.headers = { 'content-type': 'application/json' };
-    opts.body = JSON.stringify(body);
-  }
-  const res = await client.request(opts).catch((e: Error) => {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `docker api unreachable: ${e.message}`, 503);
-  });
-  const text = await res.body.text();
-  if (res.statusCode >= 400) {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `docker api ${path} -> ${res.statusCode}: ${text.slice(0, 300)}`, 502);
-  }
-  return text ? (JSON.parse(text) as T) : (undefined as T);
-}
 
 export interface ContainerSummary {
   Id: string;
@@ -38,11 +17,11 @@ export interface ContainerSummary {
 }
 
 export async function listContainers(all = false): Promise<ContainerSummary[]> {
-  return dockerJson<ContainerSummary[]>('GET', `/v1.44/containers/json?all=${all ? 1 : 0}`);
+  return authorityCall<ContainerSummary[]>('container.listManaged', { all });
 }
 
 export async function inspectContainer(id: string): Promise<{ State: { Running: boolean; Status: string; Health?: { Status: string } }; Config: { Image: string; Labels: Record<string, string> } }> {
-  return dockerJson('GET', `/v1.44/containers/${encodeURIComponent(id)}/json`);
+  return authorityCall('container.inspectManaged', { id });
 }
 
 interface ExecCreateResponse { Id: string }
@@ -65,12 +44,12 @@ export async function execCreate(containerId: string, opts: RawExecOptions): Pro
   if (opts.workingDir) body.WorkingDir = opts.workingDir;
   if (opts.env) body.Env = opts.env;
   if (opts.user) body.User = opts.user;
-  const r = await dockerJson<ExecCreateResponse>('POST', `/v1.44/containers/${encodeURIComponent(containerId)}/exec`, body);
+  const r = await authorityCall<ExecCreateResponse>('container.execManaged', { containerId, action: 'create', body });
   return r.Id;
 }
 
 export async function execInspect(execId: string): Promise<ExecInspect> {
-  return dockerJson<ExecInspect>('GET', `/v1.44/exec/${encodeURIComponent(execId)}/json`);
+  return authorityCall<ExecInspect>('container.execManaged', { action: 'inspect', execId });
 }
 
 /**
@@ -81,20 +60,12 @@ export async function execStartStream(execId: string): Promise<{ stdout: PassThr
   const stdout = new PassThrough();
   const stderr = new PassThrough();
 
-  const res = await client.request({
-    method: 'POST',
-    path: `/v1.44/exec/${encodeURIComponent(execId)}/start`,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ Detach: false, Tty: false }),
-  });
-  if (res.statusCode >= 400) {
-    const text = await res.body.text();
-    throw new BridgeError('DOCKER_UNAVAILABLE', `exec start failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
+  const res = await authorityStream('container.execManaged', { action: 'start', execId });
+  const stream = res.body;
 
   const done = (async () => {
     let buf = Buffer.alloc(0);
-    for await (const chunk of res.body as Readable) {
+    for await (const chunk of stream as Readable) {
       buf = Buffer.concat([buf, chunk as Buffer]);
       while (buf.length >= 8) {
         const type = buf[0];
@@ -114,34 +85,14 @@ export async function execStartStream(execId: string): Promise<{ stdout: PassThr
 
 /** GET a path from a container as a tar stream. */
 export async function getArchive(containerId: string, absPath: string): Promise<{ body: Readable; statHeader: string | undefined }> {
-  const res = await client.request({
-    method: 'GET',
-    path: `/v1.44/containers/${encodeURIComponent(containerId)}/archive?path=${encodeURIComponent(absPath)}`,
-  });
-  if (res.statusCode === 404) {
-    await res.body.dump();
-    throw new BridgeError('FILE_NOT_FOUND', `not found: ${absPath}`, 404);
-  }
-  if (res.statusCode >= 400) {
-    const text = await res.body.text();
-    throw new BridgeError('DOCKER_UNAVAILABLE', `archive get failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
-  const statHeader = res.headers['x-docker-container-path-stat'] as string | undefined;
-  return { body: res.body as unknown as Readable, statHeader };
+  const res = await authorityStream('container.archiveReadManaged', { containerId, path: absPath });
+  const h=res.headers['x-docker-container-path-stat'];
+  return { body: res.body, statHeader: typeof h === 'string' ? h : undefined };
 }
 
 /** PUT a tar stream into a container directory. */
 export async function putArchive(containerId: string, absDir: string, tarBuffer: Buffer): Promise<void> {
-  const res = await client.request({
-    method: 'PUT',
-    path: `/v1.44/containers/${encodeURIComponent(containerId)}/archive?path=${encodeURIComponent(absDir)}&noOverwriteDirNonDir=1`,
-    headers: { 'content-type': 'application/x-tar' },
-    body: tarBuffer,
-  });
-  const text = await res.body.text();
-  if (res.statusCode >= 400) {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `archive put failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
+  await authorityCall('container.archiveWriteManaged', { containerId, path: absDir, base64: tarBuffer.toString('base64') });
 }
 
 // ---------------------------------------------------------------------------
@@ -154,13 +105,6 @@ export async function putArchive(containerId: string, absDir: string, tarBuffer:
 // sandboxSpec.ts. Enumeration/removal is always scoped by a filter selector so
 // callers cannot delete resources by name/age/image.
 // ---------------------------------------------------------------------------
-
-const API = '/v1.44';
-
-/** URL-encode a Docker `filters` object, e.g. { label: ['k=v'] }. */
-function filtersParam(filters: Record<string, string[]>): string {
-  return `filters=${encodeURIComponent(JSON.stringify(filters))}`;
-}
 
 /** Demultiplex a Docker (Tty:false) stdout/stderr stream: [type,0,0,0,len32be]. */
 function demuxDockerStream(buf: Buffer): { stdout: Buffer; stderr: Buffer } {
@@ -182,45 +126,35 @@ function demuxDockerStream(buf: Buffer): { stdout: Buffer; stderr: Buffer } {
 }
 
 export async function inspectImage(ref: string): Promise<{ Id: string }> {
-  return dockerJson('GET', `${API}/images/${encodeURIComponent(ref)}/json`);
+  return authorityCall('image.inspect', { ref });
 }
 
 export interface VolumeSummary { Name: string; Labels: Record<string, string> | null }
 
 export async function createVolume(name: string, labels: Record<string, string>): Promise<void> {
-  await dockerJson('POST', `${API}/volumes/create`, { Name: name, Driver: 'local', Labels: labels });
+  await authorityCall('volume.createManaged', { name, labels });
 }
 
 export async function removeVolume(name: string, force = true): Promise<void> {
-  const res = await client.request({ method: 'DELETE', path: `${API}/volumes/${encodeURIComponent(name)}?force=${force ? 1 : 0}` });
-  const text = await res.body.text();
-  // 404 (already gone) is acceptable for idempotent cleanup.
-  if (res.statusCode >= 400 && res.statusCode !== 404) {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `volume remove failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
+  void force; await authorityCall('volume.removeManaged', { name });
 }
 
 export async function listVolumesByFilter(filters: Record<string, string[]>): Promise<VolumeSummary[]> {
-  const r = await dockerJson<{ Volumes: VolumeSummary[] | null }>('GET', `${API}/volumes?${filtersParam(filters)}`);
+  const r = await authorityCall<{ Volumes: VolumeSummary[] | null }>('volume.listManaged', { filters });
   return r.Volumes ?? [];
 }
 
 export async function listContainersByFilter(filters: Record<string, string[]>, all = true): Promise<ContainerSummary[]> {
-  return dockerJson<ContainerSummary[]>('GET', `${API}/containers/json?all=${all ? 1 : 0}&${filtersParam(filters)}`);
+  return authorityCall<ContainerSummary[]>('container.listManaged', { filters, all });
 }
 
 /** Create a container from a fully-formed, trusted-policy body. */
 export async function createContainer(name: string, body: Record<string, unknown>): Promise<string> {
-  const r = await dockerJson<{ Id: string }>('POST', `${API}/containers/create?name=${encodeURIComponent(name)}`, body);
+  const r = await authorityCall<{ Id: string }>('container.createManaged', { name, body });
   return r.Id;
 }
 
-export async function startContainer(id: string): Promise<void> {
-  const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/start` });
-  const text = await res.body.text();
-  if (res.statusCode >= 400 && res.statusCode !== 304) {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `container start failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
+export async function startContainer(id: string): Promise<void> { await authorityCall('container.startManaged', { id });
 }
 
 export interface FullContainerInspect {
@@ -239,27 +173,12 @@ export interface FullContainerInspect {
 }
 
 export async function inspectContainerFull(id: string): Promise<FullContainerInspect> {
-  return dockerJson<FullContainerInspect>('GET', `${API}/containers/${encodeURIComponent(id)}/json`);
+  return authorityCall<FullContainerInspect>('container.inspectManaged', { id });
 }
 
-/** Block until the container exits, bounded by timeoutMs (abort the wait, not the container). */
+/** Block until the container exits, bounded by timeoutMs. */
 export async function waitContainer(id: string, opts: { timeoutMs?: number } = {}): Promise<{ statusCode: number | null; timedOut: boolean }> {
-  const ac = new AbortController();
-  const timer = opts.timeoutMs ? setTimeout(() => ac.abort(), opts.timeoutMs) : undefined;
-  try {
-    const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/wait`, signal: ac.signal });
-    const text = await res.body.text();
-    if (res.statusCode >= 400) {
-      throw new BridgeError('DOCKER_UNAVAILABLE', `container wait failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-    }
-    const j = JSON.parse(text) as { StatusCode: number };
-    return { statusCode: Number(j.StatusCode), timedOut: false };
-  } catch (e) {
-    if (ac.signal.aborted) return { statusCode: null, timedOut: true };
-    throw e instanceof BridgeError ? e : new BridgeError('DOCKER_UNAVAILABLE', `container wait error: ${(e as Error).message}`, 502);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  try { const r=await authorityCall<{StatusCode:number}>('container.waitManaged',{id,timeoutMs:opts.timeoutMs}); return {statusCode:Number(r.StatusCode),timedOut:false}; } catch(e) { if(e instanceof BridgeError && e.message.includes('timeout')) return {statusCode:null,timedOut:true}; throw e; }
 }
 
 /**
@@ -267,18 +186,10 @@ export async function waitContainer(id: string, opts: { timeoutMs?: number } = {
  * small frame slack) into memory, never the full unbounded log.
  */
 export async function getContainerLogs(id: string, maxBytes: number): Promise<{ stdout: string; stderr: string; bytes: number; truncated: boolean }> {
-  const res = await client.request({ method: 'GET', path: `${API}/containers/${encodeURIComponent(id)}/logs?stdout=1&stderr=1&timestamps=0` });
-  if (res.statusCode >= 400) {
-    const text = await res.body.text();
-    throw new BridgeError('DOCKER_UNAVAILABLE', `container logs failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
-  let raw = Buffer.alloc(0);
-  let truncated = false;
-  const hardCap = maxBytes + 65536; // frame slack; we still clip to maxBytes below
-  for await (const chunk of res.body as unknown as Readable) {
-    raw = Buffer.concat([raw, chunk as Buffer]);
-    if (raw.length > hardCap) { truncated = true; (res.body as unknown as Readable).destroy(); break; }
-  }
+  const packed=await authorityCall<{base64:string}>('container.logsManaged',{id,maxBytes});
+  let raw = Buffer.from(packed.base64, 'base64');
+  let truncated = raw.length > maxBytes + 65536;
+  if (truncated) raw = raw.subarray(0, maxBytes + 65536);
   const { stdout, stderr } = demuxDockerStream(raw);
   const total = stdout.length + stderr.length;
   if (total > maxBytes) truncated = true;
@@ -295,34 +206,16 @@ export async function getContainerLogs(id: string, maxBytes: number): Promise<{ 
   };
 }
 
-export async function stopContainer(id: string, timeoutSec = 2): Promise<void> {
-  const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/stop?t=${timeoutSec}` });
-  const text = await res.body.text();
-  // 304 (already stopped) / 404 (already gone) are acceptable for idempotent internal cleanup.
-  if (res.statusCode >= 400 && res.statusCode !== 404) {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `container stop failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
+export async function stopContainer(id: string, timeoutSec = 2): Promise<void> { await authorityCall('container.stopManaged',{id,timeoutSec});
 }
 
-export async function restartContainer(id: string, timeoutSec = 10): Promise<void> {
-  const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/restart?t=${timeoutSec}` });
-  const text = await res.body.text();
-  if (res.statusCode >= 400 && res.statusCode !== 304) {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `container restart failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
+export async function restartContainer(id: string, timeoutSec = 10): Promise<void> { await authorityCall('container.restartManaged',{id,timeoutSec});
 }
 
-export async function killContainer(id: string, signal = 'SIGKILL'): Promise<void> {
-  const res = await client.request({ method: 'POST', path: `${API}/containers/${encodeURIComponent(id)}/kill?signal=${encodeURIComponent(signal)}` });
-  await res.body.dump();
+export async function killContainer(id: string, signal = 'SIGKILL'): Promise<void> { await authorityCall('container.killManaged',{id,signal});
 }
 
-export async function removeContainer(id: string, force = true): Promise<void> {
-  const res = await client.request({ method: 'DELETE', path: `${API}/containers/${encodeURIComponent(id)}?force=${force ? 1 : 0}&v=1` });
-  const text = await res.body.text();
-  if (res.statusCode >= 400 && res.statusCode !== 404) {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `container remove failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
+export async function removeContainer(id: string, force = true): Promise<void> { void force; await authorityCall('container.removeManaged',{id});
 }
 
 // ---------------------------------------------------------------------------
@@ -343,50 +236,19 @@ export interface NetworkSummary {
 
 /** Create a user-defined network. `internal:true` gives NO external route. */
 export async function createNetwork(name: string, opts: { internal: boolean; labels: Record<string, string> }): Promise<string> {
-  const r = await dockerJson<{ Id: string }>('POST', `${API}/networks/create`, {
-    Name: name,
-    Driver: 'bridge',
-    Internal: opts.internal,
-    CheckDuplicate: true,
-    Labels: opts.labels,
-  });
-  return r.Id;
+  const r=await authorityCall<{Id:string}>('network.createManaged',{name,internal:opts.internal,labels:opts.labels}); return r.Id;
 }
 
-export async function removeNetwork(idOrName: string): Promise<void> {
-  const res = await client.request({ method: 'DELETE', path: `${API}/networks/${encodeURIComponent(idOrName)}` });
-  const text = await res.body.text();
-  if (res.statusCode >= 400 && res.statusCode !== 404) {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `network remove failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
+export async function removeNetwork(idOrName: string): Promise<void> { await authorityCall('network.removeManaged',{id:idOrName});
 }
 
 export async function listNetworksByFilter(filters: Record<string, string[]>): Promise<NetworkSummary[]> {
-  return dockerJson<NetworkSummary[]>('GET', `${API}/networks?${filtersParam(filters)}`);
+  return authorityCall<NetworkSummary[]>('network.listManaged', { filters });
 }
 
 /** Attach an existing container to a network, optionally with DNS aliases. */
-export async function connectNetwork(networkIdOrName: string, containerId: string, aliases?: string[]): Promise<void> {
-  const body: Record<string, unknown> = { Container: containerId };
-  if (aliases?.length) body.EndpointConfig = { Aliases: aliases };
-  const res = await client.request({
-    method: 'POST',
-    path: `${API}/networks/${encodeURIComponent(networkIdOrName)}/connect`,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const text = await res.body.text();
-  if (res.statusCode >= 400) {
-    throw new BridgeError('DOCKER_UNAVAILABLE', `network connect failed: ${res.statusCode} ${text.slice(0, 200)}`, 502);
-  }
+export async function connectNetwork(networkIdOrName: string, containerId: string, aliases?: string[]): Promise<void> { await authorityCall('network.connectManaged',{network:networkIdOrName,container:containerId,aliases:aliases??[]});
 }
 
-export async function ping(): Promise<boolean> {
-  try {
-    const res = await client.request({ method: 'GET', path: '/_ping' });
-    await res.body.dump();
-    return res.statusCode === 200;
-  } catch {
-    return false;
-  }
+export async function ping(): Promise<boolean> { try { return (await authorityCall<{ok:boolean}>('ping')).ok; } catch { return false; }
 }

@@ -57,3 +57,19 @@ Validation at this checkpoint:
 - diff-check PASS.
 
 This checkpoint does **not** close SH-02. Executor still has the raw socket until the broker transport, operation handlers and Compose cutover are implemented and widened validation passes.
+
+## Implementation checkpoint 2 — source containment cutover
+
+The source cutover is now implemented. `docker-authority` is the sole production Compose consumer of the raw Docker socket. Executor no longer receives the socket or Docker group and its existing Docker call-site contract is transported through authenticated named broker operations. The broker independently revalidates managed ownership before destructive resource operations, restricts target-container authority to trusted manual registrations or explicit discovery opt-in, derives host-bind roots from mounted trusted configuration rather than request payload, bounds logs/archive inputs, and exposes no generic Docker method/path forwarding primitive.
+
+Readiness semantics moved accordingly: executor readiness now proves authenticated broker reachability; the broker's own readiness proves Docker daemon reachability. The broker remains unpublished and internal-only and receives no job/data store or provider secret.
+
+Source validation after cutover:
+
+- focused SH-02/readiness/surface suite: 29/29 PASS;
+- complete repository unit suite: 110 files / 2784 tests PASS;
+- typecheck PASS;
+- build PASS;
+- diff-check PASS.
+
+A worker-side `docker compose config` runtime/static expansion attempt could not execute because the governed `projects-work` worker image has no Docker CLI (`docker: not found`). This is classified `BLOCKED_ENVIRONMENT` for live/CLI Compose proof only; it is not converted into fabricated runtime evidence. YAML/source acceptance remains covered by the static Compose regression tests. Live runtime proof remains a separate owner-host qualification gate.

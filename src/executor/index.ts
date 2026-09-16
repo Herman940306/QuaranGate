@@ -148,8 +148,7 @@ app.get('/healthz', (_req, res) => {
 
 app.get('/readyz', handle(async () => {
   // H1-2: Full authority readiness — socket type + Docker API ping (bounded).
-  const SOCK = process.env.DOCKER_SOCK ?? '/var/run/docker.sock';
-  const result = await checkReadiness(SOCK);
+  const result = await checkReadiness();
   if (!result.ready) {
     // 503 with a diagnostic code — never leaks the socket path or secrets.
     throw new BridgeError('DOCKER_UNAVAILABLE', `${result.code}: ${result.detail}`, 503);
@@ -161,8 +160,7 @@ app.get('/readyz', handle(async () => {
 // U1: bounded, secret-free runtime metadata for the authenticated Control Center.
 // This private executor route exposes no Docker identifiers/options and performs no mutation.
 app.get('/control-center/runtime', handle(async () => {
-  const SOCK = process.env.DOCKER_SOCK ?? '/var/run/docker.sock';
-  const readiness = await checkReadiness(SOCK);
+  const readiness = await checkReadiness();
   return {
     buildRevision: process.env.QUARANGATE_BUILD_REVISION ?? 'unknown',
     dockerReachable: readiness.ready,

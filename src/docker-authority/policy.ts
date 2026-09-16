@@ -6,7 +6,7 @@ const CURRENT_NS = 'io.quarangate';
 const LEGACY_NS = ['io.mcp-ide-bridge', 'io.mcp-bridge'] as const;
 const ACCEPTED_NS = [CURRENT_NS, ...LEGACY_NS] as const;
 const ALLOWED_RESOURCES = new Set([
-  'runner','stager','workspace','evidence','applier','ollama-read-helper',
+  'runner','stager','workspace','evidence','applier','ollama-read-helper','before-capture','post-capture','git-helper','net','provider-session','secret',
   'home','control','proxy','evidence-rm','evidence-io','evidence-read','github-git-helper',
 ]);
 
@@ -14,14 +14,14 @@ export type DockerAuthorityOperation =
   | 'ping' | 'image.inspect'
   | 'container.listManaged' | 'container.inspectManaged' | 'container.createManaged'
   | 'container.startManaged' | 'container.waitManaged' | 'container.logsManaged'
-  | 'container.stopManaged' | 'container.killManaged' | 'container.removeManaged'
+  | 'container.stopManaged' | 'container.restartManaged' | 'container.killManaged' | 'container.removeManaged'
   | 'container.execManaged' | 'container.archiveReadManaged' | 'container.archiveWriteManaged'
   | 'volume.createManaged' | 'volume.listManaged' | 'volume.removeManaged'
   | 'network.createManaged' | 'network.listManaged' | 'network.connectManaged' | 'network.removeManaged';
 
 export const DOCKER_AUTHORITY_OPERATIONS: readonly DockerAuthorityOperation[] = Object.freeze([
   'ping','image.inspect','container.listManaged','container.inspectManaged','container.createManaged',
-  'container.startManaged','container.waitManaged','container.logsManaged','container.stopManaged',
+  'container.startManaged','container.waitManaged','container.logsManaged','container.stopManaged','container.restartManaged',
   'container.killManaged','container.removeManaged','container.execManaged','container.archiveReadManaged',
   'container.archiveWriteManaged','volume.createManaged','volume.listManaged','volume.removeManaged',
   'network.createManaged','network.listManaged','network.connectManaged','network.removeManaged',
@@ -36,6 +36,11 @@ function strings(v: unknown): string[] { return Array.isArray(v) && v.every(x =>
 
 export function managedIdentity(labels: unknown): { resource: string; job?: string } {
   const l = record(labels);
+  if (l['io.quarangate.github.managed'] !== undefined || l['io.quarangate.github.resource'] !== undefined) {
+    if (l['io.quarangate.github.managed'] !== 'true' || !['head-check','push-helper','push-secret'].includes(String(l['io.quarangate.github.resource'] ?? ''))) deny('invalid QuaranGate GitHub ownership labels');
+    const op=l['io.quarangate.github.operation']; if(typeof op!=='string'||!/^gh_[a-f0-9]{24}$/.test(op)) deny('invalid QuaranGate GitHub operation label');
+    return { resource: String(l['io.quarangate.github.resource']) };
+  }
   const found = ACCEPTED_NS.map(ns => ({ ns, managed: l[`${ns}.managed`], resource: l[`${ns}.resource`], job: l[`${ns}.job`] }))
     .filter(x => x.managed !== undefined || x.resource !== undefined || x.job !== undefined);
   if (found.length !== 1) deny('exactly one accepted QuaranGate ownership namespace is required');
@@ -68,10 +73,10 @@ export function validateManagedContainerCreate(bodyValue: unknown, trustedHostPa
   }
 }
 
-export function validateAuthorityRequest(value: unknown): { op: DockerAuthorityOperation; payload: Record<string, unknown> } {
+export function validateAuthorityRequest(value: unknown, trustedHostPaths: readonly string[] = []): { op: DockerAuthorityOperation; payload: Record<string, unknown> } {
   const req = record(value);
   if (typeof req.op !== 'string' || !DOCKER_AUTHORITY_OPERATIONS.includes(req.op as DockerAuthorityOperation)) deny('unsupported Docker authority operation');
   const payload = record(req.payload ?? {});
-  if (req.op === 'container.createManaged') validateManagedContainerCreate(payload.body, strings(payload.trustedHostPaths));
+  if (req.op === 'container.createManaged') validateManagedContainerCreate(payload.body, trustedHostPaths);
   return { op: req.op as DockerAuthorityOperation, payload };
 }

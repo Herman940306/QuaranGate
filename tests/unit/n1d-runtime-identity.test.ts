@@ -66,7 +66,8 @@ describe('N1D Compose runtime identity', () => {
   it('never mounts the docker socket into the gateway', () => {
     const mounts = compose.services.gateway.volumes ?? [];
     expect(mounts.some((m) => m.includes('docker.sock'))).toBe(false);
-    expect((compose.services.executor.volumes ?? []).some((m) => m.includes('docker.sock'))).toBe(true);
+    expect((compose.services.executor.volumes ?? []).some((m) => m.includes('docker.sock'))).toBe(false);
+    expect((compose.services['docker-authority'].volumes ?? []).filter((m: string) => m.includes('docker.sock'))).toHaveLength(1);
   });
 
   it('delivers the Kiro secret to the executor only, never the gateway', () => {

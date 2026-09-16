@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateAuthorityRequest, validateManagedContainerCreate } from '../../src/docker-authority/policy.js';
+import { managedIdentity, validateAuthorityRequest, validateManagedContainerCreate } from '../../src/docker-authority/policy.js';
 
 const labels = { 'io.quarangate.managed': 'true', 'io.quarangate.resource': 'runner', 'io.quarangate.job': 'job-1' };
 const safe = { Labels: labels, HostConfig: { Privileged:false, CapAdd:[], CapDrop:['ALL'], SecurityOpt:['no-new-privileges:true'], NetworkMode:'none', Binds:[], Devices:[] } };
@@ -18,4 +18,9 @@ describe('SH-02 docker authority policy', () => {
   it('rejects generic/raw daemon operations', () => expect(() => validateAuthorityRequest({op:'raw',payload:{method:'DELETE',path:'/containers/x'}})).toThrow());
   it('rejects daemon administration', () => expect(() => validateAuthorityRequest({op:'system.prune',payload:{}})).toThrow());
   it('accepts named operations only', () => expect(validateAuthorityRequest({op:'ping',payload:{}}).op).toBe('ping'));
+});
+
+describe('current managed ownership families',()=>{
+  it.each(['before-capture','post-capture','git-helper','net','provider-session','secret'])('accepts current general resource %s',(resource)=>{expect(managedIdentity({'io.quarangate.managed':'true','io.quarangate.resource':resource,'io.quarangate.job':'job_x'}).resource).toBe(resource)});
+  it('accepts bounded GitHub helper ownership and rejects unknown GitHub resource',()=>{expect(managedIdentity({'io.quarangate.github.managed':'true','io.quarangate.github.resource':'push-helper','io.quarangate.github.operation':'gh_0123456789abcdef01234567'}).resource).toBe('push-helper');expect(()=>managedIdentity({'io.quarangate.github.managed':'true','io.quarangate.github.resource':'evil','io.quarangate.github.operation':'gh_0123456789abcdef01234567'})).toThrow();});
 });
