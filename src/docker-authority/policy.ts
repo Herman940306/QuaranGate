@@ -37,6 +37,7 @@ function strings(v: unknown): string[] { return Array.isArray(v) && v.every(x =>
 export function managedIdentity(labels: unknown): { resource: string; job?: string } {
   const l = record(labels);
   if (l['io.quarangate.github.managed'] !== undefined || l['io.quarangate.github.resource'] !== undefined) {
+    if (ACCEPTED_NS.some(ns => l[`${ns}.managed`] !== undefined || l[`${ns}.resource`] !== undefined || l[`${ns}.job`] !== undefined)) deny('contradictory QuaranGate ownership namespaces');
     if (l['io.quarangate.github.managed'] !== 'true' || !['head-check','push-helper','push-secret'].includes(String(l['io.quarangate.github.resource'] ?? ''))) deny('invalid QuaranGate GitHub ownership labels');
     const op=l['io.quarangate.github.operation']; if(typeof op!=='string'||!/^gh_[a-f0-9]{24}$/.test(op)) deny('invalid QuaranGate GitHub operation label');
     return { resource: String(l['io.quarangate.github.resource']) };
