@@ -2,7 +2,7 @@
 
 ## Status
 
-`IN_PROGRESS / CURRENT-LINE CANDIDATE`
+`CLOSED / SOURCE_ACCEPTED / OWNER_AUTHORIZED_STRICT_SELF_AUDIT`
 
 Base canonical: `51c94b25ce69de7eb2dbd48802444645cf8fe888` on
 `integrate/quarangate-forward`.
