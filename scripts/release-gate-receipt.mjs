@@ -115,6 +115,17 @@ function packageVersion(name) {
   return value.version;
 }
 
+export function integrationPrerequisites({ env = process.env, exists = existsSync, probeDocker = () => run('docker', ['version']) } = {}) {
+  const missing = [];
+  const keysEnv = env.KEYS_ENV;
+  if (!keysEnv) missing.push('KEYS_ENV_NOT_CONFIGURED');
+  else if (!exists(keysEnv)) missing.push('KEYS_ENV_NOT_FOUND');
+  const docker = probeDocker();
+  if (docker?.errorCode === 'ENOENT') missing.push('DOCKER_CLI_UNAVAILABLE');
+  else if (docker?.errorCode || docker?.status !== 0) missing.push('DOCKER_RUNTIME_UNAVAILABLE');
+  return missing;
+}
+
 export function gateDefinition(gate) {
   if (!SUPPORTED_GATES.includes(gate)) throw new Error(`unsupported fixed release gate: ${gate}`);
   if (gate === 'e2e') return { unavailable: true, reason: 'CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED' };
@@ -138,6 +149,7 @@ export function unavailableReceipt(gate, source, definition) {
     status: 'UNAVAILABLE',
     source,
     failureCode: definition.reason,
+    ...(Array.isArray(definition.missingPrerequisites) ? { missingPrerequisites: [...definition.missingPrerequisites].sort() } : {}),
   };
 }
 
@@ -155,7 +167,13 @@ export function main(argv = process.argv.slice(2)) {
   const source = validateSourceBindingReceipt(readJson(sourceBindingPath, 'source-binding receipt'));
   const before = currentSource();
   if (!sameSource(source, before)) throw new Error('source-binding receipt does not match current exact Git source');
-  const definition = gateDefinition(gate);
+  let definition = gateDefinition(gate);
+  if (gate === 'integration') {
+    const missingPrerequisites = integrationPrerequisites();
+    if (missingPrerequisites.length) {
+      definition = { ...definition, unavailable: true, reason: 'INTEGRATION_PREREQUISITES_UNAVAILABLE', missingPrerequisites };
+    }
+  }
   if (definition.unavailable) {
     writeReceipt(output, unavailableReceipt(gate, source, definition));
     return 4;

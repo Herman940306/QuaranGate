@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   executionEvidence,
   gateDefinition,
+  integrationPrerequisites,
   parseVitestReport,
   pathIsWithinRoot,
   unavailableReceipt,
@@ -28,6 +29,39 @@ describe('SH-05 fixed release gate receipt executor', () => {
     expect(definition).toEqual({ unavailable: true, reason: 'CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED' });
     expect(unavailableReceipt('e2e', source, definition)).toEqual(expect.objectContaining({
       gate: 'e2e', status: 'UNAVAILABLE', source, failureCode: 'CANONICAL_E2E_ENTRYPOINT_NOT_INTEGRATED',
+    }));
+  });
+
+  it('classifies missing full-integration prerequisites without exposing secret values', () => {
+    const absent = integrationPrerequisites({
+      env: {},
+      exists: () => false,
+      probeDocker: () => ({ status: null, errorCode: 'ENOENT' }),
+    });
+    expect(absent).toEqual(['KEYS_ENV_NOT_CONFIGURED', 'DOCKER_CLI_UNAVAILABLE']);
+
+    const runtimeDown = integrationPrerequisites({
+      env: { KEYS_ENV: '/secret/path/keys.env' },
+      exists: () => true,
+      probeDocker: () => ({ status: 1, errorCode: null }),
+    });
+    expect(runtimeDown).toEqual(['DOCKER_RUNTIME_UNAVAILABLE']);
+    expect(JSON.stringify(runtimeDown)).not.toContain('/secret/path/keys.env');
+
+    const ready = integrationPrerequisites({
+      env: { KEYS_ENV: '/keys.env' },
+      exists: () => true,
+      probeDocker: () => ({ status: 0, errorCode: null }),
+    });
+    expect(ready).toEqual([]);
+
+    const receipt = unavailableReceipt('integration', source, {
+      reason: 'INTEGRATION_PREREQUISITES_UNAVAILABLE',
+      missingPrerequisites: absent,
+    });
+    expect(receipt).toEqual(expect.objectContaining({
+      status: 'UNAVAILABLE', failureCode: 'INTEGRATION_PREREQUISITES_UNAVAILABLE',
+      missingPrerequisites: ['DOCKER_CLI_UNAVAILABLE', 'KEYS_ENV_NOT_CONFIGURED'],
     }));
   });
 
