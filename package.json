@@ -28,7 +28,8 @@
     "release:sbom": "node scripts/release-sbom.mjs",
     "security:toolchain": "node scripts/security-toolchain.mjs",
     "release:policy": "node scripts/release-security-policy.mjs",
-    "release:evidence-bundle": "node scripts/release-evidence-bundle.mjs"
+    "release:evidence-bundle": "node scripts/release-evidence-bundle.mjs",
+    "release:source-binding": "node scripts/release-source-binding.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
