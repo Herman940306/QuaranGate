@@ -1,5 +1,5 @@
 /** Structured JSON audit log with credential redaction and bounded in-memory observability. */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { redact } from "../shared/redact.js";
 
 export interface AuditEntry {
@@ -23,6 +23,36 @@ export interface AuditActivityQuery {
 const MAX_ACTIVITY = 2048;
 const MAX_RETENTION_MS = 24 * 60 * 60 * 1000;
 const activity: AuditEntry[] = [];
+let auditStreamId = randomUUID();
+let auditSequence = 0;
+let auditHeadHash: string | null = null;
+
+interface AuditLogRecord {
+  auditVersion: 1;
+  streamId: string;
+  sequence: number;
+  previousHash: string | null;
+  ts: string;
+  reqId: string;
+  principal: string | null;
+  tool: string;
+  target: string | null;
+  decision: "allow" | "deny";
+  code: string | null;
+  durationMs: number | null;
+  detail: string | null;
+  entryHash: string;
+}
+
+function canonicalScalars(input: Record<string, unknown>): string {
+  return JSON.stringify(Object.fromEntries(
+    Object.entries(input).sort(([left], [right]) => left.localeCompare(right)),
+  ));
+}
+
+function hashAuditRecord(input: Omit<AuditLogRecord, "entryHash">): string {
+  return createHash("sha256").update(Buffer.from(canonicalScalars(input as unknown as Record<string, unknown>), "utf8")).digest("hex");
+}
 
 export function newReqId(): string {
   return randomUUID();
@@ -39,7 +69,40 @@ export function audit(entry: Omit<AuditEntry, "ts">): void {
   if (line.detail) line.detail = redact(line.detail).slice(0, 500);
   activity.push(line);
   prune();
-  process.stdout.write(JSON.stringify(line) + "\n");
+
+  auditSequence += 1;
+  const bound: Omit<AuditLogRecord, "entryHash"> = {
+    auditVersion: 1,
+    streamId: auditStreamId,
+    sequence: auditSequence,
+    previousHash: auditHeadHash,
+    ts: line.ts,
+    reqId: line.reqId,
+    principal: line.principal,
+    tool: line.tool,
+    target: line.target ?? null,
+    decision: line.decision,
+    code: line.code ?? null,
+    durationMs: line.durationMs ?? null,
+    detail: line.detail ?? null,
+  };
+  const entryHash = hashAuditRecord(bound);
+  auditHeadHash = entryHash;
+  process.stdout.write(JSON.stringify({ ...bound, entryHash } satisfies AuditLogRecord) + "\n");
+}
+
+export function auditIntegrityState(): {
+  scheme: "SHA256_CHAIN_V1";
+  streamId: string;
+  sequence: number;
+  headHash: string | null;
+} {
+  return {
+    scheme: "SHA256_CHAIN_V1",
+    streamId: auditStreamId,
+    sequence: auditSequence,
+    headHash: auditHeadHash,
+  };
 }
 
 /**
@@ -99,4 +162,7 @@ export function auditActivityStats(principal: string, sinceMs = 60 * 60 * 1000):
 /** Test-only reset; not reachable through runtime routes/tools. */
 export function resetAuditActivityForTests(): void {
   activity.length = 0;
+  auditStreamId = randomUUID();
+  auditSequence = 0;
+  auditHeadHash = null;
 }

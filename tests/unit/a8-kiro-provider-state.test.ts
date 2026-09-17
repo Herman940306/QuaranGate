@@ -93,6 +93,18 @@ describe('A8 R1 Kiro provider state persistence', () => {
     expect(docker.removeVolume).toHaveBeenCalledWith(stateVolume, true);
   });
 
+  it('ambiguous provider-state invalidation fails closed and retains the handle when removal is unverified', async () => {
+    const backend = new KiroBackend(job({
+      providerSessionId: 'provider-session', providerStateVolume: 'state-volume',
+    }), opts());
+    docker.removeVolume.mockRejectedValueOnce(new Error('sensitive daemon detail'));
+
+    await expect(backend.discardSessionState()).rejects.toThrow();
+    expect(docker.removeVolume).toHaveBeenCalledWith('state-volume', true);
+    expect((backend as any).providerStateVolume).toBe('state-volume');
+    expect((backend as any).providerStateHandedOff).toBe(false);
+  });
+
   it('database state ref with missing Docker volume fails closed', async () => {
     docker.listVolumesByFilter.mockResolvedValue([]);
     const backend = new KiroBackend(job({

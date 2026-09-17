@@ -1,6 +1,6 @@
 # QuaranGate Remote Owner Workstation Orchestration
 
-Status: **DEPLOYED / SOURCE PROMOTED — WINDOWS AUTOSTART REMEDIATION IN PROGRESS; FRESH-CLIENT 27-TOOL ACCEPTANCE PENDING**
+Status: **OPERATING-MODEL / HISTORICAL DEPLOYMENT RECORD** — current source, deployment and live-qualification truth belongs to the exact project-control/audit receipt for the candidate being operated; do not treat phase-era SHAs or pending counts in this document as moving release status.
 
 This document records the owner-approved remote workstation operating model: when the home workstation is powered on and its normal Windows/WSL/Docker session is available, the owner may continue development from an authenticated remote QuaranGate client without giving ordinary work targets raw Docker administration.
 
@@ -10,7 +10,7 @@ This document records the owner-approved remote workstation operating model: whe
 - preserve normal filesystem/Git permissions under the ordinary uid/gid rather than privileged bypass;
 - permit remote orchestration of already-registered project containers;
 - keep the Docker socket out of project work targets;
-- keep Docker authority private to the QuaranGate executor;
+- keep raw Docker authority private to the QuaranGate Docker-authority broker; the executor has no raw Docker socket;
 - allow bounded container inspect/log/lifecycle operations by logical target id only;
 - preserve loopback-only gateway publication with approved HTTPS ingress in front;
 - recover the local stack automatically after the normal Windows owner logon/Docker startup path;
@@ -25,8 +25,8 @@ remote owner principal
 authenticated QuaranGate gateway
        |
        v
-private executor ------------------> Docker socket
-       |                               (executor only)
+private executor --named/authenticated ops--> Docker-authority broker --> Docker socket
+       |                                      (broker only)
        |
        +--> projects-work target --> /home/<owner>/projects RW
        |                         X--> no Docker socket
@@ -129,7 +129,7 @@ Live gates after deployment:
 7. principal without `targets:control` is denied lifecycle mutation;
 8. discovery-only target control is denied;
 9. gateway remains loopback-only;
-10. executor remains unpublished and executor-only Docker socket ownership is preserved;
+10. executor and Docker-authority broker remain unpublished, executor has no raw Docker socket, and broker-only socket ownership is preserved;
 11. remote HTTPS ChatGPT path remains functional after deployment;
 12. no arbitrary container creation/mount/privileged-control public tool exists.
 

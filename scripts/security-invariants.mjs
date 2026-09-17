@@ -42,6 +42,14 @@ for (const p of composeFiles) {
       if (Array.isArray(s.ports) && s.ports.length) fail('BROKER_NOT_PUBLISHED', p, 'docker-authority publishes host ports');
     }
   }
+  if (p === 'compose.yaml') {
+    const brokerToken = doc?.services?.['docker-authority']?.environment?.DOCKER_AUTHORITY_TOKEN;
+    const executorToken = doc?.services?.executor?.environment?.DOCKER_AUTHORITY_TOKEN;
+    const expected = '${DOCKER_AUTHORITY_TOKEN:?set distinct DOCKER_AUTHORITY_TOKEN in .env}';
+    if (brokerToken !== expected || executorToken !== expected || /INTERNAL_TOKEN/u.test(String(brokerToken)) || /INTERNAL_TOKEN/u.test(String(executorToken))) {
+      fail('DISTINCT_DOCKER_AUTHORITY_CREDENTIAL', p, 'Docker-authority credential must be independently provisioned and never reuse INTERNAL_TOKEN');
+    }
+  }
 }
 
 for (const p of dockerfiles) {
@@ -101,6 +109,6 @@ for (const p of files.filter((p) => /^(?:src|runner)\/.*\.(?:ts|js|mjs|cjs)$/.te
 }
 
 failures.sort((a,b) => `${a.rule}\0${a.path}\0${a.detail}`.localeCompare(`${b.rule}\0${b.path}\0${b.detail}`));
-const result = { ok: failures.length === 0, rulesChecked: 15, composeFilesChecked: composeFiles.length, dockerfilesChecked: dockerfiles.length, failures };
+const result = { ok: failures.length === 0, rulesChecked: 16, composeFilesChecked: composeFiles.length, dockerfilesChecked: dockerfiles.length, failures };
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 if (failures.length) process.exit(1);

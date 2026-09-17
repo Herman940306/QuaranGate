@@ -10,9 +10,11 @@ describe('SH-02 broker client boundary', () => {
     expect(raw).not.toContain('/var/run/docker.sock');
     expect(raw).not.toContain('socketPath');
   });
-  it('authenticates every operation and fails if token is absent', () => {
+  it('authenticates every operation with a distinct Docker-authority credential and fails closed on token reuse', () => {
     const raw = readFileSync(join(root, 'src/docker-authority/client.ts'), 'utf8');
     expect(raw).toContain("'x-internal-token': TOKEN");
-    expect(raw).toContain('if (!TOKEN)');
+    expect(raw).toContain("process.env.DOCKER_AUTHORITY_TOKEN ?? ''");
+    expect(raw).not.toContain('process.env.DOCKER_AUTHORITY_TOKEN ?? process.env.INTERNAL_TOKEN');
+    expect(raw).toContain('TOKEN === INTERNAL_TOKEN');
   });
 });

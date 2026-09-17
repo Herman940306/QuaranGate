@@ -75,7 +75,7 @@ services:
     command: ["node", "dist/docker-authority/server.js"]
     environment:
       DOCKER_AUTHORITY_PORT: "8991"
-      DOCKER_AUTHORITY_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
+      DOCKER_AUTHORITY_TOKEN: "${DOCKER_AUTHORITY_TOKEN:?set distinct DOCKER_AUTHORITY_TOKEN in .env}"
       DOCKER_SOCK: "/var/run/docker.sock"
       BRIDGE_CONFIG: "/config/bridge.yaml"
       AGENTS_CONFIG: "/config/agents.yaml"
@@ -117,7 +117,7 @@ services:
       INTERNAL_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
       BRIDGE_CONFIG: "/config/bridge.yaml"
       DOCKER_AUTHORITY_URL: "http://docker-authority:8991"
-      DOCKER_AUTHORITY_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
+      DOCKER_AUTHORITY_TOKEN: "${DOCKER_AUTHORITY_TOKEN:?set distinct DOCKER_AUTHORITY_TOKEN in .env}"
       # Agent Control Plane (A2): optional trusted config + durable job store.
       AGENTS_CONFIG: "/config/agents.yaml"
       JOBS_DB: "/jobs/agents.db"

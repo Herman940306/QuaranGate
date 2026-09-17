@@ -19,7 +19,7 @@ The approved North Star adds a fourth, separately authorized surface:
 - **IDE Session Control Plane** — governed communication with an enrolled IDE agent surface bound to an exact IDE instance and workspace/worktree. This remains a design/qualification program, not current production capability.
 
 > [!WARNING]
-> The private `executor` service holds `/var/run/docker.sock`. Docker socket access is effectively host-level authority. QuaranGate deliberately keeps that authority away from the network-facing gateway, but it remains the system's highest-impact trust boundary. Read [Security](docs/security/SECURITY.md) before exposing QuaranGate beyond loopback.
+> Raw `/var/run/docker.sock` authority is confined to the unpublished private `docker-authority` broker. The gateway and executor do not receive the socket. The executor can request only authenticated named broker operations with a credential that is distinct from the gateway↔executor token. Docker daemon authority remains the system's highest-impact trust boundary. Read [Security](docs/security/SECURITY.md) before exposing QuaranGate beyond loopback.
 
 ---
 
@@ -64,21 +64,9 @@ QuaranGate deliberately separates *implemented*, *qualified* and *planned*. Thes
 
 This distinction matters. A successful spike is not a production adapter. A qualified model is not the same thing as a deployed backend. A completed agent job is not the same thing as an applied source change.
 
-Current accepted local `main` source baseline:
+Do not infer the current accepted source or deployed runtime from a historical SHA in this README. Establish source identity mechanically and use the matching immutable audit/control receipt for that exact revision. Source acceptance and deployment are separate gates.
 
-```text
-09672d5150075741bb7fdc48f5e9cce1eba07cca
-fix(remote): verify persisted runtime selection
-```
-
-Current deployed GitHub/MCP closeout candidate:
-
-```text
-aef07f2c46ca53a55e1ee662f3b8cddc73f6857a
-chore(mcp): harden target toolchain
-```
-
-The deployed candidate passed typecheck, **50/50 unit test files** and **1878/1878 unit tests**, plus **16/16 focused GitHub tests**. The hardened MCP target images are active and retain the read-only/no-Docker-socket boundaries. `github_checks` now succeeds using Commit statuses only and returns an empty compatibility `checkRuns` collection. GitHub live closeout is **not yet complete**: the owner-approved authority model is GitHub App **Selected repositories**, so QuaranGate must discover only repositories granted to each installation/account and must not require or recommend broadening the App to All repositories merely for discovery. Source/runtime promotion remains a separate governed gate.
+At the SH-15 preparation checkpoint, project control records the deployed product as exact P4 `a7a61c1ef1949180dd544f557999ebc328800321`; the forward source line is newer and is **not** implied to be deployed. Later acceptance receipts supersede this checkpoint statement. The owner-approved GitHub authority model supports both `all` and **Selected repositories** installations and must not broaden repository scope merely for discovery.
 
 ---
 
@@ -222,7 +210,7 @@ This is why QuaranGate is more than a remote shell wrapper. The useful capabilit
 
 A component receives only the authority needed for its role.
 
-The gateway can authenticate and authorize clients, but has no Docker socket. The executor owns Docker authority but is private and unpublished. Agent runners receive neither the Docker socket nor arbitrary host mounts.
+The gateway can authenticate and authorize clients, but has no Docker socket. The executor is private and unpublished and reaches the separate Docker-authority broker only through named authenticated operations. Agent runners receive neither the Docker socket nor arbitrary host mounts.
 
 **Why:** compromise of one trust zone should not automatically collapse every other boundary.
 

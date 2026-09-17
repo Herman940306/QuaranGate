@@ -215,7 +215,7 @@ process:read
 
 Target discovery does not grant target authority.
 
-`targets:control` is deliberately separate from `targets:read`. `targets:logs` is also separate because container logs may contain operationally sensitive data. It permits only bounded lifecycle actions (`start`, `stop`, `restart`) against an already existing **manually configured** target. The public request cannot supply a Docker container id/name, image, host mount, network, port, privilege flag, or arbitrary Docker option. Discovery-only targets are not lifecycle-controllable. Raw Docker socket access remains executor-only.
+`targets:control` is deliberately separate from `targets:read`. `targets:logs` is also separate because container logs may contain operationally sensitive data. It permits only bounded lifecycle actions (`start`, `stop`, `restart`) against an already existing **manually configured** target. The public request cannot supply a Docker container id/name, image, host mount, network, port, privilege flag, or arbitrary Docker option. Discovery-only targets are not lifecycle-controllable. Raw Docker socket access is confined to the private Docker-authority broker; the executor has no raw socket and can request only named broker operations.
 
 ## Agent Control Plane
 
@@ -478,9 +478,11 @@ Secrets should not be:
 
 ## Backend separation
 
-A Kiro worker should receive only the credential it needs for Kiro. A future Copilot worker should receive only its own credential.
+A Kiro worker receives only the credential it needs for Kiro. A Copilot worker receives only its own credential. Provider credential files are revalidated at use time; Kiro and Copilot credential reads refuse symlinks, unsafe modes and unsafe file replacement, and job-scoped secret-volume revocation fails closed if Docker cannot prove cleanup.
 
 Normal jobs should not receive every provider credential simply because QuaranGate knows how to use several backends.
+
+The internal control plane is also credential-separated. `INTERNAL_TOKEN` authenticates gateway↔executor traffic. `DOCKER_AUTHORITY_TOKEN` authenticates executor↔Docker-authority traffic and MUST be independently generated; the Docker-authority client refuses reuse of `INTERNAL_TOKEN`. A compromise of either value still requires incident rotation, but ordinary internal-service credential exposure must not automatically supply the raw-Docker broker credential.
 
 ## Prompt handling
 
@@ -553,6 +555,10 @@ duration
 ```
 
 Sensitive prompts, tokens, filesystem bodies and provider responses should not be blindly copied into the audit stream.
+
+Gateway stdout audit records use `SHA256_CHAIN_V1`: every emitted record has a per-process stream id, monotonic sequence, previous-record hash and SHA-256 entry hash over the normalized record. This makes record mutation, deletion or reordering detectable **only when the stream/head is captured by an external trusted collector**. The chain is not a signature, does not authenticate a compromised gateway, does not survive process restart as one continuous chain, and does not make stdout durable by itself. Enterprise operation therefore requires the stdout stream and restart boundaries to be retained in an append-only/immutable external sink with access control and retention appropriate to the organization.
+
+The Control Center activity view is intentionally a bounded in-memory operational window (maximum 2048 entries / 24 hours); it exposes the current stdout chain head for correlation but is not the enterprise system of record.
 
 ## Job evidence lifecycle
 
@@ -644,7 +650,10 @@ The following are architecture-level stop conditions, not ordinary bugs to work 
 
 ```text
 gateway receives docker.sock
-executor becomes publicly published
+executor receives docker.sock
+any QuaranGate service other than docker-authority receives docker.sock
+executor or docker-authority becomes publicly published
+DOCKER_AUTHORITY_TOKEN is missing, falls back to, or equals INTERNAL_TOKEN
 runner receives docker.sock
 runner receives arbitrary host bind
 caller can choose host project path
@@ -653,6 +662,7 @@ missing agent grants become allow
 agent completion automatically applies live changes
 agent_apply accepts arbitrary caller patch text
 stale base-state check can be bypassed
+secret/provider-state cleanup failure is reported as successful cleanup
 uncertain rollback is reported as success
 credentials appear in committed config/result/audit evidence
 local inference is claimed to prove entire IDE/build air-gap

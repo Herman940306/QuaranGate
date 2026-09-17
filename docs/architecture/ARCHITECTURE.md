@@ -107,7 +107,7 @@ The gateway may be reachable through operator-approved ingress. It owns protocol
 
 ## Executor zone
 
-The executor is the privileged control component. It is private and holds Docker socket access.
+The executor is a private trusted policy/execution component, but it does not hold the raw Docker socket. Raw daemon authority is isolated in the separate unpublished Docker-authority broker, which accepts only named authenticated operations and revalidates Docker-world policy independently.
 
 ## Agent worker zone
 
@@ -604,7 +604,7 @@ github_pull_request_update
 github_pull_request_review
 ```
 
-The 44-tool pre-U1 surface (18 direct + 9 Agent Control Plane + 17 GitHub App tools) was deployed in candidate `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`. The 45th `control_center_query` tool exists only in the current U1 integration candidate and is **not yet deployed or production-promoted**. GitHub authority is independently enforced through `github:*` scopes, trusted `githubAccounts` for remote repository operations, and trusted `githubProjects` for local exact-HEAD push mappings. Repository discovery comes only from QuaranHUB installations on trusted accounts, including Selected-repository installations. There is deliberately no merge or arbitrary GitHub API tool. Credential-bearing GitHub operations are isolated behind the private broker and exact-host egress proxy described in `docs/backend/GITHUB_CONTROL_PLANE.md`.
+The 44-tool pre-U1 surface (18 direct + 9 Agent Control Plane + 17 GitHub App tools) is part of the deployed P4 product recorded by project control at `a7a61c1ef1949180dd544f557999ebc328800321`. The 45th `control_center_query` tool exists in the accepted forward source line but is **not implied to be deployed or production-promoted**. GitHub authority is independently enforced through `github:*` scopes, trusted `githubAccounts` for remote repository operations, and trusted `githubProjects` for local exact-HEAD push mappings. Repository discovery comes only from QuaranHUB installations on trusted accounts, including Selected-repository installations. There is deliberately no merge or arbitrary GitHub API tool. Credential-bearing GitHub operations are isolated behind the private broker and exact-host egress proxy described in `docs/backend/GITHUB_CONTROL_PLANE.md`.
 
 ## Control Center observability — 1
 
@@ -687,7 +687,7 @@ A principal allowed to dispatch a sandbox job must not automatically receive acc
 Even when QuaranGate reaches the full North Star, these principles remain:
 
 - the gateway does not gain Docker socket authority;
-- the executor remains the private privileged component;
+- the executor remains private, while raw Docker-daemon authority remains isolated in the unpublished Docker-authority broker;
 - callers still use logical IDs rather than arbitrary host paths;
 - sandbox work remains independently reviewable;
 - live writer authority remains explicit and serialized;

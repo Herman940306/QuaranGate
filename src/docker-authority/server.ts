@@ -5,7 +5,7 @@ import YAML from 'yaml';
 import { asBridgeError, BridgeError } from '../shared/errors.js';
 import { managedIdentity, managedVolumeMounts, validateAuthorityRequest, validateManagedArchivePath, validateManagedExecForIdentity, validateManagedNetworkAttachment, validateManagedVolumeAttachment } from './policy.js';
 
-const TOKEN = process.env.DOCKER_AUTHORITY_TOKEN ?? process.env.INTERNAL_TOKEN ?? '';
+const TOKEN = process.env.DOCKER_AUTHORITY_TOKEN ?? '';
 const SOCK = process.env.DOCKER_SOCK ?? '/var/run/docker.sock';
 const PORT = Number(process.env.DOCKER_AUTHORITY_PORT ?? 8991);
 const docker = new Pool('http://localhost', { socketPath: SOCK, connections: 16 });

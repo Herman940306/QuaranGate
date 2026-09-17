@@ -3,11 +3,25 @@
  * and security policy enforcement. These tests use synthetic credentials only
  * and never touch the real API key.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, mkdirSync, rmSync, mkdtempSync, chmodSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { writeFileSync, mkdirSync, rmSync, mkdtempSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CredentialManager, RUNNER_SECRET_PATH, secretVolumeName } from '../../src/executor/agents/credentialManager.js';
+
+const dockerMocks = vi.hoisted(() => ({
+  removeVolume: vi.fn(),
+  listVolumesByFilter: vi.fn(),
+  listContainersByFilter: vi.fn(),
+  removeContainer: vi.fn(),
+}));
+vi.mock('../../src/executor/docker.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/executor/docker.js')>(),
+  removeVolume: dockerMocks.removeVolume,
+  listVolumesByFilter: dockerMocks.listVolumesByFilter,
+  listContainersByFilter: dockerMocks.listContainersByFilter,
+  removeContainer: dockerMocks.removeContainer,
+}));
 
 describe('credential manager — file validation', () => {
   let dir: string;
@@ -40,6 +54,14 @@ describe('credential manager — file validation', () => {
     writeFileSync(keyPath, 'secret-value-1234567890123456', { mode: 0o644 });
     const mgr = new CredentialManager({ credentialPath: keyPath, helperImage: 'alpine' });
     expect(() => mgr.verifyCredentialFile()).toThrow(/unsafe permissions/);
+  });
+
+  it('rejects a credential symlink before reading secret bytes', () => {
+    const target = join(dir, 'real-key');
+    writeFileSync(target, 'synthetic-key-for-testing-only!', { mode: 0o600 });
+    symlinkSync(target, keyPath);
+    const mgr = new CredentialManager({ credentialPath: keyPath, helperImage: 'alpine' });
+    expect(() => mgr.verifyCredentialFile()).toThrow(/regular file|symbolic link|symlink/i);
   });
 
   it('rejects a missing key file', () => {
@@ -141,5 +163,32 @@ describe('credential manager — non-exposure policy', () => {
     expect(mgr.getKeyForDirectUse()).toContain('synthetic-key');
     chmodSync(keyPath, 0o644);
     expect(() => mgr.getKeyForDirectUse()).toThrow(/unsafe permissions/);
+  });
+});
+
+describe('credential manager — secret revocation integrity', () => {
+  beforeEach(() => {
+    dockerMocks.removeVolume.mockReset();
+    dockerMocks.listVolumesByFilter.mockReset();
+    dockerMocks.listContainersByFilter.mockReset();
+    dockerMocks.removeContainer.mockReset();
+    dockerMocks.listVolumesByFilter.mockResolvedValue([]);
+    dockerMocks.listContainersByFilter.mockResolvedValue([]);
+    dockerMocks.removeContainer.mockResolvedValue(undefined);
+  });
+
+  it('fails closed when a job secret volume cannot be removed', async () => {
+    dockerMocks.removeVolume.mockRejectedValue(new Error('sensitive daemon detail'));
+    const mgr = new CredentialManager({ credentialPath: '/unused', helperImage: 'alpine' });
+    await expect(mgr.revokeSecret('job_' + '1'.repeat(32))).rejects.toThrow(/revocation failed after 3 attempts: Error/);
+    expect(dockerMocks.removeVolume).toHaveBeenCalledTimes(3);
+    await expect(mgr.revokeSecret('job_' + '2'.repeat(32))).rejects.not.toThrow(/sensitive daemon detail/);
+  });
+
+  it('does not report an orphan secret volume as removed when deletion fails', async () => {
+    dockerMocks.listVolumesByFilter.mockResolvedValue([{ Name: 'io-quarangate-secret-job_orphan' }]);
+    dockerMocks.removeVolume.mockRejectedValue(new Error('remove refused'));
+    const mgr = new CredentialManager({ credentialPath: '/unused', helperImage: 'alpine' });
+    await expect(mgr.reconcileOrphans()).rejects.toThrow(/orphan secret volume cleanup failed/);
   });
 });

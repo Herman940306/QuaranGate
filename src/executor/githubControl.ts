@@ -420,7 +420,13 @@ export class GitHubControl {
       if (!GITHUB_COMMIT_PATTERN.test(observed)) throw new BridgeError('GITHUB_PUSH_FAILED', 'local Git HEAD verification returned an invalid commit id', 409);
       if (observed !== expectedHead) throw new BridgeError('STALE_BASE_COMMIT', `local HEAD changed; expected ${expectedHead} but observed ${observed}`, 409);
     } finally {
-      if (containerId) await removeContainer(containerId, true).catch(() => {});
+      if (containerId) {
+        try {
+          await removeContainer(containerId, true);
+        } catch {
+          throw new BridgeError('GITHUB_PUSH_FAILED', 'GitHub HEAD-check helper cleanup could not be verified', 500);
+        }
+      }
     }
   }
 
@@ -459,7 +465,9 @@ export class GitHubControl {
     ] });
 
     let containerId: string | undefined;
+    let secretProvisionAttempted = false;
     try {
+      secretProvisionAttempted = true;
       await populateVolume({ volumeName: secretVolume, labels, helperImage: this.opts.helperImage, mountPath: '/secrets', tar });
       const spec = buildGitHubPushHelperSpec({
         image: this.opts.helperImage, hostPath, secretVolume, controlNetwork: this.opts.controlNetwork,
@@ -474,8 +482,16 @@ export class GitHubControl {
         throw new BridgeError('GITHUB_PUSH_FAILED', `GitHub push failed (exit ${waited.statusCode ?? 'unknown'})`, 409);
       }
     } finally {
-      if (containerId) await removeContainer(containerId, true).catch(() => {});
-      await removeVolume(secretVolume, true).catch(() => {});
+      let cleanupFailed = false;
+      if (containerId) {
+        try { await removeContainer(containerId, true); } catch { cleanupFailed = true; }
+      }
+      if (secretProvisionAttempted) {
+        try { await removeVolume(secretVolume, true); } catch { cleanupFailed = true; }
+      }
+      if (cleanupFailed) {
+        throw new BridgeError('GITHUB_PUSH_FAILED', 'GitHub push cleanup left unverified temporary resources', 500);
+      }
     }
 
     const post = await githubBroker.branch(r.owner, r.repo, remoteBranch);
@@ -488,11 +504,27 @@ export class GitHubControl {
 
   async reconcileOrphans(): Promise<{ containers: number; volumes: number }> {
     const filter = { label: [`${GITHUB_MANAGED}=true`] };
-    const containers = await listContainersByFilter(filter, true).catch(() => []);
-    const volumes = await listVolumesByFilter(filter).catch(() => []);
-    for (const c of containers) await removeContainer(c.Id, true).catch(() => {});
-    for (const v of volumes) await removeVolume(v.Name, true).catch(() => {});
-    return { containers: containers.length, volumes: volumes.length };
+    const containers = await listContainersByFilter(filter, true);
+    const volumes = await listVolumesByFilter(filter);
+    let removedContainers = 0;
+    let removedVolumes = 0;
+    for (const c of containers) {
+      try {
+        await removeContainer(c.Id, true);
+        removedContainers += 1;
+      } catch {
+        throw new BridgeError('GITHUB_PUSH_FAILED', 'GitHub orphan helper cleanup could not be verified', 500);
+      }
+    }
+    for (const v of volumes) {
+      try {
+        await removeVolume(v.Name, true);
+        removedVolumes += 1;
+      } catch {
+        throw new BridgeError('GITHUB_PUSH_FAILED', 'GitHub orphan secret cleanup could not be verified', 500);
+      }
+    }
+    return { containers: removedContainers, volumes: removedVolumes };
   }
 }
 

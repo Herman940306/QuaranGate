@@ -5,10 +5,10 @@ This document is the operator runbook for QuaranGate. It focuses on actions that
 QuaranGate is intentionally conservative about operational authority. A successful source build is not a deployment. A successful agent job is not an apply. A running process is not necessarily ready. Those distinctions are part of the product, not ceremony around it.
 
 > [!IMPORTANT]
-> The executor holds `/var/run/docker.sock`. Docker socket access is effectively host-level authority. QuaranGate limits that authority by keeping the executor private and exposing only a narrow internal API, but the residual impact of an executor or Docker-daemon compromise is still high. Never publish the executor and never mount the Docker socket into the gateway or an agent runner.
+> Raw `/var/run/docker.sock` authority is confined to the unpublished `docker-authority` broker. The gateway and executor do not receive the socket. The executor reaches the broker only over the private internal network with a separate `DOCKER_AUTHORITY_TOKEN` and named, independently validated operations. Never publish the broker or executor and never mount the Docker socket into the gateway, executor, target, or agent runner.
 
 > [!IMPORTANT]
-> Current accepted local `main`: `09672d5150075741bb7fdc48f5e9cce1eba07cca` (`fix(remote): verify persisted runtime selection`). Current deployed gateway/executor candidate: `aef07f2c46ca53a55e1ee662f3b8cddc73f6857a`. Candidate qualification: typecheck PASS, 50/50 unit files and 1878/1878 tests PASS, 16/16 focused GitHub tests PASS. Source promotion remains blocked by the protected dirty-path intersection at `scripts/remote-owner-start.sh`.
+> Do not use a SHA or test count copied from this runbook as current release truth. QuaranGate advances through immutable acceptance receipts; establish the live branch/HEAD/status mechanically and use the matching audit/control receipt for that exact revision. Historical SHAs and test counts below are retained only where explicitly labeled as historical evidence.
 
 ---
 
@@ -71,11 +71,16 @@ Gateway
    |
    v
 Executor
-Docker authority / trusted config / job store
-NO published port
+trusted config / job store / policy enforcement
+NO raw Docker socket / NO published port
+   |
+   | distinct DOCKER_AUTHORITY_TOKEN + named operations
+   v
+Docker-authority broker
+ONLY QuaranGate raw Docker-socket holder / NO published port
 
 WORK EXECUTION
-Executor
+Docker-authority broker, only after executor policy + broker policy
    +--> authorized target containers
    +--> isolated agent runners
    +--> dedicated apply helpers
@@ -176,6 +181,7 @@ Important values include:
 
 ```text
 INTERNAL_TOKEN
+DOCKER_AUTHORITY_TOKEN
 DOCKER_GID
 BRIDGE_PUBLIC_URL
 GIT_REVISION
@@ -186,11 +192,14 @@ agent runtime image references / secret-file paths when Agent Control is enabled
 
 N1 introduces a build-only `QUARANGATE_NPM_BUNDLE_PATH`. It is required for a valid source build but deliberately not required for ordinary runtime Compose operations such as `ps`, `logs` or `restart`.
 
-Generate the internal gateway-to-executor token with a cryptographically secure random source, for example:
+Generate the gateway-to-executor token and the Docker-authority token independently with a cryptographically secure random source:
 
 ```bash
-openssl rand -base64 32
+openssl rand -base64 32   # INTERNAL_TOKEN
+openssl rand -base64 32   # DOCKER_AUTHORITY_TOKEN — generate separately
 ```
+
+The two values MUST differ. QuaranGate refuses Docker-authority calls when the executor sees credential reuse; this prevents compromise of the ordinary internal service token from automatically granting the broker credential as well.
 
 Determine the Docker socket group visible on the Linux/WSL host:
 
@@ -951,10 +960,10 @@ npm test
 npm run build
 ```
 
-The current accepted local baseline is:
+Do not maintain a moving "current baseline" SHA or test count in this runbook. Current acceptance belongs to the immutable audit/control receipt for the exact candidate under qualification. For chronology only, an earlier accepted checkpoint was:
 
 ```text
-HEAD: 92b39ec98c423413c61880cde75b3f9ca4d21c45
+HISTORICAL HEAD: 92b39ec98c423413c61880cde75b3f9ca4d21c45
 TypeScript: PASS
 45 / 45 unit test files PASS
 1786 / 1786 unit tests PASS
@@ -962,7 +971,7 @@ source build: PASS
 full governed no-cache/network-none Docker acceptance with approved pre-provisioned inputs: PASS
 ```
 
-The N1 checkpoint (`18179696`) remains historical evidence at 44 files / 1693 tests. The preceding Tini-only checkpoint (`6129d3d`) remains historical evidence at 43 files / 1671 tests.
+The N1 checkpoint (`18179696`) likewise remains historical evidence at 44 files / 1693 tests. The preceding Tini-only checkpoint (`6129d3d`) remains historical evidence at 43 files / 1671 tests.
 
 Integration, Docker, destructive apply and credentialed provider tests have additional prerequisites and authority boundaries. Do not run every test merely because it exists.
 
@@ -1094,7 +1103,7 @@ remote authenticated client
   -> configured targets / governed agents
 ```
 
-The executor remains the only normal QuaranGate service with the Docker socket. Broad work targets such as `projects-work` must not receive `/var/run/docker.sock`.
+The unpublished `docker-authority` broker is the only normal QuaranGate service with the raw Docker socket. The executor has no raw socket and uses only the named authenticated broker contract. Broad work targets such as `projects-work` must not receive `/var/run/docker.sock`.
 
 ## Persistent projects-work target
 
@@ -1187,4 +1196,4 @@ Host-side infrastructure acceptance is available as:
 ./scripts/remote-owner-infra-acceptance.sh
 ```
 
-It performs only read/health checks and fails closed if the gateway is not loopback-only, the executor is published, Docker socket ownership drifts away from executor-only, or the projects root bind is broader/different than approved.
+It performs only read/health checks and fails closed if the gateway is not loopback-only, the executor or Docker-authority broker is published, raw Docker socket ownership drifts away from broker-only, or the projects root bind is broader/different than approved.

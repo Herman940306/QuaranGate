@@ -1054,6 +1054,41 @@ describe('A8 R1 — atomic reservation and lifecycle', () => {
     expect(discarded).toBe(1);
   });
 
+  it('unverified cleanup or provider-state invalidation stops further claims without resurrecting an expired source', async () => {
+    const store = makeStore();
+    const source = makeSessionId();
+    store.sessionStore.insertSession({
+      sessionId: source, principalId: 'principal-alice', project: 'proj-a', backend: 'fake', profile: 'audit',
+      providerSessionId: 'p-source', providerStateRef: 'state-chain',
+    });
+    const engine = new AgentJobEngine(store, TEST_CONFIG, () => ({}), () => ({
+      async prepare() {}, async run() {},
+      async validate() { throw new Error('post-provider validation failure'); },
+      isAgentFailure: () => false,
+      isDryRun: () => false,
+      async cleanup() { throw new Error('sensitive cleanup detail'); },
+      async discardSessionState() { throw new Error('sensitive provider-state detail'); },
+    }));
+    (engine as any).kick = () => {};
+    const errorLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const job = engine.dispatch({
+        principal: 'principal-alice', backend: 'fake', project: 'proj-a', profile: 'audit',
+        prompt: 'advance then cleanup failure', sessionPolicy: 'resume',
+      });
+      const claimed = store.claimNext()!;
+      await (engine as any).execute(claimed);
+
+      expect(store.get(job.jobId)!.status).toBe('FAILED_INFRASTRUCTURE');
+      expect(store.sessionStore.getSession(source)!.state).toBe('EXPIRED');
+      expect((engine as any).stopped).toBe(true);
+      expect(errorLog.mock.calls.flat().join(' ')).not.toContain('sensitive cleanup detail');
+      expect(errorLog.mock.calls.flat().join(' ')).not.toContain('sensitive provider-state detail');
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
   it('missing/mismatched provider state before provider use expires the session rather than releasing it', async () => {
     const store = makeStore();
     const source = makeSessionId();

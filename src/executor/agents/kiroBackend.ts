@@ -1457,36 +1457,48 @@ export class KiroBackend {
 
   /** Remove ALL job-scoped resources (success / failure / timeout / cancel). */
   async cleanup(): Promise<void> {
-    // Force-remove the runner container (by tracked id and by name in case the
-    // id was never captured).
+    let cleanupError: unknown;
+    const attempt = async (operation: () => Promise<void>): Promise<boolean> => {
+      try {
+        await operation();
+        return true;
+      } catch (error) {
+        cleanupError ??= error;
+        return false;
+      }
+    };
+
+    // Force-remove the runner container. Kill remains advisory; successful
+    // forced removal is the proof that the resource no longer exists.
     if (this.runnerContainerId) {
       await killContainer(this.runnerContainerId).catch(() => {});
-      await removeContainer(this.runnerContainerId, true).catch(() => {});
-      this.runnerContainerId = null;
+      if (await attempt(() => removeContainer(this.runnerContainerId!, true))) this.runnerContainerId = null;
+    } else {
+      await killContainer(runnerContainerName(this.job.jobId)).catch(() => {});
+      await removeContainer(runnerContainerName(this.job.jobId), true).catch(() => {});
     }
-    await killContainer(runnerContainerName(this.job.jobId)).catch(() => {});
-    await removeContainer(runnerContainerName(this.job.jobId), true).catch(() => {});
 
     if (this.proxyContainerId) {
       await killContainer(this.proxyContainerId).catch(() => {});
-      await removeContainer(this.proxyContainerId, true).catch(() => {});
-      this.proxyContainerId = null;
+      if (await attempt(() => removeContainer(this.proxyContainerId!, true))) this.proxyContainerId = null;
     }
-    if (this.extNet) { await removeNetwork(this.extNet).catch(() => {}); this.extNet = null; }
-    if (this.intNet) { await removeNetwork(this.intNet).catch(() => {}); this.intNet = null; }
-    if (this.controlVolume) { await removeVolume(this.controlVolume, true).catch(() => {}); this.controlVolume = null; }
+    if (this.extNet && await attempt(() => removeNetwork(this.extNet!))) this.extNet = null;
+    if (this.intNet && await attempt(() => removeNetwork(this.intNet!))) this.intNet = null;
+    if (this.controlVolume && await attempt(() => removeVolume(this.controlVolume!, true))) this.controlVolume = null;
     if (this.secretVolume) {
-      await this.opts.credentialManager.revokeSecret(this.job.jobId).catch(() => {});
-      this.secretVolume = null;
+      if (await attempt(() => this.opts.credentialManager.revokeSecret(this.job.jobId))) this.secretVolume = null;
     }
     if (this.providerStateVolume && this.providerStateCreatedByThisJob && !this.providerStateHandedOff) {
-      await removeVolume(this.providerStateVolume, true).catch(() => {});
-      this.providerStateVolume = null;
+      if (await attempt(() => removeVolume(this.providerStateVolume!, true))) this.providerStateVolume = null;
     }
-    if (this.homeVolume) { await removeVolume(this.homeVolume, true).catch(() => {}); this.homeVolume = null; }
-    if (this.staged) {
-      await this.opts.sandbox.disposeWorkspace(this.staged.volumeName).catch(() => {});
-      this.staged = null;
+    if (this.homeVolume && await attempt(() => removeVolume(this.homeVolume!, true))) this.homeVolume = null;
+    if (this.staged && await attempt(() => this.opts.sandbox.disposeWorkspace(this.staged!.volumeName))) this.staged = null;
+
+    if (cleanupError) {
+      console.error(JSON.stringify({
+        level: 'error', msg: 'Kiro cleanup left unverified resources', jobId: this.job.jobId,
+      }));
+      throw new BridgeError('SANDBOX_FAILED', 'Kiro cleanup left unverified resources', 500);
     }
     log('kiro backend: cleanup complete', { jobId: this.job.jobId });
   }
@@ -1499,7 +1511,7 @@ export class KiroBackend {
    */
   async discardSessionState(): Promise<void> {
     if (!this.providerStateVolume) return;
-    await removeVolume(this.providerStateVolume, true).catch(() => {});
+    await removeVolume(this.providerStateVolume, true);
     this.providerStateVolume = null;
     this.providerStateHandedOff = false;
     this.providerStateCreatedByThisJob = false;

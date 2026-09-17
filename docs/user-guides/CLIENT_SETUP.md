@@ -460,4 +460,4 @@ targets:logs       bounded logs for manually registered targets
 targets:control    start / stop / restart existing manually registered targets
 ```
 
-Do not solve remote orchestration by mounting `/var/run/docker.sock` into `projects-work`. The Docker socket remains private to the executor; the public MCP request accepts only logical target ids and cannot supply Docker images, mounts, networks, ports, privileges or raw daemon options.
+Do not solve remote orchestration by mounting `/var/run/docker.sock` into `projects-work`. The raw Docker socket remains private to the unpublished Docker-authority broker; the executor has no raw socket, and the public MCP request accepts only logical target ids and cannot supply Docker images, mounts, networks, ports, privileges or raw daemon options.

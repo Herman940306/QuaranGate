@@ -57,11 +57,17 @@ export class CredentialManager {
     if (!fs.existsSync(path)) {
       throw new BridgeError('SANDBOX_FAILED', 'Kiro API key file not found', 500);
     }
-    const stat = fs.statSync(path);
+    const stat = fs.lstatSync(path);
     const mode = (stat.mode & 0o777).toString(8);
+    if (!stat.isFile()) {
+      throw new BridgeError('SANDBOX_FAILED', 'Kiro API key path is not a regular file', 500);
+    }
     if ((stat.mode & 0o077) !== 0) {
       throw new BridgeError('SANDBOX_FAILED',
         `Kiro API key file has unsafe permissions (${mode}); expected 0600`, 500);
+    }
+    if (stat.size > 1024) {
+      throw new BridgeError('SANDBOX_FAILED', 'Kiro API key file has invalid size', 500);
     }
     return { size: stat.size, mode, owner: `${stat.uid}:${stat.gid}` };
   }
@@ -73,12 +79,30 @@ export class CredentialManager {
    */
   private readKey(): string {
     this.verifyCredentialFile();
-    const raw = fs.readFileSync(this.opts.credentialPath, 'utf8').trim();
-    if (raw.length < 10 || raw.length > 256) {
-      throw new BridgeError('SANDBOX_FAILED',
-        `Kiro API key has unexpected length (${raw.length}); expected 10-256 chars`, 500);
+    let fd: number | null = null;
+    try {
+      const before = fs.lstatSync(this.opts.credentialPath);
+      fd = fs.openSync(this.opts.credentialPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()
+        || stat.dev !== before.dev
+        || stat.ino !== before.ino
+        || (stat.mode & 0o077) !== 0
+        || stat.size > 1024) {
+        throw new BridgeError('SANDBOX_FAILED', 'Kiro API key file metadata changed', 500);
+      }
+      const raw = fs.readFileSync(fd, 'utf8').trim();
+      if (raw.length < 10 || raw.length > 256 || /[\r\n\0]/u.test(raw)) {
+        throw new BridgeError('SANDBOX_FAILED',
+          `Kiro API key has unexpected length or framing (${raw.length}); expected 10-256 single-line chars`, 500);
+      }
+      return raw;
+    } catch (error) {
+      if (error instanceof BridgeError) throw error;
+      throw new BridgeError('SANDBOX_FAILED', 'Kiro API key could not be read safely', 500);
+    } finally {
+      if (fd !== null) fs.closeSync(fd);
     }
-    return raw;
   }
 
   /**
@@ -108,9 +132,23 @@ export class CredentialManager {
     return volName;
   }
 
-  /** Remove a job-scoped secret volume (idempotent). */
+  /** Remove a job-scoped secret volume (idempotent, fail closed on cleanup failure). */
   async revokeSecret(jobId: string): Promise<void> {
-    await removeVolume(secretVolumeName(jobId), true).catch(() => {});
+    const name = secretVolumeName(jobId);
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await removeVolume(name, true);
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new BridgeError(
+      'SANDBOX_FAILED',
+      `Kiro credential volume revocation failed after 3 attempts: ${lastError instanceof Error ? lastError.name : 'unknown error'}`,
+      500,
+    );
   }
 
   /** Startup recovery: remove orphaned secret volumes + populate helpers. */
@@ -118,23 +156,41 @@ export class CredentialManager {
     const removed: string[] = [];
     // N1D: secret volumes are job-scoped and always orphans at startup. Sweep
     // every accepted ownership namespace so a pre-cutover crash cannot leave a
-    // legacy-labelled credential volume behind. De-duplicated by name.
+    // legacy-labelled credential volume behind. Inventory and deletion errors
+    // are security-significant and therefore propagate instead of being
+    // misreported as successful cleanup.
     const filters = managedLabelFilters([['resource', 'secret']]);
     const volumeNames = new Set<string>();
     for (const filter of filters) {
-      for (const v of await listVolumesByFilter(filter).catch(() => [])) volumeNames.add(v.Name);
+      for (const v of await listVolumesByFilter(filter)) volumeNames.add(v.Name);
     }
     for (const name of volumeNames) {
-      await removeVolume(name, true).catch(() => {});
+      try {
+        await removeVolume(name, true);
+      } catch (error) {
+        throw new BridgeError(
+          'SANDBOX_FAILED',
+          `Kiro orphan secret volume cleanup failed: ${error instanceof Error ? error.name : 'unknown error'}`,
+          500,
+        );
+      }
       removed.push(name);
     }
     // Any leftover populate-helper containers carry the same secret label.
     const containerIds = new Set<string>();
     for (const filter of filters) {
-      for (const c of await listContainersByFilter(filter, true).catch(() => [])) containerIds.add(c.Id);
+      for (const c of await listContainersByFilter(filter, true)) containerIds.add(c.Id);
     }
     for (const id of containerIds) {
-      await removeContainer(id, true).catch(() => {});
+      try {
+        await removeContainer(id, true);
+      } catch (error) {
+        throw new BridgeError(
+          'SANDBOX_FAILED',
+          `Kiro orphan secret helper cleanup failed: ${error instanceof Error ? error.name : 'unknown error'}`,
+          500,
+        );
+      }
     }
     return removed;
   }

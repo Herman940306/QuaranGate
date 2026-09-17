@@ -242,9 +242,9 @@ export class RunnerSandbox {
     };
   }
 
-  /** Remove a workspace volume (ephemeral probe workspaces are disposed). */
+  /** Remove a workspace volume and fail closed unless Docker confirms removal. */
   async disposeWorkspace(volumeName: string): Promise<void> {
-    await removeVolume(volumeName, true).catch(() => {});
+    await removeVolume(volumeName, true);
   }
 
   /**

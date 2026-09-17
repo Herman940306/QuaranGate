@@ -85,7 +85,7 @@ export interface AgentBackendAdapter {
    * must never fall back to inferring dry-run from execution results.
    */
   isDryRun(): boolean;
-  /** Cleanup ordinary job-scoped resources on failure/cancellation (best-effort). */
+  /** Cleanup ordinary job-scoped resources on failure/cancellation. Failure is security-significant. */
   cleanup?(): Promise<void>;
   /** A8 R1: invalidate/remove provider session state after ambiguous advancement. */
   discardSessionState?(): Promise<void>;
@@ -273,6 +273,25 @@ export class AgentJobEngine {
      */
     private readonly runtimeAvailableBackends?: ReadonlySet<string>,
   ) {}
+
+  private async securityCleanup(
+    jobId: string,
+    boundary: 'job-resources' | 'provider-session-state',
+    operation: () => Promise<void>,
+  ): Promise<boolean> {
+    try {
+      await operation();
+      return true;
+    } catch {
+      // Cleanup ambiguity is an authority ambiguity. Stop claiming additional
+      // work until startup reconciliation can inspect/remove the leftover
+      // resource. Never copy provider/Docker exception text into durable or
+      // caller-visible job state from this secondary cleanup path.
+      this.stopped = true;
+      bestEffortLog('security cleanup unverified; engine stopped', { jobId, boundary });
+      return false;
+    }
+  }
 
   /** Startup reconciliation per the documented A2/A8 policy (fail closed). */
   recover(): string[] {
@@ -774,7 +793,9 @@ export class AgentJobEngine {
         successorSessionId: completed.backendSessionId,
       });
     } catch (e) {
-      if (backend?.cleanup) { await backend.cleanup().catch(() => {}); }
+      if (backend?.cleanup) {
+        await this.securityCleanup(job.jobId, 'job-resources', () => backend!.cleanup!());
+      }
 
       // P3: a structured provider throttle updates durable cooldown/circuit
       // state before the job becomes terminal. If that persistence itself
@@ -799,7 +820,7 @@ export class AgentJobEngine {
           // missing/mismatched. Never resurrect the source in either case.
           this.store.sessionStore.expireReservation(sourceSessionId, job.jobId);
           if (providerUseStarted && backend?.discardSessionState) {
-            await backend.discardSessionState().catch(() => {});
+            await this.securityCleanup(job.jobId, 'provider-session-state', () => backend!.discardSessionState!());
           }
         } else {
           // No provider call occurred and session integrity itself was not the
@@ -808,8 +829,9 @@ export class AgentJobEngine {
         }
       } else if (backend?.discardSessionState) {
         // Fresh provider state without durable completion must not survive as
-        // an orphan resumable conversation.
-        await backend.discardSessionState().catch(() => {});
+        // an orphan resumable conversation. Failed invalidation stops further
+        // claims until startup reconciliation can prove the orphan state.
+        await this.securityCleanup(job.jobId, 'provider-session-state', () => backend!.discardSessionState!());
       }
       this.failActive(job.jobId, exec, backend, e);
     } finally {

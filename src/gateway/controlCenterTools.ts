@@ -11,7 +11,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { asBridgeError, BridgeError } from '../shared/errors.js';
 import { executor } from './executorClient.js';
-import { audit, auditActivityStats, newReqId, queryAuditActivity } from './audit.js';
+import { audit, auditActivityStats, auditIntegrityState, newReqId, queryAuditActivity } from './audit.js';
 import { currentPrincipal } from './context.js';
 import { rateState } from './ratelimit.js';
 import {
@@ -135,7 +135,12 @@ async function snapshot(p: Principal) {
 async function viewData(view: View, p: Principal, args: any): Promise<Record<string, unknown>> {
   const snap = await snapshot(p);
   const stats = auditActivityStats(p.id, args.sinceMs);
-  if (view === 'activity') return { retention: { storage: 'memory', maxEntries: 2048, maxAgeMs: 86_400_000 }, rows: queryAuditActivity({ principal: p.id, limit: args.limit, sinceMs: args.sinceMs }), stats };
+  if (view === 'activity') return {
+    retention: { storage: 'memory', maxEntries: 2048, maxAgeMs: 86_400_000 },
+    stdoutIntegrity: auditIntegrityState(),
+    rows: queryAuditActivity({ principal: p.id, limit: args.limit, sinceMs: args.sinceMs }),
+    stats,
+  };
   if (view === 'authority') return { principal: visiblePrincipal(p), preflight: authorityEvaluation(p, args) };
   if (view === 'topology') return {
     buildRevision: process.env.QUARANGATE_BUILD_REVISION ?? 'unknown',
@@ -155,7 +160,7 @@ async function viewData(view: View, p: Principal, args: any): Promise<Record<str
       { component: 'Ollama', expected: 'http://ollama:11434', liveState: snap.runtime?.ollama.endpointState ?? 'UNKNOWN', payloadCapture: false },
       { component: 'GitHub App', expected: ['api.github.com', 'github.com'], liveState: 'POLICY_DECLARED_LIVE_COUNTERS_UNAVAILABLE', payloadCapture: false },
       { component: 'Kiro', expected: 'bounded provider allowlist via egress proxy', liveState: 'LIVE_COUNTERS_UNAVAILABLE', payloadCapture: false },
-      { component: 'Copilot', expected: 'NOT_INTEGRATED_ON_THIS_BASE', liveState: 'NOT_AVAILABLE', payloadCapture: false },
+      { component: 'Copilot', expected: 'operator-approved exact-host allowlist via egress proxy', liveState: snap.backends.some((b) => b.id === 'copilot' && b.available) ? 'AVAILABLE' : 'NOT_CONFIGURED_OR_EXTERNAL_ENTITLEMENT_DEFERRED', payloadCapture: false },
     ],
   };
   if (view === 'providers') return {
@@ -188,13 +193,13 @@ async function viewData(view: View, p: Principal, args: any): Promise<Record<str
   };
   if (view === 'capabilities') return {
     matrix: [
-      { component: 'Ollama', configured: snap.runtime?.ollama.configured ?? false, implementation: 'IMPLEMENTED', productionQualification: 'P1_LIVE_CLOSEOUT_PENDING', toolUse: 'SUPPORTED', sessionResume: 'NOT_APPLICABLE' },
-      { component: 'Kiro', configured: snap.backends.some((b) => b.id === 'kiro'), implementation: 'IMPLEMENTED', productionQualification: 'A8_CONTINUITY_PENDING', toolUse: 'SUPPORTED', sessionResume: 'IMPLEMENTED_NOT_QUALIFIED' },
-      { component: 'Copilot', configured: false, implementation: 'CANDIDATE_NOT_INTEGRATED', productionQualification: 'P5_NOT_STARTED', toolUse: 'NOT_QUALIFIED', sessionResume: 'UNKNOWN' },
-      { component: 'VS Code', configured: false, implementation: 'FEASIBILITY_PROVEN', productionQualification: 'P7_NOT_STARTED', toolUse: 'NOT_APPLICABLE', sessionResume: 'NOT_IMPLEMENTED' },
-      { component: 'Cursor', configured: false, implementation: 'NOT_IMPLEMENTED', productionQualification: 'P7_NOT_STARTED', toolUse: 'UNKNOWN', sessionResume: 'NOT_IMPLEMENTED' },
-      { component: 'Visual Studio', configured: false, implementation: 'SECONDARY', productionQualification: 'NOT_STARTED', toolUse: 'UNKNOWN', sessionResume: 'NOT_IMPLEMENTED' },
-      { component: 'Antigravity', configured: false, implementation: 'SECONDARY', productionQualification: 'NOT_STARTED', toolUse: 'UNKNOWN', sessionResume: 'NOT_IMPLEMENTED' },
+      { component: 'Ollama', configured: snap.runtime?.ollama.configured ?? false, implementation: 'SOURCE_ACCEPTED', productionQualification: 'FINAL_CANDIDATE_REQUALIFICATION_PENDING', toolUse: 'SUPPORTED_READ_ONLY', sessionResume: 'NOT_APPLICABLE' },
+      { component: 'Kiro', configured: snap.backends.some((b) => b.id === 'kiro'), implementation: 'SOURCE_ACCEPTED', productionQualification: 'LIVE_PROVIDER_DEFERRED_EXTERNAL_ENTITLEMENT', toolUse: 'SUPPORTED', sessionResume: 'SOURCE_IMPLEMENTED_LIVE_DEFERRED' },
+      { component: 'Copilot', configured: snap.backends.some((b) => b.id === 'copilot'), implementation: 'SOURCE_ACCEPTED', productionQualification: 'LIVE_PROVIDER_DEFERRED_EXTERNAL_SUBSCRIPTION', toolUse: 'SUPPORTED_READ_ONLY', sessionResume: 'EXPLICITLY_UNSUPPORTED_UNTIL_QUALIFIED' },
+      { component: 'VS Code', configured: snap.runtime?.ideSessionControl === 'AVAILABLE_NOT_LIVE_QUALIFIED', implementation: 'SOURCE_CLOSED', productionQualification: 'LIVE_REVERIFICATION_IN_PROGRESS', toolUse: 'QUARANGATE_GOVERNED_REVIEW', sessionResume: 'SOURCE_IMPLEMENTED_LIVE_OPEN' },
+      { component: 'Cursor', configured: false, implementation: 'SOURCE_CLOSED', productionQualification: 'LIVE_BLOCKED_CURSOR_NOT_INSTALLED', toolUse: 'QUARANGATE_GOVERNED', sessionResume: 'SOURCE_IMPLEMENTED_LIVE_BLOCKED' },
+      { component: 'Visual Studio', configured: false, implementation: 'SECONDARY_DEFERRED', productionQualification: 'DEFERRED', toolUse: 'UNQUALIFIED', sessionResume: 'UNQUALIFIED' },
+      { component: 'Antigravity', configured: false, implementation: 'SECONDARY_DEFERRED', productionQualification: 'DEFERRED', toolUse: 'UNQUALIFIED', sessionResume: 'UNQUALIFIED' },
     ],
   };
   if (view === 'recovery') return {

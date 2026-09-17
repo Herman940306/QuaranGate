@@ -1,7 +1,8 @@
 /**
- * Executor service: PRIVATE. Holds the Docker socket, never published.
- * Authenticated only by the shared INTERNAL_TOKEN over the internal network.
- * Re-enforces target allowlist + workspace confinement independently of the gateway.
+ * Executor service: PRIVATE and never published. It has no raw Docker socket;
+ * named Docker operations cross the authenticated private Docker-authority broker.
+ * Gateway-to-executor requests use INTERNAL_TOKEN and the broker uses a distinct
+ * DOCKER_AUTHORITY_TOKEN. Target/workspace policy is re-enforced independently.
  */
 import fs from 'node:fs';
 import express from 'express';
