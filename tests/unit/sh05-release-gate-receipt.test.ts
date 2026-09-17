@@ -4,6 +4,7 @@ import {
   executionEvidence,
   gateDefinition,
   integrationPrerequisites,
+  systemE2ePrerequisites,
   parsePlaywrightReport,
   parseVitestReport,
   pathIsWithinRoot,
@@ -83,6 +84,22 @@ describe('SH-05 fixed release gate receipt executor', () => {
     expect(docker.args[1]).toBe('tests/unit/sh11');
     expect(promptInjection.args[1]).toBe('tests/unit/sh12');
     expect(() => vitestGateInvocation(gateDefinition('typecheck') as any, '/external/nope.json')).toThrow(/Vitest gate definition/u);
+  });
+
+  it('binds full-system P10 E2E to the fixed evidence validator rather than the synthetic Playwright gate', () => {
+    expect(gateDefinition('system-e2e')).toEqual({
+      systemE2e: true,
+      tool: { name: 'quarangate-system-e2e-validator', version: '2' },
+      commandId: 'p10-system-e2e-validate',
+    });
+  });
+
+  it('classifies missing external full-system evidence/release manifest as prerequisites without inventing PASS', () => {
+    expect(systemE2ePrerequisites({ evidenceDir: undefined, releaseManifest: undefined, releaseSignatureProof: undefined, releaseTrustPolicy: undefined, signedPackage: undefined, exists: () => false })).toEqual([
+      'RELEASE_MANIFEST_UNAVAILABLE', 'RELEASE_SIGNATURE_PROOF_UNAVAILABLE', 'RELEASE_TRUST_POLICY_UNAVAILABLE',
+      'SIGNED_WINDOWS_PACKAGE_UNAVAILABLE', 'SYSTEM_E2E_EVIDENCE_UNAVAILABLE',
+    ]);
+    expect(systemE2ePrerequisites({ evidenceDir: '/evidence', releaseManifest: '/release.json', releaseSignatureProof: '/signature.json', releaseTrustPolicy: '/trust.json', signedPackage: '/setup.exe', exists: () => true })).toEqual([]);
   });
 
   it('binds E2E to the canonical pinned Playwright entry point', () => {

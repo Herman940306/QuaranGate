@@ -6,6 +6,7 @@
     "unit",
     "integration",
     "e2e",
+    "system-e2e",
     "authority-invariants",
     "security-fuzz",
     "security-chaos",
@@ -92,6 +93,10 @@
     "security-prompt-injection": {
       "name": "vitest",
       "version": "3.2.7"
+    },
+    "system-e2e": {
+      "name": "quarangate-system-e2e-validator",
+      "version": "2"
     }
   },
   "findingPolicy": {
@@ -114,6 +119,10 @@
   },
   "gateContracts": {
     "e2e": {
+      "state": "INTEGRATED",
+      "passAllowed": true
+    },
+    "system-e2e": {
       "state": "INTEGRATED",
       "passAllowed": true
     }

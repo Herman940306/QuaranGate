@@ -8,7 +8,7 @@ import { validateOfflinePrerequisites } from './release-scanner-run.mjs';
 import { externalPrivateEvidenceDirectory } from './release-path-safety.mjs';
 
 const SOURCE_ROOT = realpathSync(resolve(fileURLToPath(new URL('../', import.meta.url))));
-const INTRINSIC_GATES = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom'];
+const INTRINSIC_GATES = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'system-e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom'];
 const SCANNER_GATES = ['sast', 'secrets', 'sca', 'config-scan', 'image-scan'];
 const TOOL_IDS = { sast: 'semgrep', secrets: 'gitleaks', sca: 'osv-scanner', 'config-scan': 'trivy', 'image-scan': 'trivy' };
 const EXIT = { PASS: 0, BLOCKED_ENVIRONMENT: 4, FAIL: 5 };
@@ -22,6 +22,10 @@ export function resolveAssuranceInputs(argv = [], env = process.env) {
     releaseManifest: from('--release-manifest', 'QG_RELEASE_MANIFEST'),
     sigstoreBundle: from('--sigstore-bundle', 'QG_RELEASE_SIGSTORE_BUNDLE'),
     publicKey: from('--public-key', 'QG_RELEASE_PUBLIC_KEY'),
+    systemE2eEvidenceDir: from('--system-e2e-evidence-dir', 'QG_SYSTEM_E2E_EVIDENCE_DIR'),
+    releaseSignatureProof: from('--release-signature-proof', 'QG_RELEASE_SIGNATURE_PROOF'),
+    releaseTrustPolicy: from('--release-trust-policy', 'QG_RELEASE_TRUST_POLICY'),
+    signedPackage: from('--signed-package', 'QG_SIGNED_WINDOWS_PACKAGE'),
   };
 }
 
@@ -66,7 +70,7 @@ export function classifyAssurance(policyReport, receipts) {
 }
 
 export function main(argv = process.argv.slice(2), env = process.env) {
-  const { evidenceDirRaw, imageInputs, releaseManifest, sigstoreBundle, publicKey } = resolveAssuranceInputs(argv, env);
+  const { evidenceDirRaw, imageInputs, releaseManifest, sigstoreBundle, publicKey, systemE2eEvidenceDir, releaseSignatureProof, releaseTrustPolicy, signedPackage } = resolveAssuranceInputs(argv, env);
   if (!evidenceDirRaw) throw new Error('--evidence-dir is required');
   const evidenceDir = externalDir(evidenceDirRaw); const receiptsDir = join(evidenceDir, 'receipts'); const rawDir = join(evidenceDir, 'raw');
   mkdirSync(receiptsDir, { recursive: true, mode: 0o700 }); mkdirSync(rawDir, { recursive: true, mode: 0o700 });
@@ -90,6 +94,13 @@ export function main(argv = process.argv.slice(2), env = process.env) {
     const receiptPath = join(receiptsDir, `${gate}.json`);
     const args = ['--gate', gate, '--source-binding', sourceBindingPath, '--output', receiptPath];
     if (gate === 'sbom') args.push('--artifact-output', sbomPath);
+    if (gate === 'system-e2e') {
+      if (systemE2eEvidenceDir) args.push('--system-e2e-evidence-dir', systemE2eEvidenceDir);
+      if (releaseManifest) args.push('--release-manifest', releaseManifest);
+      if (releaseSignatureProof) args.push('--release-signature-proof', releaseSignatureProof);
+      if (releaseTrustPolicy) args.push('--release-trust-policy', releaseTrustPolicy);
+      if (signedPackage) args.push('--signed-package', signedPackage);
+    }
     result = runScript('scripts/release-gate-receipt.mjs', args);
     assertExpectedExit(result, [0, 4, 5], `${gate} gate`);
     receipts[gate] = readJson(receiptPath, `${gate} receipt`);

@@ -158,7 +158,7 @@ if (sbom.spdxVersion !== 'SPDX-2.3' || sbom.SPDXID !== 'SPDXRef-DOCUMENT') throw
 
 const executionCommandIds = {
   typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration',
-  e2e: 'playwright-e2e',
+  e2e: 'playwright-e2e', 'system-e2e': 'p10-system-e2e-validate',
   'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', 'security-chaos': 'vitest-security-chaos', 'security-egress': 'vitest-security-egress', 'security-docker': 'vitest-security-docker', 'security-prompt-injection': 'vitest-security-prompt-injection', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
 };
 function validDigestEvidence(value) {
@@ -173,8 +173,21 @@ function validExecution(value, expectedCommandId) {
     && validDigestEvidence(value.stdout) && validDigestEvidence(value.stderr);
 }
 function assertReceiptEvidence(gate, receipt) {
-  if (['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom', 'provenance'].includes(gate)
+  if (['typecheck', 'build', 'unit', 'integration', 'e2e', 'system-e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom', 'provenance'].includes(gate)
     && !validExecution(receipt.execution, executionCommandIds[gate])) throw new Error(`gate receipt lacks valid execution evidence: ${gate}`);
+  if (gate === 'system-e2e') {
+    const a = receipt.artifact;
+    if (!a || a.schemaVersion !== 2 || a.status !== 'PASS' || !SAFE_ID.test(a.runId ?? '') || !SAFE_ID.test(a.operatorId ?? '')
+      || a.sourceCommit !== source.commit || a.productVersion !== releaseIdentity.productVersion
+      || a.releaseManifestDigest !== releaseIdentity.manifestDigest || !SHA256.test(a.signedPackageSha256 ?? '')
+      || !SHA256.test(a.releaseSignatureProofSha256 ?? '') || !SAFE_ID.test(a.releaseTrustPolicyId ?? '') || !SHA256.test(a.releaseTrustPolicySha256 ?? '')
+      || !SAFE_ID.test(a.signingKeyId ?? '') || !SHA256.test(a.signingKeyFingerprint ?? '')
+      || !SHA256.test(a.evidenceManifestSha256 ?? '') || !SHA256.test(a.reviewReceiptSha256 ?? '') || !SAFE_ID.test(a.reviewerId ?? '')
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u.test(a.reviewedAt ?? '') || Number.isNaN(Date.parse(a.reviewedAt))
+      || a.stepCount !== 15 || !Number.isInteger(a.artifactCount) || a.artifactCount < 15 || a.artifactCount > 256
+      || !Number.isSafeInteger(a.totalArtifactBytes) || a.totalArtifactBytes <= 0 || a.totalArtifactBytes > 8 * 1024 * 1024 * 1024
+      || a.environment !== 'DISPOSABLE_QUALIFICATION' || a.platform !== 'WINDOWS11_WSL2') throw new Error('system-e2e receipt does not bind exact release/live qualification evidence');
+  }
   if (gate === 'authority-invariants') {
     const a = receipt.artifact;
     if (!a || !Number.isInteger(a.rulesChecked) || a.rulesChecked <= 0 || !Number.isInteger(a.composeFilesChecked) || a.composeFilesChecked <= 0 || !Number.isInteger(a.dockerfilesChecked) || a.dockerfilesChecked <= 0) throw new Error('authority-invariants receipt lacks valid invariant evidence');

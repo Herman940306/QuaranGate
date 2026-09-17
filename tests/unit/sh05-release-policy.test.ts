@@ -24,10 +24,19 @@ function validReceipt(gate: string, sourceBindingSha256: string, findings: any[]
   const receipt: any = { schemaVersion: 1, gate, status: 'PASS', source, tool: expectedTool(gate), findings };
   const commandIds: Record<string, string> = {
     typecheck: 'typescript-typecheck', build: 'typescript-build', unit: 'vitest-unit', integration: 'vitest-integration',
-    e2e: 'playwright-e2e', 'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', 'security-chaos': 'vitest-security-chaos', 'security-egress': 'vitest-security-egress', 'security-docker': 'vitest-security-docker', 'security-prompt-injection': 'vitest-security-prompt-injection', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
+    e2e: 'playwright-e2e', 'system-e2e': 'p10-system-e2e-validate', 'authority-invariants': 'authority-invariants', 'security-fuzz': 'security-fuzz', 'security-chaos': 'vitest-security-chaos', 'security-egress': 'vitest-security-egress', 'security-docker': 'vitest-security-docker', 'security-prompt-injection': 'vitest-security-prompt-injection', sbom: 'release-sbom', provenance: 'cosign-verify-blob-attestation',
   };
   if (commandIds[gate]) receipt.execution = execution(commandIds[gate]);
   if (['unit', 'integration', 'e2e', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection'].includes(gate)) receipt.testCounts = { files: 2, tests: 10, failed: 0 };
+  if (gate === 'system-e2e') receipt.artifact = {
+    schemaVersion: 2, status: 'PASS', runId: 'p10-system-e2e-fixture-001', operatorId: 'qualification-operator-a', sourceCommit: commit, productVersion: '1.0.0',
+    releaseManifestDigest: digest, signedPackageSha256: digest,
+    releaseSignatureProofSha256: digest, releaseTrustPolicyId: 'installer-release-trust-v1', releaseTrustPolicySha256: digest,
+    signingKeyId: 'release-key-a', signingKeyFingerprint: digest, evidenceManifestSha256: digest, reviewReceiptSha256: digest,
+    reviewerId: 'independent-reviewer-b', reviewedAt: '2026-09-17T13:00:00.000Z',
+    stepCount: 15, artifactCount: 15, totalArtifactBytes: 1500,
+    environment: 'DISPOSABLE_QUALIFICATION', platform: 'WINDOWS11_WSL2',
+  };
   if (gate === 'authority-invariants') receipt.artifact = { rulesChecked: 12, composeFilesChecked: 10, dockerfilesChecked: 7 };
   if (gate === 'security-fuzz') receipt.artifact = { targetCount: 15, totalExecutions: 30060, coverageRanges: 106, iterationsPerTarget: 2000, maxInputBytes: 1024, maxCorpus: 256, maxRuntimeMs: 20000, coverageSampleInterval: 16, seed: 0x51f08a11 };
   if (gate === 'sbom') receipt.artifact = { kind: 'spdx-json', sha256: digest, bytes: 100 };
@@ -75,7 +84,7 @@ describe('SH-05 release security policy', () => {
   it('passes a complete evidence set bound to the exact mechanical source receipt', () => {
     const f = fixture(); const r = evaluate(f); expect(r.status, r.stderr || r.stdout).toBe(0);
     const report = JSON.parse(r.stdout);
-    expect(report.verdict).toBe('PASS'); expect(report.requiredGateCount).toBe(18); expect(report.evidence).toHaveLength(18);
+    expect(report.verdict).toBe('PASS'); expect(report.requiredGateCount).toBe(19); expect(report.evidence).toHaveLength(19);
     expect(report.source).toEqual(source); expect(report.sourceBinding.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -111,6 +120,21 @@ describe('SH-05 release security policy', () => {
     }
     expect(failures).toContainEqual(expect.objectContaining({ gate: 'sast', code: 'INVALID_SCAN_EVIDENCE' }));
     expect(failures).toContainEqual(expect.objectContaining({ gate: 'provenance', code: 'INVALID_PROVENANCE_EVIDENCE' }));
+  });
+
+  it('fails closed on system-e2e bounded summary source/environment drift', () => {
+    for (const mutate of [
+      (receipt: any) => { receipt.artifact.sourceCommit = 'b'.repeat(40); },
+      (receipt: any) => { receipt.artifact.environment = 'PRODUCTION'; },
+      (receipt: any) => { receipt.artifact.stepCount = 14; },
+    ]) {
+      const f = fixture();
+      const path = join(f.evidence, 'system-e2e.json');
+      const receipt = JSON.parse(readFileSync(path, 'utf8'));
+      mutate(receipt); writeFileSync(path, JSON.stringify(receipt));
+      const r = evaluate(f); expect(r.status).toBe(3);
+      expect(JSON.parse(r.stdout).failures).toContainEqual(expect.objectContaining({ gate: 'system-e2e', code: 'INVALID_SYSTEM_E2E_EVIDENCE' }));
+    }
   });
 
   it('fails closed for invalid source-binding identity', () => {

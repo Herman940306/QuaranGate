@@ -135,7 +135,7 @@ The following limitations must remain explicit until their own accepted gates ch
 - Copilot and Kiro live provider acceptance remains dependent on genuine owner entitlement/test capability where recorded by project control.
 - VS Code final live re-verification and Cursor live qualification remain environment/runtime gates; source acceptance is not live acceptance.
 - owner-host lifecycle recovery remains an owner-host/live gate where project control records it as such.
-- full release assurance remains blocked when required integration/browser/scanner/image/provenance inputs are unavailable; intrinsic source gates do not substitute for them.
+- full release assurance remains blocked when required integration/browser/full-system-E2E/scanner/image/provenance inputs are unavailable; intrinsic source gates do not substitute for them. The synthetic browser E2E gate and P10 full-system `system-e2e` gate are distinct and both remain required.
 - POSIX owner/mode protections separate Unix identities but cannot isolate malicious processes already running under the same UID.
 - audit hash chaining detects captured-stream tampering but is not authenticity or durable retention by itself.
 - a compromised executor holding valid named-operation credentials still has meaningful authority within the broker's permitted product operations; the broker boundary prevents raw/generic Docker authority, not all impact.
@@ -148,6 +148,6 @@ Where central secret management, SIEM/immutable log retention, EDR, backup encry
 
 ## 12. Release evidence requirements
 
-A production release must bind evidence to the exact candidate. At minimum, retain the release policy/receipt outputs for all required intrinsic and environmental gates, including typecheck/build/unit, authority invariants, deterministic security fuzz/chaos where required, SBOM, integration/E2E, required offline SAST/secret/SCA/config/image scanning, source/image binding and provenance/signing inputs.
+A production release must bind evidence to the exact candidate. At minimum, retain the release policy/receipt outputs for all required intrinsic and environmental gates, including typecheck/build/unit, authority invariants, deterministic security fuzz/chaos where required, SBOM, integration/synthetic browser E2E, P10 full-system `system-e2e`, required offline SAST/secret/SCA/config/image scanning, source/image binding and provenance/signing inputs. P10 `system-e2e` acceptance requires cryptographically verified P9 release signing against installer-owned trust plus an independent manifest-bound review of the closed evidence set; self-asserted PASS/review/signing booleans are not release authority.
 
 A required tool/input being unavailable produces `BLOCKED_ENVIRONMENT`/the applicable blocked state, never an invented PASS. SH-14 external pentest evidence is separate and must name the exact tested revision/artifact. If security-relevant source changes after a pentest target was bound, rebind/retest according to the pentest protocol before using the old report as release evidence.

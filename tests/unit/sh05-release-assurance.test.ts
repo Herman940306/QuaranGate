@@ -10,10 +10,15 @@ describe('SH-05 release assurance orchestration', () => {
       QG_RELEASE_MANIFEST: '/runner/manifest.json',
       QG_RELEASE_SIGSTORE_BUNDLE: '/runner/provenance.sigstore.json',
       QG_RELEASE_PUBLIC_KEY: '/runner/cosign.pub',
+      QG_SYSTEM_E2E_EVIDENCE_DIR: '/runner/system-e2e',
+      QG_RELEASE_SIGNATURE_PROOF: '/runner/release-signature.json',
+      QG_RELEASE_TRUST_POLICY: '/runner/release-trust.json',
+      QG_SIGNED_WINDOWS_PACKAGE: '/runner/QuaranGate-Setup.exe',
     };
     expect(resolveAssuranceInputs([], env)).toEqual({
       evidenceDirRaw: '/runner/evidence', imageInputs: '/runner/images.json', releaseManifest: '/runner/manifest.json',
-      sigstoreBundle: '/runner/provenance.sigstore.json', publicKey: '/runner/cosign.pub',
+      sigstoreBundle: '/runner/provenance.sigstore.json', publicKey: '/runner/cosign.pub', systemE2eEvidenceDir: '/runner/system-e2e',
+      releaseSignatureProof: '/runner/release-signature.json', releaseTrustPolicy: '/runner/release-trust.json', signedPackage: '/runner/QuaranGate-Setup.exe',
     });
     expect(resolveAssuranceInputs(['--evidence-dir', '/cli/evidence', '--release-manifest', '/cli/manifest.json'], env)).toEqual(expect.objectContaining({
       evidenceDirRaw: '/cli/evidence', releaseManifest: '/cli/manifest.json', imageInputs: '/runner/images.json',
@@ -41,7 +46,7 @@ describe('SH-05 release assurance orchestration', () => {
     expect(workflow).toContain("if: github.ref == 'refs/heads/integrate/quarangate-forward' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))");
     expect(workflow).toContain('runs-on: [self-hosted, linux, x64, quarangate-release]');
     expect(workflow).not.toMatch(/actions\/checkout|npm\s+(?:ci|install)|curl\s|wget\s|docker\s+pull/iu);
-    for (const name of ['KEYS_ENV', 'QG_RELEASE_IMAGE_INPUTS', 'QG_RELEASE_MANIFEST', 'QG_RELEASE_SIGSTORE_BUNDLE', 'QG_RELEASE_PUBLIC_KEY', 'QG_RELEASE_EVIDENCE_ROOT']) {
+    for (const name of ['KEYS_ENV', 'QG_RELEASE_IMAGE_INPUTS', 'QG_RELEASE_MANIFEST', 'QG_RELEASE_SIGSTORE_BUNDLE', 'QG_RELEASE_PUBLIC_KEY', 'QG_SYSTEM_E2E_EVIDENCE_DIR', 'QG_RELEASE_SIGNATURE_PROOF', 'QG_RELEASE_TRUST_POLICY', 'QG_SIGNED_WINDOWS_PACKAGE', 'QG_RELEASE_EVIDENCE_ROOT']) {
       expect(workflow).toContain(`${name}:`);
     }
     expect(workflow).toContain('test ! -e "$evidence"');

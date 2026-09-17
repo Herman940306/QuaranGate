@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { externalOutputPath, pathIsWithinRoot as sharedPathIsWithinRoot } from './release-path-safety.mjs';
 
 const SHA1 = /^[0-9a-f]{40}$/u;
-const SUPPORTED_GATES = Object.freeze(['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom']);
+const SUPPORTED_GATES = Object.freeze(['typecheck', 'build', 'unit', 'integration', 'e2e', 'system-e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom']);
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -127,6 +127,43 @@ export function e2ePrerequisites({
   return [];
 }
 
+export function systemE2ePrerequisites({ evidenceDir, releaseManifest, releaseSignatureProof, releaseTrustPolicy, signedPackage, exists = existsSync } = {}) {
+  const missing = [];
+  if (!releaseManifest || !exists(releaseManifest)) missing.push('RELEASE_MANIFEST_UNAVAILABLE');
+  if (!releaseSignatureProof || !exists(releaseSignatureProof)) missing.push('RELEASE_SIGNATURE_PROOF_UNAVAILABLE');
+  if (!releaseTrustPolicy || !exists(releaseTrustPolicy)) missing.push('RELEASE_TRUST_POLICY_UNAVAILABLE');
+  if (!signedPackage || !exists(signedPackage)) missing.push('SIGNED_WINDOWS_PACKAGE_UNAVAILABLE');
+  if (!evidenceDir || !exists(evidenceDir)) missing.push('SYSTEM_E2E_EVIDENCE_UNAVAILABLE');
+  return missing.sort();
+}
+
+export function parseSystemE2eSummary(value) {
+  const expected = ['schemaVersion','status','runId','operatorId','sourceCommit','productVersion','releaseManifestDigest','signedPackageSha256','releaseSignatureProofSha256','releaseTrustPolicyId','releaseTrustPolicySha256','signingKeyId','signingKeyFingerprint','evidenceManifestSha256','reviewReceiptSha256','reviewerId','reviewedAt','stepCount','artifactCount','totalArtifactBytes','environment','platform'].sort();
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).sort().some((key, index, actual) => actual.length !== expected.length || key !== expected[index])
+    || value.schemaVersion !== 2 || value.status !== 'PASS'
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.runId ?? '')
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.operatorId ?? '')
+    || !/^[0-9a-f]{40}$/u.test(value.sourceCommit ?? '')
+    || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(value.productVersion ?? '')
+    || !/^[0-9a-f]{64}$/u.test(value.releaseManifestDigest ?? '')
+    || !/^[0-9a-f]{64}$/u.test(value.signedPackageSha256 ?? '')
+    || !/^[0-9a-f]{64}$/u.test(value.releaseSignatureProofSha256 ?? '')
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.releaseTrustPolicyId ?? '')
+    || !/^[0-9a-f]{64}$/u.test(value.releaseTrustPolicySha256 ?? '')
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.signingKeyId ?? '')
+    || !/^[0-9a-f]{64}$/u.test(value.signingKeyFingerprint ?? '')
+    || !/^[0-9a-f]{64}$/u.test(value.evidenceManifestSha256 ?? '')
+    || !/^[0-9a-f]{64}$/u.test(value.reviewReceiptSha256 ?? '')
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.reviewerId ?? '')
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u.test(value.reviewedAt ?? '') || Number.isNaN(Date.parse(value.reviewedAt))
+    || value.stepCount !== 15 || !Number.isInteger(value.artifactCount) || value.artifactCount < 15 || value.artifactCount > 256
+    || !Number.isSafeInteger(value.totalArtifactBytes) || value.totalArtifactBytes <= 0 || value.totalArtifactBytes > 8 * 1024 * 1024 * 1024
+    || value.environment !== 'DISPOSABLE_QUALIFICATION' || value.platform !== 'WINDOWS11_WSL2') {
+    throw new Error('system-e2e validator summary is not an exact PASS artifact');
+  }
+  return value;
+}
+
 export function executionEvidence(result, commandId) {
   return {
     commandId,
@@ -204,6 +241,7 @@ export function vitestGateInvocation(definition, reportPath) {
 export function gateDefinition(gate) {
   if (!SUPPORTED_GATES.includes(gate)) throw new Error(`unsupported fixed release gate: ${gate}`);
   if (gate === 'e2e') return { e2e: true, tool: { name: '@playwright/test', version: lockedPackageVersion('e2e/package-lock.json', '@playwright/test') }, commandId: 'playwright-e2e' };
+  if (gate === 'system-e2e') return { systemE2e: true, tool: { name: 'quarangate-system-e2e-validator', version: '2' }, commandId: 'p10-system-e2e-validate' };
   if (gate === 'typecheck') return { binary: resolve('node_modules/.bin/tsc'), args: ['-p', 'tsconfig.json', '--noEmit'], tool: { name: 'typescript', version: packageVersion('typescript') }, commandId: 'typescript-typecheck' };
   if (gate === 'build') return { binary: resolve('node_modules/.bin/tsc'), args: ['-p', 'tsconfig.json'], tool: { name: 'typescript', version: packageVersion('typescript') }, commandId: 'typescript-build' };
   if (gate === 'unit') return { vitest: true, scope: 'tests/unit', tool: { name: 'vitest', version: packageVersion('vitest') }, commandId: 'vitest-unit' };
@@ -240,6 +278,11 @@ export function main(argv = process.argv.slice(2)) {
   const sourceBindingPath = valueAfter('--source-binding');
   const output = valueAfter('--output');
   const artifactOutput = valueAfter('--artifact-output');
+  const systemE2eEvidenceDir = valueAfter('--system-e2e-evidence-dir') ?? process.env.QG_SYSTEM_E2E_EVIDENCE_DIR;
+  const releaseManifestPath = valueAfter('--release-manifest') ?? process.env.QG_RELEASE_MANIFEST;
+  const releaseSignatureProofPath = valueAfter('--release-signature-proof') ?? process.env.QG_RELEASE_SIGNATURE_PROOF;
+  const releaseTrustPolicyPath = valueAfter('--release-trust-policy') ?? process.env.QG_RELEASE_TRUST_POLICY;
+  const signedPackagePath = valueAfter('--signed-package') ?? process.env.QG_SIGNED_WINDOWS_PACKAGE;
   if (!gate) throw new Error('--gate is required');
   if (!sourceBindingPath || !existsSync(sourceBindingPath)) throw new Error('--source-binding requires an existing receipt');
   if (!output) throw new Error('--output is required');
@@ -261,6 +304,12 @@ export function main(argv = process.argv.slice(2)) {
       definition = { ...definition, unavailable: true, reason: 'E2E_PREREQUISITES_UNAVAILABLE', missingPrerequisites };
     }
   }
+  if (gate === 'system-e2e') {
+    const missingPrerequisites = systemE2ePrerequisites({ evidenceDir: systemE2eEvidenceDir, releaseManifest: releaseManifestPath, releaseSignatureProof: releaseSignatureProofPath, releaseTrustPolicy: releaseTrustPolicyPath, signedPackage: signedPackagePath });
+    if (missingPrerequisites.length) {
+      definition = { ...definition, unavailable: true, reason: 'SYSTEM_E2E_PREREQUISITES_UNAVAILABLE', missingPrerequisites };
+    }
+  }
   if (definition.unavailable) {
     writeReceipt(output, unavailableReceipt(gate, source, definition));
     return 4;
@@ -271,7 +320,23 @@ export function main(argv = process.argv.slice(2)) {
     let result;
     let testCounts;
     let artifact;
-    if (definition.e2e) {
+    if (definition.systemE2e) {
+      result = run(process.execPath, [
+        'scripts/p10-system-e2e-evidence.mjs',
+        '--evidence-dir', systemE2eEvidenceDir,
+        '--source-binding', sourceBindingPath,
+        '--release-manifest', releaseManifestPath,
+        '--release-signature-proof', releaseSignatureProofPath,
+        '--release-trust-policy', releaseTrustPolicyPath,
+        '--signed-package', signedPackagePath,
+      ]);
+      if (result.status === 0) {
+        let parsed;
+        try { parsed = JSON.parse(result.stdout); } catch { throw new Error('system-e2e validator did not return JSON'); }
+        artifact = parseSystemE2eSummary(parsed);
+        if (artifact.sourceCommit !== source.commit) throw new Error('system-e2e validator summary source does not match release source');
+      }
+    } else if (definition.e2e) {
       const reportPath = join(temp, 'playwright.json');
       const cli = resolve('e2e/node_modules/@playwright/test/cli.js');
       result = run(process.execPath, [cli, 'test', '--config=e2e/playwright.config.ts'], {
@@ -329,7 +394,9 @@ export function main(argv = process.argv.slice(2)) {
 
     const after = currentSource();
     if (!sameSource(source, after)) throw new Error('release gate mutated or drifted exact Git source');
-    const status = result.status === 0 && !result.errorCode && ((definition.vitest || definition.e2e) ? Boolean(testCounts) : true) && (definition.sbom || gate === 'security-fuzz' ? Boolean(artifact) : true) ? 'PASS' : 'FAIL';
+    const status = result.status === 0 && !result.errorCode
+      && ((definition.vitest || definition.e2e) ? Boolean(testCounts) : true)
+      && (definition.sbom || definition.systemE2e || gate === 'security-fuzz' ? Boolean(artifact) : true) ? 'PASS' : 'FAIL';
     const receipt = {
       schemaVersion: 1,
       gate,

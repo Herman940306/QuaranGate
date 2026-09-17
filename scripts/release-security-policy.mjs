@@ -47,12 +47,14 @@ const failures = [];
 const tolerated = [];
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const SHA256 = /^[0-9a-f]{64}$/u;
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const executionCommandIds = {
   typecheck: 'typescript-typecheck',
   build: 'typescript-build',
   unit: 'vitest-unit',
   integration: 'vitest-integration',
   e2e: 'playwright-e2e',
+  'system-e2e': 'p10-system-e2e-validate',
   'authority-invariants': 'authority-invariants',
   'security-fuzz': 'security-fuzz',
   'security-chaos': 'vitest-security-chaos',
@@ -75,11 +77,25 @@ function validExecution(value, expectedCommandId) {
 }
 function validateReceiptEvidence(gate, receipt, sourceBindingSha256) {
   const errors = [];
-  const executionGate = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom', 'provenance'].includes(gate);
+  const executionGate = ['typecheck', 'build', 'unit', 'integration', 'e2e', 'system-e2e', 'authority-invariants', 'security-fuzz', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection', 'sbom', 'provenance'].includes(gate);
   if (executionGate && !validExecution(receipt.execution, executionCommandIds[gate])) errors.push('INVALID_EXECUTION_EVIDENCE');
   if (['unit', 'integration', 'e2e', 'security-chaos', 'security-egress', 'security-docker', 'security-prompt-injection'].includes(gate)) {
     const counts = receipt.testCounts;
     if (!counts || !Number.isInteger(counts.files) || counts.files <= 0 || !Number.isInteger(counts.tests) || counts.tests <= 0 || counts.failed !== 0) errors.push('INVALID_TEST_COUNTS');
+  }
+  if (gate === 'system-e2e') {
+    const artifact = receipt.artifact;
+    if (!artifact || artifact.schemaVersion !== 2 || artifact.status !== 'PASS'
+      || !SAFE_ID.test(artifact.runId ?? '') || !SAFE_ID.test(artifact.operatorId ?? '') || artifact.sourceCommit !== source.commit
+      || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(artifact.productVersion ?? '')
+      || !SHA256.test(artifact.releaseManifestDigest ?? '') || !SHA256.test(artifact.signedPackageSha256 ?? '')
+      || !SHA256.test(artifact.releaseSignatureProofSha256 ?? '') || !SAFE_ID.test(artifact.releaseTrustPolicyId ?? '') || !SHA256.test(artifact.releaseTrustPolicySha256 ?? '')
+      || !SAFE_ID.test(artifact.signingKeyId ?? '') || !SHA256.test(artifact.signingKeyFingerprint ?? '')
+      || !SHA256.test(artifact.evidenceManifestSha256 ?? '') || !SHA256.test(artifact.reviewReceiptSha256 ?? '') || !SAFE_ID.test(artifact.reviewerId ?? '')
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u.test(artifact.reviewedAt ?? '') || Number.isNaN(Date.parse(artifact.reviewedAt))
+      || artifact.stepCount !== 15 || !Number.isInteger(artifact.artifactCount) || artifact.artifactCount < 15 || artifact.artifactCount > 256
+      || !Number.isSafeInteger(artifact.totalArtifactBytes) || artifact.totalArtifactBytes <= 0 || artifact.totalArtifactBytes > 8 * 1024 * 1024 * 1024
+      || artifact.environment !== 'DISPOSABLE_QUALIFICATION' || artifact.platform !== 'WINDOWS11_WSL2') errors.push('INVALID_SYSTEM_E2E_EVIDENCE');
   }
   if (gate === 'authority-invariants') {
     const artifact = receipt.artifact;
