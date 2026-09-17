@@ -297,6 +297,8 @@ describe('governed npm offline bundle', () => {
       manifestSha256: '6c399f8614dcaf821b674c33330b899f3f2198cf2a041c7f3a200ed752136ad7',
       allowedHosts: ALLOWED_HOSTS,
     }));
+    const acceptance = fs.readFileSync(new URL('../../scripts/accept-npm-offline-build.mjs', import.meta.url), 'utf8');
+    expect(acceptance).toContain(`const EXPECTED_LOCK_SHA256 = '${analysis.packageLockSha256}';`);
   });
 
   it('accepts a complete valid bundle bound to the allowed endpoint policy', async () => {

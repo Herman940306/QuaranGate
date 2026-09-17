@@ -8,7 +8,7 @@ import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { canonicalJson } from './npm-offline-bundle.mjs';
 
-const EXPECTED_LOCK_SHA256 = '31688b0a46cb5051e069ff049bbafd34752ace10dfb9dac3a60c9a3fef5258e5';
+const EXPECTED_LOCK_SHA256 = '5ad727697de394442f04514bc391e3367af98d7efb5fc822ef3d87d1cda1b570';
 const EXPECTED_TINI_SHA256 = '1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc';
 const BASE_IMAGE = 'node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81';
 
