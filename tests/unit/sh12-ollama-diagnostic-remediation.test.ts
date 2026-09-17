@@ -9,6 +9,13 @@ import { OllamaBackend } from '../../src/executor/agents/ollamaBackend.js';
 import { validateAgentConfig } from '../../src/executor/agentConfig.js';
 import type { Principal } from '../../src/gateway/config.js';
 
+
+function constructibleOllamaMock(instance: Record<string, unknown>): typeof import('ollama').Ollama {
+  return vi.fn(class {
+    constructor() { Object.assign(this, instance); }
+  }) as unknown as typeof import('ollama').Ollama;
+}
+
 const PRINCIPAL: Principal = {
   id: 'owner', name: 'Owner', keyHash: 'a'.repeat(64), enabled: true,
   scopes: ['agents:read'], targets: [], projects: ['proj1'], agentBackends: ['ollama'], agentProfiles: ['audit'],
@@ -89,7 +96,7 @@ function backendFactoryFor(kind: 'request' | 'stream', marker: string) {
       : vi.fn().mockResolvedValue((async function* () {
           throw rawProviderError;
         })());
-    const MockOllama = vi.fn().mockReturnValue({ chat, abort: vi.fn() }) as unknown as typeof import('ollama').Ollama;
+    const MockOllama = constructibleOllamaMock({ chat, abort: vi.fn() });
     const backend = new OllamaBackend(
       {
         jobId: job.jobId, principalId: job.principalId, backend: 'ollama', project: job.project,

@@ -41,7 +41,7 @@ describe('SH-05 fixed release gate receipt executor', () => {
     expect(gateDefinition('security-chaos')).toEqual({
       vitest: true,
       scope: 'tests/unit/sh09',
-      tool: { name: 'vitest', version: '3.2.7' },
+      tool: { name: 'vitest', version: '4.1.11' },
       commandId: 'vitest-security-chaos',
     });
   });
@@ -50,19 +50,19 @@ describe('SH-05 fixed release gate receipt executor', () => {
     expect(gateDefinition('security-egress')).toEqual({
       vitest: true,
       scope: 'tests/unit/sh10',
-      tool: { name: 'vitest', version: '3.2.7' },
+      tool: { name: 'vitest', version: '4.1.11' },
       commandId: 'vitest-security-egress',
     });
     expect(gateDefinition('security-docker')).toEqual({
       vitest: true,
       scope: 'tests/unit/sh11',
-      tool: { name: 'vitest', version: '3.2.7' },
+      tool: { name: 'vitest', version: '4.1.11' },
       commandId: 'vitest-security-docker',
     });
     expect(gateDefinition('security-prompt-injection')).toEqual({
       vitest: true,
       scope: 'tests/unit/sh12',
-      tool: { name: 'vitest', version: '3.2.7' },
+      tool: { name: 'vitest', version: '4.1.11' },
       commandId: 'vitest-security-prompt-injection',
     });
   });

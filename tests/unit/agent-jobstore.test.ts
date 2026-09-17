@@ -252,9 +252,6 @@ describe('agent job store', () => {
 // =============================================================================
 
 import { describe as describeV5, it as itV5, expect as expectV5, beforeEach as beforeEachV5 } from 'vitest';
-import { DatabaseSync } from 'node:sqlite';
-import { AGENT_RETENTION_DURATION_MS } from '../../src/shared/agents.js';
-
 describeV5('A6 retention snapshot — constants', () => {
   itV5('ephemeral maps to exactly 86_400_000 ms (24 hours)', () => {
     expectV5(AGENT_RETENTION_DURATION_MS['ephemeral']).toBe(86_400_000);

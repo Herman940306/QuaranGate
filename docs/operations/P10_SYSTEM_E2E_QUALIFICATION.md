@@ -78,7 +78,7 @@ No other top-level or review files are accepted. Do not place secrets, bearer cr
 }
 ```
 
-The `steps` array contains all fifteen required IDs in the exact documented order. Artifact kinds are limited to `JSON`, `LOG`, `SCREENSHOT`, `VIDEO`, `ARCHIVE`, or `RECEIPT`.
+The `steps` array contains all fifteen required IDs in the exact documented order. Artifact kinds are limited to `JSON`, `LOG`, `SCREENSHOT`, `VIDEO`, `ARCHIVE`, or `RECEIPT`. Every step must include a `RECEIPT`; `fresh-install` and `restart-crash` must also include a `LOG`; `backup-recovery` must also include an `ARCHIVE`.
 
 ## 4. Evidence expected per step
 

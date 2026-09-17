@@ -40,6 +40,23 @@ const MAX_SIGNED_PACKAGE_BYTES = 2 * 1024 * 1024 * 1024;
 const HASH_BUFFER_BYTES = 1024 * 1024;
 
 export const P10_SYSTEM_E2E_SCHEMA_VERSION = 2;
+export const P10_SYSTEM_E2E_STEP_REQUIREMENTS = Object.freeze({
+  'fresh-install': ['RECEIPT', 'LOG'],
+  'configure': ['RECEIPT'],
+  'enroll': ['RECEIPT'],
+  'kiro': ['RECEIPT'],
+  'ollama': ['RECEIPT'],
+  'copilot': ['RECEIPT'],
+  'github': ['RECEIPT'],
+  'ide': ['RECEIPT'],
+  'jobs': ['RECEIPT'],
+  'restart-crash': ['RECEIPT', 'LOG'],
+  'resume': ['RECEIPT'],
+  'review': ['RECEIPT'],
+  'apply': ['RECEIPT'],
+  'evidence': ['RECEIPT'],
+  'backup-recovery': ['RECEIPT', 'ARCHIVE'],
+});
 export const P10_SYSTEM_E2E_STEPS = Object.freeze([
   'fresh-install',
   'configure',
@@ -125,6 +142,15 @@ function hashRegularFile(candidate, label, maxBytes) {
   }
   if (total !== info.size) throw new Error(`${label} changed during hashing`);
   return { path, bytes: total, sha256: hash.digest('hex') };
+}
+
+function validateStepEvidenceKinds(step) {
+  const required = P10_SYSTEM_E2E_STEP_REQUIREMENTS[step.id];
+  if (!Array.isArray(required)) throw new Error(`system-e2e step has no fixed evidence contract: ${step.id}`);
+  const kinds = new Set(step.artifacts.map((artifact) => artifact.kind));
+  for (const kind of required) {
+    if (!kinds.has(kind)) throw new Error(`system-e2e step lacks required ${kind} evidence: ${step.id}`);
+  }
 }
 
 function sameSource(a, b) {
@@ -386,6 +412,7 @@ export function validateP10SystemE2eEvidence({
     if (completed <= started || (previousCompleted !== null && started <= previousCompleted)) throw new Error(`system-e2e step time order is invalid: ${step.id}`);
     previousCompleted = completed;
     if (!Array.isArray(step.artifacts) || step.artifacts.length < 1 || step.artifacts.length > 32) throw new Error(`system-e2e step artifacts are invalid: ${step.id}`);
+    validateStepEvidenceKinds(step);
     for (const artifact of step.artifacts) {
       totalArtifactBytes += validateArtifact(root, artifact, seenPaths);
       artifactCount += 1;

@@ -278,7 +278,7 @@ describe('governed npm offline bundle', () => {
     const lockfile = new URL('../../package-lock.json', import.meta.url);
     const before = fs.readFileSync(lockfile);
     const analysis = await analyzeLockFile(lockfile);
-    expect(analysis.packageLockSha256).toBe('31688b0a46cb5051e069ff049bbafd34752ace10dfb9dac3a60c9a3fef5258e5');
+    expect(analysis.packageLockSha256).toBe('5ad727697de394442f04514bc391e3367af98d7efb5fc822ef3d87d1cda1b570');
     expect(fs.readFileSync(lockfile)).toEqual(before);
   });
 

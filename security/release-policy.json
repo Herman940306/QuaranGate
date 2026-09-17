@@ -32,11 +32,11 @@
     },
     "unit": {
       "name": "vitest",
-      "version": "3.2.7"
+      "version": "4.1.11"
     },
     "integration": {
       "name": "vitest",
-      "version": "3.2.7"
+      "version": "4.1.11"
     },
     "e2e": {
       "name": "@playwright/test",
@@ -80,19 +80,19 @@
     },
     "security-chaos": {
       "name": "vitest",
-      "version": "3.2.7"
+      "version": "4.1.11"
     },
     "security-egress": {
       "name": "vitest",
-      "version": "3.2.7"
+      "version": "4.1.11"
     },
     "security-docker": {
       "name": "vitest",
-      "version": "3.2.7"
+      "version": "4.1.11"
     },
     "security-prompt-injection": {
       "name": "vitest",
-      "version": "3.2.7"
+      "version": "4.1.11"
     },
     "system-e2e": {
       "name": "quarangate-system-e2e-validator",

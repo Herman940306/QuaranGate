@@ -42,7 +42,7 @@ The validator reuses the same canonical release-signature payload semantics as P
 14. `evidence`
 15. `backup-recovery`
 
-Every step must be `PASS`, have strictly ordered UTC start/completion timestamps, and bind at least one exact evidence artifact. The evidence root is closed: only `manifest.json`, `artifacts/`, and `review/independent-review.json` are permitted, every artifact must be referenced exactly once, and unmanifested/symlinked/traversal/tampered evidence is rejected.
+Every step must be `PASS`, have strictly ordered UTC start/completion timestamps, and bind exact evidence artifacts. Every step requires a `RECEIPT`; `fresh-install` and `restart-crash` additionally require a `LOG`; `backup-recovery` additionally requires an `ARCHIVE`. Arbitrary hash-correct files are not sufficient. The evidence root is closed: only `manifest.json`, `artifacts/`, and `review/independent-review.json` are permitted, every artifact must be referenced exactly once, and unmanifested/symlinked/traversal/tampered evidence is rejected.
 
 ## Environment and reviewer boundary
 

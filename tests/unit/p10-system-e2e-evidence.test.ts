@@ -68,15 +68,22 @@ function fixture() {
   writeFileSync(signedPackagePath, signedPackageBytes);
 
   const evidenceSteps = steps.map((id, index) => {
-    const relativePath = `artifacts/${String(index + 1).padStart(2, '0')}-${id}.json`;
-    const bytes = Buffer.from(`${JSON.stringify({ id, marker: `reviewable-synthetic-${index}` })}\n`);
-    writeFileSync(join(root, relativePath), bytes);
+    const artifacts: Array<{ path: string; sha256: string; bytes: number; kind: string }> = [];
+    const addArtifact = (kind: string, suffix: string) => {
+      const relativePath = `artifacts/${String(index + 1).padStart(2, '0')}-${id}-${suffix}.bin`;
+      const bytes = Buffer.from(`${JSON.stringify({ id, kind, marker: `reviewable-synthetic-${index}` })}\n`);
+      writeFileSync(join(root, relativePath), bytes);
+      artifacts.push({ path: relativePath, sha256: sha256(bytes), bytes: bytes.length, kind });
+    };
+    addArtifact('RECEIPT', 'receipt');
+    if (id === 'fresh-install' || id === 'restart-crash') addArtifact('LOG', 'log');
+    if (id === 'backup-recovery') addArtifact('ARCHIVE', 'archive');
     return {
       id,
       status: 'PASS',
       startedAt: new Date(Date.UTC(2026, 8, 17, 10, 10 + index * 2, 0)).toISOString(),
       completedAt: new Date(Date.UTC(2026, 8, 17, 10, 11 + index * 2, 0)).toISOString(),
-      artifacts: [{ path: relativePath, sha256: sha256(bytes), bytes: bytes.length, kind: 'JSON' }],
+      artifacts,
     };
   });
   const evidence: any = {
@@ -150,7 +157,7 @@ describe('P10 full-system E2E evidence validator v2', () => {
   it('accepts the exact 15-step run only with cryptographic release trust, exact package bytes and independent manifest-bound review', () => {
     const result = validate();
     expect(result).toEqual(expect.objectContaining({
-      schemaVersion: 2, status: 'PASS', runId: 'p10-system-e2e-fixture-001', operatorId: 'qualification-operator-a', stepCount: 15, artifactCount: 15,
+      schemaVersion: 2, status: 'PASS', runId: 'p10-system-e2e-fixture-001', operatorId: 'qualification-operator-a', stepCount: 15, artifactCount: 18,
       productVersion: '1.0.0', sourceCommit: source.commit, signingKeyId,
       releaseManifestDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
       signedPackageSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -162,6 +169,25 @@ describe('P10 full-system E2E evidence validator v2', () => {
       reviewReceiptSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
       reviewerId: 'independent-reviewer-b',
     }));
+  });
+
+  it('requires step-specific minimum evidence kinds instead of arbitrary hash-correct files', () => {
+    const missingFreshLog = fixture();
+    missingFreshLog.evidence.steps[0].artifacts = missingFreshLog.evidence.steps[0].artifacts.filter((artifact: any) => artifact.kind !== 'LOG');
+    rewriteEvidence(missingFreshLog); rebindReview(missingFreshLog);
+    expect(() => validate(missingFreshLog)).toThrow(/required LOG evidence/i);
+
+    const missingBackupArchive = fixture();
+    missingBackupArchive.evidence.steps[14].artifacts = missingBackupArchive.evidence.steps[14].artifacts.filter((artifact: any) => artifact.kind !== 'ARCHIVE');
+    rewriteEvidence(missingBackupArchive); rebindReview(missingBackupArchive);
+    expect(() => validate(missingBackupArchive)).toThrow(/required ARCHIVE evidence/i);
+
+    const arbitraryJsonOnly = fixture();
+    for (const step of arbitraryJsonOnly.evidence.steps) {
+      step.artifacts = step.artifacts.map((artifact: any) => ({ ...artifact, kind: 'JSON' }));
+    }
+    rewriteEvidence(arbitraryJsonOnly); rebindReview(arbitraryJsonOnly);
+    expect(() => validate(arbitraryJsonOnly)).toThrow(/required RECEIPT evidence/i);
   });
 
   it('fails on source or release-manifest drift', () => {

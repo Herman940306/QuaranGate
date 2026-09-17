@@ -24,6 +24,13 @@ import {
 } from '../../src/executor/agents/sandboxSpec.js';
 import type { AgentResourcePolicy } from '../../src/shared/agents.js';
 
+
+function constructibleOllamaMock(instance: Record<string, unknown>): typeof import('ollama').Ollama {
+  return vi.fn(class {
+    constructor() { Object.assign(this, instance); }
+  }) as unknown as typeof import('ollama').Ollama;
+}
+
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const baseComposeText = readFileSync(join(repoRoot, 'compose.yaml'), 'utf8');
 const ollamaComposeText = readFileSync(join(repoRoot, 'compose.ollama.yaml'), 'utf8');
@@ -130,7 +137,7 @@ describe('O1 backend/config', () => {
   it('OllamaBackend constructor refuses implement profile (writer)', async () => {
     const { OllamaBackend } = await import('../../src/executor/agents/ollamaBackend.js');
     const mockOllamaInstance = { chat: vi.fn() };
-    const MockOllamaClass = vi.fn().mockReturnValue(mockOllamaInstance) as unknown as typeof import('ollama').Ollama;
+    const MockOllamaClass = constructibleOllamaMock(mockOllamaInstance as Record<string, unknown>);
     expect(() => new OllamaBackend(
       { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'implement', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
       { ollamaHost: 'http://ollama:11434', modelQualifier: 'test:v1', helperImage: 'img:v1', stagerImage: 'img:v1', sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
@@ -295,7 +302,7 @@ describe('O1 tool authority', () => {
       return mockStream(resp);
     });
     const mockOllamaInstance = { chat: mockChat };
-    const MockOllamaClass = vi.fn().mockReturnValue(mockOllamaInstance) as unknown as typeof import('ollama').Ollama;
+    const MockOllamaClass = constructibleOllamaMock(mockOllamaInstance as Record<string, unknown>);
     return { OllamaBackend, MockOllamaClass, mockChat };
   }
 
@@ -318,6 +325,7 @@ describe('O1 tool authority', () => {
     const privatePath = 'PRIVATE_TOOL_ARGUMENT_PATH_SENTINEL';
     const nativeToolCall = { function: { name: 'list_files', arguments: { path: privatePath, maxDepth: 1.5 } } };
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy.mockClear();
     const { OllamaBackend, MockOllamaClass } = await makeBackendWithMockChat([
       { message: { content: '', tool_calls: [nativeToolCall] }, done: true },
     ]);
@@ -357,6 +365,7 @@ describe('O1 tool authority', () => {
   it('keeps forbidden unknown native tools as policy failures, not agent failures', async () => {
     const nativeToolCall = { function: { name: 'write_file', arguments: { path: 'x', content: 'y' } } };
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy.mockClear();
     const { OllamaBackend, MockOllamaClass } = await makeBackendWithMockChat([
       { message: { content: '', tool_calls: [nativeToolCall] }, done: true },
     ]);
@@ -571,7 +580,7 @@ describe('O1 governed result delivery', () => {
       const response = chatResponses[callIdx++] ?? { message: { content: 'done', tool_calls: [] }, done: true };
       return (async function* () { yield response; })();
     });
-    const MockOllamaClass = vi.fn().mockReturnValue({ chat: mockChat }) as unknown as typeof import('ollama').Ollama;
+    const MockOllamaClass = constructibleOllamaMock({ chat: mockChat });
     const backend = new OllamaBackend(
       { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'inspect the repository', hostPath: '/srv', policy: POLICY },
       { ollamaHost: 'http://x', modelQualifier: 'm:v1', helperImage: 'h:v1', stagerImage: 'h:v1', sensitiveReadGlobs: ['**/.env'], OllamaClass: MockOllamaClass },
@@ -714,6 +723,7 @@ describe('O1 governed result delivery', () => {
     const hiddenThinking = 'PRIVATE_THINKING_SENTINEL';
     const unboundedDoneReason = 'PRIVATE_DONE_REASON_SENTINEL/'.repeat(10);
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy.mockClear();
     const { backend } = await makeResultBackend([
       { message: { content: '', thinking: hiddenThinking, tool_calls: [] }, done: true, done_reason: unboundedDoneReason },
     ]);
@@ -742,6 +752,7 @@ describe('O1 governed result delivery', () => {
     const hiddenThinking = 'TOOL_THINKING_SENTINEL';
     const nativeToolCall = { function: { name: 'literal_search', arguments: { directory: 'src', query: 'needle' } } };
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy.mockClear();
     const { backend } = await makeResultBackend([
       { message: { content: '', thinking: hiddenThinking, tool_calls: [nativeToolCall] }, done: true, done_reason: 'stop' },
       { message: { content: 'Evidence-based final.', tool_calls: [] }, done: true, done_reason: 'stop' },
@@ -767,6 +778,7 @@ describe('O1 governed result delivery', () => {
     const privateResult = 'PRIVATE_TOOL_RESULT_SENTINEL';
     const nativeToolCall = { function: { name: 'list_files', arguments: { path: privateArgument, maxDepth: 2 } } };
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy.mockClear();
     const { backend } = await makeResultBackend([
       { message: { content: '', tool_calls: [nativeToolCall] }, done: true, done_reason: 'stop' },
       { message: { content: 'Evidence-based final.', tool_calls: [] }, done: true, done_reason: 'stop' },
@@ -814,6 +826,7 @@ describe('O1 governed result delivery', () => {
     const privatePath = 'PRIVATE_SEARCH_PATH_SENTINEL';
     const nativeToolCall = { function: { name: 'literal_search', arguments: { directory: privatePath, query: privateQuery } } };
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy.mockClear();
     const { backend } = await makeResultBackend([
       { message: { content: '', tool_calls: [nativeToolCall] }, done: true, done_reason: 'stop' },
       { message: { content: 'Evidence-based final.', tool_calls: [] }, done: true, done_reason: 'stop' },
@@ -2172,7 +2185,7 @@ describe('O1 conservative chat envelope', () => {
       const response = chatResponses[callIdx++] ?? { message: { content: 'done', tool_calls: [] }, done: true };
       return (async function* () { yield response; })();
     });
-    const MockOllamaClass = vi.fn().mockReturnValue({ chat: mockChat }) as unknown as typeof import('ollama').Ollama;
+    const MockOllamaClass = constructibleOllamaMock({ chat: mockChat });
     const backend = new OllamaBackend(
       { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt, hostPath: '/srv', policy: POLICY },
       { ollamaHost: 'http://x', modelQualifier: 'm:v1', helperImage: 'h:v1', stagerImage: 'h:v1', sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
@@ -2238,6 +2251,7 @@ describe('O1 conservative chat envelope', () => {
     const rawMarker = 'RAW_WITHHELD_SECRET_MARKER';
     const rawResult = JSON.stringify({ success: true, data: rawMarker.repeat(2500) });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy.mockClear();
     const nativeToolCall = { function: { name: 'read_file', arguments: { path: 'README.md' } } };
     const { backend, mockChat, MAX_OLLAMA_CHAT_ENVELOPE_BYTES, measureOllamaChatEnvelopeBytes } = await makeBackend('review', [
       { message: { content: '', tool_calls: [nativeToolCall] }, done: true },
@@ -2514,6 +2528,7 @@ describe('O1 R2 workspace staging', () => {
     });
 
     const createContainerSpy = vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper123');
+    createContainerSpy.mockClear();
     vi.spyOn(dockerModule, 'startContainer').mockResolvedValue(undefined);
 
     const MockOllamaClass = vi.fn() as unknown as typeof import('ollama').Ollama;
@@ -2587,11 +2602,11 @@ describe('O1 R2 workspace staging', () => {
     vi.spyOn(dockerModule, 'removeContainer').mockResolvedValue(undefined);
     vi.spyOn(dockerModule, 'removeVolume').mockResolvedValue(undefined);
 
-    const MockOllamaClass = vi.fn().mockReturnValue({
+    const MockOllamaClass = constructibleOllamaMock({
       chat: vi.fn().mockImplementation(async function* () {
         yield { message: { role: 'assistant', content: 'Test answer' }, done: true };
       }),
-    }) as unknown as typeof import('ollama').Ollama;
+    });
 
     const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
 
@@ -2615,6 +2630,7 @@ describe('O1 R2 workspace staging', () => {
     vi.spyOn(RunnerSandbox.prototype, 'stageWorkspace').mockRejectedValue(new BridgeError('PRECONDITION_FAILED', 'staging failed', 412));
 
     const createContainerSpy = vi.spyOn(dockerModule, 'createContainer').mockResolvedValue('helper123');
+    createContainerSpy.mockClear();
 
     const MockOllamaClass = vi.fn() as unknown as typeof import('ollama').Ollama;
     const sandbox = new RunnerSandbox({ image: 'test-runner:v1' });
@@ -2656,7 +2672,7 @@ describe('O1 R2 resource lifecycle', () => {
         done: true,
       };
     })());
-    const MockOllamaClass = vi.fn().mockReturnValue({ chat }) as unknown as typeof import('ollama').Ollama;
+    const MockOllamaClass = constructibleOllamaMock({ chat });
     const backend = new OllamaBackend(
       { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv/proj', policy: POLICY },
       { ollamaHost: 'http://ollama:11434', modelQualifier: 'test:v1', helperImage: 'helper:v1', sandbox, sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
@@ -2676,7 +2692,9 @@ describe('O1 R2 resource lifecycle', () => {
       new BridgeError('PRECONDITION_FAILED', 'staging failed', 412),
     );
     const createSpy = vi.spyOn(dockerModule, 'createContainer');
+    createSpy.mockClear();
     const removeSpy = vi.spyOn(dockerModule, 'removeContainer');
+    removeSpy.mockClear();
     const disposeSpy = vi.spyOn(sandbox, 'disposeWorkspace');
     const { backend } = await makeBackend(sandbox);
 
