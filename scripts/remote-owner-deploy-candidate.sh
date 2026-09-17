@@ -147,7 +147,7 @@ printf 'OLD_GATEWAY_IMAGE=%s\nOLD_DOCKER_AUTHORITY_IMAGE=%s\nOLD_EXECUTOR_IMAGE=
 # Build through the governed local-base helper. It verifies the exact npm bundle,
 # resolves the pinned Node base only from the local Docker image store through a
 # private local OCI-layout build context, keeps RUN networking disabled, and fails closed if
-# BuildKit emits registry metadata/auth activity.
+# unexpected registry/auth evidence remains fatal; exact validated OCI client alias normalization is local-only evidence.
 BASE_IMAGE='node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81'
 docker image inspect "$BASE_IMAGE" >/dev/null 2>&1 || fail "local digest-pinned base image missing: $BASE_IMAGE"
 

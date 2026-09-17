@@ -41,17 +41,34 @@ describe('P10 local-only core build', () => {
     expect(() => renderOfflineDockerfile('FROM alpine:3.20 AS build\n')).toThrow(/pinned base contract drifted/u);
   });
 
-  it('fails closed on BuildKit registry metadata or auth activity', () => {
+  it('distinguishes exact local OCI context normalization from real registry activity', () => {
+    const digest = `sha256:${'5'.repeat(64)}`;
+    const local = { contextName: 'p10_node_base', digest };
+    const localTrace = [
+      `#3 [context p10_node_base] load metadata for docker.io/library/p10_node_base@${digest}`,
+      '#5 [context p10_node_base] OCI load from client',
+      `#6 resolve docker.io/library/p10_node_base@${digest} 0.0s done`,
+    ].join('\n');
+    expect(registryActivityEvidence(localTrace, local)).toEqual([]);
+    expect(() => assertNoRegistryActivity(localTrace, local)).not.toThrow();
+
+    const wrongDigest = localTrace.replaceAll(digest, `sha256:${'6'.repeat(64)}`);
+    expect(() => assertNoRegistryActivity(wrongDigest, local)).toThrow(/registry metadata\/auth activity/u);
+    const wrongContext = localTrace.replaceAll('p10_node_base', 'other_base');
+    expect(() => assertNoRegistryActivity(wrongContext, local)).toThrow(/registry metadata\/auth activity/u);
+    const missingClientLoad = localTrace.replace('#5 [context p10_node_base] OCI load from client\n', '');
+    expect(() => assertNoRegistryActivity(missingClientLoad, local)).toThrow(/registry metadata\/auth activity/u);
+
     for (const sample of [
       '[auth] library/node:pull token for registry-1.docker.io',
       'load metadata for docker.io/library/node:24-alpine',
-      'resolve docker.io/library/node:24-alpine',
-    ]) {
-      expect(registryActivityEvidence(`safe\n${sample}\nsafe`)).toEqual([sample]);
-      expect(() => assertNoRegistryActivity(sample)).toThrow(new RegExp(`registry metadata/auth activity.*${sample.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'));
-    }
-    expect(() => assertNoRegistryActivity('load build context p10_node_base from local OCI layout')).not.toThrow();
+      'resolve ghcr.io/example/base@sha256:' + '7'.repeat(64),
+      'fetch https://registry.example.invalid/v2/base/manifests/latest',
+    ]) expect(() => assertNoRegistryActivity(`${localTrace}\n${sample}`, local)).toThrow(/registry metadata\/auth activity/u);
+
+    expect(() => registryActivityEvidence(localTrace, { contextName: 'p10_node_base' })).toThrow(/requires a valid context name and digest/u);
   });
+
 
   it('exports the immutable local base to OCI layout and keeps build RUN networking disabled', () => {
     const helper = readFileSync(new URL('../../scripts/offline-local-base.mjs', import.meta.url), 'utf8');
@@ -62,7 +79,7 @@ describe('P10 local-only core build', () => {
     expect(source).toContain("'--network=none', '--pull=false', '--no-cache'");
     expect(source).toContain("'--file', offlineDockerfile");
     expect(source).toContain("ociLayoutBuildContext('p10_node_base', localBase)");
-    expect(source).toContain('assertNoRegistryActivity(combined)');
+    expect(source).toContain("assertNoRegistryActivity(combined, { contextName: 'p10_node_base', digest: localBase.digest })");
     expect(source).toContain('cleanupLocalOciLayout(localBase)');
   });
 });

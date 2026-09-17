@@ -84,7 +84,7 @@ export function buildCoreOffline(argv = process.argv.slice(2)) {
     ];
     const built = run('docker', buildArgs);
     const combined = `${built.stdout ?? ''}\n${built.stderr ?? ''}`;
-    assertNoRegistryActivity(combined);
+    assertNoRegistryActivity(combined, { contextName: 'p10_node_base', digest: localBase.digest });
     if (built.status !== 0) throw new Error(`docker buildx build failed with exit ${built.status}`);
     outputCreated = true;
 

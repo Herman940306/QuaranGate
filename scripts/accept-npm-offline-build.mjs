@@ -286,18 +286,18 @@ async function composeValidation(bundlePath) {
   };
 }
 
-async function buildWithoutValidBundleRefused(head, imageTag, localBaseContext, offlineDockerfile) {
+async function buildWithoutValidBundleRefused(head, imageTag, localBase, offlineDockerfile) {
   const combined = await expectFailure('docker', [
     'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false', '--no-cache',
     '--file', offlineDockerfile,
-    '--build-context', localBaseContext,
+    '--build-context', localBase.buildContext,
     '--build-context', `npm_deps=${path.resolve('build')}`, '--build-arg', `GIT_REVISION=${head}`,
     '-t', imageTag, '.',
   ], /STOP_BUNDLE_INVALID[\s\S]*bundle directory contains unexpected or missing entries/u);
   if (/npm (?:http|https)|https:\/\/registry\.npmjs\.org/iu.test(combined)) {
     throw new AcceptanceError('invalid-bundle build reached npm registry activity');
   }
-  try { assertNoRegistryActivity(combined); }
+  try { assertNoRegistryActivity(combined, { contextName: 'p10_node_base', digest: localBase.digest }); }
   catch (error) { throw new AcceptanceError(error.message); }
   await requireDockerObjectAbsent('image', imageTag);
   return true;
@@ -445,7 +445,7 @@ async function main() {
     summary.compose = compose;
     summary.checks.RUNTIME_COMPOSE_WITHOUT_BUNDLE = true;
     summary.checks.COMPOSE_CONFIG = true;
-    await buildWithoutValidBundleRefused(head, invalidImageTag, localBase.buildContext, localBase.offlineDockerfile);
+    await buildWithoutValidBundleRefused(head, invalidImageTag, localBase, localBase.offlineDockerfile);
     summary.checks.BUILD_WITHOUT_VALID_BUNDLE = 'REFUSED';
 
     await runVisible('git', ['diff', '--check']);
@@ -478,7 +478,7 @@ async function main() {
       '--build-context', `npm_deps=${bundlePath}`, '--build-arg', `GIT_REVISION=${head}`,
       '-t', imageTag, '.',
     ]);
-    try { assertNoRegistryActivity(`${buildResult.stdout}\n${buildResult.stderr}`); }
+    try { assertNoRegistryActivity(`${buildResult.stdout}\n${buildResult.stderr}`, { contextName: 'p10_node_base', digest: localBase.digest }); }
     catch (error) { throw new AcceptanceError(error.message); }
     imageCreated = true;
     const built = await dockerImageInfo(imageTag);

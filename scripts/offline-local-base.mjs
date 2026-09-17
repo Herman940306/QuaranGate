@@ -8,7 +8,8 @@ export const BASE_IMAGE = 'node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d
 const IMAGE_ID = /^sha256:[0-9a-f]{64}$/u;
 const OCI_DIGEST = /^sha256:[0-9a-f]{64}$/u;
 const SAFE_CONTEXT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
-const REGISTRY_ACTIVITY = /(?:\[auth\]|pull token for|registry-1\.docker\.io|load metadata for docker\.io\/|resolve docker\.io\/)/iu;
+const EXPLICIT_REGISTRY_ACTIVITY = /(?:\[auth\]|pull token for|registry-1\.docker\.io|(?:fetch|request)\s+https?:\/\/)/iu;
+const IMAGE_METADATA = /(?:load metadata for|resolve)\s+([A-Za-z0-9.-]+(?::[0-9]+)?\/[^\s]+)/iu;
 
 function checked(command, argv) {
   const result = spawnSync(command, argv, { encoding: 'utf8', shell: false, maxBuffer: 64 * 1024 * 1024 });
@@ -104,12 +105,37 @@ export function renderOfflineDockerfile(source) {
   }).join('\n');
 }
 
-export function registryActivityEvidence(text) {
-  return String(text).split(/\r?\n/u).filter((line) => REGISTRY_ACTIVITY.test(line)).slice(0, 8);
+export function registryActivityEvidence(text, localOci = null) {
+  const lines = String(text).split(/\r?\n/u);
+  const localName = localOci?.contextName ?? null;
+  const localDigest = localOci?.digest ?? null;
+  const hasAnyLocalAllowance = localName !== null || localDigest !== null;
+  if (hasAnyLocalAllowance && (localName === null || localDigest === null || !SAFE_CONTEXT.test(localName) || !OCI_DIGEST.test(localDigest))) {
+    throw new Error('local OCI registry-evidence allowance requires a valid context name and digest');
+  }
+  const hasLocalOciLoad = localName !== null && lines.some((line) =>
+    line.includes(`[context ${localName}] OCI load from client`));
+
+  const evidence = [];
+  for (const line of lines) {
+    if (EXPLICIT_REGISTRY_ACTIVITY.test(line)) {
+      evidence.push(line);
+      continue;
+    }
+    const metadata = IMAGE_METADATA.exec(line);
+    if (!metadata) continue;
+    const [, ref] = metadata;
+    const expectedLocalAlias = localName !== null && localDigest !== null
+      ? `docker.io/library/${localName}@${localDigest}`
+      : null;
+    const exactLocalAlias = hasLocalOciLoad && ref === expectedLocalAlias;
+    if (!exactLocalAlias) evidence.push(line);
+  }
+  return evidence.slice(0, 8);
 }
 
-export function assertNoRegistryActivity(text) {
-  const evidence = registryActivityEvidence(text);
+export function assertNoRegistryActivity(text, localOci = null) {
+  const evidence = registryActivityEvidence(text, localOci);
   if (evidence.length > 0) throw new Error(`BuildKit registry metadata/auth activity detected during local-only build: ${evidence.join(' | ')}`);
 }
 
