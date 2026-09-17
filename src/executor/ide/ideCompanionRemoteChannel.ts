@@ -366,7 +366,11 @@ export class IdeCompanionRemoteChannel {
     }
     this.active = undefined;
     this.authorized = undefined;
-    active.resolveImplementation({ outcome: frame.outcome });
+    // The remote IDE/client is not an independent mutation oracle. A claimed
+    // success/no-mutation/rollback outcome cannot prove filesystem state well
+    // enough to release shared writer authority. Until QuaranGate owns an
+    // independent postcondition verifier, every remote terminal is uncertain.
+    active.resolveImplementation({ outcome: 'indeterminate' });
   }
 
   private acceptCancelAck(frame: Extract<IdeRemoteClientFrame,{type:'cancel_ack'}>): void {

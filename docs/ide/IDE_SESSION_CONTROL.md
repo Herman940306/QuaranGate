@@ -542,7 +542,13 @@ It needs the live writer lease only when an approved transition crosses into the
 
 **Risk:** a malicious local process impersonates the IDE adapter.
 
-**Control:** authenticated enrollment/channel, restrictive local IPC permissions, adapter identity/version checks and connection generation.
+**Control:** authenticated enrollment/channel, restrictive local IPC permissions, adapter identity/version checks and connection generation. These controls reject unauthenticated/cross-identity/stale peers, but they are not a sandbox against malicious code already running as the same Unix UID; same-UID confidentiality and peer authenticity remain an explicit host residual.
+
+## Threat: fabricated remote mutation outcome
+
+**Risk:** a compromised IDE/client claims `completed`, no mutation, or rollback and causes shared writer authority to be released without independent mutation proof.
+
+**Control:** remote IDE implementation terminal claims are treated as untrusted and resolve only to `INDETERMINATE + UNCERTAIN`. Safe writer release requires a trusted adapter or a future QuaranGate-owned mutation/postcondition verifier outside the remote client's assertion. Current production composition enables user review intents only and does not auto-wire remote mutation execution; the fail-closed rule protects any future or explicit composition.
 
 ## Threat: prompt injection through live context
 

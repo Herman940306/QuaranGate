@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { hashIdeCompanionPayload, signIdeCompanionEnvelope } from '../../src/shared/ideCompanionAuth.js';
-import { serializeIdeCompanionReviewPayload } from '../../src/shared/ideCompanionOperations.js';
-import { serializeIdeRemoteClientFrame, type IdeRemoteServerFrame } from '../../src/shared/ideCompanionRemoteTransport.js';
+import { serializeIdeCompanionImplementationPayload, serializeIdeCompanionReviewPayload } from '../../src/shared/ideCompanionOperations.js';
+import { IDE_REMOTE_IMPLEMENTATION_OUTCOMES, serializeIdeRemoteClientFrame, type IdeRemoteServerFrame } from '../../src/shared/ideCompanionRemoteTransport.js';
 import { serializeIdeWorkspaceAttestation } from '../../src/shared/ideWorkspaceAttestation.js';
 import { IdeCompanionRemoteChannel, IdeCompanionRemoteChannelError } from '../../src/executor/ide/ideCompanionRemoteChannel.js';
 import { deriveIdeEnvironmentIdentity, deriveIdeFilesystemIdentity } from '../../src/shared/ideWorkspaceAttestation.js';
@@ -16,6 +16,8 @@ const workspace=serializeIdeWorkspaceAttestation({
 function auth(prompt='review'){return signIdeCompanionEnvelope(secret,{version:1,enrollmentId:`iden_${'4'.repeat(32)}`,ideInstanceId:`ide_${'5'.repeat(32)}`,sessionId,connectionGeneration:7,controllerLeaseId:lease,operationId,capability:'request_review',nonce:Buffer.alloc(32,0x42).toString('base64url'),issuedAtMs:1_800_000_000_000,expiresAtMs:1_800_000_020_000,payloadSha256:hashIdeCompanionPayload(serializeIdeCompanionReviewPayload(prompt,workspace))});}
 function harness(){const sent:IdeRemoteServerFrame[]=[];let closed=false;const ch=new IdeCompanionRemoteChannel({sessionId,connectionGeneration:7,send:(f)=>{sent.push(f);return true;},close:()=>{closed=true;},isOperationAdmitted:()=>true,authorizationTimeoutMs:1000});ch.handleClientFrame(serializeIdeRemoteClientFrame({version:1,type:'transport_ready',sessionId,connectionGeneration:7}));return{ch,sent,get closed(){return closed;}};}
 function authorizedFrame(prompt='review',over:Record<string,unknown>={}){return serializeIdeRemoteClientFrame({version:1,type:'operation_authorized',sessionId,connectionGeneration:7,commandSequence:1,operationId,auth:auth(prompt),workspaceAttestation:workspace,...over} as never);}
+function implementationAuth(prompt='implement'){return signIdeCompanionEnvelope(secret,{version:1,enrollmentId:`iden_${'4'.repeat(32)}`,ideInstanceId:`ide_${'5'.repeat(32)}`,sessionId,connectionGeneration:7,controllerLeaseId:lease,operationId,capability:'request_implementation',nonce:Buffer.alloc(32,0x43).toString('base64url'),issuedAtMs:1_800_000_000_000,expiresAtMs:1_800_000_020_000,payloadSha256:hashIdeCompanionPayload(serializeIdeCompanionImplementationPayload(prompt,workspace))});}
+function implementationAuthorizedFrame(prompt='implement'){return serializeIdeRemoteClientFrame({version:1,type:'operation_authorized',sessionId,connectionGeneration:7,commandSequence:1,operationId,auth:implementationAuth(prompt),workspaceAttestation:workspace});}
 
 describe('P7 I2.2 QuaranGate remote channel state machine',()=>{
   it('routes a bounded user review intent as non-authoritative input and rejects replayed intent sequence',()=>{
@@ -54,6 +56,17 @@ describe('P7 I2.2 QuaranGate remote channel state machine',()=>{
     h.ch.handleClientFrame(serializeIdeRemoteClientFrame({version:1,type:'adapter_event',sessionId,connectionGeneration:7,operationId,eventSequence:0,eventType:'status'}));
     h.ch.handleClientFrame(serializeIdeRemoteClientFrame({version:1,type:'review_result',sessionId,connectionGeneration:7,operationId,eventSequence:1,result:'completed'}));
     await expect(run).resolves.toBeUndefined();expect(events).toEqual(['status']);expect(h.closed).toBe(false);
+  });
+
+  it.each(IDE_REMOTE_IMPLEMENTATION_OUTCOMES)('treats remote implementation outcome %s as untrusted and returns only indeterminate',async(outcome)=>{
+    const h=harness();const prompt='implement';
+    const pending=h.ch.authorizeOperation({operationId,controllerLeaseId:lease,capability:'request_implementation',prompt});
+    h.ch.handleClientFrame(implementationAuthorizedFrame(prompt));await pending;
+    const run=h.ch.implementationAdapter().run({operationId,sessionId,connectionGeneration:7,prompt,signal:new AbortController().signal,emit:()=>{}});
+    expect(h.sent[1]).toMatchObject({type:'execute_operation',operationId});
+    h.ch.handleClientFrame(serializeIdeRemoteClientFrame({version:1,type:'implementation_result',sessionId,connectionGeneration:7,operationId,eventSequence:0,outcome}));
+    await expect(run).resolves.toEqual({outcome:'indeterminate'});
+    expect(h.closed).toBe(false);
   });
   it('rejects execution without exact prior authorization',async()=>{
     const h=harness();await expect(h.ch.reviewAdapter().run({operationId,sessionId,connectionGeneration:7,prompt:'review',signal:new AbortController().signal,emit:()=>{}})).rejects.toMatchObject({code:'IDE_REMOTE_CHANNEL_AUTHORIZATION_INVALID'});

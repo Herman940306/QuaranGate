@@ -80,7 +80,7 @@ describe('P7 I3 QuaranGate-origin Cursor command/event transport',()=>{
     expect(events).toEqual(['operation_started','status','completed']);
   });
 
-  it('admits implementation through accepted B9/B8 before remote execution and releases exact writer only after safe completion',async()=>{
+  it('admits implementation but treats remote completion as untrusted and retains exact writer uncertainty',async()=>{
     let runs=0;
     const ctx=await ready(['request_implementation','cancel','observe_response'],{implementation:{run:async(input)=>{runs+=1;input.emit('status','remote-implementation');return{outcome:'completed'};}}});
     const operationId=`ideo_${'3'.repeat(32)}`;const prompt='implement bounded change';
@@ -90,10 +90,10 @@ describe('P7 I3 QuaranGate-origin Cursor command/event transport',()=>{
     writerStore.releaseLiveWriterLease({projectId:'quarangate',worktreeId:'forward',ownerKind:'ide',ownerId:`ideo_${'9'.repeat(32)}`,principalId:'probe',writerLeaseId:probe.writerLeaseId,reason:'prove pre-execution writer is free'});
     const coordinator=new IdeImplementationCoordinator({store,writerStore,runtime:ctx.runtime,adapter:ctx.remote.implementationAdapter(),nowMs:()=>nowMs});
     coordinator.startImplementation(authorization.auth,prompt,authorization.workspaceAttestation,()=>{});
-    await waitFor(()=>store.getOperation(operationId)?.state==='COMPLETED');
+    await waitFor(()=>store.getOperation(operationId)?.state==='INDETERMINATE');
     const op=store.getOperation(operationId)!;
-    expect(runs).toBe(1);expect(op).toMatchObject({state:'COMPLETED',capability:'request_implementation',writerSettlement:'RELEASED'});
-    expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('RELEASED');
+    expect(runs).toBe(1);expect(op).toMatchObject({state:'INDETERMINATE',capability:'request_implementation',writerSettlement:'UNCERTAIN'});
+    expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('UNCERTAIN');
   });
 
   it('fresh operation authorization re-reads current B4 secret so rotation after connection invalidates the old bootstrap secret without reconnect',async()=>{
@@ -119,7 +119,7 @@ describe('P7 I3 QuaranGate-origin Cursor command/event transport',()=>{
     expect(store.getOperation(operationId)).toBeUndefined();expect(runs).toBe(0);
   });
 
-  it('re-attests exact B5 workspace immediately before implementation execution and releases B8 writer on post-authorization drift',async()=>{
+  it('re-attests exact B5 workspace before implementation and keeps B8 writer uncertain when the remote client claims safe pre-mutation failure',async()=>{
     let runs=0;let current=physical();
     const ctx=await ready(['request_implementation','cancel','observe_response'],{
       collectWorkspace:async()=>current,
@@ -130,11 +130,11 @@ describe('P7 I3 QuaranGate-origin Cursor command/event transport',()=>{
     current={...current,filesystemIdentity:'f'.repeat(64)};
     const coordinator=new IdeImplementationCoordinator({store,writerStore,runtime:ctx.runtime,adapter:ctx.remote.implementationAdapter(),nowMs:()=>nowMs});
     coordinator.startImplementation(authorization.auth,prompt,authorization.workspaceAttestation,()=>{});
-    await waitFor(()=>store.getOperation(operationId)?.state==='FAILED');
+    await waitFor(()=>store.getOperation(operationId)?.state==='INDETERMINATE');
     const op=store.getOperation(operationId)!;
     expect(runs).toBe(0);
-    expect(op).toMatchObject({state:'FAILED',writerSettlement:'RELEASED'});
-    expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('RELEASED');
+    expect(op).toMatchObject({state:'INDETERMINATE',writerSettlement:'UNCERTAIN'});
+    expect(writerStore.getLiveWriterLease(op.writerLeaseId!)?.state).toBe('UNCERTAIN');
   });
 
   it('secret rotation after authorization but before B7 admission invalidates the stale operation MAC and never executes',async()=>{
