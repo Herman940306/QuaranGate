@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { buildFixtureDocuments } from '../../scripts/p10-integration-fixture.mjs';
@@ -29,6 +30,14 @@ describe('P10 integration fixture documents', () => {
     expect(byId.itest_agent_owner.scopes).toContain('agents:dispatch');
     expect(byId.itest_agent_other.scopes).not.toContain('agents:dispatch');
     expect(byId.itest_agent_other.scopes).toContain('agents:cancel');
+  });
+
+  it('keeps optional GitHub and IDE-session validator inputs unset instead of forcing missing files', () => {
+    const source = readFileSync(new URL('../../scripts/p10-integration-fixture.mjs', import.meta.url), 'utf8');
+    expect(source).toContain('delete validationEnv.GITHUB_CONFIG');
+    expect(source).toContain('delete validationEnv.IDE_SESSIONS_CONFIG');
+    expect(source).not.toContain('__absent-github.yaml');
+    expect(source).not.toContain('__absent-ide.yaml');
   });
 
   it('binds trusted agent project hostPath to the exact supplied qualification source root', () => {

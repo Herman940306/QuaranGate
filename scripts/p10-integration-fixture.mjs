@@ -150,9 +150,21 @@ export function createFixture(argv = process.argv.slice(2)) {
     };
     writePrivate(path.join(outputDir, 'runtime.env'), Object.entries(runtimeEnv).map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
 
+    const validationEnv = {
+      ...process.env,
+      CLIENTS_CONFIG: path.join(configDir, 'clients.yaml'),
+      BRIDGE_CONFIG: path.join(configDir, 'bridge.yaml'),
+      AGENTS_CONFIG: path.join(configDir, 'agents.yaml'),
+    };
+    // GitHub and IDE-session configuration are intentionally absent in this
+    // isolated integration fixture. The validator treats these surfaces as
+    // optional only when their environment variables are unset; pointing the
+    // variables at nonexistent sentinels incorrectly makes them mandatory.
+    delete validationEnv.GITHUB_CONFIG;
+    delete validationEnv.IDE_SESSIONS_CONFIG;
     const validation = spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts/validate-config.mjs')], {
       cwd: sourceRoot,
-      env: { ...process.env, CLIENTS_CONFIG: path.join(configDir, 'clients.yaml'), BRIDGE_CONFIG: path.join(configDir, 'bridge.yaml'), AGENTS_CONFIG: path.join(configDir, 'agents.yaml'), GITHUB_CONFIG: path.join(outputDir, '__absent-github.yaml'), IDE_SESSIONS_CONFIG: path.join(outputDir, '__absent-ide.yaml') },
+      env: validationEnv,
       encoding: 'utf8',
       shell: false,
     });
