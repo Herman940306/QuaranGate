@@ -27,6 +27,17 @@ describe('SH-11 Docker broker hostile-world wiring', () => {
   });
 
 
+  it('returns the trusted inspect object directly instead of dereferencing a nonexistent wrapper', () => {
+    expect(server).toContain("case 'container.inspectManaged': out=await assertContainer(String(p.id));break;");
+    expect(server).not.toContain("assertContainer(String(p.id))).info");
+  });
+
+  it('resolves exec inspection authority from the exec record, never a missing caller containerId', () => {
+    expect(server).toContain("case 'container.execManaged': {if(p.action==='create'){const c=await assertContainer(String(p.containerId));");
+    expect(server).toContain("else if(p.action==='inspect'){out=await json('GET',`${API}/exec/${enc(p.execId)}/json`);await assertContainer(String(out.ContainerID));}");
+    expect(server).not.toContain("case 'container.execManaged': {const c=await assertContainer(String(p.containerId));");
+  });
+
   it('applies resource-role policy to managed exec/archive after Docker-state inspection', () => {
     expect(server).toContain('const identity=managedIdentityFromTrustedContainer(c);if(identity)validateManagedExecForIdentity(identity,body)');
     expect(server).toContain("if(identity)validateManagedArchivePath(identity,'write',p.path)");
