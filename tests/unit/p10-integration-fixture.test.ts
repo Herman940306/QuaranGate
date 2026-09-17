@@ -38,6 +38,8 @@ describe('P10 integration fixture documents', () => {
     expect(source).toContain('delete validationEnv.IDE_SESSIONS_CONFIG');
     expect(source).not.toContain('__absent-github.yaml');
     expect(source).not.toContain('__absent-ide.yaml');
+    expect(source).toContain('cwd: REPO_ROOT');
+    expect(source).not.toContain('cwd: sourceRoot');
   });
 
   it('binds trusted agent project hostPath to the exact supplied qualification source root', () => {

@@ -163,7 +163,10 @@ export function createFixture(argv = process.argv.slice(2)) {
     delete validationEnv.GITHUB_CONFIG;
     delete validationEnv.IDE_SESSIONS_CONFIG;
     const validation = spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts/validate-config.mjs')], {
-      cwd: sourceRoot,
+      // Validate from the exact committed bootstrap tree so ignored operator
+      // config in sourceRoot cannot silently activate optional GitHub/IDE
+      // surfaces during disposable fixture preparation.
+      cwd: REPO_ROOT,
       env: validationEnv,
       encoding: 'utf8',
       shell: false,
