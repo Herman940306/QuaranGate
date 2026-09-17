@@ -63,6 +63,7 @@ export function createKiroBackendFactory(
         // session-state volume. KiroBackend independently verifies ownership.
         providerSessionId: session?.providerSessionId ?? null,
         providerStateVolume: session?.providerStateRef ?? null,
+        sessionSourceRevision: session?.sourceRevision ?? null,
       },
       deps,
     );

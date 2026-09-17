@@ -220,7 +220,7 @@ describe('AgentSessionStore', () => {
   });
 
   it('schema version upgraded to 6', () => {
-    expect(store.schemaVersion).toBe(8);
+    expect(store.schemaVersion).toBe(9);
   });
 });
 
@@ -631,7 +631,7 @@ describe('AgentJobEngine — session continuity dispatch', () => {
 describe('AgentJobStore session-continuity schema compatibility', () => {
   it('A8-S11: current fresh install includes the v6 agent_sessions contract', () => {
     const store = new AgentJobStore(':memory:');
-    expect(store.schemaVersion).toBe(8);
+    expect(store.schemaVersion).toBe(9);
     // session store is accessible
     const ss = store.sessionStore;
     expect(ss).toBeDefined();
@@ -657,7 +657,7 @@ describe('AgentJobStore session-continuity schema compatibility', () => {
 
       // Re-open the same file — session must still be ACTIVE
       const store2 = new AgentJobStore(tmp);
-      expect(store2.schemaVersion).toBe(8);
+      expect(store2.schemaVersion).toBe(9);
       const row = store2.sessionStore.getSession(id);
       expect(row).toBeDefined();
       expect(row!.state).toBe('ACTIVE');
@@ -855,7 +855,7 @@ describe('A8 R1 — atomic reservation and lifecycle', () => {
       return {
         async prepare() {}, async run() {},
         async validate() {
-          return { summary: 'continued', exitCode: 0, providerSessionId: 'provider-after', providerStateRef: 'state-chain' };
+          return { summary: 'continued', exitCode: 0, baseCommit: 'c'.repeat(40), providerSessionId: 'provider-after', providerStateRef: 'state-chain' };
         },
         isAgentFailure: () => false,
         isDryRun: () => false,
@@ -881,6 +881,7 @@ describe('A8 R1 — atomic reservation and lifecycle', () => {
     const successor = store.sessionStore.getSession(completed.backendSessionId!)!;
     expect(successor.state).toBe('ACTIVE');
     expect(successor.reservedByJobId).toBeNull();
+    expect(successor.sourceRevision).toBe('c'.repeat(40));
     expect(store.sessionStore.getProviderSessionId(successor.sessionId)).toBe('provider-after');
     expect(store.sessionStore.findActiveSession('principal-alice', 'proj-a', 'fake', 'audit')!.sessionId)
       .toBe(successor.sessionId);

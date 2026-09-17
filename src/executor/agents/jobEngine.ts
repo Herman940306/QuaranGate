@@ -114,6 +114,8 @@ export interface ResolvedSessionContext {
   providerSessionId: string;
   /** Backend-private durable state ref (for Kiro: managed session-state volume). */
   providerStateRef: string | null;
+  /** Trusted source revision last observed by the reserved session. */
+  sourceRevision: string | null;
 }
 
 /** A6-B4 review request. path/cursor/maxBytes are bounded caller inputs. */
@@ -679,6 +681,7 @@ export class AgentJobEngine {
           sessionId: sourceSessionId,
           providerSessionId: provider.providerSessionId,
           providerStateRef: provider.providerStateRef,
+          sourceRevision: provider.sourceRevision,
         };
       }
 
@@ -757,6 +760,7 @@ export class AgentJobEngine {
             profile: job.profile,
             providerSessionId: result.providerSessionId,
             providerStateRef: result.providerStateRef ?? null,
+            sourceRevision: result.baseCommit ?? null,
           }
         : null;
 

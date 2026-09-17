@@ -187,10 +187,10 @@ The symlink is untracked auxiliary test infrastructure only; it is not part of t
 ## Not claimed
 
 - No live Kiro provider resume qualification has been performed on the integrated revision.
-- No owner approval of ODR-2 source-revision binding is implied.
+- Historical note: at this validation point no owner approval of ODR-2 source-revision binding was implied. This is superseded by the later owner-approved hybrid ODR-2 policy and its bounded source remediation.
 - No independent-review claim is made for this direct forward integration.
 - Source validation does not substitute for the required live provider-restoration gate.
 
 ## Required next validation before promotion
 
-Freeze and mechanically reverify the exact integrated 24-path candidate on `integrate/quarangate-forward`; after the immutable commit identity is proven, deploy that exact revision through the bounded owner-host path, then run live Kiro continuity proving a fresh `session/new` followed by `session/load`/`session/prompt` with zero `session/new` on resume and provider state surviving the governed lifecycle. ODR-2 remains a separate owner-policy decision.
+Freeze and mechanically reverify the exact integrated 24-path candidate on `integrate/quarangate-forward`; after the immutable commit identity is proven, deploy that exact revision through the bounded owner-host path, then run live Kiro continuity proving a fresh `session/new` followed by `session/load`/`session/prompt` with zero `session/new` on resume and provider state surviving the governed lifecycle. ODR-2 is no longer an owner-policy decision: the hybrid policy is implemented in current source and documented in `A8_ODR2_SOURCE_REVISION_BINDING.md`. The live Kiro provider-restoration qualification remains a separate external/runtime gate.

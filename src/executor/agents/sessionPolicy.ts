@@ -63,6 +63,46 @@ export function sessionBindingMatches(
   );
 }
 
+export type SessionSourceRevisionDisposition =
+  | 'MATCH'
+  | 'DRIFT_ALLOWED_CONTEXT_ONLY'
+  | 'UNBOUND_ALLOWED_CONTEXT_ONLY';
+
+/**
+ * ODR-2 hybrid source-drift policy.
+ *
+ * `currentRevision` must come from fresh trusted staging of the configured
+ * project before provider state is restored or used. Session memory is context
+ * only and never filesystem/authorization truth.
+ *
+ * - writer/mutating resumes require an exact prior revision match;
+ * - read-only audit/plan/review may continue across drift after fresh staging;
+ * - legacy sessions without a revision are never resumable as writers.
+ */
+export function enforceSessionSourceRevision(input: {
+  writer: boolean;
+  storedRevision: string | null;
+  currentRevision: string;
+}): SessionSourceRevisionDisposition {
+  if (!/^[0-9a-f]{40}$/.test(input.currentRevision)) {
+    throw new BridgeError('SESSION_NOT_RESUMABLE', 'fresh source revision attestation is invalid', 409);
+  }
+  if (input.storedRevision != null && !/^[0-9a-f]{40}$/.test(input.storedRevision)) {
+    throw new BridgeError('SESSION_NOT_RESUMABLE', 'stored session source revision is invalid', 409);
+  }
+  if (input.writer) {
+    if (input.storedRevision == null) {
+      throw new BridgeError('SESSION_NOT_RESUMABLE', 'mutating session resume requires a bound source revision', 409);
+    }
+    if (input.storedRevision !== input.currentRevision) {
+      throw new BridgeError('SESSION_NOT_RESUMABLE', 'mutating session source revision drifted; start a new session', 409);
+    }
+    return 'MATCH';
+  }
+  if (input.storedRevision == null) return 'UNBOUND_ALLOWED_CONTEXT_ONLY';
+  return input.storedRevision === input.currentRevision ? 'MATCH' : 'DRIFT_ALLOWED_CONTEXT_ONLY';
+}
+
 // ---------------------------------------------------------------------------
 // Policy resolution
 // ---------------------------------------------------------------------------

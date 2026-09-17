@@ -38,6 +38,8 @@ export interface AgentSessionRow {
   reservedAt: string | null;
   /** Reserved for a future approved TTL policy; A8 does not auto-expire by wall clock. */
   expiresAt: string | null;
+  /** Trusted committed source revision that this provider session last observed. */
+  sourceRevision: string | null;
 }
 
 export interface NewAgentSession {
@@ -49,11 +51,14 @@ export interface NewAgentSession {
   providerSessionId: string;
   /** Backend-private durable state reference. Never exposed by getSession(). */
   providerStateRef?: string | null;
+  /** Trusted staged Git HEAD. NULL only for legacy/non-revision-bound sessions. */
+  sourceRevision?: string | null;
 }
 
 export interface ReservedProviderSessionContext {
   providerSessionId: string;
   providerStateRef: string | null;
+  sourceRevision: string | null;
 }
 
 const REQUIRED_SESSIONS_COLUMNS: Record<string, string> = {
@@ -71,6 +76,7 @@ const REQUIRED_SESSIONS_COLUMNS: Record<string, string> = {
   reserved_by_job_id: 'TEXT',
   reserved_at: 'TEXT',
   expires_at: 'TEXT',
+  source_revision: 'TEXT',
 };
 
 export class AgentSessionStore {
@@ -92,7 +98,8 @@ export class AgentSessionStore {
         consumed_by_job_id  TEXT,
         reserved_by_job_id  TEXT,
         reserved_at         TEXT,
-        expires_at          TEXT
+        expires_at          TEXT,
+        source_revision     TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_agent_sessions_binding
         ON agent_sessions(principal_id, project, backend, profile, state);
@@ -103,16 +110,19 @@ export class AgentSessionStore {
     `);
   }
 
-  assertSchemaShape(): void {
+  assertSchemaShape(options: { includeSourceRevision?: boolean; stampedVersion?: number } = {}): void {
+    const includeSourceRevision = options.includeSourceRevision ?? true;
+    const stampedVersion = options.stampedVersion ?? 9;
     const tableExists = this.db.prepare(
       `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_sessions'`,
     ).get() !== undefined;
     if (!tableExists) {
-      throw new BridgeError('INTERNAL', 'agent sessions DB is stamped schema v6 but table agent_sessions is missing', 500);
+      throw new BridgeError('INTERNAL', `agent sessions DB is stamped schema v${stampedVersion} but table agent_sessions is missing`, 500);
     }
     const info = this.db.prepare(`PRAGMA table_info(agent_sessions)`).all() as { name: string; type: string }[];
     const missing: string[] = [];
     for (const [column, affinity] of Object.entries(REQUIRED_SESSIONS_COLUMNS)) {
+      if (!includeSourceRevision && column === 'source_revision') continue;
       const got = info.find((c) => c.name === column);
       if (!got) { missing.push(`agent_sessions.${column}`); continue; }
       if (String(got.type).toUpperCase() !== affinity) {
@@ -131,16 +141,19 @@ export class AgentSessionStore {
     if (!session.providerSessionId || session.providerSessionId.trim() === '') {
       throw new BridgeError('MALFORMED_REQUEST', `providerSessionId must not be empty for session ${session.sessionId}`, 400);
     }
+    if (session.sourceRevision != null && !/^[0-9a-f]{40}$/.test(session.sourceRevision)) {
+      throw new BridgeError('MALFORMED_REQUEST', `sourceRevision must be a 40-hex Git commit for session ${session.sessionId}`, 400);
+    }
     const now = nowIso();
     this.db.prepare(`
       INSERT INTO agent_sessions
         (session_id, principal_id, project, backend, profile,
-         provider_session_id, provider_state_ref, state, created_at, last_used_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+         provider_session_id, provider_state_ref, state, created_at, last_used_at, source_revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
     `).run(
       session.sessionId, session.principalId, session.project, session.backend,
       session.profile, session.providerSessionId, session.providerStateRef ?? null,
-      now, now,
+      now, now, session.sourceRevision ?? null,
     );
     return this.getSession(session.sessionId)!;
   }
@@ -217,7 +230,7 @@ export class AgentSessionStore {
     const r = this.db.prepare(`
       SELECT session_id, principal_id, project, backend, profile, state,
              created_at, last_used_at, consumed_by_job_id, reserved_by_job_id,
-             reserved_at, expires_at
+             reserved_at, expires_at, source_revision
       FROM agent_sessions WHERE session_id = ?
     `).get(sessionId) as Record<string, unknown> | undefined;
     return r ? rowToSession(r) : undefined;
@@ -238,20 +251,23 @@ export class AgentSessionStore {
    */
   getReservedProviderContext(sessionId: string, jobId: string): ReservedProviderSessionContext | null {
     const r = this.db.prepare(`
-      SELECT provider_session_id, provider_state_ref FROM agent_sessions
+      SELECT provider_session_id, provider_state_ref, source_revision FROM agent_sessions
       WHERE session_id = ? AND state = 'RESERVED' AND reserved_by_job_id = ?
-    `).get(sessionId, jobId) as { provider_session_id: string; provider_state_ref: string | null } | undefined;
-    return r ? {
+    `).get(sessionId, jobId) as { provider_session_id: string; provider_state_ref: string | null; source_revision: string | null } | undefined;
+    if (!r) return null;
+    const sourceRevision = parseStoredSourceRevision(r.source_revision);
+    return {
       providerSessionId: r.provider_session_id,
       providerStateRef: r.provider_state_ref ?? null,
-    } : null;
+      sourceRevision,
+    };
   }
 
   findActiveSession(principalId: string, project: string, backend: string, profile: string): AgentSessionRow | undefined {
     const r = this.db.prepare(`
       SELECT session_id, principal_id, project, backend, profile, state,
              created_at, last_used_at, consumed_by_job_id, reserved_by_job_id,
-             reserved_at, expires_at
+             reserved_at, expires_at, source_revision
       FROM agent_sessions
       WHERE principal_id = ? AND project = ? AND backend = ? AND profile = ?
         AND state = 'ACTIVE'
@@ -356,5 +372,14 @@ function rowToSession(r: Record<string, unknown>): AgentSessionRow {
     reservedByJobId: (r.reserved_by_job_id ?? null) as string | null,
     reservedAt: (r.reserved_at ?? null) as string | null,
     expiresAt: (r.expires_at ?? null) as string | null,
+    sourceRevision: parseStoredSourceRevision((r.source_revision ?? null) as string | null),
   };
+}
+
+function parseStoredSourceRevision(value: string | null): string | null {
+  if (value == null) return null;
+  if (!/^[0-9a-f]{40}$/.test(value)) {
+    throw new BridgeError('INTERNAL', 'agent session source_revision is malformed; refusing resume', 500);
+  }
+  return value;
 }

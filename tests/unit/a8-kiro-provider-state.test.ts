@@ -105,6 +105,56 @@ describe('A8 R1 Kiro provider state persistence', () => {
     expect((backend as any).providerStateHandedOff).toBe(false);
   });
 
+
+  it('ODR-2 rejects mutating source drift immediately after trusted staging and before credential/provider-state restore', async () => {
+    const provisionSecret = vi.fn().mockResolvedValue('secret-volume');
+    const sandbox = {
+      stageWorkspace: vi.fn().mockResolvedValue({ volumeName: 'workspace-volume', baseCommit: 'b'.repeat(40) }),
+      disposeWorkspace: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RunnerSandbox;
+    const credentialManager = {
+      provisionSecret,
+      revokeSecret: vi.fn().mockResolvedValue(undefined),
+    } as unknown as CredentialManager;
+    const backend = new KiroBackend(job({
+      profile: 'implement',
+      providerSessionId: 'provider-session',
+      providerStateVolume: 'state-volume',
+      sessionSourceRevision: 'a'.repeat(40),
+    }), { ...opts(), sandbox, credentialManager });
+
+    await expect(backend.prepare(new AbortController().signal))
+      .rejects.toMatchObject({ code: 'SESSION_NOT_RESUMABLE' });
+    expect((sandbox as any).stageWorkspace).toHaveBeenCalledTimes(1);
+    expect(provisionSecret).not.toHaveBeenCalled();
+    expect(docker.listVolumesByFilter).not.toHaveBeenCalled();
+    expect((sandbox as any).disposeWorkspace).toHaveBeenCalledWith('workspace-volume');
+  });
+
+  it('ODR-2 permits read-only drift as context-only continuity after fresh staging', async () => {
+    const credentialBoundary = new Error('credential-boundary');
+    const provisionSecret = vi.fn().mockRejectedValue(credentialBoundary);
+    const sandbox = {
+      stageWorkspace: vi.fn().mockResolvedValue({ volumeName: 'workspace-volume', baseCommit: 'b'.repeat(40) }),
+      disposeWorkspace: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RunnerSandbox;
+    const credentialManager = {
+      provisionSecret,
+      revokeSecret: vi.fn().mockResolvedValue(undefined),
+    } as unknown as CredentialManager;
+    const backend = new KiroBackend(job({
+      profile: 'audit',
+      providerSessionId: 'provider-session',
+      providerStateVolume: 'state-volume',
+      sessionSourceRevision: 'a'.repeat(40),
+    }), { ...opts(), sandbox, credentialManager });
+
+    await expect(backend.prepare(new AbortController().signal)).rejects.toBe(credentialBoundary);
+    expect(provisionSecret).toHaveBeenCalledTimes(1);
+    expect(docker.listVolumesByFilter).not.toHaveBeenCalled();
+    expect((sandbox as any).disposeWorkspace).toHaveBeenCalledWith('workspace-volume');
+  });
+
   it('database state ref with missing Docker volume fails closed', async () => {
     docker.listVolumesByFilter.mockResolvedValue([]);
     const backend = new KiroBackend(job({

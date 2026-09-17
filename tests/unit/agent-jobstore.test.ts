@@ -42,7 +42,7 @@ const mode = (p: string) => statSync(p).mode & 0o777;
 describe('agent job store', () => {
   it('initializes the schema at the expected version', () => {
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(8); // P7 B8: shared live-writer arbitration
+    expect(store.schemaVersion).toBe(9); // P7 B8: shared live-writer arbitration
   });
 
   it('creates SQLite files private to the runtime identity (0600, no group/other)', () => {

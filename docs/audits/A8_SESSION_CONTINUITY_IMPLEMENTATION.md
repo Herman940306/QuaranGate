@@ -7,7 +7,7 @@
 **Historical A8 source lane:** `lane/a8-session-continuity` at base `9867cd66a451ec44bcd2e24d994e9aed78fb284f`; retained as read-only evidence, not the active writer.
 **Live Kiro session restore:** `NOT_QUALIFIED_ON_INTEGRATED_REVISION` — the live QuaranGate runtime is still the accepted P1 revision `b01015c4c2854881aeac7cab6e2caf45d978a75d`; this exact integrated A8 candidate has not yet been deployed.
 **ODR-1:** fail closed remains implemented.
-**ODR-2:** source-revision binding remains an owner decision and is not implemented here.
+**ODR-2:** historical R1 status was owner-decision pending. The owner later selected the hybrid policy; current source implements it through the bounded ODR-2 source-revision remediation documented in `A8_ODR2_SOURCE_REVISION_BINDING.md`.
 
 This document supersedes the pre-R1 A8 implementation notes that incorrectly treated local client-side session-ID injection as sufficient provider restoration.
 
@@ -398,11 +398,11 @@ SESSION_NOT_RESUMABLE
 
 No silent fallback to `new` exists.
 
-### ODR-2 — owner decision pending
+### ODR-2 — historical R1 status, superseded by bounded remediation
 
-A8 R1 does **not** bind a session to a source revision. Every individual job still captures/uses its own current `baseCommit` and all existing stale-artifact/apply protections remain unchanged.
+At the original A8 R1 freeze, sessions were not revision-bound and ODR-2 remained an explicit owner decision. That historical statement is preserved for chronology.
 
-The schema/policy can be extended later to record a source revision if the owner chooses one of the product policies for revision-bound continuation. R1 does not silently choose that policy.
+The owner later selected the hybrid policy and current source now persists the trusted staged Git revision on resumable sessions. A mutating/`implement` resume requires an exact revision match and fails closed on drift or on a legacy unbound session. Read-only `audit`/`plan`/`review` continuity may cross revision drift only after the current project revision has been freshly attested by trusted staging; provider memory remains context only. See `docs/audits/A8_ODR2_SOURCE_REVISION_BINDING.md`.
 
 ---
 
@@ -466,6 +466,6 @@ provider persistence → dedicated binding-verified session-state volume
 success authority    → atomic source-consume + successor-create + job-COMPLETED transaction
 ```
 
-Session memory remains context only. It is never permission, apply authority, filesystem truth, or proof that the current source revision matches provider memory.
+Session memory remains context only. It is never permission, apply authority, or filesystem truth. Current ODR-2 enforcement additionally records the trusted staged source revision and prevents mutating resume across revision drift; read-only drift remains context-only after fresh staging.
 
 **Candidate status:** `PASS_CANDIDATE_FORWARD_INTEGRATION`; deterministic source qualification is green on the sole forward line. Immutable commit and bounded live Kiro `session/load` qualification remain separate gates.

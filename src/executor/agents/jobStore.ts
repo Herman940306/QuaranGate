@@ -51,7 +51,7 @@ import {
   type AgentRetentionClass,
 } from '../../shared/agents.js';
 
-export const AGENT_JOB_SCHEMA_VERSION = 8;
+export const AGENT_JOB_SCHEMA_VERSION = 9;
 
 /**
  * Concurrency admission counts EXECUTING jobs only. QUEUED jobs are "active"
@@ -130,6 +130,7 @@ const REQUIRED_SCHEMA_COLUMNS: Record<string, Record<string, string>> = {
     backend: 'TEXT', profile: 'TEXT', provider_session_id: 'TEXT',
     provider_state_ref: 'TEXT', state: 'TEXT', created_at: 'TEXT', last_used_at: 'TEXT',
     consumed_by_job_id: 'TEXT', reserved_by_job_id: 'TEXT', reserved_at: 'TEXT', expires_at: 'TEXT',
+    source_revision: 'TEXT',
   },
   // v7: P3 provider admission / cooldown state. Never stores provider payloads.
   agent_provider_state: {
@@ -487,6 +488,8 @@ export interface SessionSuccessorInput {
   profile: string;
   providerSessionId: string;
   providerStateRef?: string | null;
+  /** Trusted committed source revision observed by this successful turn. */
+  sourceRevision?: string | null;
 }
 
 export interface CompleteJobWithSessionInput {
@@ -559,9 +562,10 @@ export class AgentJobStore {
    *
    * Fail closed instead of repairing or inferring missing historical state.
    */
-  private assertSchemaShape(options: { includeProviderState?: boolean; includeLiveWriter?: boolean; stampedVersion?: number } = {}): void {
+  private assertSchemaShape(options: { includeProviderState?: boolean; includeLiveWriter?: boolean; includeSessionSourceRevision?: boolean; stampedVersion?: number } = {}): void {
     const includeProviderState = options.includeProviderState ?? true;
     const includeLiveWriter = options.includeLiveWriter ?? true;
+    const includeSessionSourceRevision = options.includeSessionSourceRevision ?? true;
     const stampedVersion = options.stampedVersion ?? AGENT_JOB_SCHEMA_VERSION;
     const missing: string[] = [];
 
@@ -584,6 +588,7 @@ export class AgentJobStore {
       if (!tableExists(table)) continue;
       const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string }[];
       for (const [column, affinity] of Object.entries(columns)) {
+        if (!includeSessionSourceRevision && table === 'agent_sessions' && column === 'source_revision') continue;
         if (!includeLiveWriter && table === 'agent_apply_attempts' && (column === 'worktree_id' || column === 'writer_lease_id')) continue;
         const got = info.find((c) => c.name === column);
         if (!got) { missing.push(`${table}.${column}`); continue; }
@@ -637,7 +642,7 @@ export class AgentJobStore {
     }
     if (includeLiveWriter) this.assertLiveWriterCoherence();
     // v6+: verify the session store shape using its own dedicated check.
-    this._sessionStore.assertSchemaShape();
+    this._sessionStore.assertSchemaShape({ includeSourceRevision: includeSessionSourceRevision, stampedVersion });
   }
 
   private assertLiveWriterCoherence(): void {
@@ -717,10 +722,20 @@ export class AgentJobStore {
     // (apart from SQLite's normal open/journal bookkeeping); it is never
     // partially repaired or privacy-migrated before the failure is reported.
     if (version === 6) {
-      this.assertSchemaShape({ includeProviderState: false, includeLiveWriter: false, stampedVersion: 6 });
+      this.assertSchemaShape({ includeProviderState: false, includeLiveWriter: false, includeSessionSourceRevision: false, stampedVersion: 6 });
     }
     if (version === 7) {
-      this.assertSchemaShape({ includeLiveWriter: false, stampedVersion: 7 });
+      this.assertSchemaShape({ includeLiveWriter: false, includeSessionSourceRevision: false, stampedVersion: 7 });
+    }
+    if (version === 8) {
+      this.assertSchemaShape({ includeSessionSourceRevision: false, stampedVersion: 8 });
+    }
+    // ODR-2 v9 safety boundary: no older schema may already contain the v9
+    // revision-binding column. Adopting such a column could trust provenance
+    // written by an interrupted/out-of-tree migration, so reject before any
+    // migration mutation rather than attempting repair or backfill.
+    if (version < 9 && this.columnExists('agent_sessions', 'source_revision')) {
+      throw new BridgeError('INTERNAL', `agent job DB schema v${version} contains partial v9 session source-revision state; refusing automatic repair`, 500);
     }
     // B8 safety boundary: no historical schema may already contain any v8
     // live-writer objects or columns. Treat that as an interrupted/out-of-tree
@@ -934,6 +949,16 @@ export class AgentJobStore {
         }
         if (!this.columnExists('agent_apply_attempts', 'writer_lease_id')) {
           this.db.exec('ALTER TABLE agent_apply_attempts ADD COLUMN writer_lease_id TEXT REFERENCES live_writer_leases(writer_lease_id)');
+        }
+      }
+      if (version < 9) {
+        // v8 (P7 B8) → v9 (A8 ODR-2): bind resumable provider sessions to the
+        // trusted committed source revision they last observed. Historical
+        // sessions remain NULL rather than fabricating provenance from current
+        // source. Writer resume fails closed on NULL/drift; read-only resume
+        // may continue only after fresh staging attests the current revision.
+        if (!this.columnExists('agent_sessions', 'source_revision')) {
+          this.db.exec('ALTER TABLE agent_sessions ADD COLUMN source_revision TEXT');
         }
       }
       this.db.exec(`PRAGMA user_version=${AGENT_JOB_SCHEMA_VERSION}`);

@@ -33,6 +33,7 @@ import { readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { extract as tarExtract } from 'tar-stream';
 import { BridgeError } from '../../shared/errors.js';
+import { enforceSessionSourceRevision } from './sessionPolicy.js';
 import type { AgentResourcePolicy, AgentProfileId } from '../../shared/agents.js';
 import {
   assertKiroProfile, isWriteProfile,
@@ -151,6 +152,8 @@ export interface KiroBackendJobInput {
   providerSessionId?: string | null;
   /** A8 R1: trusted managed volume holding only Kiro ACP session persistence. */
   providerStateVolume?: string | null;
+  /** A8 ODR-2: trusted committed source revision last observed by the resumed session. */
+  sessionSourceRevision?: string | null;
 }
 
 export interface KiroBackendResult {
@@ -738,6 +741,22 @@ export class KiroBackend {
         rejectTrackedSymlinks: this.writeMode,
       });
       this.checkAbort(signal);
+
+      // A8 ODR-2: fresh trusted staging is the source attestation. Enforce
+      // revision continuity before credentials/provider state are provisioned,
+      // so a mutating resumed provider can never observe drifted source.
+      if (this.resumableProviderSessionId) {
+        const revisionDisposition = enforceSessionSourceRevision({
+          writer: this.writeMode,
+          storedRevision: this.job.sessionSourceRevision ?? null,
+          currentRevision: this.staged.baseCommit,
+        });
+        log('kiro backend: session source revision attested', {
+          jobId: this.job.jobId,
+          disposition: revisionDisposition,
+          writer: this.writeMode,
+        });
+      }
 
       if (this.writeMode) {
         // A6-B2: capture pristine STAGED_BEFORE evidence AFTER staging and BEFORE

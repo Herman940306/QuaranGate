@@ -107,7 +107,7 @@ describe('A6-B1 job store migration v2 -> v3', () => {
     const ids = seedV2Db(dbPath, 12);
 
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(store.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
 
     for (const id of ids) {
       const got = store.get(id);
@@ -134,7 +134,7 @@ describe('A6-B1 job store migration v2 -> v3', () => {
     const ids = seedV2Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v2 -> v3
     const reopened = new AgentJobStore(dbPath); // v3 -> v6 (forward migration)
-    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(reopened.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -151,7 +151,7 @@ describe('A3 job store migration v1 -> current (v3)', () => {
 
     const store = new AgentJobStore(dbPath); // opening runs migrate() cumulatively (v1 -> v2 -> ... -> v6)
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(store.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
 
     for (const id of ids) {
       const got = store.get(id);
@@ -178,7 +178,7 @@ describe('A3 job store migration v1 -> current (v3)', () => {
     const ids = seedV1Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v1 -> v3
     const reopened = new AgentJobStore(dbPath); // v3 → v6 (forward migration)
-    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(reopened.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -217,7 +217,7 @@ describe('A6-B1 artifact metadata columns — fresh v3 schema', () => {
   it('fresh v3 DB contains all nine required artifact metadata columns', () => {
     const store = new AgentJobStore(dbPath);
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(store.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -292,7 +292,7 @@ describe('A6-B1 artifact metadata columns — v2→v3 migration', () => {
   it('v2→v3 migration adds all nine artifact metadata columns', () => {
     seedV2Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(store.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -403,7 +403,7 @@ describe('A6-B1 artifact metadata columns — v1→v3 migration', () => {
   it('v1→v3 migration adds all nine artifact metadata columns', () => {
     seedV1Db(dbPath, 3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(store.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -456,7 +456,7 @@ describe('A6-B1 artifact metadata columns — fresh-v3 and migrated-v3 schema eq
     seedV2Db(p, 2);
     new AgentJobStore(p).close(); // v2→v3
     const reopened = new AgentJobStore(p); // v3→v6 (forward migration)
-    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(reopened.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     reopened.close();
 
     const db = new DatabaseSync(p);
@@ -656,7 +656,7 @@ describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => 
     seedV4Db(dbPath, 5);
     const store = new AgentJobStore(dbPath);
     expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
-    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(store.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     store.close();
   });
 
@@ -724,7 +724,7 @@ describe('A6 job store migration v4 → v5 (durable retention snapshot)', () => 
     const ids = seedV4Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v4 → v5
     const reopened = new AgentJobStore(dbPath); // v5 → v6 (A8 migration)
-    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(reopened.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     for (const id of ids) expect(reopened.get(id)).toBeTruthy();
     reopened.close();
   });
@@ -810,7 +810,7 @@ describe('A6 v4→v5 migration atomicity', () => {
     // Opening should complete the migration cleanly (columnExists guard skips
     // the already-added column and adds the remaining two).
     const store = new AgentJobStore(p);
-    expect(store.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(store.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     store.close();
 
     const db2 = new DatabaseSync(p);
@@ -838,7 +838,7 @@ describe('P3 v6 → v7 raw-prompt minimization migration', () => {
   });
 
   it('scrubs terminal historical prompts but preserves QUEUED prompt needed for restart', () => {
-    // Build a genuine v6 fixture instead of downgrading a current v8 DB and
+    // Build a genuine v6 fixture instead of downgrading a current v9 DB and
     // accidentally leaving future-schema objects behind.
     seedV4Db(dbPath, 0);
     upgradeV4FixtureToV6(dbPath);
@@ -866,7 +866,7 @@ describe('P3 v6 → v7 raw-prompt minimization migration', () => {
     expect(terminal.status).toBe('COMPLETED');
     expect(terminal.prompt).toBe('');
     expect(terminal.promptHash).toBe('2'.repeat(64));
-    expect(migrated.schemaVersion).toBe(8);
+    expect(migrated.schemaVersion).toBe(9);
     migrated.close();
   });
 });
@@ -888,7 +888,7 @@ describe('P7 B8 v7 → v8 live-writer migration', () => {
   it('migrates a genuine v7 DB to v8 without fabricating historical worktree/lease provenance', () => {
     const ids = seedGenuineV7(3);
     const store = new AgentJobStore(dbPath);
-    expect(store.schemaVersion).toBe(8);
+    expect(store.schemaVersion).toBe(9);
     store.close();
 
     const db = new DatabaseSync(dbPath);
@@ -971,7 +971,7 @@ describe('current schema shape validation (stamp is not proof)', () => {
     seedV4Db(dbPath, 3);
     new AgentJobStore(dbPath).close(); // v4 -> current
     const reopened = new AgentJobStore(dbPath);
-    expect(reopened.schemaVersion).toBe(8); // current schema includes P7 B8 live-writer arbitration
+    expect(reopened.schemaVersion).toBe(9); // current schema includes A8 ODR-2 source revision binding
     reopened.close();
   });
 
@@ -997,7 +997,7 @@ describe('current schema shape validation (stamp is not proof)', () => {
     expect(uv.user_version).toBe(7);
   });
 
-  it('current v8 with a weakened live-writer table definition fails closed on reopen', () => {
+  it('current v9 with a weakened live-writer table definition fails closed on reopen', () => {
     new AgentJobStore(dbPath).close();
     const db = new DatabaseSync(dbPath);
     db.exec(`
@@ -1024,7 +1024,7 @@ describe('current schema shape validation (stamp is not proof)', () => {
     expect(() => new AgentJobStore(dbPath)).toThrow(/live_writer_leases definition/);
   });
 
-  it('current v8 with a weakened same-name held-target index fails closed on reopen', () => {
+  it('current v9 with a weakened same-name held-target index fails closed on reopen', () => {
     new AgentJobStore(dbPath).close();
     const db = new DatabaseSync(dbPath);
     db.exec(`
@@ -1037,7 +1037,7 @@ describe('current schema shape validation (stamp is not proof)', () => {
     expect(() => new AgentJobStore(dbPath)).toThrow(/idx_live_writer_one_held_target/);
   });
 
-  it('current v8 rejects a persisted malformed lease row even when SQLite CHECK enforcement was bypassed out-of-band', () => {
+  it('current v9 rejects a persisted malformed lease row even when SQLite CHECK enforcement was bypassed out-of-band', () => {
     new AgentJobStore(dbPath).close();
     const db = new DatabaseSync(dbPath);
     db.exec('PRAGMA ignore_check_constraints=ON');
