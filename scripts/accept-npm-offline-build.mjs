@@ -181,6 +181,7 @@ async function composeValidation(bundlePath) {
     PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
     HOME: os.tmpdir(),
     INTERNAL_TOKEN: 'npm-offline-acceptance-placeholder-not-a-secret',
+    DOCKER_AUTHORITY_TOKEN: 'npm-offline-acceptance-docker-authority-placeholder-not-a-secret',
     QUARANGATE_NPM_BUNDLE_PATH: bundlePath,
     GIT_REVISION: 'npm-offline-acceptance',
     GATEWAY_IMAGE: 'quarangate:npm-offline-acceptance-gateway-config-only',
@@ -210,7 +211,7 @@ async function composeValidation(bundlePath) {
     'docker', ['compose', '--env-file', '/dev/null', 'config', '--services'], { env: runtimeEnv },
   );
   const services = servicesResult.stdout.trim().split(/\s+/u).filter(Boolean).sort();
-  if (services.join(',') !== 'executor,gateway') {
+  if (services.join(',') !== 'docker-authority,executor,gateway') {
     throw new AcceptanceError('Compose services cannot be enumerated without QUARANGATE_NPM_BUNDLE_PATH');
   }
   await runCapture('docker', ['compose', '--env-file', '/dev/null', 'ps'], { env: runtimeEnv });
