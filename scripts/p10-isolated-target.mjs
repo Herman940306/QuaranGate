@@ -9,6 +9,7 @@ const PROJECT_RE = /^[a-z0-9][a-z0-9_-]*$/u;
 const FORBIDDEN_FORWARD = new Set(['-p', '--project-name', '-f', '--file']);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TARGET_ROOT = path.join(REPO_ROOT, 'test-target');
+const PINNED_DECOY_IMAGE = 'alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc';
 
 export function isolatedTargetPlan(env = process.env, forwarded = []) {
   const project = env.QG_P10_TARGET_PROJECT?.trim();
@@ -29,6 +30,7 @@ export function isolatedTargetPlan(env = process.env, forwarded = []) {
     QG_P10_TARGET_IMAGE: `mcp-bridge-testtarget:${project}`,
     QG_P10_TARGET_DEV_CONTAINER: `${project}-dev`,
     QG_P10_TARGET_DECOY_CONTAINER: `${project}-decoy`,
+    QG_P10_TARGET_DECOY_IMAGE: PINNED_DECOY_IMAGE,
   };
   const composeFiles = [path.join(TARGET_ROOT, 'compose.yaml'), path.join(TARGET_ROOT, 'compose.p10-isolated.yaml')];
   const dockerArgs = ['compose', '-p', project, '-f', composeFiles[0], '-f', composeFiles[1], ...forwarded];

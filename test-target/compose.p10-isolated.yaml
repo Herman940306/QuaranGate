@@ -4,8 +4,14 @@ name: ${QG_P10_TARGET_PROJECT:?set isolated QG_P10_TARGET_PROJECT}
 
 services:
   dev:
+    build:
+      network: none
+      pull: false
     image: ${QG_P10_TARGET_IMAGE:?set isolated QG_P10_TARGET_IMAGE}
+    pull_policy: never
     container_name: ${QG_P10_TARGET_DEV_CONTAINER:?set isolated QG_P10_TARGET_DEV_CONTAINER}
 
   decoy:
+    image: ${QG_P10_TARGET_DECOY_IMAGE:?set digest-pinned QG_P10_TARGET_DECOY_IMAGE}
+    pull_policy: never
     container_name: ${QG_P10_TARGET_DECOY_CONTAINER:?set isolated QG_P10_TARGET_DECOY_CONTAINER}

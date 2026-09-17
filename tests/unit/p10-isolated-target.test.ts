@@ -15,6 +15,7 @@ describe('P10 isolated integration target launcher', () => {
       QG_P10_TARGET_IMAGE: 'mcp-bridge-testtarget:quarangate-p10-candidate-target',
       QG_P10_TARGET_DEV_CONTAINER: 'quarangate-p10-candidate-target-dev',
       QG_P10_TARGET_DECOY_CONTAINER: 'quarangate-p10-candidate-target-decoy',
+      QG_P10_TARGET_DECOY_IMAGE: 'alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc',
     });
   });
 
@@ -31,5 +32,9 @@ describe('P10 isolated integration target launcher', () => {
     expect(overlay).toContain('container_name: ${QG_P10_TARGET_DECOY_CONTAINER:?');
     expect(overlay).not.toContain('mcp-bridge-testtarget-dev');
     expect(overlay).not.toContain('mcp-bridge-testtarget-decoy');
+    expect(overlay).toContain('network: none');
+    expect(overlay).toContain('pull: false');
+    expect((overlay.match(/pull_policy: never/gu) ?? []).length).toBe(2);
+    expect(overlay).toContain('QG_P10_TARGET_DECOY_IMAGE');
   });
 });
