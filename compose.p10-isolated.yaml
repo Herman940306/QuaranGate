@@ -1,0 +1,17 @@
+# P10 owner-host qualification overlay.
+# This file is never used for the canonical live `quarangate` project. The
+# guarded launcher requires an isolated project and supplies every physical
+# resource identity explicitly so qualification cannot reuse live resources.
+name: ${QG_P10_COMPOSE_PROJECT:?set isolated QG_P10_COMPOSE_PROJECT}
+
+networks:
+  edge:
+    name: ${QG_P10_EDGE_NETWORK:?set isolated QG_P10_EDGE_NETWORK}
+  internal:
+    name: ${QG_P10_INTERNAL_NETWORK:?set isolated QG_P10_INTERNAL_NETWORK}
+
+volumes:
+  bridge-data:
+    name: ${QG_P10_DATA_VOLUME:?set isolated QG_P10_DATA_VOLUME}
+  bridge-jobs:
+    name: ${QG_P10_JOBS_VOLUME:?set isolated QG_P10_JOBS_VOLUME}
