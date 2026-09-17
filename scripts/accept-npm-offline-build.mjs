@@ -103,18 +103,26 @@ async function requireDockerObjectAbsent(kind, reference) {
   throw new AcceptanceError(`temporary ${kind} already exists: ${reference}`);
 }
 
-async function liveAnchor(service) {
+async function liveProjectSnapshot() {
   const result = await runCapture('docker', [
-    'ps', '--filter', 'label=com.docker.compose.project=quarangate',
-    '--filter', `label=com.docker.compose.service=${service}`, '--format', '{{.ID}}',
+    'ps', '--filter', 'label=com.docker.compose.project=quarangate', '--format', '{{.ID}}',
   ]);
-  const ids = result.stdout.trim().split(/\s+/u).filter(Boolean);
-  if (ids.length !== 1) throw new AcceptanceError(`expected exactly one live ${service} container, found ${ids.length}`);
-  const inspected = await runCapture('docker', [
-    'inspect', ids[0], '--format', '{{.Id}}|{{.Image}}|{{.State.StartedAt}}',
-  ]);
-  const [id, imageId, startedAt] = inspected.stdout.trim().split('|');
-  return { id, imageId, startedAt };
+  const ids = result.stdout.trim().split(/\s+/u).filter(Boolean).sort();
+  if (ids.length === 0) throw new AcceptanceError('expected at least one running live QuaranGate container');
+  const snapshot = [];
+  for (const id of ids) {
+    const inspected = await runCapture('docker', [
+      'inspect', id, '--format',
+      '{{index .Config.Labels "com.docker.compose.service"}}|{{.Id}}|{{.Image}}|{{.State.StartedAt}}',
+    ]);
+    const [service, containerId, imageId, startedAt] = inspected.stdout.trim().split('|');
+    if (!service || !containerId || !imageId || !startedAt) {
+      throw new AcceptanceError(`could not establish complete live QuaranGate container identity for ${id}`);
+    }
+    snapshot.push({ service, id: containerId, imageId, startedAt });
+  }
+  snapshot.sort((left, right) => `${left.service}|${left.id}`.localeCompare(`${right.service}|${right.id}`));
+  return snapshot;
 }
 
 async function syntheticNpmMechanism(tempRoot) {
@@ -351,11 +359,10 @@ async function main() {
     const lockBefore = await sha256File('package-lock.json');
     if (lockBefore !== EXPECTED_LOCK_SHA256) throw new AcceptanceError('canonical package-lock hash drift');
     const baseBefore = await dockerImageInfo(BASE_IMAGE);
-    const gatewayBefore = await liveAnchor('gateway');
-    const executorBefore = await liveAnchor('executor');
+    const liveBefore = await liveProjectSnapshot();
     summary.head = head;
     summary.baseImageBefore = baseBefore;
-    summary.liveBefore = { gateway: gatewayBefore, executor: executorBefore };
+    summary.liveBefore = liveBefore;
 
     if (options.prepare) {
       if (!options.artifactRoot) throw new AcceptanceError('--prepare requires --artifact-root');
@@ -471,11 +478,9 @@ async function main() {
     if (lockAfter !== lockBefore) throw new AcceptanceError('package-lock changed during acceptance');
     summary.packageLockSha256 = lockAfter;
 
-    const gatewayAfter = await liveAnchor('gateway');
-    const executorAfter = await liveAnchor('executor');
-    summary.liveAfter = { gateway: gatewayAfter, executor: executorAfter };
-    if (JSON.stringify(gatewayAfter) !== JSON.stringify(gatewayBefore) ||
-        JSON.stringify(executorAfter) !== JSON.stringify(executorBefore)) {
+    const liveAfter = await liveProjectSnapshot();
+    summary.liveAfter = liveAfter;
+    if (JSON.stringify(liveAfter) !== JSON.stringify(liveBefore)) {
       throw new AcceptanceError('live QuaranGate stack changed during acceptance');
     }
     summary.checks.N12_LIVE_STACK_UNCHANGED = true;

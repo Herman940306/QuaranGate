@@ -326,6 +326,10 @@ describe('governed npm offline bundle', () => {
     expect(acceptance).toContain("'worktree', 'add', '--detach', sourceRoot, head");
     expect(acceptance).toContain("'ci', `--cache=${npmCache}`, '--offline', '--ignore-scripts', '--no-audit', '--no-fund'");
     expect(acceptance).toContain("'worktree', 'remove', '--force', validationWorktree");
+    expect(acceptance).toContain("async function liveProjectSnapshot()");
+    expect(acceptance).toContain("'ps', '--filter', 'label=com.docker.compose.project=quarangate', '--format', '{{.ID}}'");
+    expect(acceptance).toContain("summary.liveBefore = liveBefore");
+    expect(acceptance).toContain("JSON.stringify(liveAfter) !== JSON.stringify(liveBefore)");
     expect(acceptance).toContain("summary.cleanup.temporaryFixtures = `preserved:${tempRoot}`");
   });
 });
