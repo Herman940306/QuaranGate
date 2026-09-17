@@ -319,6 +319,9 @@ describe('governed npm offline bundle', () => {
     expect(acceptance).toContain('RUNTIME_COMPOSE_WITHOUT_BUNDLE');
     expect(acceptance).toContain("BUILD_WITHOUT_VALID_BUNDLE = 'REFUSED'");
     expect(acceptance).toContain("'--network=none', '--pull=false', '--no-cache'");
+    expect(acceptance).toContain("'--build-context', localBase.buildContext");
+    expect(acceptance).toContain('assertNoRegistryActivity');
+    expect(acceptance).toContain("summary.cleanup.localBaseTag = 'removed'");
     expect(acceptance).toContain("DOCKER_AUTHORITY_TOKEN: 'npm-offline-acceptance-docker-authority-placeholder-not-a-secret'");
     expect(acceptance).toContain("services.join(',') !== 'docker-authority,executor,gateway'");
     expect(acceptance).toContain("validationWorktree = path.join(tempRoot, 'source-validation')");

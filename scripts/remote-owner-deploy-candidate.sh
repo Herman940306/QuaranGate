@@ -97,6 +97,8 @@ else
   BASE_DOCKER_AUTHORITY_IMAGE="$(docker inspect "${legacy_authority_ids[0]}" --format '{{.Config.Image}}')"
   [[ -n "$BASE_DOCKER_AUTHORITY_IMAGE" ]] || fail 'legacy Docker-authority baseline image is empty'
 fi
+BUNDLE_PATH="$(read_runtime_value QUARANGATE_NPM_BUNDLE_PATH)" || fail 'runtime .env must contain exactly one non-empty QUARANGATE_NPM_BUNDLE_PATH'
+[[ -d "$BUNDLE_PATH" ]] || fail "runtime npm bundle directory missing: $BUNDLE_PATH"
 export GATEWAY_IMAGE="$BASE_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$BASE_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$BASE_EXECUTOR_IMAGE"
 
 QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
@@ -105,7 +107,6 @@ DEPLOY_SERVICES=(docker-authority gateway executor)
 if [[ "$github_expected" == 1 ]]; then DEPLOY_SERVICES+=(github-egress-proxy github-broker); fi
 # Build from the candidate worktree, but deploy from MAIN_ROOT so ignored live
 # config/ files are mounted from the operator runtime rather than disappearing.
-BUILD_QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate-candidate-build -f "$REPO_ROOT/compose.yaml")
 PW=(docker compose --env-file "$RUNTIME_ENV" -p projects-work -f "$REPO_ROOT/projects-work-target/compose.yaml")
 
 printf '%s\n' '=== PREDEPLOY BASELINE ==='
@@ -143,9 +144,10 @@ if [[ "$github_expected" == 1 ]]; then
 fi
 printf 'OLD_GATEWAY_IMAGE=%s\nOLD_DOCKER_AUTHORITY_IMAGE=%s\nOLD_EXECUTOR_IMAGE=%s\nOLD_GITHUB_PRESENT=%s\n' "$OLD_GATEWAY_IMAGE" "$OLD_DOCKER_AUTHORITY_IMAGE" "$OLD_EXECUTOR_IMAGE" "$OLD_GITHUB_PRESENT"
 
-# The build is local/offline by construction: compose.yaml has build.pull=false
-# and build.network=none; the Dockerfile consumes only the pre-provisioned npm
-# bundle. Refuse to proceed if the pinned base image is not already local.
+# Build through the governed local-base helper. It verifies the exact npm bundle,
+# resolves the pinned Node base only from the local Docker image store through a
+# named build context, keeps RUN networking disabled, and fails closed if
+# BuildKit emits registry metadata/auth activity.
 BASE_IMAGE='node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81'
 docker image inspect "$BASE_IMAGE" >/dev/null 2>&1 || fail "local digest-pinned base image missing: $BASE_IMAGE"
 
@@ -154,8 +156,11 @@ NEW_DOCKER_AUTHORITY_IMAGE="quarangate:docker-authority-$REV"
 NEW_EXECUTOR_IMAGE="quarangate:executor-$REV"
 
 printf '%s\n' '=== OFFLINE BUILD ==='
-GIT_REVISION="$REV" GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$NEW_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE" \
-  "${BUILD_QG[@]}" build --no-cache gateway
+node "$REPO_ROOT/scripts/p10-offline-core-build.mjs" \
+  --source-root "$REPO_ROOT" \
+  --source-commit "$REV" \
+  --bundle "$BUNDLE_PATH" \
+  --output-image "$NEW_GATEWAY_IMAGE" || fail 'governed local-only candidate build failed'
 # Gateway/Docker-authority/executor intentionally use the same built artifact;
 # tag the verified gateway artifact independently for each service role.
 docker tag "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE"

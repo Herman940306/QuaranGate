@@ -39,7 +39,9 @@ describe('remote owner projects-work hard boundary', () => {
 
   it('candidate deployment builds one local artifact, preserves rollback state, and never pulls', () => {
     const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
-    expect(script).toContain('build --no-cache gateway');
+    expect(script).toContain('scripts/p10-offline-core-build.mjs');
+    expect(script).toContain('--bundle "$BUNDLE_PATH"');
+    expect(script).toContain("QUARANGATE_NPM_BUNDLE_PATH");
     expect(script).toContain('docker tag "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE"');
     expect(script).toContain('docker tag "$NEW_GATEWAY_IMAGE" "$NEW_EXECUTOR_IMAGE"');
     expect(script).toContain("BASE_IMAGE='node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81'");
@@ -51,8 +53,8 @@ describe('remote owner projects-work hard boundary', () => {
 
   it('candidate deployment builds candidate source but mounts live runtime config from the main operator root', () => {
     const deploy = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
-    expect(deploy).toContain('BUILD_QG=(docker compose');
-    expect(deploy).toContain('-f "$REPO_ROOT/compose.yaml"');
+    expect(deploy).toContain('--source-root "$REPO_ROOT"');
+    expect(deploy).toContain('--source-commit "$REV"');
     expect(deploy).toContain('QG_FILES=(-f "$MAIN_ROOT/compose.yaml")');
     expect(deploy).toContain('$MAIN_ROOT/config/clients.yaml');
     expect(deploy).toContain('$MAIN_ROOT/config/bridge.yaml');

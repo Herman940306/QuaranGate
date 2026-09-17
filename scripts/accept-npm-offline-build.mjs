@@ -7,10 +7,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { canonicalJson } from './npm-offline-bundle.mjs';
+import { BASE_IMAGE, assertNoRegistryActivity, localBasePlan } from './offline-local-base.mjs';
 
 const EXPECTED_LOCK_SHA256 = '5ad727697de394442f04514bc391e3367af98d7efb5fc822ef3d87d1cda1b570';
 const EXPECTED_TINI_SHA256 = '1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc';
-const BASE_IMAGE = 'node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81';
 
 class AcceptanceError extends Error {}
 
@@ -65,6 +65,22 @@ function runVisible(command, args, options = {}) {
     child.once('exit', (code, signal) => {
       if (code === 0) resolve();
       else reject(new AcceptanceError(`${command} exited with ${code ?? signal}`));
+    });
+  });
+}
+
+function runVisibleCapture(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { shell: false, ...options });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk) => { const text = String(chunk); stdout += text; process.stdout.write(text); });
+    child.stderr?.on('data', (chunk) => { const text = String(chunk); stderr += text; process.stderr.write(text); });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      const result = { code: code ?? 1, signal, stdout, stderr };
+      if (code === 0) resolve(result);
+      else reject(Object.assign(new AcceptanceError(`${command} exited with ${code ?? signal}`), { result }));
     });
   });
 }
@@ -270,15 +286,18 @@ async function composeValidation(bundlePath) {
   };
 }
 
-async function buildWithoutValidBundleRefused(head, imageTag) {
+async function buildWithoutValidBundleRefused(head, imageTag, localBaseContext) {
   const combined = await expectFailure('docker', [
     'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false', '--no-cache',
+    '--build-context', localBaseContext,
     '--build-context', `npm_deps=${path.resolve('build')}`, '--build-arg', `GIT_REVISION=${head}`,
     '-t', imageTag, '.',
   ], /STOP_BUNDLE_INVALID[\s\S]*bundle directory contains unexpected or missing entries/u);
   if (/npm (?:http|https)|https:\/\/registry\.npmjs\.org/iu.test(combined)) {
     throw new AcceptanceError('invalid-bundle build reached npm registry activity');
   }
+  try { assertNoRegistryActivity(combined); }
+  catch (error) { throw new AcceptanceError(error.message); }
   await requireDockerObjectAbsent('image', imageTag);
   return true;
 }
@@ -342,6 +361,8 @@ async function main() {
   let createdImageId = null;
   let smokeAttempted = false;
   let validationWorktree = null;
+  let localBaseTagged = false;
+  let localBase = null;
   const summary = {
     verdict: 'FAIL',
     runId,
@@ -359,9 +380,16 @@ async function main() {
     const lockBefore = await sha256File('package-lock.json');
     if (lockBefore !== EXPECTED_LOCK_SHA256) throw new AcceptanceError('canonical package-lock hash drift');
     const baseBefore = await dockerImageInfo(BASE_IMAGE);
+    localBase = localBasePlan(baseBefore.id, runId);
+    await requireDockerObjectAbsent('image', localBase.tempTag);
+    await runCapture('docker', ['tag', baseBefore.id, localBase.tempTag]);
+    localBaseTagged = true;
+    const localBaseId = (await runCapture('docker', ['image', 'inspect', localBase.tempTag, '--format', '{{.Id}}'])).stdout.trim();
+    if (localBaseId !== baseBefore.id) throw new AcceptanceError('temporary local base tag identity mismatch');
     const liveBefore = await liveProjectSnapshot();
     summary.head = head;
     summary.baseImageBefore = baseBefore;
+    summary.localBase = { tag: localBase.tempTag, imageId: baseBefore.id, buildContext: localBase.buildContext };
     summary.liveBefore = liveBefore;
 
     if (options.prepare) {
@@ -419,7 +447,7 @@ async function main() {
     summary.compose = compose;
     summary.checks.RUNTIME_COMPOSE_WITHOUT_BUNDLE = true;
     summary.checks.COMPOSE_CONFIG = true;
-    await buildWithoutValidBundleRefused(head, invalidImageTag);
+    await buildWithoutValidBundleRefused(head, invalidImageTag, localBase.buildContext);
     summary.checks.BUILD_WITHOUT_VALID_BUNDLE = 'REFUSED';
 
     await runVisible('git', ['diff', '--check']);
@@ -445,11 +473,14 @@ async function main() {
     await runVisible('npm', ['run', 'build'], { cwd: validationWorktree });
     summary.checks.BUILD = true;
 
-    await runVisible('docker', [
+    const buildResult = await runVisibleCapture('docker', [
       'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false', '--no-cache',
+      '--build-context', localBase.buildContext,
       '--build-context', `npm_deps=${bundlePath}`, '--build-arg', `GIT_REVISION=${head}`,
       '-t', imageTag, '.',
     ]);
+    try { assertNoRegistryActivity(`${buildResult.stdout}\n${buildResult.stderr}`); }
+    catch (error) { throw new AcceptanceError(error.message); }
     imageCreated = true;
     const built = await dockerImageInfo(imageTag);
     createdImageId = built.id;
@@ -490,6 +521,21 @@ async function main() {
     primaryError = error;
     summary.error = error instanceof Error ? error.message : String(error);
   } finally {
+    if (localBaseTagged && localBase) {
+      try {
+        const taggedId = (await runCapture('docker', ['image', 'inspect', localBase.tempTag, '--format', '{{.Id}}'])).stdout.trim();
+        if (taggedId !== localBase.imageId) throw new AcceptanceError('temporary local base tag changed ownership; refusing cleanup');
+        await runCapture('docker', ['image', 'rm', localBase.tempTag]);
+        summary.cleanup.localBaseTag = 'removed';
+        localBaseTagged = false;
+      } catch (error) {
+        summary.cleanup.localBaseTag = `FAILED: ${error.message}`;
+        if (!primaryError) primaryError = error;
+        summary.verdict = 'FAIL';
+      }
+    } else {
+      summary.cleanup.localBaseTag = 'not-created';
+    }
     if (validationWorktree) {
       try {
         await runCapture('git', ['worktree', 'remove', '--force', validationWorktree]);
