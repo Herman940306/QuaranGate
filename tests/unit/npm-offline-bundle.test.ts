@@ -282,6 +282,23 @@ describe('governed npm offline bundle', () => {
     expect(fs.readFileSync(lockfile)).toEqual(before);
   });
 
+
+  it('U21 binds the committed Docker-build dependency descriptor to the exact canonical lockfile', async () => {
+    const lockfile = new URL('../../package-lock.json', import.meta.url);
+    const descriptorUrl = new URL('../../build/npm-dependencies.json', import.meta.url);
+    const analysis = await analyzeLockFile(lockfile);
+    const descriptor = JSON.parse(fs.readFileSync(descriptorUrl, 'utf8'));
+    expect(descriptor).toEqual(expect.objectContaining({
+      schemaVersion: 1,
+      packageLockSha256: analysis.packageLockSha256,
+      packageLockVersion: analysis.lockfileVersion,
+      packageEntryCount: analysis.entries.length,
+      artifactCount: analysis.artifactCount,
+      manifestSha256: '6c399f8614dcaf821b674c33330b899f3f2198cf2a041c7f3a200ed752136ad7',
+      allowedHosts: ALLOWED_HOSTS,
+    }));
+  });
+
   it('accepts a complete valid bundle bound to the allowed endpoint policy', async () => {
     const fixture = await makeFixture();
     const result = await verify(fixture);

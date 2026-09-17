@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "packageLockSha256": "31688b0a46cb5051e069ff049bbafd34752ace10dfb9dac3a60c9a3fef5258e5",
+  "packageLockSha256": "5ad727697de394442f04514bc391e3367af98d7efb5fc822ef3d87d1cda1b570",
   "packageLockVersion": 3,
-  "packageEntryCount": 221,
-  "artifactCount": 220,
-  "manifestSha256": "43eb077e7f23c23014882738508b624dd738cc0315d5ea8730392e15e6aec788",
+  "packageEntryCount": 219,
+  "artifactCount": 218,
+  "manifestSha256": "6c399f8614dcaf821b674c33330b899f3f2198cf2a041c7f3a200ed752136ad7",
   "allowedHosts": [
     "registry.npmjs.org:443"
   ]
