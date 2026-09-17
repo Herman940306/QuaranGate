@@ -4,6 +4,34 @@
 # resource identity explicitly so qualification cannot reuse live resources.
 name: ${QG_P10_COMPOSE_PROJECT:?set isolated QG_P10_COMPOSE_PROJECT}
 
+services:
+  gateway:
+    environment:
+      BRIDGE_PUBLIC_URL: http://127.0.0.1:${QG_P10_BRIDGE_PORT:?set isolated QG_P10_BRIDGE_PORT}
+    volumes:
+      - type: bind
+        source: ${QG_P10_CONFIG_DIR:?set external owner-private QG_P10_CONFIG_DIR}
+        target: /config
+        read_only: true
+
+  docker-authority:
+    volumes:
+      # Re-state the broker's canonical authority mount so this overlay remains
+      # independently auditable by the security-invariant scanner. This is the
+      # same socket authority already present in compose.yaml, not an expansion.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: ${QG_P10_CONFIG_DIR:?set external owner-private QG_P10_CONFIG_DIR}
+        target: /config
+        read_only: true
+
+  executor:
+    volumes:
+      - type: bind
+        source: ${QG_P10_CONFIG_DIR:?set external owner-private QG_P10_CONFIG_DIR}
+        target: /config
+        read_only: true
+
 networks:
   edge:
     name: ${QG_P10_EDGE_NETWORK:?set isolated QG_P10_EDGE_NETWORK}

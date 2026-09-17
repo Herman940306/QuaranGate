@@ -1,0 +1,11 @@
+# P10 qualification-only isolation for the disposable demo/decoy target pair.
+# The base test target remains unchanged for ordinary development.
+name: ${QG_P10_TARGET_PROJECT:?set isolated QG_P10_TARGET_PROJECT}
+
+services:
+  dev:
+    image: ${QG_P10_TARGET_IMAGE:?set isolated QG_P10_TARGET_IMAGE}
+    container_name: ${QG_P10_TARGET_DEV_CONTAINER:?set isolated QG_P10_TARGET_DEV_CONTAINER}
+
+  decoy:
+    container_name: ${QG_P10_TARGET_DECOY_CONTAINER:?set isolated QG_P10_TARGET_DECOY_CONTAINER}
