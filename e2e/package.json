@@ -8,7 +8,12 @@
   },
   "scripts": {
     "test": "playwright test --config=playwright.config.ts",
-    "test:list": "playwright test --config=playwright.config.ts --list"
+    "test:list": "playwright test --config=playwright.config.ts --list",
+    "p10v:readiness": "node scripts/p10v-readiness.mjs",
+    "p10v:test": "playwright test --config=p10v.playwright.config.ts",
+    "p10v:finalize": "node scripts/p10v-evidence-finalize.mjs",
+    "p10v:accept": "node scripts/p10v-acceptance.mjs",
+    "p10v:visual": "node scripts/p10v-visual-compare.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
