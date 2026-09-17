@@ -38,6 +38,15 @@ describe('SH-11 Docker broker hostile-world wiring', () => {
     expect(server).not.toContain("case 'container.execManaged': {const c=await assertContainer(String(p.containerId));");
   });
 
+  it('flushes validated exec-stream headers before waiting for the first body byte', () => {
+    const execStart = server.indexOf("path:`${API}/exec/${enc(p.execId)}/start`");
+    const statusCheck = server.indexOf('if(r.statusCode>=400)', execStart);
+    const flush = server.indexOf('s.status(200);s.flushHeaders();(r.body as any).pipe(s);return;', execStart);
+    expect(execStart).toBeGreaterThan(-1);
+    expect(statusCheck).toBeGreaterThan(execStart);
+    expect(flush).toBeGreaterThan(statusCheck);
+  });
+
   it('applies resource-role policy to managed exec/archive after Docker-state inspection', () => {
     expect(server).toContain('const identity=managedIdentityFromTrustedContainer(c);if(identity)validateManagedExecForIdentity(identity,body)');
     expect(server).toContain("if(identity)validateManagedArchivePath(identity,'write',p.path)");
