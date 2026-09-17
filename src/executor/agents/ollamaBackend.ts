@@ -174,11 +174,32 @@ interface ReadFileArgs { path: string; startLine: number; maxLines: number }
 interface ListFilesArgs { path: string; maxDepth?: number }
 interface LiteralSearchArgs { directory: string; query: string }
 
-export function validateReadFileArgs(args: unknown): ReadFileArgs {
-  if (typeof args !== 'object' || args === null || Array.isArray(args)) {
-    throw new BridgeError('MALFORMED_REQUEST', 'read_file: arguments must be a plain object', 400);
+/**
+ * ollama-js types function.arguments as an object, but the daemon/model runtime
+ * can surface one JSON-object serialization as a string. Normalize only that
+ * exact representation once, within the existing provider-result byte budget,
+ * then leave every tool's strict field/value validation unchanged.
+ */
+function normalizeOllamaToolArguments(toolName: string, args: unknown): Record<string, unknown> {
+  let normalized = args;
+  if (typeof normalized === 'string') {
+    if (Buffer.byteLength(normalized, 'utf8') > MAX_OLLAMA_PROVIDER_RESULT_BYTES) {
+      throw new BridgeError('MALFORMED_REQUEST', `${toolName}: string arguments exceed fixed byte limit`, 400);
+    }
+    try {
+      normalized = JSON.parse(normalized) as unknown;
+    } catch {
+      throw new BridgeError('MALFORMED_REQUEST', `${toolName}: string arguments must contain one JSON object`, 400);
+    }
   }
-  const obj = args as Record<string, unknown>;
+  if (typeof normalized !== 'object' || normalized === null || Array.isArray(normalized)) {
+    throw new BridgeError('MALFORMED_REQUEST', `${toolName}: arguments must be a plain object`, 400);
+  }
+  return normalized as Record<string, unknown>;
+}
+
+export function validateReadFileArgs(args: unknown): ReadFileArgs {
+  const obj = normalizeOllamaToolArguments('read_file', args);
   if (typeof obj.path !== 'string' || obj.path.length === 0) {
     throw new BridgeError('MALFORMED_REQUEST', 'read_file: path must be a non-empty string', 400);
   }
@@ -199,10 +220,7 @@ export function validateReadFileArgs(args: unknown): ReadFileArgs {
 }
 
 function validateListFilesArgs(args: unknown): ListFilesArgs {
-  if (typeof args !== 'object' || args === null || Array.isArray(args)) {
-    throw new BridgeError('MALFORMED_REQUEST', 'list_files: arguments must be a plain object', 400);
-  }
-  const obj = args as Record<string, unknown>;
+  const obj = normalizeOllamaToolArguments('list_files', args);
   if (typeof obj.path !== 'string' || obj.path.length === 0) {
     throw new BridgeError('MALFORMED_REQUEST', 'list_files: path must be a non-empty string', 400);
   }
@@ -220,10 +238,7 @@ function validateListFilesArgs(args: unknown): ListFilesArgs {
 }
 
 function validateLiteralSearchArgs(args: unknown): LiteralSearchArgs {
-  if (typeof args !== 'object' || args === null || Array.isArray(args)) {
-    throw new BridgeError('MALFORMED_REQUEST', 'literal_search: arguments must be a plain object', 400);
-  }
-  const obj = args as Record<string, unknown>;
+  const obj = normalizeOllamaToolArguments('literal_search', args);
   if (typeof obj.directory !== 'string' || obj.directory.length === 0) {
     throw new BridgeError('MALFORMED_REQUEST', 'literal_search: directory must be a non-empty string', 400);
   }
@@ -404,7 +419,18 @@ function canonicalToolCallValue(value: unknown): string {
 }
 
 function toolCallSignature(toolCall: { function?: { name?: unknown; arguments?: unknown } }): string {
-  return `${String(toolCall.function?.name ?? '')}:${canonicalToolCallValue(toolCall.function?.arguments)}`;
+  let args = toolCall.function?.arguments;
+  // Duplicate suppression must treat the provider's object and one equivalent
+  // stringified-object representation as the same semantic call. Normalize
+  // only the top-level arguments value; JSON-looking strings inside legitimate
+  // tool fields (for example literal_search.query) remain ordinary strings.
+  if (typeof args === 'string' && Buffer.byteLength(args, 'utf8') <= MAX_OLLAMA_PROVIDER_RESULT_BYTES) {
+    try {
+      const parsed = JSON.parse(args) as unknown;
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) args = parsed;
+    } catch { /* malformed arguments retain their raw signature and fail in validation */ }
+  }
+  return `${String(toolCall.function?.name ?? '')}:${canonicalToolCallValue(args)}`;
 }
 
 export class OllamaBackend implements AgentBackendAdapter {
@@ -546,7 +572,7 @@ export class OllamaBackend implements AgentBackendAdapter {
       let thinkingBytes = 0;
       let done = false;
       let doneReason: string | null = null;
-      let toolCalls: Array<{ function: { name: string; arguments: Record<string, unknown> } }> = [];
+      let toolCalls: Array<{ function: { name: string; arguments: unknown } }> = [];
 
       const request = buildOllamaChatRequest(this.opts.modelQualifier, messages);
       this.requireEnvelopeWithinBudget(messages);
@@ -614,7 +640,7 @@ export class OllamaBackend implements AgentBackendAdapter {
               if (toolCallBytes > MAX_OLLAMA_PROVIDER_RESULT_BYTES) {
                 throw new OllamaAgentOutputError('ollama backend tool-call result exceeded fixed byte limit');
               }
-              toolCalls.push(tc as { function: { name: string; arguments: Record<string, unknown> } });
+              toolCalls.push(tc as { function: { name: string; arguments: unknown } });
             }
           }
           if (chunk.done) {
@@ -901,7 +927,7 @@ export class OllamaBackend implements AgentBackendAdapter {
   }
 
   private async executeToolCall(
-    toolCall: { function: { name: string; arguments: Record<string, unknown> } },
+    toolCall: { function: { name: string; arguments: unknown } },
   ): Promise<string> {
     const fn = toolCall.function;
 
@@ -910,7 +936,7 @@ export class OllamaBackend implements AgentBackendAdapter {
     }
 
     const toolName = fn.name;
-    // §4: function.arguments is materialized object data from ollama-js — NO JSON.parse
+    // Runtime representation is normalized once below; authority remains in the strict per-tool validators.
     const args = fn.arguments;
 
     let result: OllamaToolResult;

@@ -425,6 +425,48 @@ describe('O1 tool authority', () => {
     expect((caughtError as BridgeError).code).toBe('MALFORMED_REQUEST');
   });
 
+  it('accepts one stringified JSON object representation for read_file before strict field validation', async () => {
+    const { validateReadFileArgs } = await import('../../src/executor/agents/ollamaBackend.js');
+    expect(validateReadFileArgs('{"path":"src/index.ts"}')).toEqual({ path: 'src/index.ts', startLine: 1, maxLines: 200 });
+  });
+
+  it.each([
+    'not-json',
+    '"{\\"path\\":\\"src/index.ts\\"}"',
+    '[{"path":"src/index.ts"}]',
+    '42',
+    'null',
+  ])('rejects ambiguous/non-object stringified read_file arguments: %s', async (value) => {
+    const { validateReadFileArgs } = await import('../../src/executor/agents/ollamaBackend.js');
+    expect(() => validateReadFileArgs(value)).toThrowError(/read_file:/);
+  });
+
+  it('still rejects unknown fields after stringified JSON normalization', async () => {
+    const { validateReadFileArgs } = await import('../../src/executor/agents/ollamaBackend.js');
+    expect(() => validateReadFileArgs('{"path":"src/index.ts","command":"cat /etc/passwd"}')).toThrowError(/unexpected field/);
+  });
+
+  it.each([
+    ['read_file', '{"path":"src/index.ts","extra":true}'],
+    ['list_files', '{"path":"src","extra":true}'],
+    ['literal_search', '{"directory":"src","query":"needle","extra":true}'],
+  ] as const)('normalizes one JSON-object string for %s before strict unknown-field rejection', async (name, args) => {
+    const { OllamaBackend, MockOllamaClass } = await makeBackendWithMockChat([]);
+    const backend = new OllamaBackend(
+      { jobId: JOB, principalId: 'p1', backend: 'ollama', project: 'proj1', profile: 'audit', prompt: 'test', hostPath: '/srv', policy: POLICY },
+      { ollamaHost: 'http://x', modelQualifier: 'm:v1', helperImage: 'h:v1', stagerImage: 'h:v1', sensitiveReadGlobs: [], OllamaClass: MockOllamaClass },
+    );
+    (backend as unknown as Record<string, unknown>)['target'] = { containerId: 'fake', workspace: '/workspace' };
+    await expect((backend as unknown as { executeToolCall: (tc: unknown) => Promise<string> }).executeToolCall({ function: { name, arguments: args } }))
+      .rejects.toThrowError(/unexpected field/);
+  });
+
+  it('rejects an oversized stringified tool-argument representation before JSON parsing', async () => {
+    const { validateReadFileArgs } = await import('../../src/executor/agents/ollamaBackend.js');
+    const oversized = '{"path":"' + 'a'.repeat(49 * 1024) + '"}';
+    expect(() => validateReadFileArgs(oversized)).toThrowError(/fixed byte limit/);
+  });
+
   it('array arguments rejected by read_file validator', async () => {
     const { OllamaBackend, MockOllamaClass } = await makeBackendWithMockChat([]);
     const backend = new OllamaBackend(
@@ -589,6 +631,22 @@ describe('O1 governed result delivery', () => {
     const repeatedResult = finalRequest.messages.filter((m) => m.role === 'tool').at(-1)?.content ?? '';
     expect(repeatedResult).toMatch(/REPEATED_TOOL_CALL/);
     expect(repeatedResult).toMatch(/immutable snapshot/i);
+  });
+
+  it('treats object and equivalent stringified-object arguments as the same repeated tool call', async () => {
+    const firstCall = { function: { name: 'literal_search', arguments: { directory: 'src', query: 'needle' } } };
+    const sameCallStringified = { function: { name: 'literal_search', arguments: '{"query":"needle","directory":"src"}' } };
+    const finalAnswer = 'Evidence already proves the review claim.';
+    const { backend } = await makeResultBackend([
+      { message: { content: '', tool_calls: [firstCall] }, done: true },
+      { message: { content: '', tool_calls: [sameCallStringified] }, done: true },
+      { message: { content: finalAnswer, tool_calls: [] }, done: true },
+    ]);
+    const executeToolCall = vi.fn().mockResolvedValue(JSON.stringify({ success: true, data: { matches: [] } }));
+    (backend as unknown as { executeToolCall: typeof executeToolCall }).executeToolCall = executeToolCall;
+
+    await backend.run(new AbortController().signal);
+    expect(executeToolCall).toHaveBeenCalledTimes(1);
   });
 
   it('returns a useful no-tool textual response instead of execution telemetry', async () => {
