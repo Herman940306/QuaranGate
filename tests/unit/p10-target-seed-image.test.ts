@@ -9,7 +9,7 @@ describe('P10 local target seed qualification', () => {
     expect(() => targetSeedPlan(['--seed-image', 'mcp-bridge-testtarget:latest', '--output-image', 'mcp-bridge-testtarget:qg-p10', '--source-commit', 'bad'])).toThrow(/40 lowercase hex/u);
   });
 
-  it('derives a unique temporary seed tag without changing requested identities', () => {
+  it('derives a stable candidate binding identity without changing requested refs', () => {
     const commit = '1'.repeat(40);
     const plan = targetSeedPlan(['--seed-image', 'mcp-bridge-testtarget:latest', '--output-image', 'mcp-bridge-testtarget:quarangate-p10-candidate-target', '--source-commit', commit], 4242);
     expect(plan).toMatchObject({
@@ -28,18 +28,17 @@ describe('P10 local target seed qualification', () => {
     }
   });
 
-  it('has no third-party bootstrap dependency and enforces offline wrapper construction', () => {
+  it('binds the qualified seed locally without BuildKit or registry resolution', () => {
     const source = readFileSync(new URL('../../scripts/p10-target-seed-image.mjs', import.meta.url), 'utf8');
     expect(source).not.toMatch(/^import .* from ['"](?!node:|\.\.?\/)/mu);
-    expect(source).toContain("'run', '--rm', '--network', 'none'");
-    expect(source).toContain("'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false'");
-    expect(source).toContain("'--build-context', ociLayoutBuildContext('p10_seed', localSeed)");
-    expect(source).toContain('materializeLocalOciLayout(seedId');
-    expect(source).toContain('assertNoRegistryActivity(combined)');
-    expect(source).not.toContain('ARG SEED_IMAGE');
-    expect(source).toContain("'FROM p10_seed'");
+    expect(source).toContain("'run', '--rm', '--pull=never', '--network', 'none'");
+    expect(source).toContain("'image', 'tag', seedId, plan.outputImage");
+    expect(source).toContain('outputId !== seedId');
+    expect(source).toContain("bindingType: 'qualified-local-seed-tag'");
+    expect(source).toContain('registryActivity: false');
     expect(source).toContain("'{{json .RootFS.Layers}}'");
     expect(source).toContain("'image', 'rm', '-f', plan.outputImage");
-    expect(source).toContain('cleanupLocalOciLayout(localSeed)');
+    expect(source).not.toContain("'buildx', 'build'");
+    expect(source).not.toContain('oci-layout://');
   });
 });

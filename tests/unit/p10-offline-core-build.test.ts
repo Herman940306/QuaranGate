@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { BASE_IMAGE, assertNoRegistryActivity, ociLayoutBuildContext, renderOfflineDockerfile, validateOciLayout } from '../../scripts/offline-local-base.mjs';
+import { BASE_IMAGE, assertNoRegistryActivity, ociLayoutBuildContext, registryActivityEvidence, renderOfflineDockerfile, validateOciLayout } from '../../scripts/offline-local-base.mjs';
 import { coreBuildPlan } from '../../scripts/p10-offline-core-build.mjs';
 
 describe('P10 local-only core build', () => {
@@ -46,7 +46,10 @@ describe('P10 local-only core build', () => {
       '[auth] library/node:pull token for registry-1.docker.io',
       'load metadata for docker.io/library/node:24-alpine',
       'resolve docker.io/library/node:24-alpine',
-    ]) expect(() => assertNoRegistryActivity(sample)).toThrow(/registry metadata\/auth activity/u);
+    ]) {
+      expect(registryActivityEvidence(`safe\n${sample}\nsafe`)).toEqual([sample]);
+      expect(() => assertNoRegistryActivity(sample)).toThrow(new RegExp(`registry metadata/auth activity.*${sample.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'));
+    }
     expect(() => assertNoRegistryActivity('load build context p10_node_base from local OCI layout')).not.toThrow();
   });
 

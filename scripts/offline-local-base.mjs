@@ -104,8 +104,13 @@ export function renderOfflineDockerfile(source) {
   }).join('\n');
 }
 
+export function registryActivityEvidence(text) {
+  return String(text).split(/\r?\n/u).filter((line) => REGISTRY_ACTIVITY.test(line)).slice(0, 8);
+}
+
 export function assertNoRegistryActivity(text) {
-  if (REGISTRY_ACTIVITY.test(String(text))) throw new Error('BuildKit registry metadata/auth activity detected during local-only build');
+  const evidence = registryActivityEvidence(text);
+  if (evidence.length > 0) throw new Error(`BuildKit registry metadata/auth activity detected during local-only build: ${evidence.join(' | ')}`);
 }
 
 export function imageExists(ref) {

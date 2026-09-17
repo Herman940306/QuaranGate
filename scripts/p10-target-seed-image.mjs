@@ -1,11 +1,8 @@
 #!/usr/bin/env node
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { assertNoRegistryActivity, cleanupLocalOciLayout, materializeLocalOciLayout, ociLayoutBuildContext } from './offline-local-base.mjs';
 
 const HEX40 = /^[0-9a-f]{40}$/u;
 const IMAGE_ID = /^sha256:[0-9a-f]{64}$/u;
@@ -75,8 +72,6 @@ function inspect(ref, format) {
 export function qualifyTargetSeed(argv = process.argv.slice(2)) {
   const plan = targetSeedPlan(argv);
   let outputCreated = false;
-  let localSeed = null;
-  let tempRoot = null;
   try {
     if (imageExists(plan.outputImage)) throw new Error(`output image already exists: ${plan.outputImage}`);
 
@@ -92,55 +87,29 @@ export function qualifyTargetSeed(argv = process.argv.slice(2)) {
     if (!Array.isArray(seedLayers) || seedLayers.length === 0) throw new Error('seed image has no rootfs layers');
 
     const probe = runCapture('docker', [
-      'run', '--rm', '--network', 'none', '--entrypoint', 'sh', seedId, '-ec', plan.probeScript,
+      'run', '--rm', '--pull=never', '--network', 'none', '--entrypoint', 'sh', seedId, '-ec', plan.probeScript,
     ]);
     if (!probe.split(/\r?\n/u).includes('TARGET_SEED_CONTRACT=PASS')) throw new Error('seed target contract probe did not pass');
 
-    localSeed = materializeLocalOciLayout(seedId, `quarangate-p10-target-base-${plan.suffix}-`);
-    tempRoot = mkdtempSync(path.join(os.tmpdir(), 'quarangate-p10-target-wrapper-'));
-    writeFileSync(path.join(tempRoot, 'Dockerfile'), [
-      'FROM p10_seed',
-      'ARG SOURCE_REVISION',
-      `LABEL org.opencontainers.image.source="${plan.sourceUrl}"`,
-      'LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"',
-      'LABEL io.quarangate.p10.role="integration-target"',
-      '',
-    ].join('\n'), { mode: 0o600 });
-
-    const built = spawnSync('docker', [
-      'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false',
-      '--build-context', ociLayoutBuildContext('p10_seed', localSeed),
-      '--build-arg', `SOURCE_REVISION=${plan.sourceCommit}`,
-      '-t', plan.outputImage, tempRoot,
-    ], { encoding: 'utf8', shell: false, maxBuffer: 64 * 1024 * 1024 });
-    if (built.error) throw built.error;
-    const combined = `${built.stdout ?? ''}\n${built.stderr ?? ''}`;
-    assertNoRegistryActivity(combined);
-    if (built.status !== 0) {
-      const detail = built.stderr?.trim() || built.stdout?.trim() || '';
-      throw new Error(`docker buildx build failed${detail ? `: ${detail}` : ''}`);
-    }
+    runCapture('docker', ['image', 'tag', seedId, plan.outputImage]);
     outputCreated = true;
 
     const outputId = inspect(plan.outputImage, '{{.Id}}');
     if (!IMAGE_ID.test(outputId)) throw new Error('output image did not resolve to an immutable image ID');
-    if (inspect(plan.outputImage, '{{index .Config.Labels "org.opencontainers.image.revision"}}') !== plan.sourceCommit) throw new Error('output revision label mismatch');
-    if (inspect(plan.outputImage, '{{index .Config.Labels "org.opencontainers.image.source"}}') !== plan.sourceUrl) throw new Error('output source label mismatch');
-    if (inspect(plan.outputImage, '{{index .Config.Labels "io.quarangate.p10.role"}}') !== 'integration-target') throw new Error('output P10 role label mismatch');
+    if (outputId !== seedId) throw new Error('candidate target tag does not resolve to the qualified immutable seed image ID');
     if (inspect(plan.outputImage, '{{.Config.WorkingDir}}') !== seedWorkingDir) throw new Error('output WorkingDir drifted from seed');
     const outputCmd = JSON.parse(inspect(plan.outputImage, '{{json .Config.Cmd}}'));
     if (JSON.stringify(outputCmd) !== JSON.stringify(seedCmd)) throw new Error('output Cmd drifted from seed');
     const outputLayers = JSON.parse(inspect(plan.outputImage, '{{json .RootFS.Layers}}'));
     if (JSON.stringify(outputLayers) !== JSON.stringify(seedLayers)) throw new Error('output rootfs layers drifted from qualified seed');
-    if (inspect(plan.seedImage, '{{.Id}}') !== seedId) throw new Error('seed image identity changed during wrapper build');
+    if (inspect(plan.seedImage, '{{.Id}}') !== seedId) throw new Error('seed image identity changed during candidate binding');
 
-    return { seedImage: plan.seedImage, seedImageId: seedId, outputImage: plan.outputImage, outputImageId: outputId, sourceCommit: plan.sourceCommit, sourceUrl: plan.sourceUrl, rootfsLayers: outputLayers.length };
+    return { bindingType: 'qualified-local-seed-tag', seedImage: plan.seedImage, seedImageId: seedId, outputImage: plan.outputImage, outputImageId: outputId, sourceCommit: plan.sourceCommit, sourceUrl: plan.sourceUrl, rootfsLayers: outputLayers.length, registryActivity: false };
   } catch (error) {
     if (imageExists(plan.outputImage)) spawnSync('docker', ['image', 'rm', '-f', plan.outputImage], { stdio: 'ignore', shell: false });
     throw error;
   } finally {
-    cleanupLocalOciLayout(localSeed);
-    if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
+    // No temporary container, filesystem layout, or BuildKit builder is used for the target binding.
   }
 }
 
