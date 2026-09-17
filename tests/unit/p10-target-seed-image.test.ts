@@ -16,7 +16,7 @@ describe('P10 local target seed qualification', () => {
       seedImage: 'mcp-bridge-testtarget:latest',
       outputImage: 'mcp-bridge-testtarget:quarangate-p10-candidate-target',
       sourceCommit: commit,
-      tempTag: 'quarangate-p10-target-seed:111111111111-4242',
+      suffix: '111111111111-4242',
       sourceUrl: 'https://github.com/Herman940306/QuaranGate',
     });
   });
@@ -33,11 +33,13 @@ describe('P10 local target seed qualification', () => {
     expect(source).not.toMatch(/^import .* from ['"](?!node:|\.\.?\/)/mu);
     expect(source).toContain("'run', '--rm', '--network', 'none'");
     expect(source).toContain("'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false'");
-    expect(source).toContain("'--build-context', `p10_seed=docker-image://${plan.tempTag}`");
+    expect(source).toContain("'--build-context', ociLayoutBuildContext('p10_seed', localSeed)");
+    expect(source).toContain('materializeLocalOciLayout(seedId');
     expect(source).toContain('assertNoRegistryActivity(combined)');
     expect(source).not.toContain('ARG SEED_IMAGE');
     expect(source).toContain("'FROM p10_seed'");
     expect(source).toContain("'{{json .RootFS.Layers}}'");
     expect(source).toContain("'image', 'rm', '-f', plan.outputImage");
+    expect(source).toContain('cleanupLocalOciLayout(localSeed)');
   });
 });

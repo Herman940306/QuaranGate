@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { BASE_IMAGE, assertNoRegistryActivity, imageExists, localBasePlan } from './offline-local-base.mjs';
+import { BASE_IMAGE, assertNoRegistryActivity, cleanupLocalOciLayout, imageExists, materializeLocalOciLayout, ociLayoutBuildContext, renderOfflineDockerfile } from './offline-local-base.mjs';
 
 const HEX40 = /^[0-9a-f]{40}$/u;
 const IMAGE_ID = /^sha256:[0-9a-f]{64}$/u;
@@ -57,7 +58,6 @@ export function coreBuildPlan(argv, pid = process.pid) {
 
 export function buildCoreOffline(argv = process.argv.slice(2)) {
   const plan = coreBuildPlan(argv);
-  let tempTagged = false;
   let outputCreated = false;
   let localBase = null;
   try {
@@ -70,15 +70,14 @@ export function buildCoreOffline(argv = process.argv.slice(2)) {
 
     const baseId = capture('docker', ['image', 'inspect', BASE_IMAGE, '--format', '{{.Id}}']);
     if (!IMAGE_ID.test(baseId)) throw new Error('pinned base image did not resolve to an immutable local image ID');
-    localBase = localBasePlan(baseId, plan.suffix);
-    if (imageExists(localBase.tempTag)) throw new Error(`temporary local base tag already exists: ${localBase.tempTag}`);
-    capture('docker', ['tag', baseId, localBase.tempTag]);
-    tempTagged = true;
-    if (capture('docker', ['image', 'inspect', localBase.tempTag, '--format', '{{.Id}}']) !== baseId) throw new Error('temporary local base tag identity mismatch');
+    localBase = materializeLocalOciLayout(baseId, `quarangate-p10-core-base-${plan.suffix}-`);
+    const offlineDockerfile = path.join(localBase.root, 'Dockerfile.p10-offline');
+    writeFileSync(offlineDockerfile, renderOfflineDockerfile(readFileSync(path.join(plan.sourceRoot, 'Dockerfile'), 'utf8')), { mode: 0o600 });
 
     const buildArgs = [
       'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false', '--no-cache',
-      '--build-context', localBase.buildContext,
+      '--file', offlineDockerfile,
+      '--build-context', ociLayoutBuildContext('p10_node_base', localBase),
       '--build-context', `npm_deps=${plan.bundle}`,
       '--build-arg', `GIT_REVISION=${plan.sourceCommit}`,
       '-t', plan.outputImage, plan.sourceRoot,
@@ -95,7 +94,7 @@ export function buildCoreOffline(argv = process.argv.slice(2)) {
     const source = capture('docker', ['image', 'inspect', plan.outputImage, '--format', '{{index .Config.Labels "org.opencontainers.image.source"}}']);
     if (revision !== plan.sourceCommit) throw new Error('built image revision label mismatch');
     if (source !== SOURCE_URL) throw new Error('built image source label mismatch');
-    if (capture('docker', ['image', 'inspect', localBase.tempTag, '--format', '{{.Id}}']) !== baseId) throw new Error('local base identity changed during build');
+    if (capture('docker', ['image', 'inspect', BASE_IMAGE, '--format', '{{.Id}}']) !== baseId) throw new Error('local base identity changed during build');
 
     return { outputImage: plan.outputImage, outputImageId: outputId, sourceCommit: plan.sourceCommit, sourceUrl: source, baseImage: BASE_IMAGE, baseImageId: baseId, registryActivity: false };
   } catch (error) {
@@ -104,7 +103,7 @@ export function buildCoreOffline(argv = process.argv.slice(2)) {
     }
     throw error;
   } finally {
-    if (tempTagged && localBase) spawnSync('docker', ['image', 'rm', localBase.tempTag], { stdio: 'ignore', shell: false });
+    cleanupLocalOciLayout(localBase);
   }
 }
 

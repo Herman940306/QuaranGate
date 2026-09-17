@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { assertNoRegistryActivity } from './offline-local-base.mjs';
+import { assertNoRegistryActivity, cleanupLocalOciLayout, materializeLocalOciLayout, ociLayoutBuildContext } from './offline-local-base.mjs';
 
 const HEX40 = /^[0-9a-f]{40}$/u;
 const IMAGE_ID = /^sha256:[0-9a-f]{64}$/u;
@@ -50,8 +50,7 @@ export function targetSeedPlan(argv, pid = process.pid) {
   if (!SAFE_IMAGE_REF.test(outputImage)) throw new Error('--output-image has an invalid image reference');
   if (seedImage === outputImage) throw new Error('seed and output image references must differ');
   if (!HEX40.test(sourceCommit)) throw new Error('--source-commit must be 40 lowercase hex');
-  const tempTag = `quarangate-p10-target-seed:${sourceCommit.slice(0, 12)}-${pid}`;
-  return { seedImage, outputImage, sourceCommit, tempTag, sourceUrl: SOURCE_URL, probeScript: PROBE_SCRIPT };
+  return { seedImage, outputImage, sourceCommit, suffix: `${sourceCommit.slice(0, 12)}-${pid}`, sourceUrl: SOURCE_URL, probeScript: PROBE_SCRIPT };
 }
 
 function runCapture(command, argv, options = {}) {
@@ -76,11 +75,10 @@ function inspect(ref, format) {
 export function qualifyTargetSeed(argv = process.argv.slice(2)) {
   const plan = targetSeedPlan(argv);
   let outputCreated = false;
-  let tempTagged = false;
+  let localSeed = null;
   let tempRoot = null;
   try {
     if (imageExists(plan.outputImage)) throw new Error(`output image already exists: ${plan.outputImage}`);
-    if (imageExists(plan.tempTag)) throw new Error(`temporary seed tag already exists: ${plan.tempTag}`);
 
     const seedId = inspect(plan.seedImage, '{{.Id}}');
     if (!IMAGE_ID.test(seedId)) throw new Error('seed image did not resolve to an immutable image ID');
@@ -98,11 +96,8 @@ export function qualifyTargetSeed(argv = process.argv.slice(2)) {
     ]);
     if (!probe.split(/\r?\n/u).includes('TARGET_SEED_CONTRACT=PASS')) throw new Error('seed target contract probe did not pass');
 
-    runCapture('docker', ['tag', seedId, plan.tempTag]);
-    tempTagged = true;
-    if (inspect(plan.tempTag, '{{.Id}}') !== seedId) throw new Error('temporary seed tag identity mismatch');
-
-    tempRoot = mkdtempSync(path.join(os.tmpdir(), 'quarangate-p10-target-seed-'));
+    localSeed = materializeLocalOciLayout(seedId, `quarangate-p10-target-base-${plan.suffix}-`);
+    tempRoot = mkdtempSync(path.join(os.tmpdir(), 'quarangate-p10-target-wrapper-'));
     writeFileSync(path.join(tempRoot, 'Dockerfile'), [
       'FROM p10_seed',
       'ARG SOURCE_REVISION',
@@ -114,7 +109,7 @@ export function qualifyTargetSeed(argv = process.argv.slice(2)) {
 
     const built = spawnSync('docker', [
       'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false',
-      '--build-context', `p10_seed=docker-image://${plan.tempTag}`,
+      '--build-context', ociLayoutBuildContext('p10_seed', localSeed),
       '--build-arg', `SOURCE_REVISION=${plan.sourceCommit}`,
       '-t', plan.outputImage, tempRoot,
     ], { encoding: 'utf8', shell: false, maxBuffer: 64 * 1024 * 1024 });
@@ -137,14 +132,14 @@ export function qualifyTargetSeed(argv = process.argv.slice(2)) {
     if (JSON.stringify(outputCmd) !== JSON.stringify(seedCmd)) throw new Error('output Cmd drifted from seed');
     const outputLayers = JSON.parse(inspect(plan.outputImage, '{{json .RootFS.Layers}}'));
     if (JSON.stringify(outputLayers) !== JSON.stringify(seedLayers)) throw new Error('output rootfs layers drifted from qualified seed');
-    if (inspect(plan.tempTag, '{{.Id}}') !== seedId) throw new Error('seed tag identity changed during wrapper build');
+    if (inspect(plan.seedImage, '{{.Id}}') !== seedId) throw new Error('seed image identity changed during wrapper build');
 
     return { seedImage: plan.seedImage, seedImageId: seedId, outputImage: plan.outputImage, outputImageId: outputId, sourceCommit: plan.sourceCommit, sourceUrl: plan.sourceUrl, rootfsLayers: outputLayers.length };
   } catch (error) {
-    if (outputCreated) spawnSync('docker', ['image', 'rm', '-f', plan.outputImage], { stdio: 'ignore', shell: false });
+    if (imageExists(plan.outputImage)) spawnSync('docker', ['image', 'rm', '-f', plan.outputImage], { stdio: 'ignore', shell: false });
     throw error;
   } finally {
-    if (tempTagged) spawnSync('docker', ['image', 'rm', plan.tempTag], { stdio: 'ignore', shell: false });
+    cleanupLocalOciLayout(localSeed);
     if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
   }
 }

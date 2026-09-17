@@ -7,7 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { canonicalJson } from './npm-offline-bundle.mjs';
-import { BASE_IMAGE, assertNoRegistryActivity, localBasePlan } from './offline-local-base.mjs';
+import { BASE_IMAGE, assertNoRegistryActivity, cleanupLocalOciLayout, materializeLocalOciLayout, ociLayoutBuildContext, renderOfflineDockerfile } from './offline-local-base.mjs';
 
 const EXPECTED_LOCK_SHA256 = '5ad727697de394442f04514bc391e3367af98d7efb5fc822ef3d87d1cda1b570';
 const EXPECTED_TINI_SHA256 = '1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc';
@@ -286,9 +286,10 @@ async function composeValidation(bundlePath) {
   };
 }
 
-async function buildWithoutValidBundleRefused(head, imageTag, localBaseContext) {
+async function buildWithoutValidBundleRefused(head, imageTag, localBaseContext, offlineDockerfile) {
   const combined = await expectFailure('docker', [
     'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false', '--no-cache',
+    '--file', offlineDockerfile,
     '--build-context', localBaseContext,
     '--build-context', `npm_deps=${path.resolve('build')}`, '--build-arg', `GIT_REVISION=${head}`,
     '-t', imageTag, '.',
@@ -361,7 +362,6 @@ async function main() {
   let createdImageId = null;
   let smokeAttempted = false;
   let validationWorktree = null;
-  let localBaseTagged = false;
   let localBase = null;
   const summary = {
     verdict: 'FAIL',
@@ -380,16 +380,14 @@ async function main() {
     const lockBefore = await sha256File('package-lock.json');
     if (lockBefore !== EXPECTED_LOCK_SHA256) throw new AcceptanceError('canonical package-lock hash drift');
     const baseBefore = await dockerImageInfo(BASE_IMAGE);
-    localBase = localBasePlan(baseBefore.id, runId);
-    await requireDockerObjectAbsent('image', localBase.tempTag);
-    await runCapture('docker', ['tag', baseBefore.id, localBase.tempTag]);
-    localBaseTagged = true;
-    const localBaseId = (await runCapture('docker', ['image', 'inspect', localBase.tempTag, '--format', '{{.Id}}'])).stdout.trim();
-    if (localBaseId !== baseBefore.id) throw new AcceptanceError('temporary local base tag identity mismatch');
+    localBase = materializeLocalOciLayout(baseBefore.id, `quarangate-npm-offline-base-${runId}-`);
+    localBase.buildContext = ociLayoutBuildContext('p10_node_base', localBase);
+    localBase.offlineDockerfile = path.join(localBase.root, 'Dockerfile.p10-offline');
+    await fs.writeFile(localBase.offlineDockerfile, renderOfflineDockerfile(await fs.readFile('Dockerfile', 'utf8')), { mode: 0o600 });
     const liveBefore = await liveProjectSnapshot();
     summary.head = head;
     summary.baseImageBefore = baseBefore;
-    summary.localBase = { tag: localBase.tempTag, imageId: baseBefore.id, buildContext: localBase.buildContext };
+    summary.localBase = { imageId: baseBefore.id, layoutDigest: localBase.digest, buildContext: localBase.buildContext };
     summary.liveBefore = liveBefore;
 
     if (options.prepare) {
@@ -447,7 +445,7 @@ async function main() {
     summary.compose = compose;
     summary.checks.RUNTIME_COMPOSE_WITHOUT_BUNDLE = true;
     summary.checks.COMPOSE_CONFIG = true;
-    await buildWithoutValidBundleRefused(head, invalidImageTag, localBase.buildContext);
+    await buildWithoutValidBundleRefused(head, invalidImageTag, localBase.buildContext, localBase.offlineDockerfile);
     summary.checks.BUILD_WITHOUT_VALID_BUNDLE = 'REFUSED';
 
     await runVisible('git', ['diff', '--check']);
@@ -475,6 +473,7 @@ async function main() {
 
     const buildResult = await runVisibleCapture('docker', [
       'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false', '--no-cache',
+      '--file', localBase.offlineDockerfile,
       '--build-context', localBase.buildContext,
       '--build-context', `npm_deps=${bundlePath}`, '--build-arg', `GIT_REVISION=${head}`,
       '-t', imageTag, '.',
@@ -521,20 +520,18 @@ async function main() {
     primaryError = error;
     summary.error = error instanceof Error ? error.message : String(error);
   } finally {
-    if (localBaseTagged && localBase) {
+    if (localBase) {
       try {
-        const taggedId = (await runCapture('docker', ['image', 'inspect', localBase.tempTag, '--format', '{{.Id}}'])).stdout.trim();
-        if (taggedId !== localBase.imageId) throw new AcceptanceError('temporary local base tag changed ownership; refusing cleanup');
-        await runCapture('docker', ['image', 'rm', localBase.tempTag]);
-        summary.cleanup.localBaseTag = 'removed';
-        localBaseTagged = false;
+        cleanupLocalOciLayout(localBase);
+        summary.cleanup.localBaseLayout = 'removed';
+        localBase = null;
       } catch (error) {
-        summary.cleanup.localBaseTag = `FAILED: ${error.message}`;
+        summary.cleanup.localBaseLayout = `FAILED: ${error.message}`;
         if (!primaryError) primaryError = error;
         summary.verdict = 'FAIL';
       }
     } else {
-      summary.cleanup.localBaseTag = 'not-created';
+      summary.cleanup.localBaseLayout = 'not-created';
     }
     if (validationWorktree) {
       try {
