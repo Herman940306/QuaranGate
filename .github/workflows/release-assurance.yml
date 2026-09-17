@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   release-assurance:
+    if: github.ref == 'refs/heads/integrate/quarangate-forward' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: [self-hosted, linux, x64, quarangate-release]
     timeout-minutes: 90
     steps:

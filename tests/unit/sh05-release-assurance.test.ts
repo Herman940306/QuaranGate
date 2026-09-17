@@ -38,6 +38,7 @@ describe('SH-05 release assurance orchestration', () => {
 
   it('keeps the self-hosted workflow no-download and wires all external release paths explicitly', () => {
     const workflow = readFileSync('.github/workflows/release-assurance.yml', 'utf8');
+    expect(workflow).toContain("if: github.ref == 'refs/heads/integrate/quarangate-forward' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))");
     expect(workflow).toContain('runs-on: [self-hosted, linux, x64, quarangate-release]');
     expect(workflow).not.toMatch(/actions\/checkout|npm\s+(?:ci|install)|curl\s|wget\s|docker\s+pull/iu);
     for (const name of ['KEYS_ENV', 'QG_RELEASE_IMAGE_INPUTS', 'QG_RELEASE_MANIFEST', 'QG_RELEASE_SIGSTORE_BUNDLE', 'QG_RELEASE_PUBLIC_KEY', 'QG_RELEASE_EVIDENCE_ROOT']) {
