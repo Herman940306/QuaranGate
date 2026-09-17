@@ -1,9 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { execSync } from 'node:child_process';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { connect, callTool, loadKeys } from './helpers.js';
+import { composeServiceContainerId, dockerContainerHealth, integrationRuntimeControl, restartComposeService } from './runtime-control.js';
 
 const keys = loadKeys();
+const runtime = integrationRuntimeControl();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function status(c: Client, jobId: string) {
@@ -11,8 +12,8 @@ async function status(c: Client, jobId: string) {
   return r.json?.status as string;
 }
 
-// Live durability + startup recovery against the deployed executor + its
-// mcp-bridge-jobs volume. Restarts ONLY the bridge executor (project-scoped).
+// Live durability + startup recovery against an explicitly selected Compose
+// project. Canonical project `quarangate` is fail-closed unless separately opted in.
 describe('A2 durable persistence + startup recovery (live)', () => {
   let owner: Client;
   afterAll(async () => { await owner?.close(); });
@@ -46,16 +47,18 @@ describe('A2 durable persistence + startup recovery (live)', () => {
 
     // 3) Restart the executor while A is active (SIGTERM → graceful shutdown
     //    fails active work closed; hard-kill fallback is startup recover()).
-    execSync('docker compose -p quarangate restart executor', { stdio: 'ignore' });
+    restartComposeService(runtime.project, 'executor');
 
-    // 4) Wait for the executor to be healthy again.
+    // 4) Wait for the exact project-scoped executor container to be healthy again.
+    let executorHealthy = false;
     for (let i = 0; i < 60; i++) {
       try {
-        const out = execSync('docker inspect -f "{{.State.Health.Status}}" quarangate-executor-1').toString().trim();
-        if (out === 'healthy') break;
+        const containerId = composeServiceContainerId(runtime.project, 'executor');
+        if (dockerContainerHealth(containerId) === 'healthy') { executorHealthy = true; break; }
       } catch { /* transient */ }
       await sleep(1000);
     }
+    expect(executorHealthy, `executor in Compose project ${runtime.project} became healthy`).toBe(true);
     await sleep(500);
 
     // 5) All records survived the restart.
