@@ -99,6 +99,14 @@ else
 fi
 BUNDLE_PATH="$(read_runtime_value QUARANGATE_NPM_BUNDLE_PATH)" || fail 'runtime .env must contain exactly one non-empty QUARANGATE_NPM_BUNDLE_PATH'
 [[ -d "$BUNDLE_PATH" ]] || fail "runtime npm bundle directory missing: $BUNDLE_PATH"
+if KIRO_KEY_FILE="$(read_runtime_value AGENT_KIRO_KEY_FILE 2>/dev/null)"; then
+  :
+else
+  KIRO_KEY_FILE="$(AGENT_KIRO_KEY_FILE='' node "$REPO_ROOT/scripts/resolve-kiro-key-file.mjs")" || fail 'could not resolve Kiro API key host path'
+fi
+AGENT_KIRO_KEY_FILE="$KIRO_KEY_FILE" node "$REPO_ROOT/scripts/resolve-kiro-key-file.mjs" --verify >/dev/null \
+  || fail 'Kiro API key host file metadata preflight failed'
+export AGENT_KIRO_KEY_FILE="$KIRO_KEY_FILE"
 export GATEWAY_IMAGE="$BASE_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$BASE_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$BASE_EXECUTOR_IMAGE"
 
 QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")

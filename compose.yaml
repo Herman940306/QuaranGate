@@ -140,16 +140,16 @@ services:
       # any target; separate trust domain from the gateway OAuth /data volume.
       - bridge-jobs:/jobs
     # A4 dedicated Kiro API key — delivered ONLY to the executor (the trusted
-    # execution authority), as a read-only file, owned by the runtime user
-    # (uid 1000) mode 0400. The raw value never appears in env/labels/args/logs;
-    # the executor reads the FILE and hands the bytes to the runner via a
-    # job-scoped secret volume (never Docker Env). The gateway never receives it.
+    # execution authority), as a read-only file. Docker Compose file-backed
+    # secrets do not implement uid/gid/mode overrides; the deployment preflight
+    # therefore requires the HOST source to be uid 1000 and exact mode 0600,
+    # while CredentialManager re-validates mounted metadata before every use.
+    # The raw value never appears in env/labels/args/logs; the executor reads the
+    # FILE and hands the bytes to a job-scoped secret volume (never Docker Env).
+    # The gateway never receives it.
     secrets:
       - source: kiro_api_key
         target: kiro-api-key
-        uid: "1000"
-        gid: "1000"
-        mode: 0400
     tmpfs:
       - /tmp
     networks:

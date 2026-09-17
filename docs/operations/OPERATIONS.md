@@ -245,6 +245,15 @@ The legacy path remains a compatibility fallback where the accepted migration co
 
 Do not keep two uncontrolled live copies of the same credential merely for convenience.
 
+File-backed Compose secrets do not implement `uid`, `gid`, or `mode` overrides. QuaranGate therefore does not rely on those unsupported fields: before candidate deployment, the resolved host key file must be a regular non-symlink file owned by uid `1000`, mode `0600`, with bounded size. The executor independently re-validates the mounted file before each real Kiro credential read. A metadata mismatch is fail-closed.
+
+You can perform the same metadata-only preflight without reading the secret value:
+
+```bash
+AGENT_KIRO_KEY_FILE=$(node scripts/resolve-kiro-key-file.mjs) \
+  node scripts/resolve-kiro-key-file.mjs --verify
+```
+
 ## `docker compose config` warning
 
 Compose can render environment values into its expanded configuration. Do not paste unfiltered output from:

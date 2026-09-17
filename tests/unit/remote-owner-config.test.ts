@@ -51,6 +51,14 @@ describe('remote owner projects-work hard boundary', () => {
     expect(script).not.toMatch(/docker\s+pull/);
   });
 
+  it('preflights and exports the exact file-backed Kiro secret source before Compose deployment', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain('read_runtime_value AGENT_KIRO_KEY_FILE');
+    expect(script).toContain('scripts/resolve-kiro-key-file.mjs\" --verify');
+    expect(script).toContain('Kiro API key host file metadata preflight failed');
+    expect(script).toContain('export AGENT_KIRO_KEY_FILE=\"$KIRO_KEY_FILE\"');
+  });
+
   it('candidate deployment builds candidate source but mounts live runtime config from the main operator root', () => {
     const deploy = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
     expect(deploy).toContain('--source-root "$REPO_ROOT"');

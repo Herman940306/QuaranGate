@@ -73,9 +73,14 @@ describe('N1D Compose runtime identity', () => {
     expect((compose.services['docker-authority'].volumes ?? []).filter((m: string) => m.includes('docker.sock'))).toHaveLength(1);
   });
 
-  it('delivers the Kiro secret to the executor only, never the gateway', () => {
+  it('delivers the Kiro secret to the executor only, never the gateway, without unsupported file-secret ownership overrides', () => {
     expect(compose.services.executor.secrets).toBeDefined();
     expect(compose.services.gateway.secrets).toBeUndefined();
+    const secret = (compose.services.executor.secrets as any[])[0];
+    expect(secret).toEqual({ source: 'kiro_api_key', target: 'kiro-api-key' });
+    expect(secret).not.toHaveProperty('uid');
+    expect(secret).not.toHaveProperty('gid');
+    expect(secret).not.toHaveProperty('mode');
   });
 });
 

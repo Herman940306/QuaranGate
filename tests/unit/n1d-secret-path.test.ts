@@ -9,6 +9,8 @@ import {
   resolveKiroKeyFile,
   QUARANGATE_KIRO_KEY_FILE,
   LEGACY_KIRO_KEY_FILE,
+  KIRO_EXECUTOR_UID,
+  verifyKiroKeyFileMetadata,
 } from '../../scripts/resolve-kiro-key-file.mjs';
 
 const present = (...paths: string[]) => (p: string) => paths.includes(p);
@@ -56,5 +58,36 @@ describe('resolveKiroKeyFile', () => {
   it('names the NEW path when neither exists, so failures point forward', () => {
     const r = resolveKiroKeyFile({ env: {}, exists: present() });
     expect(r).toEqual({ path: QUARANGATE_KIRO_KEY_FILE, source: 'default' });
+  });
+});
+
+
+describe('Kiro file-backed secret metadata preflight', () => {
+  const regular = (overrides: Partial<{ uid: number; mode: number; size: number; file: boolean; symlink: boolean }> = {}) => ({
+    uid: 1000, mode: 0o100600, size: 64,
+    isFile: () => true, isSymbolicLink: () => false,
+    ...('uid' in overrides ? { uid: overrides.uid } : {}),
+    ...('mode' in overrides ? { mode: overrides.mode } : {}),
+    ...('size' in overrides ? { size: overrides.size } : {}),
+    ...('file' in overrides ? { isFile: () => overrides.file! } : {}),
+    ...('symlink' in overrides ? { isSymbolicLink: () => overrides.symlink! } : {}),
+  });
+
+  it('binds the host source contract to the executor uid, exact 0600, and bounded metadata without reading bytes', () => {
+    expect(KIRO_EXECUTOR_UID).toBe(1000);
+    const meta = verifyKiroKeyFileMetadata('/host/key', { lstat: () => regular() as any });
+    expect(meta).toEqual({ path: '/host/key', uid: 1000, mode: '600', size: 64 });
+  });
+
+  it.each([
+    ['wrong owner', regular({ uid: 1001 })],
+    ['group-readable', regular({ mode: 0o100640 })],
+    ['world-readable', regular({ mode: 0o100604 })],
+    ['symlink', regular({ symlink: true })],
+    ['not regular', regular({ file: false })],
+    ['too small', regular({ size: 9 })],
+    ['too large', regular({ size: 1025 })],
+  ])('fails closed for %s', (_name, stat) => {
+    expect(() => verifyKiroKeyFileMetadata('/host/key', { lstat: () => stat as any })).toThrow();
   });
 });
