@@ -283,6 +283,51 @@ class OllamaModelToolCallError extends Error {
   }
 }
 
+const OLLAMA_PROVIDER_FAILURE_MESSAGE = Object.freeze({
+  request: 'ollama provider request failed',
+  stream: 'ollama provider stream failed',
+} as const);
+
+type OllamaProviderFailureStage = keyof typeof OLLAMA_PROVIDER_FAILURE_MESSAGE;
+
+/**
+ * Provider/SDK diagnostics are untrusted input. Preserve only a fixed stage
+ * classification across the backend boundary so JobEngine can durably record
+ * FAILED_AGENT without persisting arbitrary provider exception text.
+ */
+class OllamaProviderFailureError extends Error {
+  constructor(readonly stage: OllamaProviderFailureStage) {
+    super(OLLAMA_PROVIDER_FAILURE_MESSAGE[stage]);
+    this.name = 'OllamaProviderFailureError';
+  }
+}
+
+function normalizeOllamaProviderFailure(
+  error: unknown,
+  signal: AbortSignal,
+  stage: OllamaProviderFailureStage,
+): never {
+  // Cancellation/timeout/shutdown is QuaranGate-owned control state. Preserve
+  // its trusted AbortSignal reason so AgentJobEngine retains the canonical
+  // CANCELLED/FAILED_TIMEOUT/FAILED_INFRASTRUCTURE classification.
+  if (signal.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('Ollama job cancelled');
+  }
+
+  // Product-owned policy/output failures are already bounded and carry the
+  // intended failure taxonomy. Never misclassify them as provider transport.
+  if (
+    error instanceof BridgeError
+    || error instanceof OllamaAgentOutputError
+    || error instanceof OllamaModelToolCallError
+    || error instanceof OllamaProviderFailureError
+  ) {
+    throw error;
+  }
+
+  throw new OllamaProviderFailureError(stage);
+}
+
 function safeOllamaToolName(value: unknown): string {
   return value === 'read_file' || value === 'list_files' || value === 'literal_search'
     ? value
@@ -528,6 +573,7 @@ export class OllamaBackend implements AgentBackendAdapter {
         removeAbortListener = () => signal.removeEventListener('abort', onAbort);
       });
       let stream: AbortableAsyncIterator<ChatResponse>;
+      let providerFailureStage: OllamaProviderFailureStage = 'request';
       try {
         this.activeJobSignal = signal;
         const chatPromise = Promise.resolve(this.ollama.chat(request));
@@ -539,6 +585,7 @@ export class OllamaBackend implements AgentBackendAdapter {
           }
         }).catch(() => {});
         stream = await Promise.race([chatPromise, abortPromise]);
+        providerFailureStage = 'stream';
 
         // Consume the stream
         for await (const chunk of stream) {
@@ -576,6 +623,8 @@ export class OllamaBackend implements AgentBackendAdapter {
             break;
           }
         }
+      } catch (error) {
+        normalizeOllamaProviderFailure(error, signal, providerFailureStage);
       } finally {
         this.activeJobSignal = null;
         removeAbortListener();
@@ -760,17 +809,9 @@ export class OllamaBackend implements AgentBackendAdapter {
   }
 
   isAgentFailure(e: unknown): boolean {
-    if (e instanceof OllamaAgentOutputError || e instanceof OllamaModelToolCallError) return true;
-    if (!(e instanceof Error)) return false;
-    const msg = e.message.toLowerCase();
-    // Classify Ollama inference / network errors as agent failures
-    return (
-      msg.includes('fetch failed') ||
-      msg.includes('connect econnrefused') ||
-      msg.includes('model not found') ||
-      msg.includes('ollama') ||
-      (msg.includes('500') && msg.includes('http'))
-    );
+    return e instanceof OllamaAgentOutputError
+      || e instanceof OllamaModelToolCallError
+      || e instanceof OllamaProviderFailureError;
   }
 
   isDryRun(): boolean {

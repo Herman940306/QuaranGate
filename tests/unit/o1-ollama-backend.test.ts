@@ -2911,12 +2911,13 @@ describe('O1 final production closeout — provider cancellation transport', () 
     expect(signalB!.aborted).toBe(false);
   });
 
-  it('keeps genuine fetch failure distinct from cancellation', async () => {
+  it('normalizes genuine fetch failure text while keeping it distinct from cancellation', async () => {
     const [{ OllamaBackend }, { Ollama }] = await Promise.all([
       import('../../src/executor/agents/ollamaBackend.js'),
       import('ollama'),
     ]);
-    const networkFailure = new TypeError('fetch failed');
+    const hostileMarker = 'OLLAMA_FETCH_PRIVATE_DIAGNOSTIC_SENTINEL';
+    const networkFailure = new TypeError(`fetch failed: ${hostileMarker}`);
     let capturedSignal: AbortSignal | null = null;
     const fakeFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       capturedSignal = init?.signal ?? null;
@@ -2932,7 +2933,10 @@ describe('O1 final production closeout — provider cancellation transport', () 
 
     try { await backend.run(jobController.signal); } catch (error) { caught = error; }
 
-    expect(caught).toBe(networkFailure);
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBe(networkFailure);
+    expect((caught as Error).message).toBe('ollama provider request failed');
+    expect((caught as Error).message).not.toContain(hostileMarker);
     expect(backend.isAgentFailure(caught)).toBe(true);
     expect(jobController.signal.aborted).toBe(false);
     expect(capturedSignal).not.toBeNull();

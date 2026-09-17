@@ -1,6 +1,6 @@
 # SH-12 Prompt-Injection Security Campaign
 
-STATUS: `MUTABLE_QUALIFICATION_PASS / PRE_FREEZE`
+STATUS: `R1_REMEDIATED / PENDING_INDEPENDENT_REVIEW`
 
 SH-12 tests the product invariant that untrusted text may influence model prose
 but can never grant, widen, or trigger product authority. The campaign is
@@ -123,28 +123,42 @@ The required release-gate count becomes 18.
    listener is rebound at mode `0600`, and the rebound endpoint completes an
    authenticated handshake or reaches the expected production availability
    state without rotating its durable credential. No P7 production code changed.
+9. **Independent R1 review found raw Ollama provider diagnostics could still
+   cross the backend boundary.** A rejected `chat()` request or streaming SDK
+   exception could be classified as `FAILED_AGENT` while its arbitrary raw
+   `Error.message` was persisted as `failureReason` and then reflected by public
+   `agent_result`. R1 now converts only provider/SDK/stream failures to fixed
+   `ollama provider request failed` or `ollama provider stream failed` errors at
+   the Ollama boundary. Trusted QuaranGate `BridgeError` policy/output failures
+   and AbortSignal-owned cancellation/timeout/shutdown causes retain their
+   existing taxonomy. Deterministic regressions inject unique hostile markers
+   through both request and stream failure paths and prove the markers are absent
+   from the durable terminal row and public `agent_result`.
 
-After those remediations, the source audit found no remaining path by which
-untrusted text creates QuaranGate authority. This is a source/test conclusion,
-not live-provider or downstream-renderer certification.
+After R1 remediation, writer-side source and regression qualification found no
+remaining reproduced path by which untrusted provider diagnostic text becomes
+Ollama durable/client-visible failure state. Independent acceptance remains
+pending; this is not a self-review or live-provider certification.
 
-## Mutable-tree qualification
+## R1 mutable-tree qualification
 
-The final pre-freeze mutable tree passed:
+The final R1 pre-freeze mutable tree passed:
 
-- fixed SH-12 gate: `1/1` file, `13/13` tests;
-- adjacent Kiro/Copilot runtime corpus: `4/4` files, `113/113` tests;
+- fixed SH-12 gate: `2/2` files, `15/15` tests;
+- adjacent Kiro/Copilot/Ollama/IDE corpus: `14/14` files, `424/424` tests;
 - release policy/receipt/bundle corpus: `3/3` files, `35/35` tests;
-- full unit corpus: `143/143` files, `3030/3030` tests, with no pending or
-  todo tests;
-- cumulative SH-09 through SH-12 fixed corpus: `6/6` files, `97/97` tests;
-- TypeScript typecheck and production build;
+- full unit corpus: `144/144` files, `3032/3032` tests;
+- cumulative SH-09 through SH-12 fixed corpus: `7/7` files, `99/99` tests;
+- TypeScript typecheck and production build: PASS;
 - authority invariants: `15/15` rules across 10 Compose files and 7
   Dockerfiles;
 - fixed-seed security fuzz: seed `1374718481`, 15 targets, 30,067 executions,
   and 395 coverage ranges;
-- `git diff --check`, `/tmp/q` absence, and active-cgroup `oom_kill=0` before
-  and after the widened run.
+- `git diff --check`: PASS;
+- no new `.skip`, `.todo`, or `.only` weakening in the R1 test delta;
+- `/tmp/q`: absent after widened validation;
+- active-cgroup `oom_kill`: unchanged at `17` from the prior immutable SH-12
+  qualification through this R1 pre-freeze run.
 
 The sandboxed fuzz attempt was denied before execution with subprocess
 `EPERM`; the identical command passed when permitted to run its local build
