@@ -321,5 +321,11 @@ describe('governed npm offline bundle', () => {
     expect(acceptance).toContain("'--network=none', '--pull=false', '--no-cache'");
     expect(acceptance).toContain("DOCKER_AUTHORITY_TOKEN: 'npm-offline-acceptance-docker-authority-placeholder-not-a-secret'");
     expect(acceptance).toContain("services.join(',') !== 'docker-authority,executor,gateway'");
+    expect(acceptance).toContain("validationWorktree = path.join(tempRoot, 'source-validation')");
+    expect(acceptance).toContain("prepareOfflineValidationWorktree(head, bundlePath, tempRoot, validationWorktree)");
+    expect(acceptance).toContain("'worktree', 'add', '--detach', sourceRoot, head");
+    expect(acceptance).toContain("'ci', `--cache=${npmCache}`, '--offline', '--ignore-scripts', '--no-audit', '--no-fund'");
+    expect(acceptance).toContain("'worktree', 'remove', '--force', validationWorktree");
+    expect(acceptance).toContain("summary.cleanup.temporaryFixtures = `preserved:${tempRoot}`");
   });
 });

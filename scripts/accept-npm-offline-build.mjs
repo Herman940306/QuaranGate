@@ -176,6 +176,32 @@ async function copyBundle(source, destination) {
   await fs.cp(source, destination, { recursive: true, errorOnExist: true, force: false });
 }
 
+async function prepareOfflineValidationWorktree(head, bundlePath, tempRoot, sourceRoot) {
+  const verifiedTarballs = path.join(tempRoot, 'host-verified-tarballs');
+  const npmCache = path.join(tempRoot, 'host-npm-cache');
+  await runVisible('git', ['worktree', 'add', '--detach', sourceRoot, head]);
+  await runVisible(process.execPath, [
+    path.resolve('scripts/npm-offline-bundle.mjs'), 'materialize',
+    '--bundle', bundlePath,
+    '--lockfile', path.join(sourceRoot, 'package-lock.json'),
+    '--descriptor', path.join(sourceRoot, 'build/npm-dependencies.json'),
+    '--destination', verifiedTarballs,
+  ]);
+  await fs.mkdir(npmCache, { recursive: true });
+  const artifacts = (await fs.readdir(verifiedTarballs)).filter((name) => name.endsWith('.tgz')).sort();
+  if (artifacts.length === 0) throw new AcceptanceError('verified bundle materialized no npm artifacts');
+  for (const artifact of artifacts) {
+    await runVisible('npm', [
+      'cache', 'add', path.join(verifiedTarballs, artifact),
+      `--cache=${npmCache}`, '--offline', '--ignore-scripts',
+    ], { cwd: sourceRoot });
+  }
+  await runVisible('npm', [
+    'ci', `--cache=${npmCache}`, '--offline', '--ignore-scripts', '--no-audit', '--no-fund',
+  ], { cwd: sourceRoot });
+  return sourceRoot;
+}
+
 async function composeValidation(bundlePath) {
   const safeEnv = {
     PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
@@ -307,6 +333,7 @@ async function main() {
   let imageCreated = false;
   let createdImageId = null;
   let smokeAttempted = false;
+  let validationWorktree = null;
   const summary = {
     verdict: 'FAIL',
     runId,
@@ -389,10 +416,13 @@ async function main() {
     summary.checks.BUILD_WITHOUT_VALID_BUNDLE = 'REFUSED';
 
     await runVisible('git', ['diff', '--check']);
-    await runVisible('npm', ['run', 'typecheck']);
+    validationWorktree = path.join(tempRoot, 'source-validation');
+    await prepareOfflineValidationWorktree(head, bundlePath, tempRoot, validationWorktree);
+    summary.checks.HOST_VALIDATION_OFFLINE_DEPS = true;
+    await runVisible('npm', ['run', 'typecheck'], { cwd: validationWorktree });
     summary.checks.N7_TYPECHECK = true;
     const vitestJson = path.join(tempRoot, 'vitest.json');
-    await runVisible('npm', ['test', '--', '--reporter=json', `--outputFile=${vitestJson}`]);
+    await runVisible('npm', ['test', '--', '--reporter=json', `--outputFile=${vitestJson}`], { cwd: validationWorktree });
     const testReport = JSON.parse(await fs.readFile(vitestJson, 'utf8'));
     const testFiles = Array.isArray(testReport.testResults) ? testReport.testResults : [];
     summary.unitTests = {
@@ -405,7 +435,7 @@ async function main() {
       throw new AcceptanceError('unit test report contains failures');
     }
     summary.checks.N8_UNIT_TESTS = true;
-    await runVisible('npm', ['run', 'build']);
+    await runVisible('npm', ['run', 'build'], { cwd: validationWorktree });
     summary.checks.BUILD = true;
 
     await runVisible('docker', [
@@ -455,6 +485,19 @@ async function main() {
     primaryError = error;
     summary.error = error instanceof Error ? error.message : String(error);
   } finally {
+    if (validationWorktree) {
+      try {
+        await runCapture('git', ['worktree', 'remove', '--force', validationWorktree]);
+        summary.cleanup.validationWorktree = 'removed';
+        validationWorktree = null;
+      } catch (error) {
+        summary.cleanup.validationWorktree = `FAILED: ${error.message}`;
+        if (!primaryError) primaryError = error;
+        summary.verdict = 'FAIL';
+      }
+    } else {
+      summary.cleanup.validationWorktree = 'not-created';
+    }
     if (smokeAttempted) {
       try {
         await runCapture('docker', ['rm', '-f', smokeName]);
@@ -492,8 +535,12 @@ async function main() {
         summary.verdict = 'FAIL';
       }
     }
-    await fs.rm(tempRoot, { recursive: true, force: true });
-    summary.cleanup.temporaryFixtures = 'removed';
+    if (validationWorktree) {
+      summary.cleanup.temporaryFixtures = `preserved:${tempRoot}`;
+    } else {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+      summary.cleanup.temporaryFixtures = 'removed';
+    }
     process.stdout.write(`\nQUARANGATE_NPM_OFFLINE_ACCEPTANCE_JSON\n${canonicalJson(summary)}`);
   }
   if (primaryError) throw primaryError;
