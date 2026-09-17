@@ -265,6 +265,12 @@ Target and agent authority do not imply GitHub authority, and GitHub authority d
 
 The North-Star IDE Session Control Plane is separately authorized. Agent Dispatch authority must not imply authority over active IDE sessions, and IDE-session discovery must not create ambient access to every IDE open on the host.
 
+The local IDE companion credential and Unix-domain socket use `0700`/`0600` ownership controls. Those permissions separate Unix identities; they are **not** a confidentiality or authenticity sandbox against a hostile process already running as the same UID. A same-UID process can read user-owned credential bytes and can attempt to connect to or occupy user-owned socket paths. QuaranGate therefore does not claim same-UID malware isolation.
+
+The controls that remain meaningful after a credential is exposed are bounded authority and replay/lifecycle binding: exact enrollment/IDE/runtime identity, current connection generation, session/controller lease, fresh nonce/replay claims, exact workspace/worktree attestation, operation capability/payload binding, structured event sequencing, shared writer arbitration, rotation/revocation, and fail-closed reconnect/restart handling. Production IDE Session Control is currently review-only; the production composition does not wire implementation writer authority.
+
+Trusted IDE session configuration is itself authority-bearing input. Startup requires the config to be an owner-owned, canonical non-symlink file that is not group/world writable, reached through an ancestor chain that another Unix identity cannot replace (sticky shared ancestors remain permitted). This protects against other local identities; it does not change the same-UID residual above.
+
 ---
 
 # Gateway and executor separation

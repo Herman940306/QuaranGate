@@ -86,13 +86,35 @@ function assertTrustedConfigFile(path: string): void {
   let info;
   try { info = lstatSync(path); }
   catch { throw new BridgeError('PRECONDITION_FAILED', 'IDE session config is unavailable', 503); }
-  if (!info.isFile() || info.isSymbolicLink() || info.uid !== currentUid()) {
-    throw new BridgeError('PRECONDITION_FAILED', 'IDE session config ownership/type is unsafe', 503);
+  if (!info.isFile() || info.isSymbolicLink() || info.uid !== currentUid() || (info.mode & 0o022) !== 0) {
+    throw new BridgeError('PRECONDITION_FAILED', 'IDE session config ownership/type/mode is unsafe or writable by another Unix identity', 503);
   }
   let canonical: string;
   try { canonical = realpathSync(path); }
   catch { throw new BridgeError('PRECONDITION_FAILED', 'IDE session config cannot be canonicalized', 503); }
   if (canonical !== path) throw new BridgeError('PRECONDITION_FAILED', 'IDE session config contains a symlink', 503);
+
+  // Config bytes select trusted enrollment/capability bindings. A safe file is
+  // insufficient if an untrusted Unix identity can replace one of its path
+  // components. Sticky shared ancestors (for example /tmp) remain acceptable
+  // because they prevent another UID from replacing this user's entry.
+  let current = dirname(path);
+  for (;;) {
+    let ancestor;
+    try { ancestor = lstatSync(current); }
+    catch { throw new BridgeError('PRECONDITION_FAILED', 'IDE session config ancestor is unavailable', 503); }
+    if (!ancestor.isDirectory() || ancestor.isSymbolicLink()) {
+      throw new BridgeError('PRECONDITION_FAILED', 'IDE session config ancestor type is unsafe', 503);
+    }
+    const writableByOthers = (ancestor.mode & 0o022) !== 0;
+    const sticky = (ancestor.mode & 0o1000) !== 0;
+    if (writableByOthers && !sticky) {
+      throw new BridgeError('PRECONDITION_FAILED', 'IDE session config ancestor is writable by another Unix identity without sticky protection', 503);
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
 }
 
 function assertTrustedDatabasePath(path: string): void {
