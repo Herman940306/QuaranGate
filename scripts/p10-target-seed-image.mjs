@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { assertNoRegistryActivity } from './offline-local-base.mjs';
 
 const HEX40 = /^[0-9a-f]{40}$/u;
 const IMAGE_ID = /^sha256:[0-9a-f]{64}$/u;
@@ -103,8 +104,7 @@ export function qualifyTargetSeed(argv = process.argv.slice(2)) {
 
     tempRoot = mkdtempSync(path.join(os.tmpdir(), 'quarangate-p10-target-seed-'));
     writeFileSync(path.join(tempRoot, 'Dockerfile'), [
-      'ARG SEED_IMAGE',
-      'FROM ${SEED_IMAGE}',
+      'FROM p10_seed',
       'ARG SOURCE_REVISION',
       `LABEL org.opencontainers.image.source="${plan.sourceUrl}"`,
       'LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"',
@@ -112,12 +112,19 @@ export function qualifyTargetSeed(argv = process.argv.slice(2)) {
       '',
     ].join('\n'), { mode: 0o600 });
 
-    runCapture('docker', [
+    const built = spawnSync('docker', [
       'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false',
-      '--build-arg', `SEED_IMAGE=${plan.tempTag}`,
+      '--build-context', `p10_seed=docker-image://${plan.tempTag}`,
       '--build-arg', `SOURCE_REVISION=${plan.sourceCommit}`,
       '-t', plan.outputImage, tempRoot,
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { encoding: 'utf8', shell: false, maxBuffer: 64 * 1024 * 1024 });
+    if (built.error) throw built.error;
+    const combined = `${built.stdout ?? ''}\n${built.stderr ?? ''}`;
+    assertNoRegistryActivity(combined);
+    if (built.status !== 0) {
+      const detail = built.stderr?.trim() || built.stdout?.trim() || '';
+      throw new Error(`docker buildx build failed${detail ? `: ${detail}` : ''}`);
+    }
     outputCreated = true;
 
     const outputId = inspect(plan.outputImage, '{{.Id}}');

@@ -30,9 +30,13 @@ describe('P10 local target seed qualification', () => {
 
   it('has no third-party bootstrap dependency and enforces offline wrapper construction', () => {
     const source = readFileSync(new URL('../../scripts/p10-target-seed-image.mjs', import.meta.url), 'utf8');
-    expect(source).not.toMatch(/^import .* from ['"](?!node:)/mu);
+    expect(source).not.toMatch(/^import .* from ['"](?!node:|\.\.?\/)/mu);
     expect(source).toContain("'run', '--rm', '--network', 'none'");
     expect(source).toContain("'buildx', 'build', '--load', '--progress=plain', '--network=none', '--pull=false'");
+    expect(source).toContain("'--build-context', `p10_seed=docker-image://${plan.tempTag}`");
+    expect(source).toContain('assertNoRegistryActivity(combined)');
+    expect(source).not.toContain('ARG SEED_IMAGE');
+    expect(source).toContain("'FROM p10_seed'");
     expect(source).toContain("'{{json .RootFS.Layers}}'");
     expect(source).toContain("'image', 'rm', '-f', plan.outputImage");
   });
