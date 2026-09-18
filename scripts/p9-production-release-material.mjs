@@ -337,10 +337,6 @@ export function compareReleasePaths(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-export function canonicalPathCompare(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 function normalizeAndCollectPayload(root) {
   const files = [];
   const walk = (directory, prefix = '') => {
