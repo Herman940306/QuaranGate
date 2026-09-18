@@ -131,7 +131,7 @@ The following limitations must remain explicit until their own accepted gates ch
 
 - SH-14 genuine independent external pentest execution/retest is external and is not self-certified.
 - SH-03 MCP SDK/protocol migration remains dependent on the exact approved external artifact/provenance path; unavailable artifacts are not downloaded ad hoc to manufacture closure.
-- SH-04 first enterprise IdP selection is an owner decision gate; no IdP is invented by source code.
+- SH-04 owner selection is CLOSED: Microsoft Entra ID is the first enterprise IdP profile, behind a generic OIDC Authorization Code + PKCE contract. This decision does not authorize live federation, gateway egress, credentials, or automatic IdP-claim-to-QuaranGate-permission mapping; implementation and live qualification remain separate gates.
 - Copilot and Kiro live provider acceptance remains dependent on genuine owner entitlement/test capability where recorded by project control.
 - VS Code final live re-verification and Cursor live qualification remain environment/runtime gates; source acceptance is not live acceptance.
 - owner-host lifecycle recovery remains an owner-host/live gate where project control records it as such.
