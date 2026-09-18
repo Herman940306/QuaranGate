@@ -17,6 +17,7 @@ import { executor } from './executorClient.js';
 import { audit, newReqId } from './audit.js';
 import { mountRequestTelemetry, requestTelemetryId } from './requestTelemetry.js';
 import { buildGatewayRequestPolicy, gatewayRequestAdmission } from './requestAdmission.js';
+import { mountConsoleWeb } from './consoleWeb.js';
 
 const PORT = Number(process.env.BRIDGE_PORT ?? 8787);
 const PUBLIC_URL = (process.env.BRIDGE_PUBLIC_URL ?? `http://127.0.0.1:${PORT}`).replace(/\/+$/, '');
@@ -54,6 +55,7 @@ app.disable('x-powered-by');
 // telemetry, authentication, OAuth, Console, or MCP route handling.
 app.use(gatewayRequestAdmission(REQUEST_POLICY));
 mountRequestTelemetry(app);
+mountConsoleWeb(app);
 
 // Liveness only: the process is running. Never depends on config or executor.
 app.get('/healthz', (_req, res) => { res.json({ ok: true }); });
