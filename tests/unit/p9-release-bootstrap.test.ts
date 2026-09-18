@@ -283,6 +283,18 @@ describe('P9 production release bootstrap trust root', () => {
     expect(result.stderr).toMatch(/opaque module load|manifest-bound/iu);
   });
 
+  it('refuses absolute and unaudited package-subpath runtime imports', () => {
+    const absolute = fixture(Buffer.from('import "/tmp/quarangate-untrusted-runtime.mjs";\n', 'utf8'));
+    const absoluteResult = bootstrapVerify(absolute);
+    expect(absoluteResult.status).toBe(1);
+    expect(absoluteResult.stderr).toMatch(/absolute module imports are refused/iu);
+
+    const subpath = fixture(Buffer.from('import YAMLUtil from "yaml/util";\nvoid YAMLUtil;\n', 'utf8'));
+    const subpathResult = bootstrapVerify(subpath);
+    expect(subpathResult.status).toBe(1);
+    expect(subpathResult.stderr).toMatch(/unaudited package subpath/iu);
+  });
+
   it('refuses an incomplete audited package runtime graph before CLI handoff', () => {
     const markerRoot = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-incomplete-runtime-'));
     const marker = path.join(markerRoot, 'executed.txt');

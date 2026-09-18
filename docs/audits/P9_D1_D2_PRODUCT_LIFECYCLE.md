@@ -435,14 +435,16 @@ No source test in this section substitutes for those external gates.
 
 A later forensic review of the pending signed-package boundary found that the Windows wizard would otherwise invoke ordinary compiled installer code directly from the release tree. The isolated remediation adds a Node-built-ins-only bootstrap that authenticates release identity before package code or dependencies are loaded.
 
-The bootstrap requires canonical external manifest/signature/trust inputs, keeps them outside the payload root, verifies strict manifest schema and canonical digest, validates the detached Ed25519 proof against independently supplied trust, rejects a non-closed payload tree (unmanifested files/directories, symlinks, hard links, unsafe entries, or missing files), stages only verified payload bytes into a private 0700 tree and re-verifies it, snapshots the already-verified trust metadata into a separate private tree, rewrites delegated package/trust paths to those private snapshots, and removes both staging trees after delegation. The production profile additionally binds the exact transitive 20-module compiled installer graph and permits only the audited yaml/zod package roots under node_modules. The ordinary installer repeats signature/payload/profile/closure verification as defense in depth.
+The bootstrap requires canonical external manifest/signature/trust inputs, keeps them outside the payload root, verifies strict manifest schema and canonical digest, validates the detached Ed25519 proof against independently supplied trust, rejects a non-closed payload tree (unmanifested files/directories, symlinks, hard links, unsafe entries, or missing files), stages only verified payload bytes into a private 0700 tree and re-verifies it, snapshots the already-verified trust metadata into a separate private tree, rewrites delegated package/trust paths to those private snapshots, and removes both staging trees after delegation. The production profile additionally binds the exact transitive 20-module compiled installer graph and permits only the audited yaml/zod package roots under node_modules. Before any staged package code runs, the bootstrap now traverses the manifest-bound installer dependency graph, follows the audited yaml/zod runtime entrypoints and their reachable relative/self imports, rejects unaudited external packages, rejects missing graph files, and fails closed on non-literal `import()` / `require()` loads that cannot be manifest-bound. The ordinary installer repeats signature/payload/profile/closure verification as defense in depth.
 
 Pre-freeze evidence on the final dirty bytes:
 
-- bootstrap/profile/closure focused gate: **44/44 PASS across 5 files**;
-- complete P9 matrix: **151/151 PASS across 17 files**;
+- final bootstrap/runtime/payload focused gate: **37/37 PASS across 3 files**;
+- complete P9 matrix: **156/156 PASS across 17 files**;
 - clean isolated importer proof using only the required 20 compiled installer modules plus yaml and zod: **PASS**;
-- full unit corpus: **3215/3215 PASS across 166/166 files**;
+- real staged yaml/zod runtime-graph execution proof: **PASS**;
+- opaque/non-literal, absolute-import, and unaudited package-subpath dependency refusal: **PASS**;
+- full unit corpus: **3220/3220 PASS across 166/166 files**;
 - TypeScript typecheck and build: **PASS**;
 - security invariants: **16/16 PASS across 12 Compose files and 7 Dockerfiles**;
 - fixed-seed fuzz: **PASS**, seed `1374718481`, **30,067 executions**, **395 coverage ranges**;

@@ -410,7 +410,8 @@ function packageNameFromSpecifier(specifier) {
 
 function jsSpecifiers(source, relative) {
   if (/\bimport\s*\((?!\s*['"])/u.test(source)
-    || /\brequire\s*\((?!\s*['"])/u.test(source)) {
+    || /\brequire\s*\((?!\s*['"])/u.test(source)
+    || /\bmodule\.require\s*\(/u.test(source)) {
     fail('installer runtime contains an opaque module load that cannot be manifest-bound: ' + relative);
   }
   return [
@@ -473,13 +474,19 @@ function verifyInstallerRuntimeClosure(root, manifest) {
     localSeen.add(relative);
     for (const specifier of jsSpecifiers(readManifestedJs(relative), relative)) {
       if (NODE_BUILTINS.has(specifier)) continue;
-      if (specifier.startsWith('.') || specifier.startsWith('/')) {
+      if (specifier.startsWith('/')) {
+        fail('installer runtime absolute module imports are refused: ' + specifier);
+      }
+      if (specifier.startsWith('.')) {
         visitLocal(resolveManifestedImport(relative, specifier, manifestPaths));
         continue;
       }
       const pkg = packageNameFromSpecifier(specifier);
       if (!INSTALLER_RUNTIME_PACKAGES.includes(pkg)) {
         fail('installer runtime imports an unaudited package: ' + pkg);
+      }
+      if (specifier !== pkg) {
+        fail('installer runtime imports an unaudited package subpath: ' + specifier);
       }
       importedPackages.add(pkg);
     }
@@ -491,7 +498,10 @@ function verifyInstallerRuntimeClosure(root, manifest) {
     packageSeen.add(relative);
     for (const specifier of jsSpecifiers(readManifestedJs(relative), relative)) {
       if (NODE_BUILTINS.has(specifier)) continue;
-      if (specifier.startsWith('.') || specifier.startsWith('/')) {
+      if (specifier.startsWith('/')) {
+        fail('runtime package absolute module imports are refused: ' + specifier);
+      }
+      if (specifier.startsWith('.')) {
         const inner = resolveManifestedImport(relative, specifier, manifestPaths);
         const prefix = 'node_modules/' + packageName + '/';
         if (!inner.startsWith(prefix)) fail('runtime package import escapes package root: ' + relative);
