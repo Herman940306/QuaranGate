@@ -117,14 +117,25 @@ function release(fx: Fixture): {
 } {
   const payloads = new Map<string, Buffer>([
     ['app/runtime.txt', Buffer.from('new-runtime')],
+    ['compose.yaml', Buffer.from('compose')],
+    ['dist/installer/cli.js', Buffer.from('cli')],
     ['migrations/config/config-0-to-1.json', migrationBytes('config-0-to-1', 'CONFIG', { migrated: 'yes' })],
     ['migrations/state/state-0-to-1.json', migrationBytes('state-0-to-1', 'STATE', { migrated: 'yes' })],
+    ['scripts/production-runtime-start.sh', Buffer.from('#!/bin/bash\n')],
+    ['scripts/production-runtime-stop.sh', Buffer.from('#!/bin/bash\n')],
+    ['scripts/windows/Inspect-QuaranGateProductionAutostart.ps1', Buffer.from('inspect')],
+    ['scripts/windows/Install-QuaranGateProductionAutostart.ps1', Buffer.from('install')],
+    ['scripts/windows/Open-QuaranGateControlCenter.ps1', Buffer.from('open')],
+    ['scripts/windows/QuaranGate-Setup.cmd', Buffer.from('launcher')],
+    ['scripts/windows/QuaranGate-Setup.ps1', Buffer.from('setup')],
+    ['scripts/windows/Remove-QuaranGateProductionAutostart.ps1', Buffer.from('remove')],
   ]);
-  const files: ReleasePackageFile[] = [...payloads.entries()].map(([relative, bytes]) => {
+  const executable = new Set(['scripts/production-runtime-start.sh', 'scripts/production-runtime-stop.sh']);
+  const files: ReleasePackageFile[] = [...payloads.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([relative, bytes]) => {
     const target = path.join(fx.packageRoot, ...relative.split('/'));
     mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
     writeFileSync(target, bytes, { mode: 0o600 });
-    return { path: relative, sizeBytes: bytes.length, digest: hash(bytes), mode: 0o644 };
+    return { path: relative, sizeBytes: bytes.length, digest: hash(bytes), mode: executable.has(relative) ? 0o755 : 0o644 };
   });
   const migrations: MigrationRecord[] = [
     {
@@ -152,15 +163,16 @@ function release(fx: Fixture): {
     lifecycle: {
       configSchemaVersion: 1,
       stateSchemaVersion: 1,
-      components: ['gateway'],
+      components: ['docker-authority', 'executor', 'gateway', 'projects-work'],
       migrations,
     },
     files,
-    images: [{
-      component: 'gateway',
-      reference: `quarangate-gateway:git-${newGit}`,
-      digest: `sha256:${'a'.repeat(64)}`,
-    }],
+    images: [
+      { component: 'docker-authority', reference: `quarangate:docker-authority-${newGit}`, digest: `sha256:${'a'.repeat(64)}` },
+      { component: 'executor', reference: `quarangate:executor-${newGit}`, digest: `sha256:${'a'.repeat(64)}` },
+      { component: 'gateway', reference: `quarangate:gateway-${newGit}`, digest: `sha256:${'a'.repeat(64)}` },
+      { component: 'projects-work', reference: `quarangate:projects-work-${newGit}`, digest: `sha256:${'a'.repeat(64)}` },
+    ],
   });
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
   const signatureProof = {
@@ -195,7 +207,7 @@ function release(fx: Fixture): {
       releaseDigest: manifest.manifestDigest,
       configSchemaVersion: 1,
       stateSchemaVersion: 1,
-      components: ['gateway'],
+      components: ['docker-authority', 'executor', 'gateway', 'projects-work'],
       migrations,
     },
   };
@@ -279,6 +291,10 @@ class RecordingPlatform implements ProductionLifecyclePlatform {
     }
   }
 
+  async materializeRuntimeConfig(): Promise<void> {
+    this.calls.push('materializeRuntimeConfig');
+  }
+
   async inspectAuthority(): Promise<AuthorityInspection> {
     this.calls.push('inspectAuthority');
     return {
@@ -357,6 +373,7 @@ function readyFacts(): HostFacts {
     platformVersion: '2',
     wslDistribution: 'Ubuntu-24.04',
     wslVersion: 2,
+      runtimeUser: { name: 'herman', uid: 1000, gid: 1000 },
     docker: { available: true, version: '29.7.2', daemonReachable: true },
     compose: { available: true, version: '5.5.0' },
     git: { available: true, version: '2.43.0' },
@@ -957,6 +974,10 @@ describe('P9 production install-plan consumer', () => {
 
     expect(result).toMatchObject({ state: 'SUCCESS', controlCenterOpened: true });
     expect(platform.opened).toBe(true);
+    expect(platform.calls.indexOf('materializeRuntimeConfig')).toBeGreaterThanOrEqual(0);
+    expect(platform.calls.indexOf('materializeRuntimeConfig')).toBeLessThan(
+      platform.calls.indexOf('startRuntime'),
+    );
     expect(platform.calls.indexOf('inspectRuntime')).toBeLessThan(
       platform.calls.indexOf('openControlCenter:http://127.0.0.1:8787'),
     );

@@ -175,6 +175,27 @@ describe('P9 D2 plan before mutation', () => {
     expect(first.authorized).toBe(false);
   });
 
+  it('sequences fresh-install runtime configuration before the first runtime start', () => {
+    const target = upgradeRequest().target!;
+    const plan = buildLifecyclePlan(null, {
+      action: 'INSTALL',
+      operationId: 'op-fresh-install',
+      target: { ...target, configSchemaVersion: 1, stateSchemaVersion: 1 },
+      preservation: upgradeRequest().preservation,
+      authorityState: 'VALID',
+    });
+    expect(plan.noOp).toBe(false);
+    expect(plan.recoveryAnchorRequired).toBe(false);
+    expect(plan.steps.map((step) => step.kind)).toEqual([
+      'VERIFY_PRECONDITIONS',
+      'TRANSITION_COMPONENTS',
+      'MATERIALIZE_RUNTIME_CONFIG',
+      'START_RUNTIME',
+      'VERIFY_STARTUP_REGISTRATION',
+      'VERIFY_FINAL_IDENTITY_AND_HEALTH',
+    ]);
+  });
+
   it('requires exact migration chains and refuses malformed or partial migrations', () => {
     const current = manifest();
     expect(() => buildLifecyclePlan(current, upgradeRequest({

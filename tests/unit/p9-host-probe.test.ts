@@ -26,6 +26,9 @@ function deps(overrides: Partial<HostProbeDependencies> = {}): HostProbeDependen
       if (key === 'git --version') return { exitCode: 0, stdout: 'git version 2.43.0', stderr: '' };
       if (key === 'node --version') return { exitCode: 0, stdout: 'v24.20.0', stderr: '' };
       if (program === 'nvidia-smi') return { exitCode: 0, stdout: 'Generic GPU, 12288', stderr: '' };
+      if (key === 'id -un') return { exitCode: 0, stdout: 'herman\n', stderr: '' };
+      if (key === 'id -u') return { exitCode: 0, stdout: '1000\n', stderr: '' };
+      if (key === 'id -g') return { exitCode: 0, stdout: '1000\n', stderr: '' };
       return { exitCode: 127, stdout: '', stderr: 'not found' };
     },
     calls,
@@ -49,6 +52,7 @@ describe('P9 D1 mechanical host probe', () => {
       git: { available: true, version: '2.43.0' },
       node: { available: true, version: '24.20.0' },
       gpu: { present: true, name: 'Generic GPU', vramBytes: 12288 * 1024 * 1024 },
+      runtimeUser: { name: 'herman', uid: 1000, gid: 1000 },
     });
     expect(JSON.stringify(facts)).not.toContain('must-not-leak');
   });
@@ -57,7 +61,7 @@ describe('P9 D1 mechanical host probe', () => {
     const input = deps();
     probeHostFacts(input);
     expect(input.calls.map((call) => call.program)).toEqual([
-      'docker', 'docker', 'docker', 'git', 'node', 'nvidia-smi',
+      'docker', 'docker', 'docker', 'git', 'node', 'nvidia-smi', 'id', 'id', 'id',
     ]);
     expect(input.calls.every((call) => !['sh', 'bash', 'cmd.exe', 'powershell.exe'].includes(call.program))).toBe(true);
   });

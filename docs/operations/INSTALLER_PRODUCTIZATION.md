@@ -1,6 +1,6 @@
 # QuaranGate Installer & Lifecycle Productization — D1/D2
 
-**Status:** Source remediation frozen and accepted under the owner-authorized strict self-audit exception; current-canonical integration is pending. Signed Windows release packaging and live production qualification remain pending.
+**Status:** Historical D1/D2 lifecycle source is integrated. A current-line production-install bridge remediation is source-qualified pre-freeze on canonical base `2a576f2d8ce47f680ca3f102aa39dc13b0dc1315`; immutable freeze/review/promotion remain pending. The real signed Windows release package and live production qualification remain pending.
 
 **Roadmap role:** D1 and D2 must close before A9 production hardening begins.
 
@@ -55,24 +55,28 @@ Before A9, qualification must cover a fresh/clean install, first run, restart/re
 
 The current P9 remediation candidate implements the source-level lifecycle boundary as:
 
-- a native Windows Forms wizard source (scripts/windows/QuaranGate-Setup.ps1) with a RemoteSigned click launcher, explicit review and no unsigned-package mutation;
-- a fixed-argument WSL/Node planner (src/installer/cli.ts) which performs mechanical host probes and emits a digest-bound review plan;
+- a native Windows Forms production wizard (`scripts/windows/QuaranGate-Setup.ps1`) with a RemoteSigned click launcher that forwards the signed-release arguments and never uses hidden elevation;
+- a fixed-argument WSL/Node installer controller (`src/installer/cli.ts`) with source-only `plan` plus production `plan-production` / `apply-production` commands; production planning cryptographically verifies the exact release manifest, detached Ed25519 proof, installer-owned trust policy and every manifested payload byte **before** owner review;
 - a deterministic D1 policy layer (src/installer/productInstaller.ts) that maps human choices to the existing QuaranGate scopes rather than creating a second authority system;
-- a strict release-package manifest (src/installer/releasePackage.ts) binding every payload file and OCI image to immutable SHA-256 identity, requiring exact lifecycle/image component-set agreement and an installer-owned release trust policy that is separate from untrusted package material;
-- a versioned installation manifest plus D2 planner/coordinator (src/lifecycle/**) with plan-before-mutation, exact path+mode-bound recovery anchors, runtime quiescing before upgrade/repair mutation, recoverable repair, credential preservation or reauthorization, supported rollback, preserve-by-default uninstall, reinstall attestation and interruption classification;
+- a strict release-package manifest (`src/installer/releasePackage.ts`) plus production profile (`src/installer/productionRelease.ts`) binding every payload file and the exact `docker-authority`, `executor`, `gateway`, and `projects-work` OCI images to immutable identity; installer trust is supplied separately from release material;
+- deterministic fresh-install runtime configuration (`src/installer/runtimeConfig.ts`) that writes private atomic config, keeps providers/GitHub/IDE/remote activation deferred to their later qualification steps, stores only the owner key hash, and returns the plaintext owner credential once after successful install;
+- a concrete WSL production platform (`src/installer/wslProductionPlatform.ts`) and bounded production start/stop + Windows Task Scheduler control scripts that use fixed argv, inspect exact managed authority/image identities, refuse pre-existing same-name authority on fresh install, start with `--no-build --pull never`, and clean partial newly-managed runtime state on failed startup validation;
+- a versioned installation manifest plus D2 planner/coordinator (`src/lifecycle/**`) with plan-before-mutation, exact path+mode-bound recovery anchors, runtime quiescing before upgrade/repair mutation, recoverable repair, credential preservation or reauthorization, supported rollback, preserve-by-default uninstall, reinstall attestation and interruption classification;
 - private atomic lifecycle persistence with traversal, symlink, junction-equivalent path alias, hard-link, permission and bounded-read defenses;
 - bounded/redacted lifecycle evidence.
 
-The Windows wizard remains in source-candidate mode until a trusted signed release payload exists. It will produce and display the exact review plan, but deliberately returns PACKAGE_APPLY_DEFERRED_RELEASE_GATE instead of mutating installation state when run from an unsigned source tree. This is not a replacement for the required signed release installer; it is the fail-closed source boundary from which that package must be built.
+The production wizard no longer treats an unsigned source-tree review as install authority. Its production path requires explicit release-manifest, detached-signature and independently supplied trust-policy inputs; `plan-production` verifies them and the complete payload before displaying the digest-bound review. After explicit owner consent, `apply-production` re-verifies the same release, re-probes the current host, rebuilds the plan and refuses any release/host/answer/digest/consent drift before lifecycle mutation. The legacy source-only `plan` command remains non-mutating and cannot satisfy the production release gate.
 
 ## Current qualification boundary
 
 The deterministic unit/integration harness uses disposable roots and typed fake lifecycle drivers. It proves non-host-specific D1/D2 policy, persistence and recovery behavior without touching live QuaranGate, real credentials, Task Scheduler, Docker state, provider entitlements, models or project data.
 
-The following remain outside this isolated parallel source qualification:
+The following remain outside this source qualification and must not be inferred as PASS:
 
-- final accepted IDE adapter inventory and package payload: PENDING_UPSTREAM_P7;
-- final signed Windows package build: DEFERRED_EXTERNAL_OWNER_CREDENTIAL plus a trusted installer toolchain;
-- live Windows/WSL install, upgrade, rollback, repair, uninstall and reinstall rehearsal: NOT_RUN;
-- immutable remediation freeze and current-canonical transplant: PENDING;
+- immutable current-line remediation freeze, independent/read-only review (or explicitly classified owner-authorized self-audit if no independent reviewer is available), and guarded canonical promotion: PENDING;
+- final signed `QuaranGate-Setup.exe` build: `DEFERRED_EXTERNAL_OWNER_CREDENTIAL` plus a trusted Windows packaging/AuthentiCode toolchain;
+- exact release-manifest/signature/trust/package regeneration against the eventual frozen release candidate: PENDING;
+- live Windows 11/WSL2 fresh-install, restart/recovery, upgrade, failed-upgrade rollback, repair, uninstall/data-preservation and reinstall rehearsal: NOT_RUN;
+- provider, GitHub, IDE and remote activation remain post-install qualification work and are not silently enabled by fresh install;
+- P10/A9 15-step system-E2E, P10-V rendered/visual evidence, and P11 release/promotion: NOT RUN / NOT ACCEPTED;
 - production deployment: NOT_RUN.

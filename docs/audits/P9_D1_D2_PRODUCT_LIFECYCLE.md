@@ -1,5 +1,8 @@
 # P9 D1 + D2 Product Lifecycle — Isolated Source Candidate
 
+> **Current-line reconciliation — 2026-09-18:** The historical lane, hashes and acceptance record below are intentionally preserved. Canonical later advanced to `2a576f2d8ce47f680ca3f102aa39dc13b0dc1315`. A new isolated current-line remediation, `fix/p9-production-install-gpt`, closes the production signed-release/apply bridge that the historical source deliberately deferred. See **Current-line production-install bridge remediation** at the end of this record. Nothing in the historical chronology is retroactively rewritten.
+
+
 ## Scope and governance
 
 - Owner: Herman
@@ -262,3 +265,71 @@ Immutable replay on that exact commit:
 - temporary dependency symlink removed after validation; worktree clean; staging empty.
 
 Next source gate: transplant the complete P9 chain onto the then-current accepted canonical source and repeat integration validation before canonical promotion.
+
+---
+
+## Current-line production-install bridge remediation — 2026-09-18
+
+### Authority and scope
+
+- Writer lane: `fix/p9-production-install-gpt`
+- Isolated worktree: `/workspace/QuaranGate-p9-production-install-gpt`
+- Exact current-line base at remediation start: `2a576f2d8ce47f680ca3f102aa39dc13b0dc1315`
+- Exact base tree: `fcb8cfc30a913017a26f603bcff27c8f600f30b2`
+- Canonical ref remained at that exact base during source work.
+- Accepted owner-host P10 runtime/evidence was not mutated by this lane.
+- This section records **source qualification only**. A signed Windows package, Authenticode, live production lifecycle qualification, provider qualification, P10/P10-V and P11 are not claimed.
+
+### Gap found against the P10 release boundary
+
+Fresh reconciliation against the P10 runbook proved that the historical P9 source intentionally stopped after owner review at `PACKAGE_APPLY_DEFERRED_RELEASE_GATE`. That was safe for the historical source candidate but insufficient for the release product because P10 step 1 requires a cryptographically frozen P9 release identity and an installable signed Windows package before live qualification starts.
+
+The current-line audit also found that production apply lacked a concrete host platform and fresh runtime-configuration bridge. A production package therefore could not honestly turn the reviewed plan into the exact WSL/Compose runtime required by QuaranGate.
+
+### Current-line remediation
+
+The current-line candidate adds the missing production bridge without creating a second authority system:
+
+1. **Exact production release profile.** `src/installer/productionRelease.ts` requires exactly `docker-authority`, `executor`, `gateway`, and `projects-work`, immutable source-bound image identities, and the complete owner-facing/runtime control payload including both Windows setup entrypoints.
+2. **Verified production plan/apply.** `src/installer/cli.ts` retains non-mutating source `plan` and adds fixed-argument `plan-production` / `apply-production`. Production planning verifies the manifest, detached Ed25519 proof, independently supplied installer-owned trust policy, complete payload bytes and production profile **before** owner review. Apply repeats release verification, re-probes the host, rebuilds the plan and requires the exact reviewed digest and consent set before mutation.
+3. **Typed host authority.** The reviewed install plan binds the observed WSL distribution and runtime username/UID/GID. Apply cannot silently target a different WSL/runtime identity.
+4. **Fresh runtime configuration.** `src/installer/runtimeConfig.ts` produces private atomic `.env`/YAML/project-Compose files and a private Kiro placeholder from the reviewed plan and verified release. Raw owner credentials are not persisted in normal config; the owner API key is returned once after a successful install while only its hash is written to client configuration.
+5. **Activation sequencing.** Fresh package apply refuses pre-activation of Kiro, Copilot, Ollama, GitHub, IDE or remote access. Those remain later configure/provider/GitHub/IDE qualification steps rather than being silently enabled during install.
+6. **Concrete WSL production platform.** `src/installer/wslProductionPlatform.ts` uses fixed argv and bounded output/timeouts, refuses pre-existing same-name authority during fresh install, reconciles the fixed Windows startup registration, starts/stops only installed production scripts and verifies exact managed container/image identities.
+7. **Bounded runtime/startup scripts.** Production start verifies local immutable image bindings and uses `--no-build --pull never`. Partial newly managed runtime is removed on any post-start validation failure through an EXIT cleanup contract. Windows startup scripts use a fixed task identity and limited run level.
+8. **Owner-facing signed wizard.** `QuaranGate-Setup.ps1` requires release manifest/signature/trust inputs, displays the exact verified release + host + authority + consent review, and invokes `apply-production` only after owner approval. The RemoteSigned `.cmd` launcher forwards the release arguments. Temporary answer/consent documents are removed after use.
+
+### Pre-freeze evidence
+
+The current-line bridge went through incremental focused qualification and then a fresh exact-byte pre-freeze replay after the Windows launcher and documentation reconciliation.
+
+Final pre-freeze replay on the complete candidate:
+
+- all P9 unit/integration: **108/108 PASS across 14/14 files**;
+- repository full unit corpus: **3173/3173 PASS across 163/163 files**;
+- TypeScript typecheck: **PASS**;
+- build: **PASS**;
+- security invariants: **16/16 PASS across 12 Compose files and 7 Dockerfiles**;
+- fixed-seed fuzz: **PASS**, seed `1374718481`, **30,067 executions**, **395 coverage ranges**;
+- production runtime shell syntax: **PASS**;
+- `git diff --check`: **PASS**;
+- package-lock SHA-256 remained exact at `5ad727697de394442f04514bc391e3367af98d7efb5fc822ef3d87d1cda1b570`;
+- full candidate-path credential/secret-shape scan, including new/untracked files: **PASS**;
+- full candidate-path forbidden-authority scan, including new/untracked files: **PASS**.
+
+These are pre-commit source qualification results. The immutable-candidate replay must still be repeated after freeze and must bind the exact commit/tree; this section does not predeclare that later verdict.
+
+### Remaining external/release boundary
+
+Even after source freeze/promotion, P9 is not a live release PASS until the external release artifacts and lifecycle rehearsal exist. Still required:
+
+- immutable current-line candidate freeze and review;
+- guarded canonical promotion only if the canonical ref has not drifted;
+- exact P9 release manifest and detached Ed25519 proof for the frozen release candidate;
+- independently supplied installer trust policy;
+- a real signed `QuaranGate-Setup.exe` / trusted Windows packaging result and SHA-256;
+- live Windows 11/WSL2 install/restart/upgrade/repair/rollback/uninstall/reinstall evidence on a disposable qualification environment;
+- downstream provider/IDE/GitHub qualification and P10/A9;
+- P10-V and P11.
+
+No source test in this section substitutes for those external gates.

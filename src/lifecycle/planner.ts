@@ -72,6 +72,8 @@ export type LifecycleStepKind =
   | 'MIGRATE_CONFIGURATION'
   | 'MIGRATE_STATE'
   | 'TRANSITION_COMPONENTS'
+  | 'MATERIALIZE_RUNTIME_CONFIG'
+  | 'START_RUNTIME'
   | 'RECONCILE_COMPONENTS'
   | 'VERIFY_STARTUP_REGISTRATION'
   | 'REMOVE_APPLICATION_COMPONENTS'
@@ -302,6 +304,8 @@ function stepsFor(request: LifecyclePlanRequest, noOp: boolean): LifecycleStep[]
       kinds = [
         ['VERIFY_PRECONDITIONS', false],
         ['TRANSITION_COMPONENTS', true],
+        ['MATERIALIZE_RUNTIME_CONFIG', true],
+        ['START_RUNTIME', true],
         ['VERIFY_STARTUP_REGISTRATION', true],
         ['VERIFY_FINAL_IDENTITY_AND_HEALTH', false],
       ];

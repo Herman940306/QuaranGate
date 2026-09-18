@@ -166,6 +166,9 @@ export function probeHostFacts(deps: HostProbeDependencies): HostFacts {
     '--query-gpu=name,memory.total',
     '--format=csv,noheader,nounits',
   ]);
+  const runtimeUserName = run(deps, 'id', ['-un']);
+  const runtimeUid = run(deps, 'id', ['-u']);
+  const runtimeGid = run(deps, 'id', ['-g']);
 
   const platform = detectPlatform(deps);
   const dockerAvailable = dockerVersion.exitCode === 0;
@@ -174,9 +177,16 @@ export function probeHostFacts(deps: HostProbeDependencies): HostFacts {
   const gpuLine = gpu.exitCode === 0 ? gpu.stdout.trim().split(/\r?\n/u)[0] : undefined;
   const gpuParts = gpuLine?.split(',').map((part) => part.trim());
   const vramMib = gpuParts?.[1] ? Number(gpuParts[1]) : Number.NaN;
+  const uid = Number(runtimeUid.stdout.trim());
+  const gid = Number(runtimeGid.stdout.trim());
+  const runtimeUser = runtimeUserName.exitCode === 0 && runtimeUid.exitCode === 0 && runtimeGid.exitCode === 0
+    && runtimeUserName.stdout.trim().length > 0 && Number.isSafeInteger(uid) && uid >= 0 && Number.isSafeInteger(gid) && gid >= 0
+    ? { name: runtimeUserName.stdout.trim(), uid, gid }
+    : undefined;
 
   return {
     ...platform,
+    ...(runtimeUser ? { runtimeUser } : {}),
     platformVersion: deps.release,
     docker: dockerAvailable
       ? {

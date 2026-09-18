@@ -27,6 +27,7 @@ import {
 } from './productInstaller.js';
 import { verifyTrustedReleaseBundle } from '../lifecycle/productionDriver.js';
 import type { ReleaseTrustPolicy, VerifiedReleasePackage } from './releasePackage.js';
+import { verifyProductionReleaseProfile } from './productionRelease.js';
 
 export interface ProductionInstallRelease {
   bundle: TrustedReleaseBundle;
@@ -160,6 +161,7 @@ export async function executeProductionInstall(
     );
   }
   const verified = verifyTrustedReleaseBundle(request.release.bundle, trustPolicy);
+  verifyProductionReleaseProfile(verified.manifest);
   if (authorized.plan.release.manifestDigest !== verified.manifest.manifestDigest
     || authorized.plan.release.productVersion !== verified.manifest.productVersion
     || authorized.plan.release.sourceCommit !== verified.manifest.sourceCommit) {

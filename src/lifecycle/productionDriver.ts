@@ -82,6 +82,7 @@ export interface AuthorityInspection {
 }
 
 export interface ProductionLifecyclePlatform {
+  materializeRuntimeConfig(manifest: InstallationManifest): Promise<void>;
   inspectAuthority(manifest: InstallationManifest): Promise<AuthorityInspection>;
   reconcileStartup(manifest: InstallationManifest): Promise<void>;
   removeStartup(manifest: InstallationManifest): Promise<void>;
@@ -707,6 +708,24 @@ export class ProductionLifecycleDriver implements LifecycleDriver {
         case 'TRANSITION_COMPONENTS':
           if (!current) this.ensureFreshRoots(manifest);
           this.materializeRelease(plan, current, false);
+          // Fresh INSTALL has an explicit runtime-config and start boundary so
+          // reviewed local configuration exists before the first process starts.
+          // Existing lifecycle actions preserve the previously qualified
+          // transition semantics.
+          if (plan.action !== 'INSTALL') {
+            await this.options.platform.startRuntime(this.projectedManifest(plan, current, 'HEALTHY'));
+          }
+          return;
+        case 'MATERIALIZE_RUNTIME_CONFIG':
+          if (plan.action !== 'INSTALL' || current) {
+            throw new LifecycleDriverError('RUNTIME_CONFIG_STEP_INVALID', 'Initial runtime configuration is valid only for a fresh install', false);
+          }
+          await this.options.platform.materializeRuntimeConfig(this.projectedManifest(plan, current, 'HEALTHY'));
+          return;
+        case 'START_RUNTIME':
+          if (plan.action !== 'INSTALL' || current) {
+            throw new LifecycleDriverError('RUNTIME_START_STEP_INVALID', 'Initial runtime start is valid only for a fresh install', false);
+          }
           await this.options.platform.startRuntime(this.projectedManifest(plan, current, 'HEALTHY'));
           return;
         case 'RECONCILE_COMPONENTS':

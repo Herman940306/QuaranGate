@@ -28,6 +28,11 @@ export interface HostFacts {
   platformVersion: string;
   wslDistribution?: string;
   wslVersion?: 1 | 2;
+  runtimeUser?: {
+    name: string;
+    uid: number;
+    gid: number;
+  };
   docker: ToolFact;
   compose: ToolFact;
   git: ToolFact;
@@ -125,6 +130,14 @@ export function evaluateSystemReadiness(facts: HostFacts): SystemReadiness {
   } else {
     checks.push(issue('PLATFORM_UNSUPPORTED', 'UNSUPPORTED', 'The operating system/runtime is unsupported', 'Use Linux or Windows 11 with WSL2.'));
   }
+
+  const runtimeUser = facts.runtimeUser;
+  checks.push(runtimeUser
+    && typeof runtimeUser.name === 'string' && runtimeUser.name.length > 0 && runtimeUser.name.length <= 64 && !CONTROL.test(runtimeUser.name)
+    && Number.isSafeInteger(runtimeUser.uid) && runtimeUser.uid >= 0
+    && Number.isSafeInteger(runtimeUser.gid) && runtimeUser.gid >= 0
+    ? pass('RUNTIME_USER_READY', `Runtime user ${runtimeUser.name} uid=${runtimeUser.uid} gid=${runtimeUser.gid} is bound`)
+    : issue('RUNTIME_USER_UNPROVEN', 'BLOCKED', 'The runtime Linux user identity could not be mechanically proven', 'Run the installer inside the intended WSL/Linux runtime user and rerun readiness.'));
 
   checks.push(toolCheck(facts.docker, 'Docker', 'DOCKER_MISSING', 'DOCKER_VERSION_UNSUPPORTED', MINIMUM_DOCKER_VERSION));
   if (facts.docker.available) {
@@ -379,6 +392,13 @@ export interface InstallPlan {
   schemaVersion: 1;
   digest: string;
   readiness: SystemReadiness;
+  hostBinding: {
+    platform: HostFacts['platform'];
+    platformVersion: string;
+    wslDistribution?: string;
+    wslVersion?: 1 | 2;
+    runtimeUser: NonNullable<HostFacts['runtimeUser']>;
+  };
   profile: InstallProfile;
   release: InstallReleaseChoice;
   installRoot: string;
@@ -664,9 +684,18 @@ export function buildInstallPlan(answers: InstallerAnswers): InstallPlan {
     { sequence: answers.startup.enabled ? 7 : 6, kind: 'OPEN_CONTROL_CENTER_AFTER_HEALTH', mutation: false, authorityBoundary: 'loopback browser navigation' },
   ];
 
+  const runtimeUser = answers.host.runtimeUser;
+  if (!runtimeUser) throw new InstallerPolicyError('RUNTIME_USER_UNPROVEN', 'Runtime user identity is required in the reviewed install plan');
   const base: Omit<InstallPlan, 'digest'> = {
     schemaVersion: 1,
     readiness,
+    hostBinding: {
+      platform: answers.host.platform,
+      platformVersion: answers.host.platformVersion,
+      ...(answers.host.wslDistribution ? { wslDistribution: answers.host.wslDistribution } : {}),
+      ...(answers.host.wslVersion ? { wslVersion: answers.host.wslVersion } : {}),
+      runtimeUser: { ...runtimeUser },
+    },
     profile: answers.profile,
     release: answers.release,
     installRoot,

@@ -19,6 +19,7 @@ function readyFacts(): HostFacts {
     platformVersion: '2',
     wslDistribution: 'Ubuntu-24.04',
     wslVersion: 2,
+    runtimeUser: { name: 'herman', uid: 1000, gid: 1000 },
     docker: { available: true, version: '29.7.2', daemonReachable: true },
     compose: { available: true, version: '5.5.0' },
     git: { available: true, version: '2.43.0' },

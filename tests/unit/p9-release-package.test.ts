@@ -207,10 +207,17 @@ describe('P9 Windows click-install source boundary', () => {
     expect(setup).toContain('UPSTREAM_P7_PENDING');
     expect(setup).toContain('http://127.0.0.1:8787');
     expect(setup).toContain("'--exec', 'node'");
-    expect(setup).toContain('PLAN_REVIEW_REQUIRED');
+    expect(setup).toContain('SIGNED_RELEASE_REVIEW_REQUIRED');
+    expect(setup).toContain("'plan-production'");
+    expect(setup).toContain("'apply-production'");
+    expect(setup).toContain('ReleaseTrustPolicy');
+    expect(setup).toContain('approvedSensitiveChoices');
+    expect(setup).toContain('POST_INSTALL_QUALIFICATION');
+    expect(setup).not.toContain('PACKAGE_APPLY_DEFERRED_RELEASE_GATE');
     expect(setup).not.toMatch(/netsh|portproxy|\/var\/run\/docker\.sock|RunAs|ExecutionPolicy Bypass/u);
     expect(setup).not.toMatch(/mcpb_|API_KEY=|TOKEN=/u);
     expect(launcher).toContain('-ExecutionPolicy RemoteSigned');
+    expect(launcher).toContain('%*');
     expect(launcher).not.toContain('Bypass');
   });
 });
