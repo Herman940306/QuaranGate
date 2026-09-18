@@ -93,9 +93,27 @@ class FakeHost {
   core = '';
   projects = '';
   task: { exists: boolean; description?: string; execute?: string; arguments?: string } = { exists: false };
+  networks: string[] = [];
+  volumes: string[] = [];
+  readonly composeNetworks = new Map<string, string[]>();
+  readonly composeVolumes = new Map<string, string[]>();
   readonly states = new Map<string, string>();
 
   result(stdout = ''): PlatformCommandResult { return { exitCode: 0, stdout, stderr: '', timedOut: false }; }
+
+  private resourceOutput(kind: 'network' | 'volume', request: PlatformCommandRequest): string {
+    const filterIndex = request.args.indexOf('--filter');
+    const filter = filterIndex >= 0 ? request.args[filterIndex + 1] ?? '' : '';
+    const prefix = 'label=com.docker.compose.project=';
+    if (filter.startsWith(prefix)) {
+      const project = filter.slice(prefix.length);
+      const source = kind === 'network' ? this.composeNetworks : this.composeVolumes;
+      const values = source.get(project) ?? [];
+      return values.length > 0 ? values.join('\n') + '\n' : '';
+    }
+    const values = kind === 'network' ? this.networks : this.volumes;
+    return values.length > 0 ? values.join('\n') + '\n' : '';
+  }
 
   run = async (request: PlatformCommandRequest): Promise<PlatformCommandResult> => {
     this.calls.push(request);
@@ -128,6 +146,12 @@ class FakeHost {
       const filter = request.args[request.args.indexOf('--filter') + 1] ?? '';
       return this.result(filter.endsWith('=quarangate-projects') ? this.projects : this.core);
     }
+    if (request.program === 'docker' && request.args[0] === 'network' && request.args[1] === 'ls') {
+      return this.result(this.resourceOutput('network', request));
+    }
+    if (request.program === 'docker' && request.args[0] === 'volume' && request.args[1] === 'ls') {
+      return this.result(this.resourceOutput('volume', request));
+    }
     if (request.program === 'docker' && request.args[0] === 'inspect') {
       return this.result(`${this.states.get(request.args[1]!) ?? ''}\n`);
     }
@@ -147,6 +171,51 @@ describe('P9 WSL production lifecycle platform', () => {
     });
     await expect(platform.inspectAuthority(fx.manifest)).resolves.toEqual({ duplicateAuthority: true, staleRegistrations: false });
     expect(host.calls.every((call) => call.program !== 'bash')).toBe(true);
+  });
+
+  it.each([
+    ['unlabelled reserved network', 'network', 'quarangate-edge'],
+    ['unlabelled retained durable volume', 'volume', 'mcp-bridge-jobs'],
+  ] as const)('refuses fresh install when a %s already exists', async (_label, kind, name) => {
+    const fx = fixture(false);
+    const host = new FakeHost();
+    if (kind === 'network') host.networks = [name];
+    else host.volumes = [name];
+    const platform = new WslProductionLifecyclePlatform({
+      authorizedPlan: fx.authorizedPlan, packageRoot: fx.packageRoot,
+      secrets: createInitialRuntimeSecrets((n) => Buffer.alloc(n, 7)), run: host.run,
+    });
+
+    await expect(platform.inspectAuthority(fx.manifest)).resolves.toEqual({
+      duplicateAuthority: true, staleRegistrations: false,
+    });
+    expect(host.calls.every((call) => call.program !== 'bash')).toBe(true);
+  });
+
+  it('refuses fresh install when any Compose-labelled network remains without containers', async () => {
+    const fx = fixture(false);
+    const host = new FakeHost();
+    host.composeNetworks.set('quarangate-projects', ['old-project-network']);
+    const platform = new WslProductionLifecyclePlatform({
+      authorizedPlan: fx.authorizedPlan, packageRoot: fx.packageRoot,
+      secrets: createInitialRuntimeSecrets((n) => Buffer.alloc(n, 8)), run: host.run,
+    });
+
+    await expect(platform.inspectAuthority(fx.manifest)).resolves.toEqual({
+      duplicateAuthority: true, staleRegistrations: false,
+    });
+  });
+
+  it('fails closed on malformed Docker resource inventory output', async () => {
+    const fx = fixture(false);
+    const host = new FakeHost();
+    host.networks = ['bad resource name'];
+    const platform = new WslProductionLifecyclePlatform({
+      authorizedPlan: fx.authorizedPlan, packageRoot: fx.packageRoot,
+      secrets: createInitialRuntimeSecrets((n) => Buffer.alloc(n, 10)), run: host.run,
+    });
+
+    await expect(platform.inspectAuthority(fx.manifest)).rejects.toThrow(/malformed or duplicate resource identity/iu);
   });
 
   it('materializes config, reconciles the exact startup identity, and reports only exact live image identities healthy', async () => {

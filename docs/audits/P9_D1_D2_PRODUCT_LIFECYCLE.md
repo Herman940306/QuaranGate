@@ -323,7 +323,30 @@ These are pre-commit source qualification results. The immutable-candidate repla
 
 The first immutable current-line freeze, `80f34d003fb4006cdffa937a610cade15d209018`, is preserved as **NOT ACCEPTED**. Its commit metadata exposed a packaging defect before immutable replay: `scripts/production-runtime-start.sh` was tracked as mode `100644` even though the production release profile requires that installed entrypoint to be executable. Canonical was not moved.
 
-R1 changes only the tracked executable mode of that start script, adds a regression that requires both production runtime entrypoints to carry executable permission bits, and records this finding. The immutable R1 candidate must still pass the complete exact-commit replay before review/promotion.
+R1 changes only the tracked executable mode of that start script, adds a regression that requires both production runtime entrypoints to carry executable permission bits, and records this finding. Immutable R1 `cdddf968bfbfae5be3e4cddb927826039ec1f2b0` then passed the complete exact-commit replay.
+
+### Strict self-audit R2 — stale Docker resource authority
+
+The owner-authorized strict self-audit of immutable R1 found one additional fresh-install authority gap before promotion: the WSL production platform refused pre-existing same-project containers and stale Windows startup registration, but a host could retain or recreate same-name Docker networks/volumes after the containers were gone. Because production Compose deliberately uses explicit physical resources such as `quarangate-edge`, `quarangate-internal`, `quarangate-data`, and retained durable volume `mcp-bridge-jobs`, a nominally fresh install must not adopt those bytes implicitly.
+
+R2 therefore expands **pre-mutation** authority inspection only. Before runtime configuration is materialized it now:
+
+- enumerates Docker networks and volumes using fixed argv;
+- refuses any network/volume still carrying Compose project label `quarangate` or `quarangate-projects`;
+- independently refuses exact reserved physical network names `quarangate-edge`, `quarangate-internal`, and `quarangate-projects_default` even when labels are absent;
+- independently refuses exact reserved volume names `quarangate-data` and `mcp-bridge-jobs` even when labels are absent;
+- rejects malformed or duplicate Docker resource inventory output rather than treating it as absence.
+
+The lifecycle coordinator calls production preflight before setting `mutationStarted` or executing any mutating lifecycle step, so these checks cannot be bypassed by runtime materialization/start ordering.
+
+Focused R2 evidence before immutable freeze:
+
+- production platform/release/runtime focused gate: **15/15 PASS across 3/3 files**;
+- complete P9 matrix: **113/113 PASS across 14/14 files**;
+- TypeScript typecheck: **PASS**;
+- `git diff --check`: **PASS**.
+
+R2 must still pass full-repository exact-byte pre-freeze qualification and immutable-commit replay before the strict self-audit may close or canonical promotion may occur.
 
 ### Remaining external/release boundary
 

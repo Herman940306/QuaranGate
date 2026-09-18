@@ -20,6 +20,16 @@ import type { AuthorizedInstallPlan } from './productInstaller.js';
 const MAX_COMMAND_OUTPUT = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const CORE_SERVICES = ['docker-authority', 'executor', 'gateway'] as const;
+const COMPOSE_PROJECTS = ['quarangate', 'quarangate-projects'] as const;
+const RESERVED_NETWORK_NAMES = new Set([
+  'quarangate-edge',
+  'quarangate-internal',
+  'quarangate-projects_default',
+]);
+const RESERVED_VOLUME_NAMES = new Set([
+  'quarangate-data',
+  'mcp-bridge-jobs',
+]);
 
 export interface PlatformCommandRequest {
   program: string;
@@ -123,6 +133,23 @@ function parseComposeLines(stdout: string): ComposeContainer[] {
     }
     return { id: parts[0]!, service: parts[1]! };
   });
+}
+
+function parseDockerResourceNames(stdout: string, label: string): string[] {
+  if (!stdout.trim()) return [];
+  const names = stdout.trim().split(/\r?\n/u);
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(name) || seen.has(name)) {
+      throw new LifecycleDriverError(
+        'PLATFORM_DOCKER_OUTPUT_INVALID',
+        `Docker ${label} inspection returned malformed or duplicate resource identity`,
+        false,
+      );
+    }
+    seen.add(name);
+  }
+  return names;
 }
 
 function exactOneByService(containers: ComposeContainer[], expected: readonly string[]): {
@@ -258,6 +285,39 @@ export class WslProductionLifecyclePlatform implements ProductionLifecyclePlatfo
     return parseComposeLines(result.stdout);
   }
 
+  private async listDockerResourceNames(
+    kind: 'network' | 'volume',
+    composeProject?: string,
+  ): Promise<string[]> {
+    const args = [kind, 'ls'];
+    if (composeProject) {
+      args.push('--filter', `label=com.docker.compose.project=${composeProject}`);
+    }
+    args.push('--format', '{{.Name}}');
+    const result = await this.checked({
+      program: 'docker',
+      args,
+      timeoutMs: 15_000,
+    }, 'DOCKER_AUTHORITY_INSPECTION_FAILED');
+    return parseDockerResourceNames(result.stdout, kind);
+  }
+
+  private async freshDockerResourceCollision(): Promise<boolean> {
+    const [allNetworks, allVolumes, ...projectResources] = await Promise.all([
+      this.listDockerResourceNames('network'),
+      this.listDockerResourceNames('volume'),
+      ...COMPOSE_PROJECTS.flatMap((project) => [
+        this.listDockerResourceNames('network', project),
+        this.listDockerResourceNames('volume', project),
+      ]),
+    ]);
+    if (allNetworks.some((name) => RESERVED_NETWORK_NAMES.has(name))
+      || allVolumes.some((name) => RESERVED_VOLUME_NAMES.has(name))) {
+      return true;
+    }
+    return projectResources.some((names) => names.length > 0);
+  }
+
   private async containerState(id: string): Promise<ContainerRuntimeState> {
     const result = await this.checked({
       program: 'docker',
@@ -289,8 +349,9 @@ export class WslProductionLifecyclePlatform implements ProductionLifecyclePlatfo
     // Before this package has materialized its own runtime config, ANY existing
     // authority is a collision. Never adopt a same-named pre-existing runtime.
     if (!this.runtimeProvisioned) {
+      const dockerResourceCollision = await this.freshDockerResourceCollision();
       return {
-        duplicateAuthority: core.length > 0 || projects.length > 0,
+        duplicateAuthority: core.length > 0 || projects.length > 0 || dockerResourceCollision,
         staleRegistrations: startup.exists,
       };
     }
