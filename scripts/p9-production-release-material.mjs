@@ -159,13 +159,19 @@ function validateCoreImage(plan) {
 
   const probe = [
     'set -eu',
+    '[ "$(id -u)" -ne 0 ]',
     'test "$(sha256sum /sbin/tini | cut -d" " -f1)" = 1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc',
-    'test -f /app/dist/gateway/index.js',
-    'test -f /app/dist/executor/index.js',
-    'test -f /app/dist/installer/cli.js',
-    'test -f /app/dist/lifecycle/productionDriver.js',
-    'test -f /app/node_modules/yaml/package.json',
-    'test -f /app/node_modules/zod/package.json',
+    'test -r /app/package.json',
+    'test "$(stat -c %a /app/package.json)" = "644"',
+    'node -e "JSON.parse(require(\'node:fs\').readFileSync(\'/app/package.json\', \'utf8\'))"',
+    'test -r /app/dist/gateway/index.js',
+    'test -r /app/dist/executor/index.js',
+    'test -r /app/dist/installer/cli.js',
+    'test -r /app/dist/lifecycle/productionDriver.js',
+    'test -r /app/console/app.js',
+    'test -r /app/console/index.html',
+    'test -r /app/node_modules/yaml/package.json',
+    'test -r /app/node_modules/zod/package.json',
     'test ! -e /app/src',
     'test ! -e /app/.git',
     'test ! -e /app/.env',
@@ -175,7 +181,7 @@ function validateCoreImage(plan) {
   const stdout = run('docker', [
     'run', '--rm', '--pull=never', '--network', 'none', '--read-only',
     '--cap-drop=ALL', '--security-opt', 'no-new-privileges:true',
-    '--user', '0:0', '--entrypoint', '/bin/sh', id, '-ec', probe,
+    '--entrypoint', '/bin/sh', id, '-ec', probe,
   ]);
   if (!stdout.split(/\r?\n/u).includes('CORE_RELEASE_IMAGE=PASS')) fail('core image runtime probe did not pass');
   return id;
