@@ -294,7 +294,7 @@ describe('governed npm offline bundle', () => {
       packageLockVersion: analysis.lockfileVersion,
       packageEntryCount: analysis.entries.length,
       artifactCount: analysis.artifactCount,
-      manifestSha256: '6c399f8614dcaf821b674c33330b899f3f2198cf2a041c7f3a200ed752136ad7',
+      manifestSha256: '5ed9cec31932e4ccf6d1b16f58b1485efd9774f6a39f9b1eeb3c709dfe2d4c7e',
       allowedHosts: ALLOWED_HOSTS,
     }));
     const acceptance = fs.readFileSync(new URL('../../scripts/accept-npm-offline-build.mjs', import.meta.url), 'utf8');
