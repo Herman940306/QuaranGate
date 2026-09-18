@@ -228,6 +228,14 @@ export async function executeProductionInstall(
   });
   const result = await new LifecycleCoordinator(store, driver, now).execute(approvedLifecycle);
   if (result.state !== 'SUCCESS') return { ...result, controlCenterOpened: false };
-  await platform.openControlCenter('http://127.0.0.1:8787');
-  return { ...result, controlCenterOpened: true };
+  let controlCenterOpened = false;
+  try {
+    await platform.openControlCenter('http://127.0.0.1:8787');
+    controlCenterOpened = true;
+  } catch {
+    // Browser launch is a convenience after verified lifecycle success. Never
+    // strand the one-time owner credential by converting a healthy committed
+    // install into an installer failure solely because the UI could not open.
+  }
+  return { ...result, controlCenterOpened };
 }

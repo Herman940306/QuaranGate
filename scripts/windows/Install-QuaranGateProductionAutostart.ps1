@@ -24,8 +24,8 @@ $arguments = @(
     '--exec', 'bash', $startScript
 ) | ForEach-Object { Quote-Argument $_ }
 $action = New-ScheduledTaskAction -Execute $wsl -Argument ($arguments -join ' ')
-$trigger = New-ScheduledTaskTrigger -AtLogOn
 $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentIdentity
 $principal = New-ScheduledTaskPrincipal -UserId $currentIdentity -LogonType Interactive -RunLevel Limited
 $description = "QuaranGate production startup identity=$IdentityDigest"
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Description $description -Force | Out-Null

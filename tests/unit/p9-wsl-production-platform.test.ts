@@ -92,7 +92,7 @@ class FakeHost {
   readonly calls: PlatformCommandRequest[] = [];
   core = '';
   projects = '';
-  task: { exists: boolean; description?: string; execute?: string; arguments?: string } = { exists: false };
+  task: { exists: boolean; description?: string; execute?: string; arguments?: string; principalUserId?: string; principalLogonType?: string; principalRunLevel?: string; triggerType?: string; triggerUserId?: string } = { exists: false };
   networks: string[] = [];
   volumes: string[] = [];
   readonly composeNetworks = new Map<string, string[]>();
@@ -133,6 +133,11 @@ class FakeHost {
           description: `QuaranGate production startup identity=${digest}`,
           execute: 'C:\\Windows\\System32\\wsl.exe',
           arguments: `"--distribution" "Ubuntu-24.04" "--user" "herman" "--exec" "bash" "${root}/scripts/production-runtime-start.sh"`,
+          principalUserId: 'DESKTOP\\herman',
+          principalLogonType: 'Interactive',
+          principalRunLevel: 'Limited',
+          triggerType: 'MSFT_TaskLogonTrigger',
+          triggerUserId: 'DESKTOP\\herman',
         };
         return this.result('PRODUCTION_AUTOSTART_INSTALL=PASS\n');
       }
@@ -252,6 +257,46 @@ describe('P9 WSL production lifecycle platform', () => {
     host.states.set('cccccccccccc', `sha256:${'9'.repeat(64)}|true|healthy`);
     await expect(platform.inspectRuntime(fx.manifest)).resolves.toMatchObject({
       running: true, healthy: false, sourceCommit: null, releaseDigest: null, runtimeIdentities: [],
+    });
+  });
+
+  it('treats a startup task with drifted WSL distribution or Linux user as stale authority', async () => {
+    const fx = fixture(true);
+    const host = new FakeHost();
+    const platform = new WslProductionLifecyclePlatform({
+      authorizedPlan: fx.authorizedPlan, packageRoot: fx.packageRoot,
+      secrets: createInitialRuntimeSecrets((n) => Buffer.alloc(n, 11)), run: host.run,
+    });
+
+    await platform.materializeRuntimeConfig(fx.manifest);
+    await platform.reconcileStartup(fx.manifest);
+    host.task.arguments = host.task.arguments!.replace('"Ubuntu-24.04"', '"Other-Distro"');
+
+    await expect(platform.inspectAuthority({ ...fx.manifest, lifecycleState: 'INSTALLED' })).resolves.toEqual({
+      duplicateAuthority: false, staleRegistrations: true,
+    });
+  });
+
+  it('treats startup principal, run-level, or trigger drift as stale authority', async () => {
+    const fx = fixture(true);
+    const host = new FakeHost();
+    const platform = new WslProductionLifecyclePlatform({
+      authorizedPlan: fx.authorizedPlan, packageRoot: fx.packageRoot,
+      secrets: createInitialRuntimeSecrets((n) => Buffer.alloc(n, 12)), run: host.run,
+    });
+
+    await platform.materializeRuntimeConfig(fx.manifest);
+    await platform.reconcileStartup(fx.manifest);
+    host.task.principalRunLevel = 'Highest';
+
+    await expect(platform.inspectAuthority({ ...fx.manifest, lifecycleState: 'INSTALLED' })).resolves.toEqual({
+      duplicateAuthority: false, staleRegistrations: true,
+    });
+
+    host.task.principalRunLevel = 'Limited';
+    host.task.triggerUserId = 'DESKTOP\\other';
+    await expect(platform.inspectAuthority({ ...fx.manifest, lifecycleState: 'INSTALLED' })).resolves.toEqual({
+      duplicateAuthority: false, staleRegistrations: true,
     });
   });
 

@@ -283,19 +283,27 @@ Only this exact verified release, host identity, answers, digest and consent set
         $applyJson = (& $wsl @applyArguments 2>&1 | Out-String).Trim()
         if ($LASTEXITCODE -ne 0) { throw "Production install blocked: $applyJson" }
         $result = $applyJson | ConvertFrom-Json -ErrorAction Stop
-        if ($result.status -ne 'PASS' -or $result.lifecycleState -ne 'SUCCESS' -or -not $result.controlCenterOpened) {
-            throw 'Production installer did not return a complete PASS result.'
+        if ($result.status -ne 'PASS' -or $result.lifecycleState -ne 'SUCCESS') {
+            throw 'Production installer did not return a successful lifecycle result.'
         }
         if ($null -eq $result.ownerCredential -or [string]::IsNullOrWhiteSpace([string]$result.ownerCredential.apiKey)) {
             throw 'Production installer did not return the one-time owner credential.'
         }
 
-        $status.Text = 'INSTALL_COMPLETE — Control Center health accepted.'
+        if ($result.controlCenterOpened) {
+            $status.Text = 'INSTALL_COMPLETE — Control Center opened.'
+            $controlCenterNote = 'The Control Center was opened automatically.'
+        } else {
+            $status.Text = 'INSTALL_COMPLETE — open Control Center manually at http://127.0.0.1:8787'
+            $controlCenterNote = 'The installation is healthy, but the browser could not be opened automatically. Open http://127.0.0.1:8787 manually.'
+        }
         $credentialMessage = @"
 QuaranGate installation completed.
 
 One-time owner Control Center credential:
 $($result.ownerCredential.apiKey)
+
+$controlCenterNote
 
 Store this credential securely now. The setup wizard does not persist the plaintext credential.
 "@

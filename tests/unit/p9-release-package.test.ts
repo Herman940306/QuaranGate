@@ -213,6 +213,8 @@ describe('P9 Windows click-install source boundary', () => {
     expect(setup).toContain('ReleaseTrustPolicy');
     expect(setup).toContain('approvedSensitiveChoices');
     expect(setup).toContain('POST_INSTALL_QUALIFICATION');
+    expect(setup).toContain('The installation is healthy, but the browser could not be opened automatically.');
+    expect(setup).not.toContain("-or -not $result.controlCenterOpened");
     expect(setup).not.toContain('PACKAGE_APPLY_DEFERRED_RELEASE_GATE');
     expect(setup).not.toMatch(/netsh|portproxy|\/var\/run\/docker\.sock|RunAs|ExecutionPolicy Bypass/u);
     expect(setup).not.toMatch(/mcpb_|API_KEY=|TOKEN=/u);

@@ -346,7 +346,52 @@ Focused R2 evidence before immutable freeze:
 - TypeScript typecheck: **PASS**;
 - `git diff --check`: **PASS**.
 
-R2 must still pass full-repository exact-byte pre-freeze qualification and immutable-commit replay before the strict self-audit may close or canonical promotion may occur.
+R2 then froze as `14f6174a111a2d63cb17c56e4f43bf78f498e6f5` (tree `d32b1340077ecbfc0941aaaa163e428fe16c97fd`) and passed the complete immutable replay:
+
+- combined current-line delta from canonical base: **29 paths**;
+- combined patch SHA-256: `062a72d14709c086cd25de7fafd767be06fc0bcc0e7ce883f228427b6f4175c9`;
+- path/status SHA-256: `8272bf02d77b56d2b6e2f54ef1b5bcadc5b5283129a921f4a92c28402d5f9353`;
+- content-manifest SHA-256: `f0edba400f83d53a12499e8893548665305cfc6c9417f86b569510b2c90039f6`;
+- P9: **113/113 PASS across 14/14 files**;
+- full unit corpus: **3178/3178 PASS across 163/163 files**;
+- typecheck, build, security invariants, fixed-seed fuzz, shell syntax, commit diff-check and immutable secret/authority scans: **PASS**.
+
+Canonical remained unchanged.
+
+### Strict self-audit R3 — exact Windows startup authority
+
+The immutable R2 semantic audit then found that the Windows startup receipt was still under-bound. Post-registration inspection verified the description and only checked that task arguments *contained* `--exec`, `bash`, and the start-script path. It did not prove the exact reviewed WSL distribution/Linux user, nor the principal/run-level/logon-trigger identity.
+
+R3 changes startup verification to require:
+
+- exactly one Scheduled Task action and exactly one trigger;
+- the exact digest-bound description and `wsl.exe` executable class;
+- an exact argument string for the reviewed WSL distribution, reviewed Linux runtime user and exact installed start script, with no additional arguments;
+- one user-specific logon trigger;
+- trigger user equal to principal user;
+- principal logon type `Interactive`;
+- principal run level `Limited`;
+- trigger class `MSFT_TaskLogonTrigger`.
+
+The installer now creates the logon trigger with the current Windows identity explicitly. Adversarial tests prove WSL-distribution drift, elevated run-level drift and trigger/principal mismatch are classified as stale authority.
+
+### Strict self-audit R4 — committed success must not strand owner credential
+
+The same audit found a post-success failure-state defect: lifecycle success was committed before the convenience browser-open step, but failure of `Start-Process` could still throw through the installer and prevent delivery of the one-time owner credential. That would leave a healthy installed runtime whose only plaintext owner credential had never been shown.
+
+R4 makes loopback browser launch explicitly non-authoritative after verified lifecycle success. A browser-launch failure now returns `controlCenterOpened:false` while preserving `SUCCESS`; the CLI still returns the one-time owner credential, and the Windows wizard tells the owner to open `http://127.0.0.1:8787` manually. Integration coverage proves the committed manifest remains healthy and release-bound when auto-open fails.
+
+Focused R3/R4 evidence before final freeze:
+
+- startup/platform/release focused gate: **19/19 PASS across 3/3 files**;
+- browser-failure/platform/release integration gate: **35/35 PASS across 3/3 files**;
+- complete P9 matrix: **116/116 PASS across 14/14 files**;
+- TypeScript typecheck: **PASS**;
+- `git diff --check`: **PASS**.
+
+The owner-authorized strict self-audit also rechecked the release/consent and package-read boundaries: plan digest binds host/WSL, release, physical roots, project authority, provider/IDE/GitHub/remote/startup/backup choices and required consents; apply recomputes the plan and consent identity before mutation; signed payload bytes are re-read and re-hashed immediately before install-tree mutation; migration descriptors are digest-checked immediately before application; package parents may not be symlinks and final payload files must be single-link regular files.
+
+A final whole-repository exact-byte pre-freeze run and immutable replay are still required after this documentation reconciliation before source acceptance or guarded canonical promotion.
 
 ### Remaining external/release boundary
 

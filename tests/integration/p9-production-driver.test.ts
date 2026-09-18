@@ -282,6 +282,7 @@ class RecordingPlatform implements ProductionLifecyclePlatform {
   opened = false;
   runtime?: InstallationManifest;
   failStart?: () => void;
+  failOpen?: () => void;
   readonly calls: string[] = [];
 
   constructor(current?: InstallationManifest) {
@@ -345,6 +346,7 @@ class RecordingPlatform implements ProductionLifecyclePlatform {
 
   async openControlCenter(url: 'http://127.0.0.1:8787'): Promise<void> {
     this.calls.push(`openControlCenter:${url}`);
+    this.failOpen?.();
     this.opened = true;
   }
 }
@@ -982,6 +984,32 @@ describe('P9 production install-plan consumer', () => {
       platform.calls.indexOf('openControlCenter:http://127.0.0.1:8787'),
     );
     const stored = new FilesystemLifecycleStore(fx.roots.state).loadManifest();
+    expect(stored?.releaseDigest).toBe(next.bundle.manifest.manifestDigest);
+  });
+
+  it('keeps a verified install successful when browser auto-open fails after health acceptance', async () => {
+    const fx = fixture();
+    const next = release(fx);
+    const authorized = authorizeInstall(installAnswers(fx, {
+      state: 'VERIFIED_RELEASE',
+      productVersion: next.bundle.manifest.productVersion,
+      sourceCommit: next.bundle.manifest.sourceCommit,
+      manifestDigest: next.bundle.manifest.manifestDigest,
+    }));
+    const platform = new RecordingPlatform();
+    platform.failOpen = () => { throw new Error('browser launch unavailable'); };
+
+    const result = await executeProductionInstall({
+      operationId: 'production-install-browser-fail',
+      installationId: '123e4567-e89b-42d3-a456-426614174099',
+      authorizedPlan: authorized,
+      release: { bundle: next.bundle },
+    }, platform, next.trustPolicy, now);
+
+    expect(result).toMatchObject({ state: 'SUCCESS', controlCenterOpened: false });
+    expect(platform.opened).toBe(false);
+    const stored = new FilesystemLifecycleStore(fx.roots.state).loadManifest();
+    expect(stored?.health.state).toBe('HEALTHY');
     expect(stored?.releaseDigest).toBe(next.bundle.manifest.manifestDigest);
   });
 

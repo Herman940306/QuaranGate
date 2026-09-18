@@ -66,6 +66,11 @@ interface StartupTaskInspection {
   description?: string;
   execute?: string;
   arguments?: string;
+  principalUserId?: string;
+  principalLogonType?: string;
+  principalRunLevel?: string;
+  triggerType?: string;
+  triggerUserId?: string;
 }
 
 interface ContainerRuntimeState {
@@ -245,13 +250,35 @@ export class WslProductionLifecyclePlatform implements ProductionLifecyclePlatfo
     }
     const value = parsed as Record<string, unknown>;
     if (value.exists === false) return { exists: false };
-    if (typeof value.description !== 'string' || typeof value.execute !== 'string' || typeof value.arguments !== 'string') {
-      throw new LifecycleDriverError('STARTUP_INSPECTION_INVALID', 'Startup inspection is missing task identity fields', false);
+    for (const field of [
+      'description', 'execute', 'arguments', 'principalUserId', 'principalLogonType',
+      'principalRunLevel', 'triggerType', 'triggerUserId',
+    ] as const) {
+      if (typeof value[field] !== 'string') {
+        throw new LifecycleDriverError('STARTUP_INSPECTION_INVALID', 'Startup inspection is missing task identity fields', false);
+      }
     }
-    return { exists: true, description: value.description, execute: value.execute, arguments: value.arguments };
+    return {
+      exists: true,
+      description: value.description as string,
+      execute: value.execute as string,
+      arguments: value.arguments as string,
+      principalUserId: value.principalUserId as string,
+      principalLogonType: value.principalLogonType as string,
+      principalRunLevel: value.principalRunLevel as string,
+      triggerType: value.triggerType as string,
+      triggerUserId: value.triggerUserId as string,
+    };
   }
 
-  private expectedStartup(manifest: InstallationManifest): { digest: string; script: string } | null {
+  private taskArgument(value: string): string {
+    if (/[\x00-\x1f\x7f"]/u.test(value)) {
+      throw new LifecycleDriverError('STARTUP_ARGUMENT_INVALID', 'Startup task argument is unsafe', false);
+    }
+    return `"${value}"`;
+  }
+
+  private expectedStartup(manifest: InstallationManifest): { digest: string; script: string; arguments: string } | null {
     if (manifest.startupRegistrations.length === 0) return null;
     if (manifest.startupRegistrations.length !== 1) {
       throw new LifecycleDriverError('STARTUP_REGISTRATION_INVALID', 'Production runtime permits at most one startup registration', false);
@@ -261,19 +288,33 @@ export class WslProductionLifecyclePlatform implements ProductionLifecyclePlatfo
     if (registration.mechanism !== 'WINDOWS_TASK_SCHEDULER_WSL') {
       throw new LifecycleDriverError('STARTUP_MECHANISM_UNSUPPORTED', 'Unsupported production startup mechanism', false);
     }
+    const script = `${manifest.roots.install}/scripts/production-runtime-start.sh`;
+    const host = this.plan.plan.hostBinding;
+    const argumentsValue = [
+      '--distribution', host.wslDistribution!,
+      '--user', host.runtimeUser.name,
+      '--exec', 'bash', script,
+    ].map((value) => this.taskArgument(value)).join(' ');
     return {
       digest: registration.identityDigest,
-      script: `${manifest.roots.install}/scripts/production-runtime-start.sh`,
+      script,
+      arguments: argumentsValue,
     };
   }
 
-  private startupMatches(task: StartupTaskInspection, expected: { digest: string; script: string }): boolean {
-    if (!task.exists || !task.description || !task.execute || !task.arguments) return false;
+  private startupMatches(
+    task: StartupTaskInspection,
+    expected: { digest: string; script: string; arguments: string },
+  ): boolean {
+    if (!task.exists || !task.description || !task.execute || !task.arguments
+      || !task.principalUserId || !task.triggerUserId) return false;
     return task.description === `QuaranGate production startup identity=${expected.digest}`
       && path.win32.basename(task.execute).toLowerCase() === 'wsl.exe'
-      && task.arguments.includes('--exec')
-      && task.arguments.includes('bash')
-      && task.arguments.includes(expected.script);
+      && task.arguments === expected.arguments
+      && task.principalUserId === task.triggerUserId
+      && task.principalLogonType === 'Interactive'
+      && task.principalRunLevel === 'Limited'
+      && task.triggerType === 'MSFT_TaskLogonTrigger';
   }
 
   private async listCompose(project: string): Promise<ComposeContainer[]> {
