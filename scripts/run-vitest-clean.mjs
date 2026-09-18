@@ -46,6 +46,21 @@ export function signalExitCode(signal) {
   return SIGNAL_EXIT[signal] ?? 1;
 }
 
+export function isolatedTestEnvironment(root, inherited = process.env, overrides = {}) {
+  const env = {};
+  for (const [name, value] of Object.entries({ ...inherited, ...overrides })) {
+    if (!name.toUpperCase().startsWith('GIT_') && value !== undefined) env[name] = value;
+  }
+  return {
+    ...env,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: join(root, '.test-global-gitconfig'),
+    TMPDIR: root,
+    TMP: root,
+    TEMP: root,
+  };
+}
+
 export async function runVitestClean(args, deps = {}) {
   const spawnImpl = deps.spawnImpl ?? spawn;
   const root = createOwnedTestTempRoot(deps.tempBase ?? testTempBase());
@@ -54,7 +69,7 @@ export async function runVitestClean(args, deps = {}) {
   const cleanup = () => rmSync(root, { recursive: true, force: true });
 
   try {
-    const env = { ...process.env, ...(deps.env ?? {}), TMPDIR: root, TMP: root, TEMP: root };
+    const env = isolatedTestEnvironment(root, process.env, deps.env ?? {});
     child = spawnImpl(process.execPath, vitestInvocationArgs(args), {
       cwd: deps.cwd ?? process.cwd(),
       env,

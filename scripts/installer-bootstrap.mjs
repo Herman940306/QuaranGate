@@ -80,9 +80,24 @@ const REQUIRED_PAYLOAD = [
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_PACKAGE_FILES = 50_000;
 const MAX_PACKAGE_BYTES = 1024 * 1024 * 1024;
+const MINIMUM_MODULE_GUARD_NODE = [22, 15, 0];
+const DELEGATED_NODE_ENV_BLOCKLIST = new Set(['NODE_OPTIONS', 'NODE_PATH']);
 
 function fail(message) {
   throw new Error(message);
+}
+
+function assertModuleGuardRuntime(version = process.versions.node) {
+  const parts = version.split('.').map((part) => Number.parseInt(part, 10));
+  if (parts.length < 3 || parts.some((part) => !Number.isInteger(part) || part < 0)) {
+    fail('unable to verify Node runtime version for installer module guard');
+  }
+  for (let index = 0; index < MINIMUM_MODULE_GUARD_NODE.length; index += 1) {
+    if (parts[index] > MINIMUM_MODULE_GUARD_NODE[index]) return;
+    if (parts[index] < MINIMUM_MODULE_GUARD_NODE[index]) {
+      fail('production bootstrap requires Node >=22.15.0 for synchronous runtime module hooks');
+    }
+  }
 }
 
 function canonicalStringify(value) {
@@ -450,7 +465,7 @@ function jsSpecifiers(source, relative) {
   if (/\bimport\s*\((?!\s*['"])/u.test(uncommented)
     || /\brequire\s*\((?!\s*['"])/u.test(uncommented)
     || /\bmodule\s*\.\s*require\s*\(/u.test(uncommented)
-    || /\bcreateRequire\s*\(/u.test(uncommented)) {
+    || /\bcreateRequire\b/u.test(uncommented)) {
     fail('installer runtime contains an opaque module load that cannot be manifest-bound: ' + relative);
   }
   return [
@@ -563,10 +578,14 @@ function verifyInstallerRuntimeClosure(root, manifest) {
     visitPackage(packageName, packageEntryPoint(packageJson, packageName));
   }
 
+  const moduleFiles = [...localSeen, ...packageSeen].sort();
+  const digestByPath = new Map(manifest.files.map((file) => [file.path, file.digest]));
   return {
     localFiles: localSeen.size,
     packageFiles: packageSeen.size,
     packages: [...importedPackages].sort(),
+    moduleFiles,
+    moduleDigests: Object.fromEntries(moduleFiles.map((file) => [file, digestByPath.get(file)])),
   };
 }
 
@@ -590,6 +609,7 @@ function verifyBootstrapInputs({ packageRoot, manifestFile, signatureProofFile, 
     manifest,
     proof,
     trustPolicy,
+    runtimeClosure,
     result: {
       schemaVersion: 1,
       status: 'PASS',
@@ -612,15 +632,117 @@ function stageVerifiedPayload(root, manifest) {
     verifyClosedPayload(root, manifest, staged);
     // Re-hash the private copy and prove the installer graph before any of its code is loaded.
     verifyClosedPayload(staged, manifest);
-    verifyInstallerRuntimeClosure(staged, manifest);
-    return staged;
+    const runtimeClosure = verifyInstallerRuntimeClosure(staged, manifest);
+    return { root: staged, runtimeClosure };
   } catch (error) {
     rmSync(staged, { recursive: true, force: true });
     throw error;
   }
 }
 
-function stageVerifiedMetadata(manifest, proof, trustPolicy) {
+const MODULE_GUARD_SOURCE = String.raw`import { createHash } from 'node:crypto';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { isBuiltin, registerHooks } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const policyFile = process.env.QG_BOOTSTRAP_MODULE_POLICY_FILE;
+if (!policyFile) throw new Error('bootstrap module policy file is missing');
+delete process.env.QG_BOOTSTRAP_MODULE_POLICY_FILE;
+const policyStat = lstatSync(policyFile);
+if (!policyStat.isFile() || policyStat.isSymbolicLink() || policyStat.nlink !== 1 || policyStat.size <= 0 || policyStat.size > 96 * 1024) {
+  throw new Error('bootstrap module policy file is unsafe');
+}
+if (realpathSync(policyFile) !== policyFile) throw new Error('bootstrap module policy file resolves through an alias');
+const policy = JSON.parse(readFileSync(policyFile, 'utf8'));
+if (!policy || policy.schemaVersion !== 1 || typeof policy.stageRoot !== 'string' || !Array.isArray(policy.modules)) {
+  throw new Error('bootstrap module policy is invalid');
+}
+const stageRoot = realpathSync(policy.stageRoot);
+const allowed = new Map();
+for (const module of policy.modules) {
+  if (!module || typeof module.path !== 'string' || !/^[0-9a-f]{64}$/u.test(module.digest)) {
+    throw new Error('bootstrap module policy contains an invalid module entry');
+  }
+  const lexical = path.resolve(stageRoot, ...module.path.split('/'));
+  const relative = path.relative(stageRoot, lexical);
+  if (!relative || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+    throw new Error('bootstrap module policy path escapes staged runtime root');
+  }
+  if (allowed.has(pathToFileURL(lexical).href)) throw new Error('bootstrap module policy contains a duplicate module path');
+  allowed.set(pathToFileURL(lexical).href, module.digest);
+}
+
+const restrictedBuiltins = new Set(['module', 'node:module', 'vm', 'node:vm', 'worker_threads', 'node:worker_threads']);
+const originalGetBuiltinModule = process.getBuiltinModule?.bind(process);
+if (originalGetBuiltinModule) {
+  Object.defineProperty(process, 'getBuiltinModule', {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value(specifier) {
+      if (restrictedBuiltins.has(specifier)) {
+        throw new Error('bootstrap module guard refused restricted builtin access: ' + specifier);
+      }
+      return originalGetBuiltinModule(specifier);
+    },
+  });
+}
+
+function guardedFile(urlText) {
+  const url = new URL(urlText);
+  if (url.protocol !== 'file:' || url.search || url.hash) {
+    throw new Error('bootstrap module guard refused non-file module resolution: ' + urlText);
+  }
+  const lexicalPath = path.resolve(fileURLToPath(url));
+  const lexicalUrl = pathToFileURL(lexicalPath).href;
+  const realPath = realpathSync(lexicalPath);
+  const realUrl = pathToFileURL(realPath).href;
+  if (realUrl !== lexicalUrl) {
+    throw new Error('bootstrap module guard refused aliased runtime module path: ' + urlText);
+  }
+  const digest = allowed.get(realUrl);
+  if (!digest) {
+    throw new Error('bootstrap module guard refused module outside verified runtime closure: ' + urlText);
+  }
+  return digest;
+}
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    const resolved = nextResolve(specifier, context);
+    if (resolved.url.startsWith('node:')) {
+      if (!isBuiltin(resolved.url)) throw new Error('bootstrap module guard refused non-builtin node specifier: ' + resolved.url);
+      if (restrictedBuiltins.has(resolved.url)) throw new Error('bootstrap module guard refused restricted builtin access: ' + resolved.url);
+      return resolved;
+    }
+    guardedFile(resolved.url);
+    return resolved;
+  },
+  load(url, context, nextLoad) {
+    if (url.startsWith('node:')) return nextLoad(url, context);
+    const expectedDigest = guardedFile(url);
+    const loaded = nextLoad(url, context);
+    if (loaded.source === null || loaded.source === undefined) {
+      throw new Error('bootstrap module guard could not inspect runtime module bytes: ' + url);
+    }
+    let bytes;
+    if (typeof loaded.source === 'string') bytes = Buffer.from(loaded.source, 'utf8');
+    else if (Buffer.isBuffer(loaded.source)) bytes = loaded.source;
+    else if (loaded.source instanceof ArrayBuffer) bytes = Buffer.from(loaded.source);
+    else if (ArrayBuffer.isView(loaded.source)) bytes = Buffer.from(loaded.source.buffer, loaded.source.byteOffset, loaded.source.byteLength);
+    else throw new Error('bootstrap module guard received unsupported runtime module source: ' + url);
+    const actualDigest = createHash('sha256').update(bytes).digest('hex');
+    if (actualDigest !== expectedDigest) {
+      throw new Error('bootstrap module guard refused runtime module digest drift: ' + url);
+    }
+    return loaded;
+  },
+});
+`;
+const MODULE_GUARD_SPECIFIER = 'data:text/javascript;base64,' + Buffer.from(MODULE_GUARD_SOURCE, 'utf8').toString('base64');
+
+function stageVerifiedMetadata(manifest, proof, trustPolicy, modulePolicy) {
   const staged = mkdtempSync(path.join(os.tmpdir(), 'quarangate-release-bootstrap-meta-'));
   chmodSync(staged, 0o700);
   try {
@@ -628,10 +750,12 @@ function stageVerifiedMetadata(manifest, proof, trustPolicy) {
       manifestFile: path.join(staged, 'release-manifest.json'),
       signatureProofFile: path.join(staged, 'release-signature.json'),
       trustPolicyFile: path.join(staged, 'release-trust-policy.json'),
+      modulePolicyFile: path.join(staged, 'runtime-module-policy.json'),
     };
     writeFileSync(files.manifestFile, JSON.stringify(manifest), { flag: 'wx', mode: 0o600 });
     writeFileSync(files.signatureProofFile, JSON.stringify(proof), { flag: 'wx', mode: 0o600 });
     writeFileSync(files.trustPolicyFile, JSON.stringify(trustPolicy), { flag: 'wx', mode: 0o600 });
+    writeFileSync(files.modulePolicyFile, modulePolicy, { flag: 'wx', mode: 0o600 });
     return { root: staged, ...files };
   } catch (error) {
     rmSync(staged, { recursive: true, force: true });
@@ -668,29 +792,51 @@ function parseProductionArgs(argv) {
 }
 
 export function main(argv = process.argv.slice(2)) {
+  assertModuleGuardRuntime();
   const parsed = parseProductionArgs(argv);
   const verified = verifyBootstrapInputs(parsed);
   const staged = stageVerifiedPayload(verified.root, verified.manifest);
   let metadata;
   try {
-    metadata = stageVerifiedMetadata(verified.manifest, verified.proof, verified.trustPolicy);
-    const cli = path.join(staged, 'dist', 'installer', 'cli.js');
+    const modulePolicy = JSON.stringify({
+      schemaVersion: 1,
+      stageRoot: staged.root,
+      modules: staged.runtimeClosure.moduleFiles.map((file) => ({
+        path: file,
+        digest: staged.runtimeClosure.moduleDigests[file],
+      })),
+    });
+    if (Buffer.byteLength(modulePolicy, 'utf8') > 96 * 1024) {
+      fail('installer runtime module policy exceeds bootstrap metadata bound');
+    }
+    metadata = stageVerifiedMetadata(verified.manifest, verified.proof, verified.trustPolicy, modulePolicy);
+    const cli = path.join(staged.root, 'dist', 'installer', 'cli.js');
     const delegatedArgv = [...argv];
-    delegatedArgv[4] = staged;
+    delegatedArgv[4] = staged.root;
     delegatedArgv[6] = metadata.manifestFile;
     delegatedArgv[8] = metadata.signatureProofFile;
     delegatedArgv[10] = metadata.trustPolicyFile;
-    const child = spawnSync(process.execPath, [cli, ...delegatedArgv], {
-      cwd: staged,
+    const delegatedEnv = Object.fromEntries(Object.entries(process.env)
+      .filter(([name, value]) => !DELEGATED_NODE_ENV_BLOCKLIST.has(name) && value !== undefined));
+    delegatedEnv.QG_BOOTSTRAP_MODULE_POLICY_FILE = metadata.modulePolicyFile;
+    const child = spawnSync(process.execPath, [
+      '--no-addons',
+      '--disallow-code-generation-from-strings',
+      '--import', MODULE_GUARD_SPECIFIER,
+      cli,
+      ...delegatedArgv,
+    ], {
+      cwd: staged.root,
       stdio: 'inherit',
       timeout: 20 * 60 * 1000,
+      env: delegatedEnv,
     });
     if (child.error) throw child.error;
     if (child.signal) fail('production installer CLI terminated by signal ' + child.signal);
     process.exitCode = child.status ?? 1;
   } finally {
     if (metadata) rmSync(metadata.root, { recursive: true, force: true });
-    rmSync(staged, { recursive: true, force: true });
+    rmSync(staged.root, { recursive: true, force: true });
   }
 }
 

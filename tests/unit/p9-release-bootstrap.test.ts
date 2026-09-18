@@ -272,6 +272,101 @@ describe('P9 production release bootstrap trust root', () => {
     expect(existsSync(delegated.cwd)).toBe(false);
   });
 
+  it('removes inherited Node preload and search-path controls before delegated startup', () => {
+    const attackRoot = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-preload-'));
+    const attackerMarker = path.join(attackRoot, 'attacker-executed.txt');
+    const delegatedMarker = path.join(attackRoot, 'delegated.json');
+    const preloadCjs = path.join(attackRoot, 'preload.cjs');
+    const preloadMjs = path.join(attackRoot, 'preload.mjs');
+    const loaderMjs = path.join(attackRoot, 'loader.mjs');
+    writeFileSync(preloadCjs, 'require("node:fs").writeFileSync(process.env.QG_ATTACKER_MARKER, "require");\n');
+    writeFileSync(preloadMjs, 'import { writeFileSync } from "node:fs"; writeFileSync(process.env.QG_ATTACKER_MARKER, "import");\n');
+    writeFileSync(loaderMjs, 'import { writeFileSync } from "node:fs"; writeFileSync(process.env.QG_ATTACKER_MARKER, "loader"); export const resolve = (s, c, n) => n(s, c);\n');
+    const cliBytes = Buffer.from(
+      'import { writeFileSync } from "node:fs";\n'
+      + 'writeFileSync(process.env.QG_DELEGATED_MARKER, JSON.stringify({\n'
+      + '  nodeOptions: process.env.NODE_OPTIONS ?? null,\n'
+      + '  nodePath: process.env.NODE_PATH ?? null,\n'
+      + '  policy: process.env.QG_BOOTSTRAP_MODULE_POLICY_FILE ?? null,\n'
+      + '}));\n',
+      'utf8',
+    );
+    const value = fixture(cliBytes);
+    const bootstrap = pathToFileURL(path.resolve('scripts/installer-bootstrap.mjs')).href;
+    const bootstrapArgs = [
+      'plan-production',
+      '--answers', path.join(value.root, 'unused-answers.json'),
+      '--package-root', value.packageRoot,
+      '--manifest', value.manifestFile,
+      '--signature-proof', value.signatureProofFile,
+      '--trust-policy', value.trustPolicyFile,
+    ];
+    const harness = `
+      process.env.NODE_OPTIONS = process.env.QG_ATTACK_NODE_OPTIONS;
+      process.env.NODE_PATH = process.env.QG_ATTACK_NODE_PATH;
+      const { main } = await import(${JSON.stringify(bootstrap)});
+      main(JSON.parse(process.argv[1]));
+    `;
+    for (const option of [
+      `--require=${preloadCjs}`,
+      `--import=${preloadMjs}`,
+      `--experimental-loader=${loaderMjs}`,
+    ]) {
+      rmSync(attackerMarker, { force: true });
+      rmSync(delegatedMarker, { force: true });
+      const result = spawnSync(process.execPath, ['--input-type=module', '--eval', harness, JSON.stringify(bootstrapArgs)], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          QG_ATTACK_NODE_OPTIONS: option,
+          QG_ATTACK_NODE_PATH: attackRoot,
+          QG_ATTACKER_MARKER: attackerMarker,
+          QG_DELEGATED_MARKER: delegatedMarker,
+        },
+        maxBuffer: 1024 * 1024,
+        timeout: 30_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(existsSync(attackerMarker), option).toBe(false);
+      expect(JSON.parse(readFileSync(delegatedMarker, 'utf8'))).toEqual({ nodeOptions: null, nodePath: null, policy: null });
+    }
+  });
+
+  it('disables string-generated JavaScript in the delegated installer process', () => {
+    const markerRoot = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-codegen-'));
+    const marker = path.join(markerRoot, 'executed.txt');
+    const value = fixture(Buffer.from(
+      'Function("return process")().getBuiltinModule("node:fs").writeFileSync(process.env.QG_BOOTSTRAP_MARKER, "executed");\n',
+      'utf8',
+    ));
+    const result = spawnSync(process.execPath, [
+      path.resolve('scripts/installer-bootstrap.mjs'),
+      'plan-production', '--answers', path.join(value.root, 'unused-answers.json'),
+      '--package-root', value.packageRoot, '--manifest', value.manifestFile,
+      '--signature-proof', value.signatureProofFile, '--trust-policy', value.trustPolicyFile,
+    ], {
+      cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, QG_BOOTSTRAP_MARKER: marker }, timeout: 30_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/code generation from strings disallowed/iu);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('refuses loader, VM and worker builtin access from the verified runtime closure', () => {
+    for (const builtin of ['module', 'vm', 'worker_threads']) {
+      const value = fixture(Buffer.from(`process.getBuiltinModule(${JSON.stringify(builtin)});\n`, 'utf8'));
+      const result = spawnSync(process.execPath, [
+        path.resolve('scripts/installer-bootstrap.mjs'),
+        'plan-production', '--answers', path.join(value.root, 'unused-answers.json'),
+        '--package-root', value.packageRoot, '--manifest', value.manifestFile,
+        '--signature-proof', value.signatureProofFile, '--trust-policy', value.trustPolicyFile,
+      ], { cwd: process.cwd(), encoding: 'utf8', timeout: 30_000 });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/module guard refused restricted builtin access/iu);
+    }
+  });
+
   it('refuses opaque or comment-obscured runtime loaders that cannot be manifest-bound', () => {
     for (const source of [
       'const runtimePackage = "yaml";\nawait import(runtimePackage);\n',
@@ -279,6 +374,7 @@ describe('P9 production release bootstrap trust root', () => {
       'require/* hidden separator */("/tmp/quarangate-untrusted-runtime.cjs");\n',
       'module/* hidden separator */.require("/tmp/quarangate-untrusted-runtime.cjs");\n',
       'import { createRequire } from "node:module";\nconst runtimeRequire = createRequire(import.meta.url);\nruntimeRequire("/tmp/quarangate-untrusted-runtime.cjs");\n',
+      'import { createRequire as cr } from "node:module";\nconst runtimeRequire = cr(import.meta.url);\nruntimeRequire("/tmp/quarangate-untrusted-runtime.cjs");\n',
     ]) {
       const value = fixture(Buffer.from(source, 'utf8'));
       const result = bootstrapVerify(value);
@@ -291,6 +387,135 @@ describe('P9 production release bootstrap trust root', () => {
     const value = fixture(Buffer.from('import { readFileSync } from /* hidden separator */ "node:fs";\nvoid readFileSync;\n', 'utf8'));
     const result = bootstrapVerify(value);
     expect(result.status).toBe(0);
+  });
+
+  it('runtime resolver guard blocks a dynamic import form that evades static specifier extraction', () => {
+    const markerRoot = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-runtime-guard-dynamic-'));
+    const marker = path.join(markerRoot, 'executed.txt');
+    const cliBytes = Buffer.from(
+      'await import("data:text/javascript,globalThis.__qgRuntimeGuardBypass=true", {});\n'
+      + 'import { writeFileSync } from "node:fs";\n'
+      + 'writeFileSync(process.env.QG_BOOTSTRAP_MARKER, "executed");\n',
+      'utf8',
+    );
+    const value = fixture(cliBytes);
+    const result = spawnSync(process.execPath, [
+      path.resolve('scripts/installer-bootstrap.mjs'),
+      'plan-production',
+      '--answers', path.join(value.root, 'unused-answers.json'),
+      '--package-root', value.packageRoot,
+      '--manifest', value.manifestFile,
+      '--signature-proof', value.signatureProofFile,
+      '--trust-policy', value.trustPolicyFile,
+    ], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, QG_BOOTSTRAP_MARKER: marker },
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/module guard refused non-file module resolution/iu);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('runtime resolver guard blocks a dynamic import hidden inside a template expression', () => {
+    const markerRoot = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-runtime-guard-template-'));
+    const marker = path.join(markerRoot, 'executed.txt');
+    const cliBytes = Buffer.from(
+      'const hidden = `value=${await import("data:text/javascript," + "export default 1")}`;\n'
+      + 'import { writeFileSync } from "node:fs";\n'
+      + 'writeFileSync(process.env.QG_BOOTSTRAP_MARKER, hidden);\n',
+      'utf8',
+    );
+    const value = fixture(cliBytes);
+    const result = spawnSync(process.execPath, [
+      path.resolve('scripts/installer-bootstrap.mjs'),
+      'plan-production',
+      '--answers', path.join(value.root, 'unused-answers.json'),
+      '--package-root', value.packageRoot,
+      '--manifest', value.manifestFile,
+      '--signature-proof', value.signatureProofFile,
+      '--trust-policy', value.trustPolicyFile,
+    ], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, QG_BOOTSTRAP_MARKER: marker },
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/module guard refused non-file module resolution/iu);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('runtime resolver guard blocks an obfuscated CommonJS require outside the verified closure', () => {
+    const markerRoot = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-runtime-guard-cjs-'));
+    const marker = path.join(markerRoot, 'executed.txt');
+    const outside = path.join(markerRoot, 'outside.cjs');
+    writeFileSync(outside, 'require("node:fs").writeFileSync(process.env.QG_BOOTSTRAP_MARKER, "outside-executed");\n', { mode: 0o600 });
+    const cliBytes = Buffer.from(
+      'const moduleApi = process.getBuiltinModule("module");\n'
+      + 'const runtimeRequire = moduleApi["create" + "Require"](import.meta.url);\n'
+      + 'runtimeRequire(process.env.QG_BOOTSTRAP_EXTERNAL_MODULE);\n'
+      + 'import { writeFileSync } from "node:fs";\n'
+      + 'writeFileSync(process.env.QG_BOOTSTRAP_MARKER, "cli-continued");\n',
+      'utf8',
+    );
+    const value = fixture(cliBytes);
+    const result = spawnSync(process.execPath, [
+      path.resolve('scripts/installer-bootstrap.mjs'),
+      'plan-production',
+      '--answers', path.join(value.root, 'unused-answers.json'),
+      '--package-root', value.packageRoot,
+      '--manifest', value.manifestFile,
+      '--signature-proof', value.signatureProofFile,
+      '--trust-policy', value.trustPolicyFile,
+    ], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        QG_BOOTSTRAP_MARKER: marker,
+        QG_BOOTSTRAP_EXTERNAL_MODULE: outside,
+      },
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/module guard refused (?:restricted builtin access|module outside verified runtime closure)/iu);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('runtime load guard rejects digest drift in an allowlisted staged module before execution', () => {
+    const markerRoot = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-runtime-guard-digest-'));
+    const marker = path.join(markerRoot, 'executed.txt');
+    const cliBytes = Buffer.from(
+      'import { writeFileSync } from "node:fs";\n'
+      + 'writeFileSync(new URL("../gateway/config.js", import.meta.url), "export const drifted = true;\\n");\n'
+      + 'await import("../gateway/config.js");\n'
+      + 'writeFileSync(process.env.QG_BOOTSTRAP_MARKER, "continued");\n',
+      'utf8',
+    );
+    const value = fixture(cliBytes);
+    const result = spawnSync(process.execPath, [
+      path.resolve('scripts/installer-bootstrap.mjs'),
+      'plan-production',
+      '--answers', path.join(value.root, 'unused-answers.json'),
+      '--package-root', value.packageRoot,
+      '--manifest', value.manifestFile,
+      '--signature-proof', value.signatureProofFile,
+      '--trust-policy', value.trustPolicyFile,
+    ], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, QG_BOOTSTRAP_MARKER: marker },
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/runtime module digest drift/iu);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it('refuses absolute and unaudited package-subpath runtime imports', () => {

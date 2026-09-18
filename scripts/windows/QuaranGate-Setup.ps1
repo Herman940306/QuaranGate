@@ -212,7 +212,7 @@ $reviewButton.Add_Click({
         $planArguments = @(
             '-d', $Distribution,
             '-u', $LinuxUser,
-            '--exec', 'node',
+            '--exec', '/usr/bin/env', '-u', 'NODE_OPTIONS', '-u', 'NODE_PATH', 'node',
             "$linuxPackageRoot/scripts/installer-bootstrap.mjs",
             'plan-production'
         ) + $releaseArguments
@@ -276,7 +276,7 @@ Only this exact verified release, host identity, answers, digest and consent set
         $applyArguments = @(
             '-d', $Distribution,
             '-u', $LinuxUser,
-            '--exec', 'node',
+            '--exec', '/usr/bin/env', '-u', 'NODE_OPTIONS', '-u', 'NODE_PATH', 'node',
             "$linuxPackageRoot/scripts/installer-bootstrap.mjs",
             'apply-production'
         ) + $releaseArguments + @('--consent', $linuxConsent)

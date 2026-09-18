@@ -1,9 +1,15 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createReleasePackageManifest, verifyReleasePackageManifest } from '../../src/installer/releasePackage.js';
+import {
+  createDisposableGitChildRoot,
+  createDisposableGitRoot,
+  initializeDisposableGitRepository,
+  runDisposableGit,
+} from '../helpers/disposableGit.js';
 import {
   BUILD_TYPE,
   BUILDER_ID,
@@ -71,16 +77,14 @@ function bundleFor(statement: any) {
   };
 }
 
-function git(cwd: string, args: string[]) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(r.stderr || r.stdout);
-  return r.stdout.trim();
+function git(cwd: string, args: string[], inherited = process.env) {
+  return runDisposableGit(cwd, args, inherited);
 }
 
-function e2eFixture() {
-  const root = mkdtempSync(join(resolve('..'), 'qg-prov-')); createdRoots.push(root);
-  const repo = join(root, 'repo'); const ev = join(root, 'evidence'); const bin = join(repo, 'test-bin');
-  mkdirSync(repo); mkdirSync(ev); mkdirSync(bin);
+function e2eFixture(inherited = process.env) {
+  const root = createDisposableGitRoot('qg-prov-'); createdRoots.push(root);
+  const repo = createDisposableGitChildRoot(root, 'repo'); const ev = join(root, 'evidence'); const bin = join(repo, 'test-bin');
+  mkdirSync(ev); mkdirSync(bin);
   mkdirSync(join(repo, 'security'));
   const policyBytes = readFileSync('security/release-policy.json');
   const toolchainBytes = readFileSync('security/release-toolchain.json');
@@ -90,8 +94,9 @@ function e2eFixture() {
   const fake = join(bin, 'cosign');
   writeFileSync(fake, `#!/bin/sh\nif [ "$1" = "version" ]; then echo "GitVersion: v${'$'}{FAKE_COSIGN_VERSION:-${COSIGN_VERSION}}"; exit 0; fi\nprintf '%s\\n' "$@" > "$FAKE_COSIGN_ARGS_FILE"\nexit "${'$'}{FAKE_COSIGN_VERIFY_EXIT:-0}"\n`);
   chmodSync(fake, 0o755);
-  git(repo, ['init', '-q']); git(repo, ['config', 'user.email', 'test@example.invalid']); git(repo, ['config', 'user.name', 'SH05 Test']);
-  git(repo, ['add', '.']); git(repo, ['commit', '-q', '-m', 'fixture']);
+  initializeDisposableGitRepository(repo, inherited);
+  git(repo, ['config', 'user.email', 'test@example.invalid'], inherited); git(repo, ['config', 'user.name', 'SH05 Test'], inherited);
+  git(repo, ['add', '.'], inherited); git(repo, ['commit', '-q', '-m', 'fixture'], inherited);
   const commit = git(repo, ['rev-parse', 'HEAD']); const tree = git(repo, ['rev-parse', 'HEAD^{tree}']); const branch = git(repo, ['branch', '--show-current']);
   const s = { repository: null, branch, commit, tree, clean: true };
   const sourceBinding = join(ev, 'source.json'); const manifestPath = join(ev, 'manifest.json'); const sbom = join(ev, 'release.spdx.json');
@@ -186,6 +191,18 @@ describe('SH-05 SLSA v1 provenance and Cosign attestation gate', () => {
     expect(args).toContain('verify-blob-attestation'); expect(args).toContain('--bundle'); expect(args).toContain('--key');
     expect(args).toContain('--type'); expect(args).toContain(PREDICATE_TYPE); expect(args).toContain('--digestAlg'); expect(args).toContain('sha256');
     expect(git(f.repo, ['status', '--short'])).toBe('');
+  });
+
+  it('cannot redirect fixture Git mutations through hostile inherited repository controls', () => {
+    const victim = createDisposableGitRoot('qg-source-binding-victim-'); createdRoots.push(victim);
+    initializeDisposableGitRepository(victim);
+    git(victim, ['config', 'user.email', 'owner@example.invalid']); git(victim, ['config', 'user.name', 'Disposable Owner']);
+    writeFileSync(join(victim, 'sentinel.txt'), 'preserve\n'); git(victim, ['add', '.']); git(victim, ['commit', '-q', '-m', 'baseline']);
+    const before = git(victim, ['rev-parse', 'HEAD']);
+    const f = e2eFixture({ ...process.env, GIT_DIR: join(victim, '.git'), GIT_WORK_TREE: victim });
+    expect(git(victim, ['rev-parse', 'HEAD'])).toBe(before);
+    expect(git(victim, ['config', 'user.name'])).toBe('Disposable Owner');
+    expect(git(f.repo, ['show', '-s', '--format=%an <%ae>'])).toBe('SH05 Test <test@example.invalid>');
   });
 
   it('fails closed before Cosign when the signed DSSE statement differs from the generated release truth', () => {

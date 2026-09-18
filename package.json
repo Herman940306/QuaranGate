@@ -6,7 +6,7 @@
   "description": "Standalone MCP gateway bridging approved MCP clients to explicitly authorized Docker target containers",
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { canonicalJson } from './npm-offline-bundle.mjs';
 import { BASE_IMAGE, assertNoRegistryActivity, cleanupLocalOciLayout, materializeLocalOciLayout, ociLayoutBuildContext, renderOfflineDockerfile } from './offline-local-base.mjs';
 
-const EXPECTED_LOCK_SHA256 = '5ad727697de394442f04514bc391e3367af98d7efb5fc822ef3d87d1cda1b570';
+const EXPECTED_LOCK_SHA256 = '15bdce912856da9b8eddddb49aa1e382e3515a00945fdd8c46d1fb8beb29f46b';
 const EXPECTED_TINI_SHA256 = '1358f1be32dc2a0dd8084dbda675c3b3dde8352b519b7b8a65573262551ad0fc';
 
 class AcceptanceError extends Error {}

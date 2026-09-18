@@ -1,26 +1,35 @@
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  assertDisposableGitRoot,
+  createDisposableGitRoot,
+  initializeDisposableGitRepository,
+  runDisposableGit,
+} from '../helpers/disposableGit.js';
+
+const createdRoots: string[] = [];
+afterEach(() => { while (createdRoots.length) rmSync(createdRoots.pop()!, { recursive: true, force: true }); });
 
 function git(repo: string, ...args: string[]) {
-  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
-  expect(r.status, r.stderr || r.stdout).toBe(0);
-  return r.stdout.trim();
+  return runDisposableGit(repo, args);
 }
 
-function repo() {
-  const root = mkdtempSync(join(tmpdir(), 'qg-source-binding-'));
-  git(root, 'init');
-  git(root, 'config', 'user.email', 'sh05@example.invalid');
-  git(root, 'config', 'user.name', 'SH05 Test');
-  git(root, 'remote', 'add', 'origin', 'https://github.com/Herman940306/QuaranGate.git');
+function repo(inherited = process.env) {
+  const root = createDisposableGitRoot('qg-source-binding-');
+  createdRoots.push(root);
+  initializeDisposableGitRepository(root, inherited);
+  runDisposableGit(root, ['config', 'user.email', 'sh05@example.invalid'], inherited);
+  runDisposableGit(root, ['config', 'user.name', 'SH05 Test'], inherited);
+  runDisposableGit(root, ['remote', 'add', 'origin', 'https://github.com/Herman940306/QuaranGate.git'], inherited);
   writeFileSync(join(root, '.gitignore'), 'node_modules\ndist/\n');
   writeFileSync(join(root, 'source.txt'), 'accepted\n');
-  git(root, 'add', '.'); git(root, 'commit', '-m', 'fixture');
+  runDisposableGit(root, ['add', '.'], inherited); runDisposableGit(root, ['commit', '-m', 'fixture'], inherited);
   mkdirSync(join(root, 'dist'));
   const evidence = mkdtempSync(join(tmpdir(), 'qg-source-binding-evidence-'));
+  createdRoots.push(evidence);
   const output = join(evidence, 'source-binding.json');
   return { root, output, evidence };
 }
@@ -36,6 +45,27 @@ describe('SH-05 Git-derived release source binding', () => {
     expect(receipt).toMatchObject({ schemaVersion: 1, gate: 'source-binding', status: 'PASS', source: { repository: 'https://github.com/Herman940306/QuaranGate.git', clean: true } });
     expect(receipt.source.commit).toBe(git(f.root, 'rev-parse', 'HEAD'));
     expect(receipt.source.tree).toBe(git(f.root, 'rev-parse', 'HEAD^{tree}'));
+  });
+
+  it('refuses a non-disposable source root and ignores hostile inherited Git selectors', () => {
+    expect(() => assertDisposableGitRoot(process.cwd())).toThrow(/active test temp directory|unowned name/u);
+    const unownedMatchingPath = mkdtempSync(join(tmpdir(), 'qg-source-binding-')); createdRoots.push(unownedMatchingPath);
+    expect(() => initializeDisposableGitRepository(unownedMatchingPath)).toThrow(/not created by the fixture helper/u);
+    const victim = createDisposableGitRoot('qg-source-binding-victim-'); createdRoots.push(victim);
+    initializeDisposableGitRepository(victim);
+    git(victim, 'config', 'user.email', 'owner@example.invalid'); git(victim, 'config', 'user.name', 'Disposable Owner');
+    writeFileSync(join(victim, 'sentinel.txt'), 'preserve\n'); git(victim, 'add', '.'); git(victim, 'commit', '-m', 'baseline');
+    const before = git(victim, 'rev-parse', 'HEAD');
+    const fixture = repo({
+      ...process.env,
+      GIT_DIR: join(victim, '.git'),
+      GIT_WORK_TREE: victim,
+      git_common_dir: join(victim, '.git'),
+      Git_Config_Global: join(victim, 'hostile-global-config'),
+    });
+    expect(git(victim, 'rev-parse', 'HEAD')).toBe(before);
+    expect(git(victim, 'config', 'user.name')).toBe('Disposable Owner');
+    expect(git(fixture.root, 'show', '-s', '--format=%an <%ae>')).toBe('SH05 Test <sh05@example.invalid>');
   });
 
   it('fails closed for tracked working-tree drift', () => {

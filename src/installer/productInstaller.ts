@@ -12,7 +12,7 @@ const CONTROL = /[\u0000-\u001f\u007f]/u;
 export const INSTALLER_SCHEMA_VERSION = 1 as const;
 export const MINIMUM_DOCKER_VERSION = '24.0.0';
 export const MINIMUM_COMPOSE_VERSION = '2.20.0';
-export const MINIMUM_NODE_VERSION = '22.0.0';
+export const MINIMUM_NODE_VERSION = '22.15.0';
 
 export type ReadinessStatus = 'READY' | 'REMEDIATION_REQUIRED' | 'UNSUPPORTED' | 'BLOCKED';
 export type ReadinessCheckStatus = 'PASS' | Exclude<ReadinessStatus, 'READY'>;

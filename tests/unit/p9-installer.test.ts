@@ -4,6 +4,7 @@ import {
   buildInstallPlan,
   evaluateSystemReadiness,
   mapClientPermissions,
+  MINIMUM_NODE_VERSION,
   profileDefaults,
   selectLocalAiProfile,
   type HostFacts,
@@ -98,6 +99,11 @@ function answers(overrides: Partial<InstallerAnswers> = {}): InstallerAnswers {
 }
 
 describe('P9 D1 system readiness', () => {
+  it('binds readiness to the first Node release with synchronous runtime module hooks', () => {
+    expect(MINIMUM_NODE_VERSION).toBe('22.15.0');
+    expect(evaluateSystemReadiness({ ...readyFacts(), node: { available: true, version: '22.15.0' } }).status).toBe('READY');
+  });
+
   it('classifies the supported WSL2/Docker toolchain as READY', () => {
     const result = evaluateSystemReadiness(readyFacts());
     expect(result.status).toBe('READY');
@@ -108,6 +114,7 @@ describe('P9 D1 system readiness', () => {
     ['missing Docker', { docker: { available: false } }, 'REMEDIATION_REQUIRED', 'DOCKER_MISSING'],
     ['unreachable daemon', { docker: { available: true, version: '29.7.2', daemonReachable: false } }, 'BLOCKED', 'DOCKER_DAEMON_UNREACHABLE'],
     ['incompatible Docker', { docker: { available: true, version: '23.0.0', daemonReachable: true } }, 'REMEDIATION_REQUIRED', 'DOCKER_VERSION_UNSUPPORTED'],
+    ['incompatible Node for runtime module guard', { node: { available: true, version: '22.14.0' } }, 'REMEDIATION_REQUIRED', 'NODE_VERSION_UNSUPPORTED'],
     ['missing Compose', { compose: { available: false } }, 'REMEDIATION_REQUIRED', 'COMPOSE_MISSING'],
     ['inadequate memory', { memoryBytes: 3 * gib }, 'BLOCKED', 'MEMORY_INADEQUATE'],
   ])('%s is classified truthfully', (_name, patch, status, code) => {

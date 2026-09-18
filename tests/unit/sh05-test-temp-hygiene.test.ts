@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createOwnedTestTempRoot,
+  isolatedTestEnvironment,
   ownedTestTempRootPath,
   runVitestClean,
   signalExitCode,
@@ -53,6 +54,29 @@ describe('SH-05 self-cleaning Vitest temp-root wrapper', () => {
     expect(args.slice(1)).toEqual(['run', '--configLoader', 'native', 'tests/unit', '--no-file-parallelism']);
   });
 
+  it('removes inherited Git repository controls before any test process starts', () => {
+    const env = isolatedTestEnvironment('/tmp/q', {
+      PATH: '/usr/bin',
+      GIT_DIR: '/valuable/repository/.git',
+      GIT_WORK_TREE: '/valuable/repository',
+      GIT_COMMON_DIR: '/valuable/repository/.git',
+      GIT_INDEX_FILE: '/valuable/repository/.git/index',
+      GIT_AUTHOR_NAME: 'Fixture Identity',
+      git_config_global: '/valuable/global-config',
+      Git_Object_Directory: '/valuable/repository/.git/objects',
+    });
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.GIT_DIR).toBeUndefined();
+    expect(env.GIT_WORK_TREE).toBeUndefined();
+    expect(env.GIT_COMMON_DIR).toBeUndefined();
+    expect(env.GIT_INDEX_FILE).toBeUndefined();
+    expect(env.GIT_AUTHOR_NAME).toBeUndefined();
+    expect(env.git_config_global).toBeUndefined();
+    expect(env.Git_Object_Directory).toBeUndefined();
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe('1');
+    expect(env.GIT_CONFIG_GLOBAL).toBe('/tmp/q/.test-global-gitconfig');
+  });
+
   it('contains fixture files under the owned root and removes only that root after success', async () => {
     const parent = mkdtempSync(join(tmpdir(), 'qgt-wrapper-test-')); owned.push(parent);
     const sentinel = join(parent, 'outside-sentinel'); writeFileSync(sentinel, 'keep');
@@ -89,4 +113,3 @@ describe('SH-05 self-cleaning Vitest temp-root wrapper', () => {
     expect(signalExitCode('SIGUSR1')).toBe(1);
   });
 });
-

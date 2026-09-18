@@ -199,6 +199,15 @@ describe('P9 detached release signing trust', () => {
 });
 
 describe('P9 Windows click-install source boundary', () => {
+  it('declares the runtime-hook Node floor consistently in package metadata', () => {
+    const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as { engines?: { node?: string } };
+    const packageLock = JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8')) as {
+      packages?: Record<string, { engines?: { node?: string } }>;
+    };
+    expect(packageJson.engines?.node).toBe('>=22.15.0');
+    expect(packageLock.packages?.['']?.engines?.node).toBe('>=22.15.0');
+  });
+
   it('uses a native guided UI and the accepted WSL boundary without hidden elevation', () => {
     const setup = readFileSync(resolve(root, 'scripts/windows/QuaranGate-Setup.ps1'), 'utf8');
     const launcher = readFileSync(resolve(root, 'scripts/windows/QuaranGate-Setup.cmd'), 'utf8');
@@ -206,7 +215,8 @@ describe('P9 Windows click-install source boundary', () => {
     expect(setup).toContain('ShowDialog()');
     expect(setup).toContain('UPSTREAM_P7_PENDING');
     expect(setup).toContain('http://127.0.0.1:8787');
-    expect(setup).toContain("'--exec', 'node'");
+    expect(setup).toContain("'--exec', '/usr/bin/env', '-u', 'NODE_OPTIONS', '-u', 'NODE_PATH', 'node'");
+    expect(setup).not.toContain("'--exec', 'node'");
     expect(setup).toContain('$linuxPackageRoot/scripts/installer-bootstrap.mjs');
     expect(setup).not.toContain('$linuxPackageRoot/dist/installer/cli.js');
     expect(setup).toContain('SIGNED_RELEASE_REVIEW_REQUIRED');
