@@ -408,17 +408,56 @@ function packageNameFromSpecifier(specifier) {
   return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
 }
 
+function stripJavaScriptComments(source) {
+  let out = '';
+  let index = 0;
+  let state = 'code';
+  while (index < source.length) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (state === 'code') {
+      if (char === '/' && next === '/') { out += '  '; index += 2; state = 'line-comment'; continue; }
+      if (char === '/' && next === '*') { out += '  '; index += 2; state = 'block-comment'; continue; }
+      if (char === '\'' || char === '"' || char === '`') { out += char; index += 1; state = char; continue; }
+      out += char; index += 1; continue;
+    }
+    if (state === 'line-comment') {
+      out += char === '\n' || char === '\r' ? char : ' ';
+      index += 1;
+      if (char === '\n' || char === '\r') state = 'code';
+      continue;
+    }
+    if (state === 'block-comment') {
+      if (char === '*' && next === '/') { out += '  '; index += 2; state = 'code'; continue; }
+      out += char === '\n' || char === '\r' ? char : ' ';
+      index += 1;
+      continue;
+    }
+    out += char;
+    index += 1;
+    if (char === '\\') {
+      if (index < source.length) { out += source[index]; index += 1; }
+      continue;
+    }
+    if (char === state) state = 'code';
+  }
+  if (state === 'block-comment') fail('installer runtime contains an unterminated block comment: ' + source);
+  return out;
+}
+
 function jsSpecifiers(source, relative) {
-  if (/\bimport\s*\((?!\s*['"])/u.test(source)
-    || /\brequire\s*\((?!\s*['"])/u.test(source)
-    || /\bmodule\.require\s*\(/u.test(source)) {
+  const uncommented = stripJavaScriptComments(source);
+  if (/\bimport\s*\((?!\s*['"])/u.test(uncommented)
+    || /\brequire\s*\((?!\s*['"])/u.test(uncommented)
+    || /\bmodule\s*\.\s*require\s*\(/u.test(uncommented)
+    || /\bcreateRequire\s*\(/u.test(uncommented)) {
     fail('installer runtime contains an opaque module load that cannot be manifest-bound: ' + relative);
   }
   return [
-    ...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/gu),
-    ...source.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/gu),
-    ...source.matchAll(/\bimport\s+['"]([^'"]+)['"]/gu),
-    ...source.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gu),
+    ...uncommented.matchAll(/\bfrom\s+['"]([^'"]+)['"]/gu),
+    ...uncommented.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/gu),
+    ...uncommented.matchAll(/\bimport\s+['"]([^'"]+)['"]/gu),
+    ...uncommented.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gu),
   ].map((match) => match[1]);
 }
 

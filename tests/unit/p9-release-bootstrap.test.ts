@@ -272,15 +272,25 @@ describe('P9 production release bootstrap trust root', () => {
     expect(existsSync(delegated.cwd)).toBe(false);
   });
 
-  it('refuses an opaque dynamic module load that cannot be manifest-bound', () => {
-    const value = fixture(Buffer.from(
-      'const runtimePackage = "yaml";\n'
-      + 'await import(runtimePackage);\n',
-      'utf8',
-    ));
+  it('refuses opaque or comment-obscured runtime loaders that cannot be manifest-bound', () => {
+    for (const source of [
+      'const runtimePackage = "yaml";\nawait import(runtimePackage);\n',
+      'await import/* hidden separator */("/tmp/quarangate-untrusted-runtime.mjs");\n',
+      'require/* hidden separator */("/tmp/quarangate-untrusted-runtime.cjs");\n',
+      'module/* hidden separator */.require("/tmp/quarangate-untrusted-runtime.cjs");\n',
+      'import { createRequire } from "node:module";\nconst runtimeRequire = createRequire(import.meta.url);\nruntimeRequire("/tmp/quarangate-untrusted-runtime.cjs");\n',
+    ]) {
+      const value = fixture(Buffer.from(source, 'utf8'));
+      const result = bootstrapVerify(value);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/opaque module load|manifest-bound|absolute module imports are refused/iu);
+    }
+  });
+
+  it('normalizes comments before extracting static runtime imports', () => {
+    const value = fixture(Buffer.from('import { readFileSync } from /* hidden separator */ "node:fs";\nvoid readFileSync;\n', 'utf8'));
     const result = bootstrapVerify(value);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toMatch(/opaque module load|manifest-bound/iu);
+    expect(result.status).toBe(0);
   });
 
   it('refuses absolute and unaudited package-subpath runtime imports', () => {
