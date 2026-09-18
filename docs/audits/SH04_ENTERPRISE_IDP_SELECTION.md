@@ -110,3 +110,9 @@ Not accepted or inferred:
 - any change to QuaranGate authorization.
 
 Those require a separately scoped source implementation and live qualification against the exact then-current canonical revision.
+
+## Freeze/replay note
+
+The first immutable decision freeze, `eebf2cc131c1cd73e9cdb17667f46b4b19aa7150`, is preserved as **NOT ACCEPTED**. Its full-unit replay reached the repository tests and failed exactly one stale governance assertion: the SH-15 operational-security regression still required the historical literal that SH-04 was owner-decision-gated.
+
+R1 updates that regression to require the new closed Entra/generic-OIDC decision and the explicit non-authority/non-live claims in this audit. No authentication runtime, egress policy, credential handling, dependency, Compose, Docker, provider, gateway, principal, scope, or deployment behavior is changed by R1.

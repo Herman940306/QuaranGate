@@ -87,7 +87,11 @@ describe('SH-15 operational security', () => {
     for (const heading of requiredSections) expect(operational).toContain(heading);
     expect(operational).toContain('SH-14 genuine independent external pentest execution/retest is external and is not self-certified');
     expect(operational).toContain('SH-03 MCP SDK/protocol migration remains dependent');
-    expect(operational).toContain('SH-04 first enterprise IdP selection is an owner decision gate');
+    expect(operational).toContain('SH-04 owner selection is CLOSED: Microsoft Entra ID is the first enterprise IdP profile');
+    const sh04 = readFileSync('docs/audits/SH04_ENTERPRISE_IDP_SELECTION.md', 'utf8');
+    expect(sh04).toContain('SH04_IDP_SELECTION=MICROSOFT_ENTRA_ID / GENERIC_OIDC_CONTRACT');
+    expect(sh04).toContain('IMPLEMENTATION_NOT_STARTED / LIVE_QUALIFICATION_NOT_RUN');
+    expect(sh04).toContain('IdP roles, groups, email addresses, display names, tenant roles, directory roles, or arbitrary token claims must **not** automatically become QuaranGate permissions');
     expect(operational).toContain('append-only/immutable collector');
     expect(operational).toContain('DOCKER_AUTHORITY_TOKEN');
     expect(operational).toContain('must be independently generated');
