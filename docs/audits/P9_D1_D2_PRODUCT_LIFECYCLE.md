@@ -319,6 +319,12 @@ Final pre-freeze replay on the complete candidate:
 
 These are pre-commit source qualification results. The immutable-candidate replay must still be repeated after freeze and must bind the exact commit/tree; this section does not predeclare that later verdict.
 
+### Freeze finding and R1 remediation
+
+The first immutable current-line freeze, `80f34d003fb4006cdffa937a610cade15d209018`, is preserved as **NOT ACCEPTED**. Its commit metadata exposed a packaging defect before immutable replay: `scripts/production-runtime-start.sh` was tracked as mode `100644` even though the production release profile requires that installed entrypoint to be executable. Canonical was not moved.
+
+R1 changes only the tracked executable mode of that start script, adds a regression that requires both production runtime entrypoints to carry executable permission bits, and records this finding. The immutable R1 candidate must still pass the complete exact-commit replay before review/promotion.
+
 ### Remaining external/release boundary
 
 Even after source freeze/promotion, P9 is not a live release PASS until the external release artifacts and lifecycle rehearsal exist. Still required:

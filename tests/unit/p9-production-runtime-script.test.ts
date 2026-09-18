@@ -1,8 +1,17 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('P9 production runtime start cleanup', () => {
+  it('tracks both production runtime entrypoints as executable files', () => {
+    for (const relative of [
+      'scripts/production-runtime-start.sh',
+      'scripts/production-runtime-stop.sh',
+    ]) {
+      expect(statSync(path.resolve(relative)).mode & 0o111).not.toBe(0);
+    }
+  });
+
   it('covers explicit failure exits with EXIT cleanup and disarms cleanup only after full success', () => {
     const source = readFileSync(path.resolve('scripts/production-runtime-start.sh'), 'utf8');
 
