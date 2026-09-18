@@ -1,5 +1,6 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { existsSync, linkSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { builtinModules } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -18,16 +19,96 @@ function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function fixture(cliBytes = Buffer.from('export {};\n')) {
+const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map((name) => 'node:' + name)]);
+
+function jsSpecifiers(source: string): string[] {
+  return [
+    ...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/gu),
+    ...source.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/gu),
+    ...source.matchAll(/\bimport\s+['"]([^'"]+)['"]/gu),
+    ...source.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gu),
+  ].map((match) => match[1]!);
+}
+
+function normalizePackageRelative(value: string): string {
+  return path.posix.normalize(value.replace(/^\.\//u, ''));
+}
+
+function resolvePackageImport(packageName: string, fromRelative: string, specifier: string): string {
+  const packageRoot = path.join(process.cwd(), 'node_modules', packageName);
+  const base = normalizePackageRelative(path.posix.join(path.posix.dirname(fromRelative), specifier));
+  const ext = path.posix.extname(base);
+  const candidates = ext
+    ? [base]
+    : [base + '.js', base + '.mjs', base + '.cjs', path.posix.join(base, 'index.js'), path.posix.join(base, 'index.mjs'), path.posix.join(base, 'index.cjs')];
+  const resolved = candidates.find((candidate) => existsSync(path.join(packageRoot, ...candidate.split('/'))));
+  if (!resolved) throw new Error(`Cannot resolve ${specifier} from ${packageName}/${fromRelative}`);
+  return resolved;
+}
+
+function runtimePackageEntry(packageName: 'yaml' | 'zod'): string {
+  const packageJson = JSON.parse(readFileSync(path.join(process.cwd(), 'node_modules', packageName, 'package.json'), 'utf8')) as {
+    main?: string;
+    module?: string;
+    exports?: Record<string, { node?: string; import?: string }>;
+  };
+  if (packageName === 'yaml') return normalizePackageRelative(packageJson.exports?.['.']?.node ?? packageJson.main ?? './dist/index.js');
+  return normalizePackageRelative(packageJson.exports?.['.']?.import ?? packageJson.module ?? packageJson.main ?? './index.js');
+}
+
+function runtimePackageFiles(packageName: 'yaml' | 'zod'): string[] {
+  const packageRoot = path.join(process.cwd(), 'node_modules', packageName);
+  const seen = new Set<string>(['package.json']);
+  const visit = (relative: string): void => {
+    if (seen.has(relative)) return;
+    seen.add(relative);
+    const source = readFileSync(path.join(packageRoot, ...relative.split('/')), 'utf8');
+    for (const specifier of jsSpecifiers(source)) {
+      if (NODE_BUILTINS.has(specifier)) continue;
+      if (!specifier.startsWith('.') && !specifier.startsWith('/')) {
+        if (specifier === packageName) {
+          visit(runtimePackageEntry(packageName));
+          continue;
+        }
+        throw new Error(`Unexpected external dependency from ${packageName}: ${specifier}`);
+      }
+      visit(resolvePackageImport(packageName, relative, specifier));
+    }
+  };
+  visit(runtimePackageEntry(packageName));
+  return [...seen].map((relative) => `node_modules/${packageName}/${relative}`).sort();
+}
+
+function addRealRuntimePackages(payloads: Map<string, Buffer>): void {
+  for (const packageName of ['yaml', 'zod'] as const) {
+    for (const relative of runtimePackageFiles(packageName)) {
+      payloads.set(relative, readFileSync(path.join(process.cwd(), ...relative.split('/'))));
+    }
+  }
+}
+
+function fixture(
+  cliBytes = Buffer.from('export {};\n'),
+  options: { realRuntimePackages?: boolean } = {},
+) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-'));
   const payloadRoot = path.join(root, 'payload');
   mkdirSync(payloadRoot, { recursive: true });
 
-  const files = [...PRODUCTION_REQUIRED_PAYLOAD_FILES].sort().map((relative, index) => {
+  const payloads = new Map<string, Buffer>();
+  [...PRODUCTION_REQUIRED_PAYLOAD_FILES].sort().forEach((relative, index) => {
     let bytes = Buffer.from('payload-' + String(index) + '-' + relative, 'utf8');
     if (relative === 'package.json') bytes = Buffer.from('{"name":"quarangate-release","private":true,"type":"module"}\n');
     if (relative === 'package-lock.json') bytes = Buffer.from('{"name":"quarangate-release","lockfileVersion":3,"packages":{}}\n');
+    if (relative === 'node_modules/yaml/package.json' || relative === 'node_modules/zod/package.json') {
+      bytes = readFileSync(path.join(process.cwd(), ...relative.split('/')));
+    }
     if (relative === 'dist/installer/cli.js') bytes = cliBytes;
+    payloads.set(relative, bytes);
+  });
+  if (options.realRuntimePackages) addRealRuntimePackages(payloads);
+
+  const files = [...payloads.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([relative, bytes]) => {
     const target = path.join(payloadRoot, ...relative.split('/'));
     mkdirSync(path.dirname(target), { recursive: true });
     const mode = relative === 'scripts/production-runtime-start.sh'
@@ -189,6 +270,78 @@ describe('P9 production release bootstrap trust root', () => {
       expect(existsSync(delegated.argv[index]!)).toBe(false);
     }
     expect(existsSync(delegated.cwd)).toBe(false);
+  });
+
+  it('refuses an opaque dynamic module load that cannot be manifest-bound', () => {
+    const value = fixture(Buffer.from(
+      'const runtimePackage = "yaml";\n'
+      + 'await import(runtimePackage);\n',
+      'utf8',
+    ));
+    const result = bootstrapVerify(value);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/opaque module load|manifest-bound/iu);
+  });
+
+  it('refuses an incomplete audited package runtime graph before CLI handoff', () => {
+    const markerRoot = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-incomplete-runtime-'));
+    const marker = path.join(markerRoot, 'executed.txt');
+    const cliBytes = Buffer.from(
+      'import YAML from "yaml";\n'
+      + 'import { z } from "zod";\n'
+      + 'import { writeFileSync } from "node:fs";\n'
+      + 'writeFileSync(process.env.QG_BOOTSTRAP_MARKER, String(Boolean(YAML.parse)) + String(Boolean(z.object)));\n',
+      'utf8',
+    );
+    const value = fixture(cliBytes);
+    const result = spawnSync(process.execPath, [
+      path.resolve('scripts/installer-bootstrap.mjs'),
+      'plan-production',
+      '--answers', path.join(value.root, 'unused-answers.json'),
+      '--package-root', value.packageRoot,
+      '--manifest', value.manifestFile,
+      '--signature-proof', value.signatureProofFile,
+      '--trust-policy', value.trustPolicyFile,
+    ], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, QG_BOOTSTRAP_MARKER: marker },
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/runtime package|installer runtime import|missing from the manifest/iu);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('proves the audited yaml and zod runtime package graph can execute from the verified staging copy', () => {
+    const markerRoot = mkdtempSync(path.join(os.tmpdir(), 'qg-bootstrap-runtime-'));
+    const marker = path.join(markerRoot, 'executed.txt');
+    const cliBytes = Buffer.from(
+      'import YAML from "yaml";\n'
+      + 'import { z } from "zod";\n'
+      + 'import { writeFileSync } from "node:fs";\n'
+      + 'writeFileSync(process.env.QG_BOOTSTRAP_MARKER, JSON.stringify({ parsed: YAML.parse("a: 1").a, valid: z.object({ a: z.number() }).parse({ a: 1 }).a }));\n',
+      'utf8',
+    );
+    const value = fixture(cliBytes, { realRuntimePackages: true });
+    const result = spawnSync(process.execPath, [
+      path.resolve('scripts/installer-bootstrap.mjs'),
+      'plan-production',
+      '--answers', path.join(value.root, 'unused-answers.json'),
+      '--package-root', value.packageRoot,
+      '--manifest', value.manifestFile,
+      '--signature-proof', value.signatureProofFile,
+      '--trust-policy', value.trustPolicyFile,
+    ], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      env: { ...process.env, QG_BOOTSTRAP_MARKER: marker },
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(marker, 'utf8'))).toEqual({ parsed: 1, valid: 1 });
   });
 
   it('refuses an unmanifested executable before normal installer code can be loaded', () => {

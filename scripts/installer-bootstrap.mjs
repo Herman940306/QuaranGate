@@ -24,6 +24,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { builtinModules } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -58,6 +59,7 @@ const INSTALLER_RUNTIME_MODULES = [
   'dist/shared/errors.js',
 ];
 const INSTALLER_RUNTIME_PACKAGES = ['yaml', 'zod'];
+const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map((name) => 'node:' + name)]);
 const REQUIRED_PAYLOAD = [
   'compose.yaml',
   ...INSTALLER_RUNTIME_MODULES,
@@ -401,6 +403,124 @@ function verifyClosedPayload(root, manifest, stageRoot = null) {
   return { files: seenFiles.size, directories: seenDirs.size, bytes: totalBytes };
 }
 
+function packageNameFromSpecifier(specifier) {
+  const parts = specifier.split('/');
+  return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
+
+function jsSpecifiers(source, relative) {
+  if (/\bimport\s*\((?!\s*['"])/u.test(source)
+    || /\brequire\s*\((?!\s*['"])/u.test(source)) {
+    fail('installer runtime contains an opaque module load that cannot be manifest-bound: ' + relative);
+  }
+  return [
+    ...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/gu),
+    ...source.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/gu),
+    ...source.matchAll(/\bimport\s+['"]([^'"]+)['"]/gu),
+    ...source.matchAll(/\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gu),
+  ].map((match) => match[1]);
+}
+
+function normalizePackageRelative(value, label) {
+  const normalized = path.posix.normalize(value.replace(/^\.\//u, ''));
+  if (!normalized || normalized === '.' || normalized.startsWith('../') || path.posix.isAbsolute(normalized) || normalized.includes('\\')) {
+    fail(label + ' resolves outside its package root');
+  }
+  return normalized;
+}
+
+function resolveManifestedImport(fromRelative, specifier, manifestPaths) {
+  const base = normalizePackageRelative(path.posix.join(path.posix.dirname(fromRelative), specifier), 'runtime import');
+  const ext = path.posix.extname(base);
+  const candidates = ext
+    ? [base]
+    : [base + '.js', base + '.mjs', base + '.cjs', path.posix.join(base, 'index.js'), path.posix.join(base, 'index.mjs'), path.posix.join(base, 'index.cjs')];
+  const resolved = candidates.find((candidate) => manifestPaths.has(candidate));
+  if (!resolved) fail('installer runtime import is missing from the manifest: ' + specifier + ' declared by ' + fromRelative);
+  return resolved;
+}
+
+function packageJsonFromRoot(root, packageName) {
+  return JSON.parse(readFileSync(path.join(root, 'node_modules', packageName, 'package.json'), 'utf8'));
+}
+
+function packageEntryPoint(packageJson, packageName) {
+  if (packageName === 'yaml') {
+    const dot = packageJson.exports?.['.'];
+    return normalizePackageRelative(dot?.node ?? packageJson.main ?? './dist/index.js', 'yaml entrypoint');
+  }
+  if (packageName === 'zod') {
+    const dot = packageJson.exports?.['.'];
+    return normalizePackageRelative(dot?.import ?? packageJson.module ?? packageJson.main ?? './index.js', 'zod entrypoint');
+  }
+  fail('installer runtime imports an unaudited package: ' + packageName);
+}
+
+function verifyInstallerRuntimeClosure(root, manifest) {
+  const manifestPaths = new Set(manifest.files.map((file) => file.path));
+  const localSeen = new Set();
+  const packageSeen = new Set();
+  const importedPackages = new Set();
+
+  const readManifestedJs = (relative) => {
+    if (!manifestPaths.has(relative)) fail('installer runtime file is missing from the manifest: ' + relative);
+    const absolute = path.join(root, ...relative.split('/'));
+    return readFileSync(absolute, 'utf8');
+  };
+
+  const visitLocal = (relative) => {
+    if (localSeen.has(relative)) return;
+    localSeen.add(relative);
+    for (const specifier of jsSpecifiers(readManifestedJs(relative), relative)) {
+      if (NODE_BUILTINS.has(specifier)) continue;
+      if (specifier.startsWith('.') || specifier.startsWith('/')) {
+        visitLocal(resolveManifestedImport(relative, specifier, manifestPaths));
+        continue;
+      }
+      const pkg = packageNameFromSpecifier(specifier);
+      if (!INSTALLER_RUNTIME_PACKAGES.includes(pkg)) {
+        fail('installer runtime imports an unaudited package: ' + pkg);
+      }
+      importedPackages.add(pkg);
+    }
+  };
+
+  const visitPackage = (packageName, packageRelative) => {
+    const relative = 'node_modules/' + packageName + '/' + packageRelative;
+    if (packageSeen.has(relative)) return;
+    packageSeen.add(relative);
+    for (const specifier of jsSpecifiers(readManifestedJs(relative), relative)) {
+      if (NODE_BUILTINS.has(specifier)) continue;
+      if (specifier.startsWith('.') || specifier.startsWith('/')) {
+        const inner = resolveManifestedImport(relative, specifier, manifestPaths);
+        const prefix = 'node_modules/' + packageName + '/';
+        if (!inner.startsWith(prefix)) fail('runtime package import escapes package root: ' + relative);
+        visitPackage(packageName, inner.slice(prefix.length));
+        continue;
+      }
+      if (specifier === packageName) {
+        visitPackage(packageName, packageEntryPoint(packageJsonFromRoot(root, packageName), packageName));
+        continue;
+      }
+      fail('runtime package imports an external package not admitted into the installer closure: ' + specifier);
+    }
+  };
+
+  for (const relative of INSTALLER_RUNTIME_MODULES) visitLocal(relative);
+  for (const packageName of importedPackages) {
+    const packageJsonPath = 'node_modules/' + packageName + '/package.json';
+    if (!manifestPaths.has(packageJsonPath)) fail('runtime package metadata is missing from the manifest: ' + packageName);
+    const packageJson = packageJsonFromRoot(root, packageName);
+    visitPackage(packageName, packageEntryPoint(packageJson, packageName));
+  }
+
+  return {
+    localFiles: localSeen.size,
+    packageFiles: packageSeen.size,
+    packages: [...importedPackages].sort(),
+  };
+}
+
 function verifyBootstrapInputs({ packageRoot, manifestFile, signatureProofFile, trustPolicyFile }) {
   const root = canonicalPackageRoot(packageRoot);
   const manifestPath = canonicalExternalFile(manifestFile, 'release manifest');
@@ -415,6 +535,7 @@ function verifyBootstrapInputs({ packageRoot, manifestFile, signatureProofFile, 
   const proof = validateSignatureProof(readJson(proofPath, 'release signature proof'), manifest);
   const signingIdentity = verifyDetachedSignature(manifest, proof, trustPolicy);
   const payload = verifyClosedPayload(root, manifest);
+  const runtimeClosure = verifyInstallerRuntimeClosure(root, manifest);
   return {
     root,
     manifest,
@@ -429,6 +550,8 @@ function verifyBootstrapInputs({ packageRoot, manifestFile, signatureProofFile, 
       signingKeyFingerprint: signingIdentity.publicKeyFingerprint,
       verifiedFiles: payload.files,
       verifiedBytes: payload.bytes,
+      runtimeFiles: runtimeClosure.localFiles + runtimeClosure.packageFiles,
+      runtimePackages: runtimeClosure.packages,
     },
   };
 }
@@ -438,8 +561,9 @@ function stageVerifiedPayload(root, manifest) {
   chmodSync(staged, 0o700);
   try {
     verifyClosedPayload(root, manifest, staged);
-    // Re-hash the private copy before any of its code is loaded.
+    // Re-hash the private copy and prove the installer graph before any of its code is loaded.
     verifyClosedPayload(staged, manifest);
+    verifyInstallerRuntimeClosure(staged, manifest);
     return staged;
   } catch (error) {
     rmSync(staged, { recursive: true, force: true });

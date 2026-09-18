@@ -89,4 +89,54 @@ describe('P9 production installer runtime closure', () => {
       expect(PRODUCTION_REQUIRED_PAYLOAD_FILES).toContain(`node_modules/${packageName}/package.json`);
     }
   });
+
+  it('loads the real CLI from an isolated runtime tree containing only the audited production packages', () => {
+    const graph = installerRuntimeGraph();
+    const isolated = mkdtempSync(path.join(os.tmpdir(), 'qg-p9-runtime-closure-'));
+    try {
+      writeFileSync(path.join(isolated, 'package.json'), '{"type":"module"}\n');
+
+      for (const sourceFile of graph.sourceFiles) {
+        if (!sourceFile.startsWith('src/') || !sourceFile.endsWith('.ts')) {
+          throw new Error(`Unexpected installer source path: ${sourceFile}`);
+        }
+        const source = readFileSync(path.join(root, sourceFile), 'utf8');
+        const relativeOutput = 'dist/' + sourceFile.slice('src/'.length, -'.ts'.length) + '.js';
+        const output = path.join(isolated, ...relativeOutput.split('/'));
+        mkdirSync(path.dirname(output), { recursive: true });
+        const transpiled = ts.transpileModule(source, {
+          compilerOptions: {
+            module: ts.ModuleKind.ES2022,
+            target: ts.ScriptTarget.ES2022,
+          },
+          fileName: sourceFile,
+        }).outputText;
+        writeFileSync(output, transpiled);
+      }
+
+      for (const packageName of PRODUCTION_INSTALLER_RUNTIME_PACKAGES) {
+        cpSync(
+          path.join(root, 'node_modules', packageName),
+          path.join(isolated, 'node_modules', packageName),
+          { recursive: true },
+        );
+      }
+
+      const env = { ...process.env };
+      delete env.NODE_OPTIONS;
+      delete env.NODE_PATH;
+      const result = spawnSync(process.execPath, [path.join(isolated, 'dist', 'installer', 'cli.js')], {
+        cwd: isolated,
+        encoding: 'utf8',
+        env,
+        timeout: 30_000,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/INSTALLER_BLOCKED: usage: cli\.js/u);
+      expect(result.stderr).not.toMatch(/ERR_MODULE_NOT_FOUND|Cannot find package|Cannot find module/u);
+    } finally {
+      rmSync(isolated, { recursive: true, force: true });
+    }
+  });
 });
