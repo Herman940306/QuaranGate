@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { releaseMaterialPlan, relativeRuntimeImports, sourcePayloadFile } from '../../scripts/p9-production-release-material.mjs';
+import { compareReleasePaths, releaseMaterialPlan, relativeRuntimeImports, sourcePayloadFile } from '../../scripts/p9-production-release-material.mjs';
 
 const commit = 'a'.repeat(40);
 
@@ -81,6 +81,19 @@ describe('P9 production release material builder', () => {
     expect(source).toContain("releasePackage.verifyReleasePayload");
     expect(source).toContain("lstatSync(plan.sourceRoot).isSymbolicLink()");
     expect(source).toContain("stat.nlink !== 1");
+  });
+
+  it('uses raw lexical path ordering required by the release schema instead of locale collation', () => {
+    const values = [
+      'node_modules/yaml/bin.mjs',
+      'node_modules/yaml/README.md',
+      'node_modules/yaml/LICENSE',
+    ];
+    expect([...values].sort(compareReleasePaths)).toEqual([
+      'node_modules/yaml/LICENSE',
+      'node_modules/yaml/README.md',
+      'node_modules/yaml/bin.mjs',
+    ]);
   });
 
   it('recursively resolves only relative audited dist imports for the temporary release contract', () => {

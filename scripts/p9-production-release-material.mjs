@@ -333,6 +333,14 @@ function copyRuntimePayload(coreImageId, payloadRoot, runtimeModules) {
   }
 }
 
+export function compareReleasePaths(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function canonicalPathCompare(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function normalizeAndCollectPayload(root) {
   const files = [];
   const walk = (directory, prefix = '') => {
@@ -359,7 +367,7 @@ function normalizeAndCollectPayload(root) {
     }
   };
   walk(root);
-  files.sort((left, right) => left.path.localeCompare(right.path));
+  files.sort((left, right) => compareReleasePaths(left.path, right.path));
   return files;
 }
 
