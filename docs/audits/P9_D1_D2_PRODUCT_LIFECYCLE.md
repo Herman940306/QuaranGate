@@ -391,14 +391,37 @@ Focused R3/R4 evidence before final freeze:
 
 The owner-authorized strict self-audit also rechecked the release/consent and package-read boundaries: plan digest binds host/WSL, release, physical roots, project authority, provider/IDE/GitHub/remote/startup/backup choices and required consents; apply recomputes the plan and consent identity before mutation; signed payload bytes are re-read and re-hashed immediately before install-tree mutation; migration descriptors are digest-checked immediately before application; package parents may not be symlinks and final payload files must be single-link regular files.
 
-A final whole-repository exact-byte pre-freeze run and immutable replay are still required after this documentation reconciliation before source acceptance or guarded canonical promotion.
+The final current-line candidate then froze as `ef35173702b818ad46b54dc65537b31cd6085b9e` (parent `14f6174a111a2d63cb17c56e4f43bf78f498e6f5`, tree `a7cd0b824d4b2ae9bd462c156977e64b4ce19ace`) and passed the complete immutable replay:
+
+- combined current-line delta from base `2a576f2d8ce47f680ca3f102aa39dc13b0dc1315`: **29 paths**;
+- combined patch SHA-256: `198b6e9c1a4eeebcf4f94f667841a48376fcba3bcba85274619568791d3a4dc1`;
+- path/status SHA-256: `8272bf02d77b56d2b6e2f54ef1b5bcadc5b5283129a921f4a92c28402d5f9353`;
+- content-manifest SHA-256: `6703fa414f01e40886f975f3d394deb1d62d290ce90e1e2c623f91dbe5551794`;
+- P9: **116/116 PASS across 14/14 files**;
+- full unit corpus: **3180/3180 PASS across 163/163 files**;
+- typecheck: **PASS**;
+- build: **PASS**;
+- security invariants: **16/16 PASS across 12 Compose files and 7 Dockerfiles**;
+- fixed-seed fuzz: **PASS**, seed `1374718481`, **30,067 executions**, **395 coverage ranges**;
+- production runtime shell syntax: **PASS**;
+- immutable secret scan: **PASS**;
+- immutable forbidden-authority scan: **PASS**;
+- source/worktree cleanliness: **PASS**.
+
+Independent reviewer execution was not available: the configured real Kiro reviewer backend was unavailable, while non-Kiro agent execution is explicitly a deterministic local fake engine and therefore was not misrepresented as independent semantic review. Herman's standing owner-authorized strict self-audit exception applies to this source-only acceptance path.
+
+Verdict: `OWNER_AUTHORIZED_STRICT_SELF_AUDIT_PASS / P9_CURRENT_LINE_SOURCE_ACCEPTED`.
+
+This verdict is deliberately **not** independent review, signed-package acceptance, live Windows/WSL lifecycle acceptance, provider qualification, P10/A9 acceptance, P10-V acceptance, or P11 release approval.
+
+The guarded canonical source ref was subsequently advanced from exact `2a576f2d8ce47f680ca3f102aa39dc13b0dc1315` to exact accepted implementation source `ef35173702b818ad46b54dc65537b31cd6085b9e`. The accepted P9 implementation is therefore already on the canonical product line. A later documentation-only reconciliation descendant may advance the canonical ref without changing these accepted implementation bytes or their receipts.
 
 ### Remaining external/release boundary
 
 Even after source freeze/promotion, P9 is not a live release PASS until the external release artifacts and lifecycle rehearsal exist. Still required:
 
-- immutable current-line candidate freeze and review;
-- guarded canonical promotion only if the canonical ref has not drifted;
+- source freeze/replay and owner-authorized strict self-audit: COMPLETE at `ef35173702b818ad46b54dc65537b31cd6085b9e`;
+- guarded canonical source promotion: COMPLETE for that accepted source;
 - exact P9 release manifest and detached Ed25519 proof for the frozen release candidate;
 - independently supplied installer trust policy;
 - a real signed `QuaranGate-Setup.exe` / trusted Windows packaging result and SHA-256;

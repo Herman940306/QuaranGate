@@ -1,6 +1,6 @@
 # QuaranGate Installer & Lifecycle Productization — D1/D2
 
-**Status:** Historical D1/D2 lifecycle source is integrated. A current-line production-install bridge remediation is source-qualified pre-freeze on canonical base `2a576f2d8ce47f680ca3f102aa39dc13b0dc1315`; immutable freeze/review/promotion remain pending. The real signed Windows release package and live production qualification remain pending.
+**Status:** Historical D1/D2 lifecycle source is integrated. The current-line production-install implementation is source-accepted under the owner-authorized strict self-audit exception at `ef35173702b818ad46b54dc65537b31cd6085b9e` (tree `a7cd0b824d4b2ae9bd462c156977e64b4ce19ace`) and was promoted to the canonical product line. Later documentation-only reconciliation descendants do not change that implementation acceptance identity. This is not independent review and does not claim signed-Windows-package or live production qualification. The real signed Windows release package and live production qualification remain pending.
 
 **Roadmap role:** D1 and D2 must close before A9 production hardening begins.
 
@@ -73,7 +73,7 @@ The deterministic unit/integration harness uses disposable roots and typed fake 
 
 The following remain outside this source qualification and must not be inferred as PASS:
 
-- immutable current-line remediation freeze, independent/read-only review (or explicitly classified owner-authorized self-audit if no independent reviewer is available), and guarded canonical promotion: PENDING;
+- current-line source freeze/replay and owner-authorized strict self-audit: PASS; guarded canonical promotion: COMPLETE at `ef35173702b818ad46b54dc65537b31cd6085b9e`; this is explicitly not independent review;
 - final signed `QuaranGate-Setup.exe` build: `DEFERRED_EXTERNAL_OWNER_CREDENTIAL` plus a trusted Windows packaging/AuthentiCode toolchain;
 - exact release-manifest/signature/trust/package regeneration against the eventual frozen release candidate: PENDING;
 - live Windows 11/WSL2 fresh-install, restart/recovery, upgrade, failed-upgrade rollback, repair, uninstall/data-preservation and reinstall rehearsal: NOT_RUN;
