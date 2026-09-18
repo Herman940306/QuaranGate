@@ -23,7 +23,7 @@ import {
   type ReleaseSignatureProof,
   type ReleaseTrustPolicy,
 } from './releasePackage.js';
-import { verifyProductionReleaseProfile } from './productionRelease.js';
+import { verifyProductionReleasePayloadClosure, verifyProductionReleaseProfile } from './productionRelease.js';
 import { assertInitialRuntimePlanActivationDeferred } from './runtimeConfig.js';
 import { executeProductionInstall } from './productionInstaller.js';
 import { WslProductionLifecyclePlatform } from './wslProductionPlatform.js';
@@ -281,8 +281,8 @@ export function loadVerifiedProductionRelease(paths: ProductionReleasePaths): Ve
   const signatureProofFile = canonicalInputFile(paths.signatureProofFile, MAX_PROOF_BYTES, 'release signature proof');
   const trustPolicyFile = canonicalInputFile(paths.trustPolicyFile, MAX_TRUST_BYTES, 'release trust policy');
 
-  if (isInside(packageRoot, trustPolicyFile)) {
-    fail('release trust policy must be supplied independently from release payload material');
+  if (isInside(packageRoot, manifestFile) || isInside(packageRoot, signatureProofFile) || isInside(packageRoot, trustPolicyFile)) {
+    fail('release manifest, signature proof and trust policy must be supplied independently from release payload material');
   }
 
   const manifest = readBoundedJson<ReleasePackageManifest>(manifestFile, MAX_MANIFEST_BYTES, 'release manifest');
@@ -293,6 +293,7 @@ export function loadVerifiedProductionRelease(paths: ProductionReleasePaths): Ve
   const bundle: TrustedReleaseBundle = { payloadRoot: packageRoot, manifest, signatureProof };
   const verified = verifyTrustedReleaseBundle(bundle, trustPolicy);
   verifyProductionReleaseProfile(verified.manifest);
+  verifyProductionReleasePayloadClosure(packageRoot, verified.manifest);
 
   return {
     packageRoot,

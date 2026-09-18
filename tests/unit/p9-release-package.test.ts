@@ -207,6 +207,8 @@ describe('P9 Windows click-install source boundary', () => {
     expect(setup).toContain('UPSTREAM_P7_PENDING');
     expect(setup).toContain('http://127.0.0.1:8787');
     expect(setup).toContain("'--exec', 'node'");
+    expect(setup).toContain('$linuxPackageRoot/scripts/installer-bootstrap.mjs');
+    expect(setup).not.toContain('$linuxPackageRoot/dist/installer/cli.js');
     expect(setup).toContain('SIGNED_RELEASE_REVIEW_REQUIRED');
     expect(setup).toContain("'plan-production'");
     expect(setup).toContain("'apply-production'");

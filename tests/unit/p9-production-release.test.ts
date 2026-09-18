@@ -3,7 +3,12 @@ import {
   createReleasePackageManifest,
   type ReleasePackageManifest,
 } from '../../src/installer/releasePackage.js';
-import { verifyProductionReleaseProfile } from '../../src/installer/productionRelease.js';
+import {
+  PRODUCTION_INSTALLER_RUNTIME_MODULES,
+  PRODUCTION_INSTALLER_RUNTIME_PACKAGES,
+  PRODUCTION_REQUIRED_PAYLOAD_FILES,
+  verifyProductionReleaseProfile,
+} from '../../src/installer/productionRelease.js';
 
 const commit = 'a'.repeat(40);
 const digest = (c: string) => `sha256:${c.repeat(64)}`;
@@ -29,18 +34,15 @@ function manifest(
       components: images.map((image) => image.component).sort(),
       migrations: [],
     },
-    files: [
-      { path: 'compose.yaml', sizeBytes: 1, digest: '1'.repeat(64), mode: 0o644 },
-      { path: 'dist/installer/cli.js', sizeBytes: 1, digest: '2'.repeat(64), mode: 0o644 },
-      { path: 'scripts/production-runtime-start.sh', sizeBytes: 1, digest: '3'.repeat(64), mode: 0o755 },
-      { path: 'scripts/production-runtime-stop.sh', sizeBytes: 1, digest: '4'.repeat(64), mode: 0o755 },
-      { path: 'scripts/windows/Inspect-QuaranGateProductionAutostart.ps1', sizeBytes: 1, digest: '5'.repeat(64), mode: 0o644 },
-      { path: 'scripts/windows/Install-QuaranGateProductionAutostart.ps1', sizeBytes: 1, digest: '6'.repeat(64), mode: 0o644 },
-      { path: 'scripts/windows/Open-QuaranGateControlCenter.ps1', sizeBytes: 1, digest: '7'.repeat(64), mode: 0o644 },
-      { path: 'scripts/windows/QuaranGate-Setup.cmd', sizeBytes: 1, digest: '8'.repeat(64), mode: 0o644 },
-      { path: 'scripts/windows/QuaranGate-Setup.ps1', sizeBytes: 1, digest: '9'.repeat(64), mode: 0o644 },
-      { path: 'scripts/windows/Remove-QuaranGateProductionAutostart.ps1', sizeBytes: 1, digest: 'a'.repeat(64), mode: 0o644 },
-    ],
+    files: [...PRODUCTION_REQUIRED_PAYLOAD_FILES].sort().map((relative, index) => ({
+      path: relative,
+      sizeBytes: 1,
+      digest: (index % 16).toString(16).repeat(64),
+      mode: relative === 'scripts/production-runtime-start.sh'
+        || relative === 'scripts/production-runtime-stop.sh'
+        ? 0o755 as const
+        : 0o644 as const,
+    })),
     images: [...images].sort((a, b) => a.component.localeCompare(b.component)),
   });
 }
@@ -81,6 +83,29 @@ describe('P9 production release profile', () => {
       files,
     });
     expect(() => verifyProductionReleaseProfile(incomplete)).toThrow(/missing required install payloads/iu);
+  });
+
+  it('binds the audited installer module graph and only yaml/zod package roots', () => {
+    expect(PRODUCTION_INSTALLER_RUNTIME_MODULES).toContain('dist/installer/cli.js');
+    expect(PRODUCTION_INSTALLER_RUNTIME_MODULES).toContain('dist/lifecycle/productionDriver.js');
+    expect(PRODUCTION_INSTALLER_RUNTIME_MODULES).toContain('dist/executor/agentConfig.js');
+    expect(PRODUCTION_INSTALLER_RUNTIME_MODULES).toContain('dist/gateway/config.js');
+    expect(PRODUCTION_INSTALLER_RUNTIME_PACKAGES).toEqual(['yaml', 'zod']);
+    expect(PRODUCTION_REQUIRED_PAYLOAD_FILES).toContain('node_modules/yaml/package.json');
+    expect(PRODUCTION_REQUIRED_PAYLOAD_FILES).toContain('node_modules/zod/package.json');
+  });
+
+  it('refuses arbitrary node_modules packages even when they are signed into the manifest', () => {
+    const value = manifest();
+    const { manifestDigest: _manifestDigest, ...identity } = value;
+    const files = [...value.files, {
+      path: 'node_modules/left-pad/package.json',
+      sizeBytes: 1,
+      digest: 'f'.repeat(64),
+      mode: 0o644 as const,
+    }].sort((left, right) => left.path.localeCompare(right.path));
+    const bloated = createReleasePackageManifest({ ...identity, files });
+    expect(() => verifyProductionReleaseProfile(bloated)).toThrow(/unaudited runtime dependency/iu);
   });
 
 });

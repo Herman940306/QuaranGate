@@ -121,6 +121,18 @@ describe('P9 signed production CLI release admission', () => {
     })).toThrow(/independently/iu);
   });
 
+  it('refuses unmanifested package-root bytes even when every signed payload file is intact', () => {
+    const value = fixture();
+    writeFileSync(path.join(value.payloadRoot, 'unmanifested.mjs'), 'throw new Error("executed");', { mode: 0o644 });
+
+    expect(() => loadVerifiedProductionRelease({
+      packageRoot: value.payloadRoot,
+      manifestFile: value.manifestFile,
+      signatureProofFile: value.signatureProofFile,
+      trustPolicyFile: value.trustPolicyFile,
+    })).toThrow(/unmanifested/iu);
+  });
+
   it('refuses payload bytes that changed after the manifest was signed', () => {
     const value = fixture();
     writeFileSync(path.join(value.payloadRoot, 'compose.yaml'), 'tampered', { mode: 0o644 });

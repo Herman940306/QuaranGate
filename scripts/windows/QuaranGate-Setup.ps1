@@ -1,6 +1,8 @@
 # QuaranGate guided Windows production setup.
-# A signed release wrapper supplies the exact release manifest, detached
-# signature proof and independently managed trust policy before review.
+# The final outer signed Windows package must authenticate this setup script
+# and scripts/installer-bootstrap.mjs before either is executed. The signed
+# wrapper then supplies the exact release manifest, detached signature proof
+# and independently managed trust policy before review.
 [CmdletBinding()]
 param(
     [string]$Distribution = 'Ubuntu-24.04',
@@ -211,7 +213,7 @@ $reviewButton.Add_Click({
             '-d', $Distribution,
             '-u', $LinuxUser,
             '--exec', 'node',
-            "$linuxPackageRoot/dist/installer/cli.js",
+            "$linuxPackageRoot/scripts/installer-bootstrap.mjs",
             'plan-production'
         ) + $releaseArguments
 
@@ -275,7 +277,7 @@ Only this exact verified release, host identity, answers, digest and consent set
             '-d', $Distribution,
             '-u', $LinuxUser,
             '--exec', 'node',
-            "$linuxPackageRoot/dist/installer/cli.js",
+            "$linuxPackageRoot/scripts/installer-bootstrap.mjs",
             'apply-production'
         ) + $releaseArguments + @('--consent', $linuxConsent)
 

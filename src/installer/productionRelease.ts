@@ -1,3 +1,5 @@
+import { lstatSync, readdirSync, realpathSync } from 'node:fs';
+import path from 'node:path';
 import {
   ReleasePackageError,
   verifyReleasePackageManifest,
@@ -19,9 +21,39 @@ export const PRODUCTION_RUNTIME_COMPONENTS = [
 
 export type ProductionRuntimeComponent = (typeof PRODUCTION_RUNTIME_COMPONENTS)[number];
 
+export const PRODUCTION_INSTALLER_RUNTIME_MODULES = [
+  'dist/executor/agentConfig.js',
+  'dist/executor/agents/applyPolicy.js',
+  'dist/executor/agents/canonicalJson.js',
+  'dist/gateway/config.js',
+  'dist/installer/cli.js',
+  'dist/installer/hostProbe.js',
+  'dist/installer/productInstaller.js',
+  'dist/installer/productionInstaller.js',
+  'dist/installer/productionRelease.js',
+  'dist/installer/releasePackage.js',
+  'dist/installer/runtimeConfig.js',
+  'dist/installer/wslProductionPlatform.js',
+  'dist/lifecycle/engine.js',
+  'dist/lifecycle/manifest.js',
+  'dist/lifecycle/pathOwnership.js',
+  'dist/lifecycle/planner.js',
+  'dist/lifecycle/productionDriver.js',
+  'dist/lifecycle/safeFilesystem.js',
+  'dist/shared/agents.js',
+  'dist/shared/errors.js',
+] as const;
+
+export const PRODUCTION_INSTALLER_RUNTIME_PACKAGES = ['yaml', 'zod'] as const;
+
 export const PRODUCTION_REQUIRED_PAYLOAD_FILES = [
   'compose.yaml',
-  'dist/installer/cli.js',
+  ...PRODUCTION_INSTALLER_RUNTIME_MODULES,
+  'node_modules/yaml/package.json',
+  'node_modules/zod/package.json',
+  'package-lock.json',
+  'package.json',
+  'scripts/installer-bootstrap.mjs',
   'scripts/production-runtime-start.sh',
   'scripts/production-runtime-stop.sh',
   'scripts/windows/QuaranGate-Setup.cmd',
@@ -35,6 +67,75 @@ export const PRODUCTION_REQUIRED_PAYLOAD_FILES = [
 export interface ProductionReleaseProfile {
   manifest: ReleasePackageManifest;
   images: Array<ReleasePackageImage & { component: ProductionRuntimeComponent }>;
+}
+
+function packageAncestors(relative: string): string[] {
+  const parts = relative.split('/');
+  const out: string[] = [];
+  for (let index = 1; index < parts.length; index += 1) {
+    out.push(parts.slice(0, index).join('/'));
+  }
+  return out;
+}
+
+export function verifyProductionReleasePayloadClosure(
+  payloadRootInput: string,
+  manifestInput: ReleasePackageManifest,
+): { files: number; directories: number } {
+  const manifest = verifyReleasePackageManifest(manifestInput);
+  const root = path.resolve(payloadRootInput);
+  if (root !== payloadRootInput || root === path.parse(root).root) {
+    throw new ReleasePackageError('PRODUCTION_RELEASE_ROOT_INVALID', 'Production release payload root must be one canonical absolute non-root path');
+  }
+  let rootStat;
+  try {
+    rootStat = lstatSync(root);
+  } catch {
+    throw new ReleasePackageError('PRODUCTION_RELEASE_ROOT_INVALID', 'Production release payload root is missing');
+  }
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || realpathSync(root) !== root) {
+    throw new ReleasePackageError('PRODUCTION_RELEASE_ROOT_INVALID', 'Production release payload root must be one real non-symlink directory');
+  }
+
+  const expectedFiles = new Set(manifest.files.map((file) => file.path));
+  const expectedDirectories = new Set(manifest.files.flatMap((file) => packageAncestors(file.path)));
+  const seenFiles = new Set<string>();
+  const seenDirectories = new Set<string>();
+
+  const walk = (absolute: string, relativePrefix: string): void => {
+    for (const entry of readdirSync(absolute).sort()) {
+      const relative = relativePrefix ? `${relativePrefix}/${entry}` : entry;
+      const candidate = path.join(absolute, entry);
+      const stat = lstatSync(candidate);
+      if (stat.isSymbolicLink()) {
+        throw new ReleasePackageError('PRODUCTION_RELEASE_PAYLOAD_NOT_CLOSED', `Production release contains a symlink: ${relative}`);
+      }
+      if (stat.isDirectory()) {
+        if (!expectedDirectories.has(relative)) {
+          throw new ReleasePackageError('PRODUCTION_RELEASE_PAYLOAD_NOT_CLOSED', `Production release contains an unmanifested directory: ${relative}`);
+        }
+        seenDirectories.add(relative);
+        walk(candidate, relative);
+        continue;
+      }
+      if (!stat.isFile() || stat.nlink !== 1) {
+        throw new ReleasePackageError('PRODUCTION_RELEASE_PAYLOAD_NOT_CLOSED', `Production release contains an unsafe filesystem entry: ${relative}`);
+      }
+      if (!expectedFiles.has(relative)) {
+        throw new ReleasePackageError('PRODUCTION_RELEASE_PAYLOAD_NOT_CLOSED', `Production release contains an unmanifested file: ${relative}`);
+      }
+      seenFiles.add(relative);
+    }
+  };
+  walk(root, '');
+
+  if (seenFiles.size !== expectedFiles.size || [...expectedFiles].some((file) => !seenFiles.has(file))) {
+    throw new ReleasePackageError('PRODUCTION_RELEASE_PAYLOAD_NOT_CLOSED', 'Production release is missing one or more manifest-declared files');
+  }
+  if (seenDirectories.size !== expectedDirectories.size || [...expectedDirectories].some((dir) => !seenDirectories.has(dir))) {
+    throw new ReleasePackageError('PRODUCTION_RELEASE_PAYLOAD_NOT_CLOSED', 'Production release directory tree does not match the manifest');
+  }
+  return { files: seenFiles.size, directories: seenDirectories.size };
 }
 
 function referenceMatchesComponent(image: ReleasePackageImage, sourceCommit: string): boolean {
@@ -64,6 +165,18 @@ export function verifyProductionReleaseProfile(manifestInput: ReleasePackageMani
     throw new ReleasePackageError(
       'PRODUCTION_RELEASE_PAYLOAD_INCOMPLETE',
       `Production release is missing required install payloads: ${missingPayloads.join(', ')}`,
+    );
+  }
+  const allowedRuntimeDependencyPrefixes = PRODUCTION_INSTALLER_RUNTIME_PACKAGES
+    .map((name) => `node_modules/${name}/`);
+  const unexpectedRuntimeDependencies = manifest.files
+    .map((file) => file.path)
+    .filter((file) => file.startsWith('node_modules/')
+      && !allowedRuntimeDependencyPrefixes.some((prefix) => file.startsWith(prefix)));
+  if (unexpectedRuntimeDependencies.length > 0) {
+    throw new ReleasePackageError(
+      'PRODUCTION_RELEASE_DEPENDENCY_INVALID',
+      `Production installer payload contains an unaudited runtime dependency: ${unexpectedRuntimeDependencies[0]}`,
     );
   }
   const executableScripts = new Set([

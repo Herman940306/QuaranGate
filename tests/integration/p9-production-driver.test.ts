@@ -21,6 +21,7 @@ import {
   type InstallerAnswers,
 } from '../../src/installer/productInstaller.js';
 import { executeProductionInstall } from '../../src/installer/productionInstaller.js';
+import { PRODUCTION_REQUIRED_PAYLOAD_FILES } from '../../src/installer/productionRelease.js';
 import {
   createReleasePackageManifest,
   releaseSignaturePayload,
@@ -119,6 +120,9 @@ function release(fx: Fixture): {
     ['app/runtime.txt', Buffer.from('new-runtime')],
     ['compose.yaml', Buffer.from('compose')],
     ['dist/installer/cli.js', Buffer.from('cli')],
+    ['package-lock.json', Buffer.from('{"name":"quarangate-release","lockfileVersion":3,"packages":{}}\n')],
+    ['package.json', Buffer.from('{"name":"quarangate-release","private":true,"type":"module"}\n')],
+    ['scripts/installer-bootstrap.mjs', Buffer.from('export {};\n')],
     ['migrations/config/config-0-to-1.json', migrationBytes('config-0-to-1', 'CONFIG', { migrated: 'yes' })],
     ['migrations/state/state-0-to-1.json', migrationBytes('state-0-to-1', 'STATE', { migrated: 'yes' })],
     ['scripts/production-runtime-start.sh', Buffer.from('#!/bin/bash\n')],
@@ -130,6 +134,11 @@ function release(fx: Fixture): {
     ['scripts/windows/QuaranGate-Setup.ps1', Buffer.from('setup')],
     ['scripts/windows/Remove-QuaranGateProductionAutostart.ps1', Buffer.from('remove')],
   ]);
+  for (const relative of PRODUCTION_REQUIRED_PAYLOAD_FILES) {
+    if (!payloads.has(relative)) {
+      payloads.set(relative, Buffer.from('required-' + relative, 'utf8'));
+    }
+  }
   const executable = new Set(['scripts/production-runtime-start.sh', 'scripts/production-runtime-stop.sh']);
   const files: ReleasePackageFile[] = [...payloads.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([relative, bytes]) => {
     const target = path.join(fx.packageRoot, ...relative.split('/'));
