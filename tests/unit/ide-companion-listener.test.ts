@@ -137,6 +137,15 @@ async function readLine(socket: Socket): Promise<Record<string, unknown>> {
   });
 }
 
+async function waitForCondition(predicate: () => boolean, label: string, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
 function makeWorkspaceAttestation(
   ctx: ReturnType<typeof setup>, helloFrame: IdeCompanionHelloFrame, generation: number,
   over: Partial<IdeWorkspaceAttestation> = {},
@@ -402,7 +411,10 @@ describe('P7 B6 authenticated AF_UNIX listener foundation', () => {
     const changed = serializeIdeWorkspaceAttestation({ ...base, workspace: { ...base.workspace, filesystemIdentity: 'f'.repeat(64) } });
     const response = await complete(ctx, started, undefined, changed);
     expect(response).toMatchObject({ type: 'error', code: 'IDE_WORKSPACE_DENIED' });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitForCondition(
+      () => store.getSession(started.hello.sessionId)?.state === 'DISCONNECTED',
+      'workspace-denial session disconnect',
+    );
     expect(store.getEnrollment(ctx.enrollment.enrollmentId)?.currentGeneration).toBe(1);
     expect(store.getSession(started.hello.sessionId)?.state).toBe('DISCONNECTED');
   });
@@ -424,7 +436,12 @@ describe('P7 B6 authenticated AF_UNIX listener foundation', () => {
     const ctx = setup(); listener = new IdeCompanionListener({ store, runtime: ctx.runtime, nowMs: () => nowMs, challengeBytes: () => Buffer.alloc(32, 0x42) }); await listener.start();
     const first = await begin(ctx, sessionId('4'), clientNonce(0x41)); expect((await complete(ctx, first)).type).toBe('ready');
     const second = await begin(ctx, sessionId('5'), clientNonce(0x43)); expect(second.challenge.connectionGeneration).toBe(2); expect((await complete(ctx, second)).type).toBe('ready');
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitForCondition(
+      () => store.getEnrollment(ctx.enrollment.enrollmentId)?.currentGeneration === 2
+        && store.getSession(first.hello.sessionId)?.state === 'STALE'
+        && store.getSession(second.hello.sessionId)?.state === 'AVAILABLE',
+      'reconnect generation reconciliation',
+    );
     expect(store.getEnrollment(ctx.enrollment.enrollmentId)?.currentGeneration).toBe(2);
     expect(store.getSession(first.hello.sessionId)?.state).toBe('STALE');
     expect(store.getSession(second.hello.sessionId)?.state).toBe('AVAILABLE');
@@ -433,7 +450,11 @@ describe('P7 B6 authenticated AF_UNIX listener foundation', () => {
   it('reconciles a ready connection close to DISCONNECTED and refuses further authority on that session', async () => {
     const ctx = setup(); listener = new IdeCompanionListener({ store, runtime: ctx.runtime, nowMs: () => nowMs, challengeBytes: () => Buffer.alloc(32, 0x42) }); await listener.start();
     const started = await begin(ctx); expect((await complete(ctx, started)).type).toBe('ready');
-    started.socket.destroy(); await new Promise((resolve) => setTimeout(resolve, 10));
+    started.socket.destroy();
+    await waitForCondition(
+      () => store.getSession(started.hello.sessionId)?.state === 'DISCONNECTED',
+      'ready-session socket-close reconciliation',
+    );
     expect(store.getSession(started.hello.sessionId)?.state).toBe('DISCONNECTED');
   });
 
@@ -459,7 +480,10 @@ describe('P7 B6 authenticated AF_UNIX listener foundation', () => {
     const started = await begin(ctx); expect((await complete(ctx, started)).type).toBe('ready');
     started.socket.write(`${serializeIdeCompanionHello(started.hello)}\n`);
     expect(await readLine(started.socket)).toMatchObject({ type: 'error', code: 'UNEXPECTED_FRAME' });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitForCondition(
+      () => store.getSession(started.hello.sessionId)?.state === 'DISCONNECTED',
+      'unexpected-frame session disconnect',
+    );
     expect(store.getSession(started.hello.sessionId)?.state).toBe('DISCONNECTED');
   });
 
@@ -478,7 +502,10 @@ describe('P7 B6 authenticated AF_UNIX listener foundation', () => {
     const started = await begin(ctx); expect((await complete(ctx, started)).type).toBe('ready');
     expect(existsSync(ctx.runtime.socketPath)).toBe(true);
     await listener.stop(); listener = undefined;
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitForCondition(
+      () => store.getSession(started.hello.sessionId)?.state === 'DISCONNECTED',
+      'listener-stop session disconnect',
+    );
     expect(store.getSession(started.hello.sessionId)?.state).toBe('DISCONNECTED');
     expect(existsSync(ctx.runtime.socketPath)).toBe(false);
   });
