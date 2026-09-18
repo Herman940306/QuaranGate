@@ -54,6 +54,13 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY console ./console
 COPY package.json ./
+# Runtime payload may be staged under an owner-private umask. Normalize it
+# explicitly so image readability never depends on host/build-context modes,
+# while keeping application bytes root-owned and non-writable by USER node.
+RUN chown -R root:root /app/node_modules /app/dist /app/console /app/package.json \
+    && chmod 0755 /app \
+    && chmod -R u=rwX,go=rX /app/node_modules /app/dist /app/console \
+    && chmod 0644 /app/package.json
 USER node
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/gateway/index.js"]

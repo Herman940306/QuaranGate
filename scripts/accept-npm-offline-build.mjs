@@ -306,6 +306,14 @@ async function buildWithoutValidBundleRefused(head, imageTag, localBase, offline
 async function runtimeImageValidation(image, containerName) {
   const script = [
     'set -eu',
+    '[ "$(id -u)" -ne 0 ]',
+    'test -r /app/package.json',
+    'test "$(stat -c %a /app/package.json)" = "644"',
+    'node -e "JSON.parse(require(\'node:fs\').readFileSync(\'/app/package.json\', \'utf8\'))"',
+    'test -r /app/dist/gateway/index.js',
+    'test -r /app/dist/executor/index.js',
+    'test -r /app/console/app.js',
+    'test -r /app/console/index.html',
     'tini_version=$(/sbin/tini --version 2>&1)',
     "tini_sha=$(sha256sum /sbin/tini | cut -d' ' -f1)",
     'test -d /app/dist/gateway',
@@ -337,7 +345,7 @@ async function runtimeImageValidation(image, containerName) {
   const result = await runCapture('docker', [
     'run', '--rm', '--name', containerName, '--network=none', '--pull=never',
     '--read-only', '--cap-drop=ALL', '--security-opt', 'no-new-privileges:true',
-    '--user', '0:0', '--entrypoint', '/bin/sh', image, '-c', script,
+    '--entrypoint', '/bin/sh', image, '-c', script,
   ]);
   const [tiniVersion, tiniSha256, tarballCount, cacheCount, logsCount, npxCount, npmrcCount] = result.stdout.trim().split('|');
   if (!tiniVersion.includes('0.19.0') || tiniSha256 !== EXPECTED_TINI_SHA256) {
