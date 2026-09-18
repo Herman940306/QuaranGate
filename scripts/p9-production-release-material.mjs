@@ -43,8 +43,7 @@ const SOURCE_PAYLOADS = [
   'scripts/windows/Open-QuaranGateControlCenter.ps1',
   'scripts/windows/Remove-QuaranGateProductionAutostart.ps1',
 ];
-const BOOTSTRAP_RUNTIME_MODULES = [
-  'dist/executor/agents/canonicalJson.js',
+const CONTRACT_ENTRY_MODULES = [
   'dist/installer/productionRelease.js',
   'dist/installer/releasePackage.js',
 ];
@@ -266,13 +265,44 @@ function dockerCopy(containerId, source, destination) {
   run('docker', ['cp', `${containerId}:${source}`, destination]);
 }
 
+export function relativeRuntimeImports(relativeModule, sourceText) {
+  const imports = new Set();
+  const staticImport = /\b(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/gu;
+  for (const match of sourceText.matchAll(staticImport)) {
+    const specifier = match[1];
+    if (specifier.startsWith('node:')) continue;
+    if (!specifier.startsWith('./') && !specifier.startsWith('../')) {
+      fail(`release contract module has a non-builtin external import: ${relativeModule} -> ${specifier}`);
+    }
+    if (specifier.includes('\\') || specifier.includes('?') || specifier.includes('#')) {
+      fail(`release contract module has an unsafe relative import: ${relativeModule} -> ${specifier}`);
+    }
+    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(relativeModule), specifier));
+    if (!resolved.startsWith('dist/') || !resolved.endsWith('.js') || resolved.split('/').includes('..')) {
+      fail(`release contract import escapes audited dist JavaScript: ${relativeModule} -> ${specifier}`);
+    }
+    imports.add(resolved);
+  }
+  return [...imports].sort();
+}
+
 function importRuntimeContract(coreImageId, scratchRoot) {
   const contractRoot = path.join(scratchRoot, 'contract');
   mkdirSync(contractRoot, { recursive: true, mode: 0o700 });
   const containerId = createCoreContainer(coreImageId);
+  const copied = new Set();
+  const queue = [...CONTRACT_ENTRY_MODULES];
   try {
-    for (const relative of BOOTSTRAP_RUNTIME_MODULES) {
-      dockerCopy(containerId, `/app/${relative}`, path.join(contractRoot, ...relative.split('/')));
+    while (queue.length > 0) {
+      const relative = queue.shift();
+      if (copied.has(relative)) continue;
+      const destination = path.join(contractRoot, ...relative.split('/'));
+      dockerCopy(containerId, `/app/${relative}`, destination);
+      copied.add(relative);
+      const sourceText = readFileSync(destination, 'utf8');
+      for (const dependency of relativeRuntimeImports(relative, sourceText)) {
+        if (!copied.has(dependency)) queue.push(dependency);
+      }
     }
   } finally {
     spawnSync('docker', ['rm', '-f', containerId], { stdio: 'ignore', shell: false });

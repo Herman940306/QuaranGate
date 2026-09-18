@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { releaseMaterialPlan, sourcePayloadFile } from '../../scripts/p9-production-release-material.mjs';
+import { releaseMaterialPlan, relativeRuntimeImports, sourcePayloadFile } from '../../scripts/p9-production-release-material.mjs';
 
 const commit = 'a'.repeat(40);
 
@@ -81,6 +81,25 @@ describe('P9 production release material builder', () => {
     expect(source).toContain("releasePackage.verifyReleasePayload");
     expect(source).toContain("lstatSync(plan.sourceRoot).isSymbolicLink()");
     expect(source).toContain("stat.nlink !== 1");
+  });
+
+  it('recursively resolves only relative audited dist imports for the temporary release contract', () => {
+    expect(relativeRuntimeImports(
+      'dist/installer/releasePackage.js',
+      "import { createHash } from 'node:crypto';\nimport { canonicalSerialize } from '../executor/agents/canonicalJson.js';\n",
+    )).toEqual(['dist/executor/agents/canonicalJson.js']);
+    expect(relativeRuntimeImports(
+      'dist/executor/agents/canonicalJson.js',
+      "import { BridgeError } from '../../shared/errors.js';\n",
+    )).toEqual(['dist/shared/errors.js']);
+    expect(() => relativeRuntimeImports(
+      'dist/installer/releasePackage.js',
+      "import yaml from 'yaml';\n",
+    )).toThrow(/non-builtin external import/u);
+    expect(() => relativeRuntimeImports(
+      'dist/installer/releasePackage.js',
+      "import x from '../../../escape.js';\n",
+    )).toThrow(/escapes audited dist JavaScript/u);
   });
 
   it('rejects symlinked source payload parents instead of dereferencing them inside the repository', () => {
