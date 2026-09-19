@@ -40,8 +40,16 @@ if [[ "$ollama_expected" == 1 ]]; then
   [[ -f "$MAIN_ROOT/compose.ollama.yaml" ]] || fail 'O1 is configured but compose.ollama.yaml is missing'
   QG_FILES+=(-f "$MAIN_ROOT/compose.ollama.yaml")
 fi
-# Exact pre-GitHub composition used to restore a first-enable rollback.
-BASE_QG_FILES=("${QG_FILES[@]}")
+# The candidate topology comes from the candidate worktree while relative
+# operator binds (./config, secrets) are resolved against MAIN_ROOT. Rollback
+# keeps the exact predeploy operator topology from MAIN_ROOT instead.
+BASE_QG_FILES=(-f "$MAIN_ROOT/compose.yaml")
+QG_FILES=(-f "$REPO_ROOT/compose.yaml")
+if [[ "$ollama_expected" == 1 ]]; then
+  BASE_QG_FILES+=(-f "$MAIN_ROOT/compose.ollama.yaml")
+  [[ -f "$REPO_ROOT/compose.ollama.yaml" ]] || fail 'O1 is configured but candidate compose.ollama.yaml is missing'
+  QG_FILES+=(-f "$REPO_ROOT/compose.ollama.yaml")
+fi
 
 # A7 Copilot is executor-only. If runtime configuration already enables it,
 # rollback retains the MAIN_ROOT overlay while candidate deployment validates
@@ -62,7 +70,9 @@ if docker ps -a --filter label=com.docker.compose.project=quarangate --filter la
 if [[ "$github_expected" == 1 ]]; then
   [[ -f "$REPO_ROOT/compose.github.yaml" ]] || fail 'candidate compose.github.yaml is missing'
   [[ -f "$MAIN_ROOT/config/github.yaml" ]] || fail 'GitHub control is active but runtime github.yaml is missing'
-  # Use candidate overlay source while retaining MAIN_ROOT compose/config mounts.
+  [[ -f "$MAIN_ROOT/compose.github.yaml" ]] || fail 'GitHub control is active but runtime compose.github.yaml is missing'
+  # Candidate deploy uses candidate overlay; rollback uses the exact runtime overlay.
+  BASE_QG_FILES+=(-f "$MAIN_ROOT/compose.github.yaml")
   QG_FILES+=(-f "$REPO_ROOT/compose.github.yaml")
 fi
 
@@ -89,16 +99,27 @@ PYENV
 }
 BASE_GATEWAY_IMAGE="$(read_runtime_value GATEWAY_IMAGE)" || fail 'runtime .env must contain exactly one non-empty GATEWAY_IMAGE'
 BASE_EXECUTOR_IMAGE="$(read_runtime_value EXECUTOR_IMAGE)" || fail 'runtime .env must contain exactly one non-empty EXECUTOR_IMAGE'
-if BASE_DOCKER_AUTHORITY_IMAGE="$(read_runtime_value DOCKER_AUTHORITY_IMAGE 2>/dev/null)"; then
-  :
-else
-  mapfile -t legacy_authority_ids < <(docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=docker-authority --format '{{.ID}}')
-  [[ ${#legacy_authority_ids[@]} -eq 1 ]] || fail 'cannot derive one-time SH-06 Docker-authority baseline image'
+
+# First SH-06 migration may start from the older executor-socket topology where
+# no Docker-authority service existed. Preserve that absence as rollback state;
+# never invent an old authority image.
+mapfile -t legacy_authority_ids < <(docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=docker-authority --format '{{.ID}}')
+[[ ${#legacy_authority_ids[@]} -le 1 ]] || fail 'multiple historical Docker-authority containers found'
+OLD_DOCKER_AUTHORITY_PRESENT=${#legacy_authority_ids[@]}
+BASE_DOCKER_AUTHORITY_IMAGE=''
+if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then
   BASE_DOCKER_AUTHORITY_IMAGE="$(docker inspect "${legacy_authority_ids[0]}" --format '{{.Config.Image}}')"
   [[ -n "$BASE_DOCKER_AUTHORITY_IMAGE" ]] || fail 'legacy Docker-authority baseline image is empty'
+  if persisted_authority="$(read_runtime_value DOCKER_AUTHORITY_IMAGE 2>/dev/null)"; then
+    [[ "$persisted_authority" == "$BASE_DOCKER_AUTHORITY_IMAGE" ]] || fail 'persisted Docker-authority selector disagrees with live baseline'
+  fi
+elif read_runtime_value DOCKER_AUTHORITY_IMAGE >/dev/null 2>&1; then
+  fail 'runtime .env selects Docker-authority but no historical authority container exists'
 fi
-BUNDLE_PATH="$(read_runtime_value QUARANGATE_NPM_BUNDLE_PATH)" || fail 'runtime .env must contain exactly one non-empty QUARANGATE_NPM_BUNDLE_PATH'
-[[ -d "$BUNDLE_PATH" ]] || fail "runtime npm bundle directory missing: $BUNDLE_PATH"
+
+RUNTIME_BUNDLE_PATH="$(read_runtime_value QUARANGATE_NPM_BUNDLE_PATH)" || fail 'runtime .env must contain exactly one non-empty QUARANGATE_NPM_BUNDLE_PATH'
+BUNDLE_PATH="${QUARANGATE_DEPLOY_NPM_BUNDLE_PATH:-$RUNTIME_BUNDLE_PATH}"
+[[ "$BUNDLE_PATH" == /* && -d "$BUNDLE_PATH" ]] || fail "candidate npm bundle directory missing or non-absolute: $BUNDLE_PATH"
 if KIRO_KEY_FILE="$(read_runtime_value AGENT_KIRO_KEY_FILE 2>/dev/null)"; then
   :
 else
@@ -107,10 +128,12 @@ fi
 AGENT_KIRO_KEY_FILE="$KIRO_KEY_FILE" node "$REPO_ROOT/scripts/resolve-kiro-key-file.mjs" --verify >/dev/null \
   || fail 'Kiro API key host file metadata preflight failed'
 export AGENT_KIRO_KEY_FILE="$KIRO_KEY_FILE"
-export GATEWAY_IMAGE="$BASE_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$BASE_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$BASE_EXECUTOR_IMAGE"
+export GATEWAY_IMAGE="$BASE_GATEWAY_IMAGE" EXECUTOR_IMAGE="$BASE_EXECUTOR_IMAGE"
 
-QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
-BASE_QG=(docker compose --env-file "$RUNTIME_ENV" -p quarangate "${BASE_QG_FILES[@]}")
+# Candidate topology is parsed from candidate source, while --project-directory
+# keeps relative live config/secret binds anchored to the operator runtime root.
+QG=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
+BASE_QG=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${BASE_QG_FILES[@]}")
 DEPLOY_SERVICES=(docker-authority gateway executor)
 if [[ "$github_expected" == 1 ]]; then DEPLOY_SERVICES+=(github-egress-proxy github-broker); fi
 # Build from the candidate worktree, but deploy from MAIN_ROOT so ignored live
@@ -119,19 +142,23 @@ PW=(docker compose --env-file "$RUNTIME_ENV" -p projects-work -f "$REPO_ROOT/pro
 
 printf '%s\n' '=== PREDEPLOY BASELINE ==='
 printf 'REV=%s\nBRANCH=%s\n' "$REV" "$BRANCH"
-gateway_id="$("${QG[@]}" ps -q gateway)"
-authority_id="$("${QG[@]}" ps -q docker-authority)"
-executor_id="$("${QG[@]}" ps -q executor)"
+gateway_id="$("${BASE_QG[@]}" ps -q gateway)"
+executor_id="$("${BASE_QG[@]}" ps -q executor)"
 [[ -n "$gateway_id" ]] || fail 'current gateway container missing'
-[[ -n "$authority_id" ]] || fail 'current Docker-authority container missing'
 [[ -n "$executor_id" ]] || fail 'current executor container missing'
 OLD_GATEWAY_IMAGE="$(docker inspect "$gateway_id" --format '{{.Config.Image}}')"
-OLD_DOCKER_AUTHORITY_IMAGE="$(docker inspect "$authority_id" --format '{{.Config.Image}}')"
 OLD_EXECUTOR_IMAGE="$(docker inspect "$executor_id" --format '{{.Config.Image}}')"
 OLD_GATEWAY_IMAGE_ID="$(docker inspect "$gateway_id" --format '{{.Image}}')"
-OLD_DOCKER_AUTHORITY_IMAGE_ID="$(docker inspect "$authority_id" --format '{{.Image}}')"
 OLD_EXECUTOR_IMAGE_ID="$(docker inspect "$executor_id" --format '{{.Image}}')"
-[[ "$OLD_GATEWAY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$OLD_DOCKER_AUTHORITY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$OLD_EXECUTOR_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'could not capture immutable rollback image IDs'
+OLD_DOCKER_AUTHORITY_IMAGE=''
+OLD_DOCKER_AUTHORITY_IMAGE_ID=''
+if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then
+  authority_id="${legacy_authority_ids[0]}"
+  OLD_DOCKER_AUTHORITY_IMAGE="$(docker inspect "$authority_id" --format '{{.Config.Image}}')"
+  OLD_DOCKER_AUTHORITY_IMAGE_ID="$(docker inspect "$authority_id" --format '{{.Image}}')"
+  [[ "$OLD_DOCKER_AUTHORITY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'could not capture immutable Docker-authority rollback image ID'
+fi
+[[ "$OLD_GATEWAY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$OLD_EXECUTOR_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'could not capture immutable rollback image IDs'
 OLD_GITHUB_PRESENT=0
 OLD_GITHUB_IMAGE=''
 OLD_GITHUB_IMAGE_ID=''
@@ -150,7 +177,7 @@ if [[ "$github_expected" == 1 ]]; then
     [[ "$OLD_GITHUB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$OLD_GITHUB_PROXY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'could not capture immutable GitHub rollback image IDs'
   fi
 fi
-printf 'OLD_GATEWAY_IMAGE=%s\nOLD_DOCKER_AUTHORITY_IMAGE=%s\nOLD_EXECUTOR_IMAGE=%s\nOLD_GITHUB_PRESENT=%s\n' "$OLD_GATEWAY_IMAGE" "$OLD_DOCKER_AUTHORITY_IMAGE" "$OLD_EXECUTOR_IMAGE" "$OLD_GITHUB_PRESENT"
+printf 'OLD_GATEWAY_IMAGE=%s\nOLD_DOCKER_AUTHORITY_PRESENT=%s\nOLD_DOCKER_AUTHORITY_IMAGE=%s\nOLD_EXECUTOR_IMAGE=%s\nOLD_GITHUB_PRESENT=%s\n' "$OLD_GATEWAY_IMAGE" "$OLD_DOCKER_AUTHORITY_PRESENT" "$OLD_DOCKER_AUTHORITY_IMAGE" "$OLD_EXECUTOR_IMAGE" "$OLD_GITHUB_PRESENT"
 
 # Build through the governed local-base helper. It verifies the exact npm bundle,
 # resolves the pinned Node base only from the local Docker image store through a
@@ -163,20 +190,69 @@ NEW_GATEWAY_IMAGE="quarangate:gateway-$REV"
 NEW_DOCKER_AUTHORITY_IMAGE="quarangate:docker-authority-$REV"
 NEW_EXECUTOR_IMAGE="quarangate:executor-$REV"
 
-printf '%s\n' '=== OFFLINE BUILD ==='
-node "$REPO_ROOT/scripts/p10-offline-core-build.mjs" \
-  --source-root "$REPO_ROOT" \
-  --source-commit "$REV" \
+printf '%s\n' '=== OFFLINE BUILD / EXACT RELEASE REUSE ==='
+# Always bind the selected npm bundle to this exact candidate lock/descriptor,
+# including deployments that reuse already-qualified release image tags.
+node "$REPO_ROOT/scripts/npm-offline-bundle.mjs" verify \
   --bundle "$BUNDLE_PATH" \
-  --output-image "$NEW_GATEWAY_IMAGE" || fail 'governed local-only candidate build failed'
-# Gateway/Docker-authority/executor intentionally use the same built artifact;
-# tag the verified gateway artifact independently for each service role.
-docker tag "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE"
-docker tag "$NEW_GATEWAY_IMAGE" "$NEW_EXECUTOR_IMAGE"
+  --lockfile "$REPO_ROOT/package-lock.json" \
+  --descriptor "$REPO_ROOT/build/npm-dependencies.json" >/dev/null \
+  || fail 'candidate npm bundle does not verify against exact source'
+
+existing_release_refs=0
+for image in "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE" "$NEW_EXECUTOR_IMAGE"; do
+  if docker image inspect "$image" >/dev/null 2>&1; then existing_release_refs=$((existing_release_refs + 1)); fi
+done
+if [[ "$existing_release_refs" == 0 ]]; then
+  node "$REPO_ROOT/scripts/p10-offline-core-build.mjs" \
+    --source-root "$REPO_ROOT" \
+    --source-commit "$REV" \
+    --bundle "$BUNDLE_PATH" \
+    --output-image "$NEW_GATEWAY_IMAGE" || fail 'governed local-only candidate build failed'
+  docker tag "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE"
+  docker tag "$NEW_GATEWAY_IMAGE" "$NEW_EXECUTOR_IMAGE"
+elif [[ "$existing_release_refs" == 3 ]]; then
+  RELEASE_RECEIPT="${QUARANGATE_DEPLOY_RELEASE_RECEIPT:-}"
+  [[ "$RELEASE_RECEIPT" == /* && -f "$RELEASE_RECEIPT" ]] || fail 'existing release refs require absolute QUARANGATE_DEPLOY_RELEASE_RECEIPT'
+  receipt_core_id="$(python3 - "$RELEASE_RECEIPT" "$REV" "$(git rev-parse HEAD^{tree})"     "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE" "$NEW_EXECUTOR_IMAGE" <<'PYRECEIPT'
+import json, re, sys
+path, rev, tree, gateway, authority, executor = sys.argv[1:]
+doc = json.load(open(path))
+if doc.get('status') != 'PASS': raise SystemExit('release receipt is not PASS')
+source = doc.get('source') or {}
+if source.get('commit') != rev or source.get('tree') != tree or source.get('clean') is not True:
+    raise SystemExit('release receipt source binding mismatch')
+images = doc.get('images') or {}
+core = images.get('coreInput') or {}
+core_id = core.get('id')
+if not isinstance(core_id, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', core_id):
+    raise SystemExit('release receipt core image ID invalid')
+expected = {'gateway': gateway, 'docker-authority': authority, 'executor': executor}
+seen = {}
+for item in images.get('release') or []:
+    component = item.get('component')
+    if component in expected:
+        if component in seen: raise SystemExit('duplicate release image component')
+        if item.get('reference') != expected[component] or item.get('digest') != core_id:
+            raise SystemExit('release image binding mismatch')
+        seen[component] = True
+if set(seen) != set(expected): raise SystemExit('release receipt lacks required core image roles')
+print(core_id)
+PYRECEIPT
+  )" || fail 'existing release refs are not bound by the supplied exact release receipt'
+  for image in "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE" "$NEW_EXECUTOR_IMAGE"; do
+    [[ "$(docker image inspect "$image" --format '{{.Id}}')" == "$receipt_core_id" ]] || fail "existing release ref digest mismatch: $image"
+  done
+  printf 'EXISTING_RELEASE_REFS=VERIFIED receipt=%s\n' "$RELEASE_RECEIPT"
+else
+  fail 'partial existing release ref set refused'
+fi
 
 for image in "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE" "$NEW_EXECUTOR_IMAGE"; do
   actual_rev="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+  actual_source="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.source"}}')"
   [[ "$actual_rev" == "$REV" ]] || fail "image provenance mismatch for $image: $actual_rev"
+  [[ "$actual_source" == 'https://github.com/Herman940306/QuaranGate' ]] || fail "image source provenance mismatch for $image"
 done
 new_gateway_id="$(docker image inspect "$NEW_GATEWAY_IMAGE" --format '{{.Id}}')"
 new_authority_id="$(docker image inspect "$NEW_DOCKER_AUTHORITY_IMAGE" --format '{{.Id}}')"
@@ -202,28 +278,32 @@ rollback() {
       cp "$env_backup" "$RUNTIME_ENV" || rollback_ok=0
     fi
     if [[ "$mutated" == 1 ]]; then
-      if [[ "$OLD_GITHUB_PRESENT" == 1 ]]; then
-        # Upgrade-over-upgrade: restore the GitHub proxy+broker alongside the
-        # exact old gateway/executor images. The overlay derives both GitHub
-        # service images from GATEWAY_IMAGE and verifies them below.
+      # Remove forward-only services that were absent in the predeploy topology
+      # before restoring the legacy Compose graph.
+      if [[ "$github_expected" == 1 && "$OLD_GITHUB_PRESENT" == 0 ]]; then
+        "${QG[@]}" rm -sf github-broker github-egress-proxy >/dev/null 2>&1 || rollback_ok=0
+      fi
+      if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 ]]; then
+        "${QG[@]}" rm -sf docker-authority >/dev/null 2>&1 || rollback_ok=0
+      fi
+
+      rollback_services=(gateway executor)
+      if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then rollback_services=(docker-authority "${rollback_services[@]}"); fi
+      if [[ "$OLD_GITHUB_PRESENT" == 1 ]]; then rollback_services+=(github-egress-proxy github-broker); fi
+
+      if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then
         if ! GATEWAY_IMAGE="$OLD_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$OLD_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$OLD_EXECUTOR_IMAGE" \
-          "${QG[@]}" up -d --no-build --pull never docker-authority gateway executor github-egress-proxy github-broker >/dev/null 2>&1; then
+          "${BASE_QG[@]}" up -d --no-deps --force-recreate --no-build --pull never "${rollback_services[@]}" >/dev/null 2>&1; then
           rollback_ok=0
         fi
       else
-        # First GitHub enable: the pre-deploy runtime had NO GitHub services.
-        # Remove candidate broker+proxy first, then restore only the old
-        # gateway/executor. --no-deps prevents the new overlay dependencies
-        # from recreating services that did not exist in the rollback baseline.
-        if [[ "$github_expected" == 1 ]]; then
-          "${QG[@]}" rm -sf github-broker github-egress-proxy >/dev/null 2>&1 || rollback_ok=0
-        fi
-        if ! GATEWAY_IMAGE="$OLD_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$OLD_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$OLD_EXECUTOR_IMAGE" \
-          "${BASE_QG[@]}" up -d --no-deps --force-recreate --no-build --pull never docker-authority gateway executor >/dev/null 2>&1; then
+        if ! GATEWAY_IMAGE="$OLD_GATEWAY_IMAGE" EXECUTOR_IMAGE="$OLD_EXECUTOR_IMAGE" \
+          "${BASE_QG[@]}" up -d --no-deps --force-recreate --no-build --pull never "${rollback_services[@]}" >/dev/null 2>&1; then
           rollback_ok=0
         fi
-        # Remove the two exact first-enable networks after their services and
-        # executor attachment are gone. Ignore already-absent networks only.
+      fi
+
+      if [[ "$OLD_GITHUB_PRESENT" == 0 ]]; then
         for net in quarangate-github-control quarangate-github-egress; do
           if docker network inspect "$net" >/dev/null 2>&1; then
             docker network rm "$net" >/dev/null 2>&1 || rollback_ok=0
@@ -231,10 +311,9 @@ rollback() {
         done
       fi
 
-      rollback_gateway_id="$("${QG[@]}" ps -q gateway 2>/dev/null || true)"
-      rollback_authority_id="$("${QG[@]}" ps -q docker-authority 2>/dev/null || true)"
-      rollback_executor_id="$("${QG[@]}" ps -q executor 2>/dev/null || true)"
-      if [[ -z "$rollback_gateway_id" || -z "$rollback_authority_id" || -z "$rollback_executor_id" ]]; then
+      rollback_gateway_id="$("${BASE_QG[@]}" ps -q gateway 2>/dev/null || true)"
+      rollback_executor_id="$("${BASE_QG[@]}" ps -q executor 2>/dev/null || true)"
+      if [[ -z "$rollback_gateway_id" || -z "$rollback_executor_id" ]]; then
         rollback_ok=0
       else
         rollback_healthy=0
@@ -245,19 +324,29 @@ rollback() {
         done
         [[ "$rollback_healthy" == 1 ]] || rollback_ok=0
         rollback_gateway_image="$(docker inspect "$rollback_gateway_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
-        rollback_authority_image="$(docker inspect "$rollback_authority_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
         rollback_executor_image="$(docker inspect "$rollback_executor_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
         rollback_gateway_image_id="$(docker inspect "$rollback_gateway_id" --format '{{.Image}}' 2>/dev/null || true)"
-        rollback_authority_image_id="$(docker inspect "$rollback_authority_id" --format '{{.Image}}' 2>/dev/null || true)"
         rollback_executor_image_id="$(docker inspect "$rollback_executor_id" --format '{{.Image}}' 2>/dev/null || true)"
         [[ "$rollback_gateway_image" == "$OLD_GATEWAY_IMAGE" && "$rollback_gateway_image_id" == "$OLD_GATEWAY_IMAGE_ID" ]] || rollback_ok=0
-        [[ "$rollback_authority_image" == "$OLD_DOCKER_AUTHORITY_IMAGE" && "$rollback_authority_image_id" == "$OLD_DOCKER_AUTHORITY_IMAGE_ID" ]] || rollback_ok=0
         [[ "$rollback_executor_image" == "$OLD_EXECUTOR_IMAGE" && "$rollback_executor_image_id" == "$OLD_EXECUTOR_IMAGE_ID" ]] || rollback_ok=0
       fi
 
+      rollback_authority_id="$(docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=docker-authority --format '{{.ID}}')"
+      if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then
+        if [[ -z "$rollback_authority_id" ]]; then
+          rollback_ok=0
+        else
+          rollback_authority_image="$(docker inspect "$rollback_authority_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
+          rollback_authority_image_id="$(docker inspect "$rollback_authority_id" --format '{{.Image}}' 2>/dev/null || true)"
+          [[ "$rollback_authority_image" == "$OLD_DOCKER_AUTHORITY_IMAGE" && "$rollback_authority_image_id" == "$OLD_DOCKER_AUTHORITY_IMAGE_ID" ]] || rollback_ok=0
+        fi
+      elif [[ -n "$rollback_authority_id" ]]; then
+        rollback_ok=0
+      fi
+
       if [[ "$OLD_GITHUB_PRESENT" == 1 ]]; then
-        rollback_github_id="$("${QG[@]}" ps -q github-broker 2>/dev/null || true)"
-        rollback_github_proxy_id="$("${QG[@]}" ps -q github-egress-proxy 2>/dev/null || true)"
+        rollback_github_id="$("${BASE_QG[@]}" ps -q github-broker 2>/dev/null || true)"
+        rollback_github_proxy_id="$("${BASE_QG[@]}" ps -q github-egress-proxy 2>/dev/null || true)"
         if [[ -z "$rollback_github_id" || -z "$rollback_github_proxy_id" ]]; then
           rollback_ok=0
         else
@@ -354,7 +443,7 @@ printf '%s\n' '=== PERSIST IMMUTABLE RUNTIME IMAGE IDENTITIES ==='
 python3 - "$RUNTIME_ENV" \
   "$NEW_GATEWAY_IMAGE" "$new_gateway_id" \
   "$NEW_DOCKER_AUTHORITY_IMAGE" "$new_authority_id" \
-  "$NEW_EXECUTOR_IMAGE" "$new_executor_id" <<'PY'
+  "$NEW_EXECUTOR_IMAGE" "$new_executor_id" "$BUNDLE_PATH" <<'PY'
 import os, re, stat, sys, tempfile
 from pathlib import Path
 
@@ -366,6 +455,7 @@ updates = {
     'DOCKER_AUTHORITY_IMAGE_ID': sys.argv[5],
     'EXECUTOR_IMAGE': sys.argv[6],
     'EXECUTOR_IMAGE_ID': sys.argv[7],
+    'QUARANGATE_NPM_BUNDLE_PATH': sys.argv[8],
 }
 lines = path.read_text().splitlines(keepends=True)
 for key, value in updates.items():
@@ -401,7 +491,7 @@ env_updated=1
 python3 - "$RUNTIME_ENV" \
   "$NEW_GATEWAY_IMAGE" "$new_gateway_id" \
   "$NEW_DOCKER_AUTHORITY_IMAGE" "$new_authority_id" \
-  "$NEW_EXECUTOR_IMAGE" "$new_executor_id" <<'PYVERIFY'
+  "$NEW_EXECUTOR_IMAGE" "$new_executor_id" "$BUNDLE_PATH" <<'PYVERIFY'
 import sys
 from pathlib import Path
 
@@ -410,6 +500,7 @@ expected = {
     'GATEWAY_IMAGE': sys.argv[2], 'GATEWAY_IMAGE_ID': sys.argv[3],
     'DOCKER_AUTHORITY_IMAGE': sys.argv[4], 'DOCKER_AUTHORITY_IMAGE_ID': sys.argv[5],
     'EXECUTOR_IMAGE': sys.argv[6], 'EXECUTOR_IMAGE_ID': sys.argv[7],
+    'QUARANGATE_NPM_BUNDLE_PATH': sys.argv[8],
 }
 found = {}
 for raw in path.read_text().splitlines():

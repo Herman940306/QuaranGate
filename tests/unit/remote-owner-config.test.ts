@@ -51,6 +51,44 @@ describe('remote owner projects-work hard boundary', () => {
     expect(script).not.toMatch(/docker\s+pull/);
   });
 
+  it('migrates a pre-SH06 runtime without inventing a historical Docker-authority baseline', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain('OLD_DOCKER_AUTHORITY_PRESENT=${#legacy_authority_ids[@]}');
+    expect(script).toContain("[[ ${#legacy_authority_ids[@]} -le 1 ]]");
+    expect(script).toContain('if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 ]]');
+    expect(script).toContain('rm -sf docker-authority');
+    expect(script).toContain('elif [[ -n "$rollback_authority_id" ]]');
+    expect(script).not.toContain("cannot derive one-time SH-06 Docker-authority baseline image");
+  });
+
+  it('deploys candidate topology against operator-relative binds and keeps legacy topology for rollback', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain('QG_FILES=(-f "$REPO_ROOT/compose.yaml")');
+    expect(script).toContain('BASE_QG_FILES=(-f "$MAIN_ROOT/compose.yaml")');
+    expect(script).toContain('--project-directory "$MAIN_ROOT"');
+    expect(script).toContain('BASE_QG_FILES+=(-f "$MAIN_ROOT/compose.github.yaml")');
+    expect(script).toContain('QG_FILES+=(-f "$REPO_ROOT/compose.github.yaml")');
+  });
+
+  it('requires exact receipt binding before reusing existing current release refs', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain('existing release refs require absolute QUARANGATE_DEPLOY_RELEASE_RECEIPT');
+    expect(script).toContain("doc.get('status') != 'PASS'");
+    expect(script).toContain("source.get('commit') != rev");
+    expect(script).toContain("source.get('tree') != tree");
+    expect(script).toContain('release receipt lacks required core image roles');
+    expect(script).toContain('existing release ref digest mismatch');
+    expect(script).toContain("fail 'partial existing release ref set refused'");
+  });
+
+  it('accepts an explicit exact-current npm bundle only after verification and persists it atomically', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain('QUARANGATE_DEPLOY_NPM_BUNDLE_PATH');
+    expect(script).toContain('scripts/npm-offline-bundle.mjs');
+    expect(script).toContain("'QUARANGATE_NPM_BUNDLE_PATH': sys.argv[8]");
+    expect(script).toContain("fail 'candidate npm bundle does not verify against exact source'");
+  });
+
   it('preflights and exports the exact file-backed Kiro secret source before Compose deployment', () => {
     const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
     expect(script).toContain('read_runtime_value AGENT_KIRO_KEY_FILE');
