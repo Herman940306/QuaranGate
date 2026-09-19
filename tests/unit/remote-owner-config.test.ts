@@ -98,6 +98,23 @@ describe('remote owner projects-work hard boundary', () => {
     expect(script).not.toContain("\"$DOCKER_AUTHORITY_TOKEN_VALUE\" <<'PY'");
   });
 
+  it('refuses an existing Docker-authority without a persisted token instead of inventing an unrecoverable rollback secret', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain('existing Docker-authority requires a persisted DOCKER_AUTHORITY_TOKEN for exact rollback');
+    expect(script).toContain('[[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 ]]');
+  });
+
+  it('arms runtime-env rollback before atomic persistence starts', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    const persistMarker = script.indexOf("=== PERSIST IMMUTABLE RUNTIME IMAGE IDENTITIES ===");
+    const armed = script.indexOf('env_updated=1', persistMarker);
+    const pythonWrite = script.indexOf('python3 - "$RUNTIME_ENV"', persistMarker);
+    expect(persistMarker).toBeGreaterThanOrEqual(0);
+    expect(armed).toBeGreaterThan(persistMarker);
+    expect(pythonWrite).toBeGreaterThan(armed);
+    expect(script.slice(pythonWrite)).not.toContain("PY\nenv_updated=1\n");
+  });
+
   it('migrates a legacy Ollama tag only through the exact local RepoDigest for the same image ID', () => {
     const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
     expect(script).toContain('tag-to-digest O1 migration requires exactly one historical Ollama container');

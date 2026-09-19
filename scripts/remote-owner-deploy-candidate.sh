@@ -128,6 +128,7 @@ INTERNAL_TOKEN_VALUE="$(read_runtime_value INTERNAL_TOKEN)" || fail 'runtime .en
 if DOCKER_AUTHORITY_TOKEN_VALUE="$(read_runtime_value DOCKER_AUTHORITY_TOKEN 2>/dev/null)"; then
   GENERATED_DOCKER_AUTHORITY_TOKEN=0
 else
+  [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 ]] || fail 'existing Docker-authority requires a persisted DOCKER_AUTHORITY_TOKEN for exact rollback'
   DOCKER_AUTHORITY_TOKEN_VALUE="$(python3 - <<'PYTOKEN'
 import secrets
 print(secrets.token_urlsafe(32))
@@ -482,6 +483,9 @@ fi
 GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$NEW_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE" QUARANGATE_RUNTIME_ENV="$RUNTIME_ENV" "$REPO_ROOT/scripts/remote-owner-infra-acceptance.sh"
 
 printf '%s\n' '=== PERSIST IMMUTABLE RUNTIME IMAGE IDENTITIES ==='
+# Arm rollback before persistence starts so any failure during or immediately
+# after atomic replacement restores the exact predeploy runtime env bytes.
+env_updated=1
 CANDIDATE_OLLAMA_IMAGE="$CANDIDATE_OLLAMA_IMAGE" DOCKER_AUTHORITY_TOKEN="$DOCKER_AUTHORITY_TOKEN_VALUE" python3 - "$RUNTIME_ENV" \
   "$NEW_GATEWAY_IMAGE" "$new_gateway_id" \
   "$NEW_DOCKER_AUTHORITY_IMAGE" "$new_authority_id" \
@@ -529,7 +533,6 @@ finally:
     if os.path.exists(tmp_name):
         os.unlink(tmp_name)
 PY
-env_updated=1
 
 # Verify the persisted file directly. Ambient exports must not be able to make a
 # stale or incomplete runtime identity look accepted.
