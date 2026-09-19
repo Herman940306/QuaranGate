@@ -73,10 +73,12 @@ similarly verified by both prior `Config.Image` and prior immutable `.Image` ID.
 
 Unattended recovery trusts neither ambient shell variables nor tags by
 themselves: it loads the six persisted keys, proves each tag still resolves to
-its persisted image ID before Compose start, uses `--no-build --pull never`, and
-then verifies each live primary container by both role tag and immutable image
+its persisted image ID, then gives Compose the immutable `sha256:` IDs rather
+than the mutable aliases. It uses `--no-build --pull never` and verifies each
+live primary container was actually created from the expected immutable image
 ID. Optional GitHub broker/proxy services are bound to the same gateway artifact
-ID.
+ID. The persisted role tags remain auditable aliases and must continue resolving
+to those exact IDs before any start.
 
 For one migration only, candidate deployment may derive a missing historical
 `DOCKER_AUTHORITY_IMAGE` selector from exactly one already-running

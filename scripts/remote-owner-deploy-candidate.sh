@@ -6,27 +6,58 @@ cd "$REPO_ROOT"
 
 fail() { printf 'REMOTE_OWNER_DEPLOY=FAIL reason=%s\n' "$*" >&2; exit 1; }
 
-command -v docker >/dev/null 2>&1 || fail 'docker CLI missing'
 command -v git >/dev/null 2>&1 || fail 'git missing'
 command -v python3 >/dev/null 2>&1 || fail 'python3 missing'
-docker info >/dev/null 2>&1 || fail 'Docker Engine unavailable'
 
 REV="$(git rev-parse HEAD)"
 BRANCH="$(git branch --show-current)"
 [[ -n "$REV" && -n "$BRANCH" ]] || fail 'candidate Git identity unavailable'
 [[ -z "$(git status --porcelain)" ]] || fail 'candidate worktree is not clean'
 
-# Candidate linked worktree normally sits at <main>/.quarangate-worktrees/<name>.
-# After promotion this same script may run from main, where .env is local.
-MAIN_ROOT="$REPO_ROOT"
-if [[ ! -f "$MAIN_ROOT/.env" && -f "$REPO_ROOT/../../.env" ]]; then
-  MAIN_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
+runtime_root_complete() {
+  local root="$1"
+  [[ -d "$root" && -f "$root/.env" && -f "$root/config/clients.yaml" && -f "$root/config/bridge.yaml" && -f "$root/compose.yaml" ]]
+}
+
+canonical_dir() {
+  (cd "$1" 2>/dev/null && pwd -P)
+}
+
+# Resolve the operator runtime independently of candidate-worktree layout.
+# Priority is explicit trusted root, explicit runtime-env parent, then exact
+# candidate root, then the Git common-dir parent used by linked worktrees.
+# Isolated host clones must supply QUARANGATE_RUNTIME_ROOT or
+# QUARANGATE_RUNTIME_ENV rather than guessing an operator path.
+MAIN_ROOT=''
+if [[ -n "${QUARANGATE_RUNTIME_ROOT:-}" ]]; then
+  MAIN_ROOT="$(canonical_dir "$QUARANGATE_RUNTIME_ROOT")" || fail 'explicit runtime root is not a real directory'
+  runtime_root_complete "$MAIN_ROOT" || fail 'explicit runtime root is incomplete'
+elif [[ -n "${QUARANGATE_RUNTIME_ENV:-}" ]]; then
+  [[ -f "$QUARANGATE_RUNTIME_ENV" ]] || fail 'explicit runtime .env not found'
+  MAIN_ROOT="$(canonical_dir "$(dirname "$QUARANGATE_RUNTIME_ENV")")" || fail 'explicit runtime .env parent is not a real directory'
+  runtime_root_complete "$MAIN_ROOT" || fail 'runtime root derived from explicit .env is incomplete'
+elif runtime_root_complete "$REPO_ROOT"; then
+  MAIN_ROOT="$REPO_ROOT"
+else
+  git_common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  git_common_parent=''
+  if [[ -n "$git_common_dir" && "$(basename "$git_common_dir")" == '.git' ]]; then
+    git_common_parent="$(canonical_dir "$(dirname "$git_common_dir")" || true)"
+  fi
+  [[ -n "$git_common_parent" && "$git_common_parent" != "$REPO_ROOT" ]] || fail 'operator runtime root cannot be derived from candidate Git topology'
+  runtime_root_complete "$git_common_parent" || fail 'Git common-dir parent is not a complete operator runtime root'
+  MAIN_ROOT="$git_common_parent"
 fi
 RUNTIME_ENV="${QUARANGATE_RUNTIME_ENV:-$MAIN_ROOT/.env}"
 [[ -f "$RUNTIME_ENV" ]] || fail 'runtime .env not found'
-[[ -f "$MAIN_ROOT/config/clients.yaml" ]] || fail 'runtime clients.yaml not found'
-[[ -f "$MAIN_ROOT/config/bridge.yaml" ]] || fail 'runtime bridge.yaml not found'
-[[ -f "$MAIN_ROOT/compose.yaml" ]] || fail 'runtime compose.yaml not found'
+
+if [[ "${1:-}" == '--resolve-runtime-root-only' ]]; then
+  printf 'MAIN_ROOT=%s\nRUNTIME_ENV=%s\n' "$MAIN_ROOT" "$RUNTIME_ENV"
+  exit 0
+fi
+
+command -v docker >/dev/null 2>&1 || fail 'docker CLI missing'
+docker info >/dev/null 2>&1 || fail 'Docker Engine unavailable'
 
 export PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}"
 [[ -d "$PROJECTS_ROOT" ]] || fail "projects root missing: $PROJECTS_ROOT"
@@ -207,6 +238,20 @@ OLD_GITHUB_IMAGE=''
 OLD_GITHUB_IMAGE_ID=''
 OLD_GITHUB_PROXY_IMAGE=''
 OLD_GITHUB_PROXY_IMAGE_ID=''
+OLD_GITHUB_CONTROL_NETWORK_PRESENT=0
+OLD_GITHUB_CONTROL_NETWORK_ID=''
+OLD_GITHUB_EGRESS_NETWORK_PRESENT=0
+OLD_GITHUB_EGRESS_NETWORK_ID=''
+if docker network inspect quarangate-github-control >/dev/null 2>&1; then
+  OLD_GITHUB_CONTROL_NETWORK_PRESENT=1
+  OLD_GITHUB_CONTROL_NETWORK_ID="$(docker network inspect quarangate-github-control --format '{{.Id}}')"
+  [[ -n "$OLD_GITHUB_CONTROL_NETWORK_ID" ]] || fail 'could not capture predeploy GitHub control network identity'
+fi
+if docker network inspect quarangate-github-egress >/dev/null 2>&1; then
+  OLD_GITHUB_EGRESS_NETWORK_PRESENT=1
+  OLD_GITHUB_EGRESS_NETWORK_ID="$(docker network inspect quarangate-github-egress --format '{{.Id}}')"
+  [[ -n "$OLD_GITHUB_EGRESS_NETWORK_ID" ]] || fail 'could not capture predeploy GitHub egress network identity'
+fi
 if [[ "$github_expected" == 1 ]]; then
   old_github_id="$("${QG[@]}" ps -q github-broker 2>/dev/null || true)"
   old_github_proxy_id="$("${QG[@]}" ps -q github-egress-proxy 2>/dev/null || true)"
@@ -220,7 +265,7 @@ if [[ "$github_expected" == 1 ]]; then
     [[ "$OLD_GITHUB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$OLD_GITHUB_PROXY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'could not capture immutable GitHub rollback image IDs'
   fi
 fi
-printf 'OLD_GATEWAY_IMAGE=%s\nOLD_DOCKER_AUTHORITY_PRESENT=%s\nOLD_DOCKER_AUTHORITY_IMAGE=%s\nOLD_EXECUTOR_IMAGE=%s\nOLD_GITHUB_PRESENT=%s\n' "$OLD_GATEWAY_IMAGE" "$OLD_DOCKER_AUTHORITY_PRESENT" "$OLD_DOCKER_AUTHORITY_IMAGE" "$OLD_EXECUTOR_IMAGE" "$OLD_GITHUB_PRESENT"
+printf 'OLD_GATEWAY_IMAGE=%s\nOLD_DOCKER_AUTHORITY_PRESENT=%s\nOLD_DOCKER_AUTHORITY_IMAGE=%s\nOLD_EXECUTOR_IMAGE=%s\nOLD_GITHUB_PRESENT=%s\nOLD_GITHUB_CONTROL_NETWORK_PRESENT=%s\nOLD_GITHUB_EGRESS_NETWORK_PRESENT=%s\n' "$OLD_GATEWAY_IMAGE" "$OLD_DOCKER_AUTHORITY_PRESENT" "$OLD_DOCKER_AUTHORITY_IMAGE" "$OLD_EXECUTOR_IMAGE" "$OLD_GITHUB_PRESENT" "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" "$OLD_GITHUB_EGRESS_NETWORK_PRESENT"
 
 # Build through the governed local-base helper. It verifies the exact npm bundle,
 # resolves the pinned Node base only from the local Docker image store through a
@@ -243,6 +288,7 @@ node "$REPO_ROOT/scripts/npm-offline-bundle.mjs" verify \
   || fail 'candidate npm bundle does not verify against exact source'
 
 existing_release_refs=0
+receipt_core_id=''
 for image in "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE" "$NEW_EXECUTOR_IMAGE"; do
   if docker image inspect "$image" >/dev/null 2>&1; then existing_release_refs=$((existing_release_refs + 1)); fi
 done
@@ -301,6 +347,23 @@ new_gateway_id="$(docker image inspect "$NEW_GATEWAY_IMAGE" --format '{{.Id}}')"
 new_authority_id="$(docker image inspect "$NEW_DOCKER_AUTHORITY_IMAGE" --format '{{.Id}}')"
 new_executor_id="$(docker image inspect "$NEW_EXECUTOR_IMAGE" --format '{{.Id}}')"
 [[ "$new_gateway_id" == "$new_authority_id" && "$new_gateway_id" == "$new_executor_id" ]] || fail 'gateway/docker-authority/executor shared-artifact identity mismatch'
+if [[ -n "$receipt_core_id" ]]; then
+  [[ "$new_gateway_id" == "$receipt_core_id" && "$new_authority_id" == "$receipt_core_id" && "$new_executor_id" == "$receipt_core_id" ]] \
+    || fail 'existing release refs changed after receipt validation'
+fi
+assert_candidate_image_bindings() {
+  local image expected_id actual_id
+  for pair in \
+    "$NEW_GATEWAY_IMAGE|$new_gateway_id" \
+    "$NEW_DOCKER_AUTHORITY_IMAGE|$new_authority_id" \
+    "$NEW_EXECUTOR_IMAGE|$new_executor_id"; do
+    image="${pair%%|*}"; expected_id="${pair#*|}"
+    actual_id="$(docker image inspect "$image" --format '{{.Id}}')"
+    [[ "$actual_id" == "$expected_id" ]] || fail "candidate image tag retargeted before deployment selection: $image"
+  done
+  unset pair image expected_id actual_id
+}
+assert_candidate_image_bindings
 printf 'NEW_SHARED_IMAGE_ID=%s\n' "$new_gateway_id"
 
 # Preserve the ignored runtime env byte-for-byte for rollback without printing
@@ -346,12 +409,11 @@ rollback() {
         fi
       fi
 
-      if [[ "$OLD_GITHUB_PRESENT" == 0 ]]; then
-        for net in quarangate-github-control quarangate-github-egress; do
-          if docker network inspect "$net" >/dev/null 2>&1; then
-            docker network rm "$net" >/dev/null 2>&1 || rollback_ok=0
-          fi
-        done
+      if [[ "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" == 0 ]] && docker network inspect quarangate-github-control >/dev/null 2>&1; then
+        docker network rm quarangate-github-control >/dev/null 2>&1 || rollback_ok=0
+      fi
+      if [[ "$OLD_GITHUB_EGRESS_NETWORK_PRESENT" == 0 ]] && docker network inspect quarangate-github-egress >/dev/null 2>&1; then
+        docker network rm quarangate-github-egress >/dev/null 2>&1 || rollback_ok=0
       fi
 
       rollback_gateway_id="$("${BASE_QG[@]}" ps -q gateway 2>/dev/null || true)"
@@ -405,9 +467,20 @@ rollback() {
           [[ "$rollback_github_proxy_health" == healthy ]] || rollback_ok=0
         fi
       elif docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-broker --format '{{.ID}}' | grep -q . || \
-           docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-egress-proxy --format '{{.ID}}' | grep -q . || \
-           docker network inspect quarangate-github-control >/dev/null 2>&1 || \
-           docker network inspect quarangate-github-egress >/dev/null 2>&1; then
+           docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-egress-proxy --format '{{.ID}}' | grep -q .; then
+        rollback_ok=0
+      fi
+
+      rollback_github_control_network_id="$(docker network inspect quarangate-github-control --format '{{.Id}}' 2>/dev/null || true)"
+      if [[ "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" == 1 ]]; then
+        [[ -n "$rollback_github_control_network_id" && "$rollback_github_control_network_id" == "$OLD_GITHUB_CONTROL_NETWORK_ID" ]] || rollback_ok=0
+      elif [[ -n "$rollback_github_control_network_id" ]]; then
+        rollback_ok=0
+      fi
+      rollback_github_egress_network_id="$(docker network inspect quarangate-github-egress --format '{{.Id}}' 2>/dev/null || true)"
+      if [[ "$OLD_GITHUB_EGRESS_NETWORK_PRESENT" == 1 ]]; then
+        [[ -n "$rollback_github_egress_network_id" && "$rollback_github_egress_network_id" == "$OLD_GITHUB_EGRESS_NETWORK_ID" ]] || rollback_ok=0
+      elif [[ -n "$rollback_github_egress_network_id" ]]; then
         rollback_ok=0
       fi
     fi
@@ -425,9 +498,12 @@ rollback() {
 trap rollback EXIT
 
 printf '%s\n' '=== CONTROLLED DEPLOY ==='
+# Recheck the attested aliases, then select the immutable IDs for Compose so
+# no tag retarget can alter the bytes that are actually started.
+assert_candidate_image_bindings
+export GATEWAY_IMAGE="$new_gateway_id" DOCKER_AUTHORITY_IMAGE="$new_authority_id" EXECUTOR_IMAGE="$new_executor_id"
 mutated=1
-GIT_REVISION="$REV" GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$NEW_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE" \
-  "${QG[@]}" up -d --no-build --pull never "${DEPLOY_SERVICES[@]}"
+GIT_REVISION="$REV" "${QG[@]}" up -d --no-build --pull never "${DEPLOY_SERVICES[@]}"
 "${PW[@]}" up -d --no-build --pull never
 
 printf '%s\n' '=== WAIT FOR GATEWAY ==='
@@ -468,19 +544,19 @@ authority_image_live="$(docker inspect "$authority_id" --format '{{.Config.Image
 authority_image_id_live="$(docker inspect "$authority_id" --format '{{.Image}}')"
 executor_image_live="$(docker inspect "$executor_id" --format '{{.Config.Image}}')"
 executor_image_id_live="$(docker inspect "$executor_id" --format '{{.Image}}')"
-[[ "$gateway_image_live" == "$NEW_GATEWAY_IMAGE" && "$gateway_image_id_live" == "$new_gateway_id" ]] || fail "gateway live image identity mismatch"
-[[ "$authority_image_live" == "$NEW_DOCKER_AUTHORITY_IMAGE" && "$authority_image_id_live" == "$new_authority_id" ]] || fail "Docker-authority live image identity mismatch"
-[[ "$executor_image_live" == "$NEW_EXECUTOR_IMAGE" && "$executor_image_id_live" == "$new_executor_id" ]] || fail "executor live image identity mismatch"
+[[ "$gateway_image_live" == "$new_gateway_id" && "$gateway_image_id_live" == "$new_gateway_id" ]] || fail "gateway live image identity mismatch"
+[[ "$authority_image_live" == "$new_authority_id" && "$authority_image_id_live" == "$new_authority_id" ]] || fail "Docker-authority live image identity mismatch"
+[[ "$executor_image_live" == "$new_executor_id" && "$executor_image_id_live" == "$new_executor_id" ]] || fail "executor live image identity mismatch"
 if [[ "$github_expected" == 1 ]]; then
   github_image_live="$(docker inspect "$github_id" --format '{{.Config.Image}}')"
   github_image_id_live="$(docker inspect "$github_id" --format '{{.Image}}')"
   github_proxy_image_live="$(docker inspect "$github_proxy_id" --format '{{.Config.Image}}')"
   github_proxy_image_id_live="$(docker inspect "$github_proxy_id" --format '{{.Image}}')"
-  [[ "$github_image_live" == "$NEW_GATEWAY_IMAGE" && "$github_image_id_live" == "$new_gateway_id" ]] || fail "GitHub broker live image identity mismatch"
-  [[ "$github_proxy_image_live" == "$NEW_GATEWAY_IMAGE" && "$github_proxy_image_id_live" == "$new_gateway_id" ]] || fail "GitHub egress proxy live image identity mismatch"
+  [[ "$github_image_live" == "$new_gateway_id" && "$github_image_id_live" == "$new_gateway_id" ]] || fail "GitHub broker live image identity mismatch"
+  [[ "$github_proxy_image_live" == "$new_gateway_id" && "$github_proxy_image_id_live" == "$new_gateway_id" ]] || fail "GitHub egress proxy live image identity mismatch"
 fi
 
-GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$NEW_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE" QUARANGATE_RUNTIME_ENV="$RUNTIME_ENV" "$REPO_ROOT/scripts/remote-owner-infra-acceptance.sh"
+GATEWAY_IMAGE="$new_gateway_id" DOCKER_AUTHORITY_IMAGE="$new_authority_id" EXECUTOR_IMAGE="$new_executor_id" QUARANGATE_RUNTIME_ROOT="$MAIN_ROOT" QUARANGATE_RUNTIME_ENV="$RUNTIME_ENV" "$REPO_ROOT/scripts/remote-owner-infra-acceptance.sh"
 
 printf '%s\n' '=== PERSIST IMMUTABLE RUNTIME IMAGE IDENTITIES ==='
 # Arm rollback before persistence starts so any failure during or immediately

@@ -55,6 +55,12 @@ for pair in GATEWAY_IMAGE:GATEWAY_IMAGE_ID DOCKER_AUTHORITY_IMAGE:DOCKER_AUTHORI
   actual_id="$(docker image inspect "$ref" --format '{{.Id}}' 2>/dev/null || true)"
   [[ "$actual_id" == "$expected_id" ]] || fail "runtime image tag-to-ID binding mismatch for ${ref_key}"
 done
+GATEWAY_IMAGE_ALIAS="$GATEWAY_IMAGE"
+DOCKER_AUTHORITY_IMAGE_ALIAS="$DOCKER_AUTHORITY_IMAGE"
+EXECUTOR_IMAGE_ALIAS="$EXECUTOR_IMAGE"
+# Tags remain persisted audit aliases, but Compose starts by content ID so a
+# concurrent tag retarget cannot change the bytes selected for recovery.
+export GATEWAY_IMAGE="$GATEWAY_IMAGE_ID" DOCKER_AUTHORITY_IMAGE="$DOCKER_AUTHORITY_IMAGE_ID" EXECUTOR_IMAGE="$EXECUTOR_IMAGE_ID"
 unset key count value pair ref_key id_key ref expected_id actual_id
 
 # A linked candidate worktree does not carry ignored runtime config files.

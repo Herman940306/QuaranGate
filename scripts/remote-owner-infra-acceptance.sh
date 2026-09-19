@@ -19,11 +19,13 @@ if [[ ! -f "$RUNTIME_ENV" && -f "$REPO_ROOT/../../.env" ]]; then
 fi
 [[ -f "$RUNTIME_ENV" ]] || fail 'runtime .env not found'
 
-# A linked candidate worktree does not carry ignored runtime config files.
-# Resolve the real operator runtime root separately so Compose always mounts
-# the live config/ directory rather than the candidate's tracked-only config.
-RUNTIME_ROOT="$REPO_ROOT"
-if [[ ! -f "$RUNTIME_ROOT/config/clients.yaml" && -f "$REPO_ROOT/../../config/clients.yaml" ]]; then
+# Candidate deployment may execute from an isolated host clone. In that case
+# the deployer supplies the already-validated operator runtime root explicitly
+# rather than making this helper rediscover it from candidate path layout.
+RUNTIME_ROOT="${QUARANGATE_RUNTIME_ROOT:-$REPO_ROOT}"
+if [[ -n "${QUARANGATE_RUNTIME_ROOT:-}" ]]; then
+  RUNTIME_ROOT="$(cd "$RUNTIME_ROOT" 2>/dev/null && pwd -P)" || fail 'explicit runtime root is not a real directory'
+elif [[ ! -f "$RUNTIME_ROOT/config/clients.yaml" && -f "$REPO_ROOT/../../config/clients.yaml" ]]; then
   RUNTIME_ROOT="$(cd "$REPO_ROOT/../.." && pwd)"
 fi
 [[ -f "$RUNTIME_ROOT/config/clients.yaml" ]] || fail 'runtime clients.yaml not found'
@@ -67,9 +69,11 @@ PW=(docker compose --env-file "$RUNTIME_ENV" -p projects-work -f "$REPO_ROOT/pro
 
 # Resolve service containers from trusted Compose identity, not guessed names.
 gateway_id="$("${QG[@]}" ps -q gateway)"
+authority_id="$("${QG[@]}" ps -q docker-authority)"
 executor_id="$("${QG[@]}" ps -q executor)"
 projects_id="$("${PW[@]}" ps -q work)"
 [[ -n "$gateway_id" ]] || fail 'gateway container missing'
+[[ -n "$authority_id" ]] || fail 'docker-authority container missing'
 [[ -n "$executor_id" ]] || fail 'executor container missing'
 [[ -n "$projects_id" ]] || fail 'projects-work container missing'
 github_id=''
@@ -94,11 +98,13 @@ executor_ports="$(docker inspect "$executor_id" --format '{{json .HostConfig.Por
 [[ "$executor_ports" == 'null' || "$executor_ports" == '{}' ]] || fail 'executor unexpectedly publishes host ports'
 pass EXECUTOR_UNPUBLISHED
 
-# Docker socket authority belongs to the private executor, never gateway/work/broker.
+# Raw Docker authority belongs only to the private docker-authority broker.
+authority_mounts="$(docker inspect "$authority_id" --format '{{json .Mounts}}')"
 executor_mounts="$(docker inspect "$executor_id" --format '{{json .Mounts}}')"
 gateway_mounts="$(docker inspect "$gateway_id" --format '{{json .Mounts}}')"
 projects_mounts="$(docker inspect "$projects_id" --format '{{json .Mounts}}')"
-printf '%s\n' "$executor_mounts" | grep -q '/var/run/docker.sock' || fail 'executor Docker socket missing'
+printf '%s\n' "$authority_mounts" | grep -q '/var/run/docker.sock' || fail 'docker-authority Docker socket missing'
+if printf '%s\n' "$executor_mounts" | grep -q '/var/run/docker.sock'; then fail 'executor has Docker socket'; fi
 if printf '%s\n' "$gateway_mounts" | grep -q '/var/run/docker.sock'; then fail 'gateway has Docker socket'; fi
 if printf '%s\n' "$projects_mounts" | grep -q '/var/run/docker.sock'; then fail 'projects-work has Docker socket'; fi
 if [[ "$github_expected" == 1 ]]; then
@@ -165,7 +171,7 @@ if [[ "$github_expected" == 1 ]]; then
   pass GITHUB_BROKER_BOUNDARY
   pass GITHUB_EGRESS_PROXY_BOUNDARY
 fi
-pass EXECUTOR_ONLY_DOCKER_SOCKET
+pass DOCKER_AUTHORITY_ONLY_DOCKER_SOCKET
 
 # Umbrella host bind must be exactly the approved projects root -> /workspace RW.
 mount_line="$(docker inspect "$projects_id" --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}|{{.Destination}}|{{.RW}}{{end}}{{end}}')"

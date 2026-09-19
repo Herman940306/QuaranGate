@@ -632,7 +632,7 @@ quarangate:docker-authority-<full-reviewed-sha>
 quarangate:executor-<full-reviewed-sha>
 ```
 
-All three service tags intentionally point to the same reviewed QuaranGate artifact. `remote-owner-deploy-candidate.sh` persists each service-specific tag **and** its exact Docker `sha256:` image ID. `remote-owner-start.sh` refuses recovery if any tag has been retargeted, if any persisted image ID is absent/malformed, or if the live container does not match both the expected service tag and immutable image ID.
+All three service tags intentionally point to the same reviewed QuaranGate artifact. `remote-owner-deploy-candidate.sh` persists each service-specific tag **and** its exact Docker `sha256:` image ID. Candidate deployment and `remote-owner-start.sh` first prove each persisted tag still resolves to that ID, then give Compose the immutable image IDs so a concurrent tag retarget cannot alter the bytes actually started. Live containers must match the expected immutable IDs; the service tags remain auditable aliases.
 
 `compose.yaml` has no `quarangate:latest` or unset production image fallback. Gateway, Docker-authority and executor image selections are mandatory and all use `pull_policy: never`.
 

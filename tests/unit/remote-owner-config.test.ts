@@ -81,6 +81,43 @@ describe('remote owner projects-work hard boundary', () => {
     expect(script).toContain("fail 'partial existing release ref set refused'");
   });
 
+  it('rebinds final captured release IDs to the receipt and rechecks them at deployment selection', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    const receiptCheck = script.indexOf('existing release refs changed after receipt validation');
+    const bindingFunction = script.indexOf('assert_candidate_image_bindings()');
+    const controlledDeploy = script.indexOf("=== CONTROLLED DEPLOY ===");
+    const deployRecheck = script.indexOf('assert_candidate_image_bindings', controlledDeploy);
+    const immutableSelection = script.indexOf('export GATEWAY_IMAGE="$new_gateway_id" DOCKER_AUTHORITY_IMAGE="$new_authority_id" EXECUTOR_IMAGE="$new_executor_id"', controlledDeploy);
+    const mutation = script.indexOf('mutated=1', controlledDeploy);
+    expect(receiptCheck).toBeGreaterThanOrEqual(0);
+    expect(bindingFunction).toBeGreaterThan(receiptCheck);
+    expect(deployRecheck).toBeGreaterThan(controlledDeploy);
+    expect(immutableSelection).toBeGreaterThan(deployRecheck);
+    expect(mutation).toBeGreaterThan(immutableSelection);
+    expect(script).toContain('candidate image tag retargeted before deployment selection');
+  });
+
+  it('resolves the operator root independently of sibling-worktree path assumptions and propagates it to infra acceptance', () => {
+    const deploy = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(deploy).toContain('QUARANGATE_RUNTIME_ROOT');
+    expect(deploy).toContain('git rev-parse --path-format=absolute --git-common-dir');
+    expect(deploy).toContain("operator runtime root cannot be derived from candidate Git topology");
+    expect(deploy).toContain("--resolve-runtime-root-only");
+    expect(deploy).toContain('QUARANGATE_RUNTIME_ROOT="$MAIN_ROOT" QUARANGATE_RUNTIME_ENV="$RUNTIME_ENV"');
+  });
+
+  it('captures GitHub network state independently of service presence and removes only candidate-created networks', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    for (const key of [
+      'OLD_GITHUB_CONTROL_NETWORK_PRESENT', 'OLD_GITHUB_CONTROL_NETWORK_ID',
+      'OLD_GITHUB_EGRESS_NETWORK_PRESENT', 'OLD_GITHUB_EGRESS_NETWORK_ID',
+    ]) expect(script).toContain(key);
+    expect(script).toContain('[[ "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" == 0 ]] && docker network inspect quarangate-github-control');
+    expect(script).toContain('[[ "$OLD_GITHUB_EGRESS_NETWORK_PRESENT" == 0 ]] && docker network inspect quarangate-github-egress');
+    expect(script).toContain('rollback_github_control_network_id');
+    expect(script).toContain('rollback_github_egress_network_id');
+  });
+
   it('accepts an explicit exact-current npm bundle only after verification and persists it atomically', () => {
     const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
     expect(script).toContain('QUARANGATE_DEPLOY_NPM_BUNDLE_PATH');
@@ -139,13 +176,14 @@ describe('remote owner projects-work hard boundary', () => {
     expect(script).toContain('export AGENT_KIRO_KEY_FILE=\"$KIRO_KEY_FILE\"');
   });
 
-  it('candidate deployment builds candidate source but mounts live runtime config from the main operator root', () => {
+  it('candidate deployment builds candidate source but mounts validated live runtime config from the operator root', () => {
     const deploy = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
     expect(deploy).toContain('--source-root "$REPO_ROOT"');
     expect(deploy).toContain('--source-commit "$REV"');
     expect(deploy).toContain('QG_FILES=(-f "$MAIN_ROOT/compose.yaml")');
-    expect(deploy).toContain('$MAIN_ROOT/config/clients.yaml');
-    expect(deploy).toContain('$MAIN_ROOT/config/bridge.yaml');
+    expect(deploy).toContain('-f "$root/config/clients.yaml"');
+    expect(deploy).toContain('-f "$root/config/bridge.yaml"');
+    expect(deploy).toContain('runtime_root_complete "$MAIN_ROOT"');
   });
 
   it('persists and verifies exact service tags plus immutable image IDs and verifies rollback by ID', () => {
@@ -163,23 +201,38 @@ describe('remote owner projects-work hard boundary', () => {
     expect(deploy).toContain('rollback_executor_image_id');
   });
 
-  it('unattended recovery refuses a retargeted primary tag and enforces exact live image IDs', () => {
+  it('unattended recovery refuses a retargeted primary tag and starts by exact immutable IDs', () => {
     const start = readFileSync(join(root, 'scripts', 'remote-owner-start.sh'), 'utf8');
     for (const key of ['GATEWAY_IMAGE_ID', 'DOCKER_AUTHORITY_IMAGE_ID', 'EXECUTOR_IMAGE_ID']) {
       expect(start).toContain(key);
     }
     expect(start).toContain('runtime image tag-to-ID binding mismatch');
+    expect(start).toContain('export GATEWAY_IMAGE="$GATEWAY_IMAGE_ID" DOCKER_AUTHORITY_IMAGE="$DOCKER_AUTHORITY_IMAGE_ID" EXECUTOR_IMAGE="$EXECUTOR_IMAGE_ID"');
     expect(start).toContain('live image identity mismatch');
     expect(start).toContain('OLLAMA_IMAGE must be digest-pinned with @sha256');
   });
 
+  it('live infra acceptance enforces docker-authority as the sole Docker socket holder', () => {
+    const infra = readFileSync(join(root, 'scripts', 'remote-owner-infra-acceptance.sh'), 'utf8');
+    expect(infra).toContain("[[ -n \"$authority_id\" ]] || fail 'docker-authority container missing'");
+    expect(infra).toContain("docker-authority Docker socket missing");
+    expect(infra).toContain("executor has Docker socket");
+    expect(infra).toContain("gateway has Docker socket");
+    expect(infra).toContain("projects-work has Docker socket");
+    expect(infra).toContain('pass DOCKER_AUTHORITY_ONLY_DOCKER_SOCKET');
+    expect(infra).not.toContain('pass EXECUTOR_ONLY_DOCKER_SOCKET');
+  });
   it('linked-worktree recovery resolves the operator runtime root before composing QuaranGate', () => {
-    for (const name of ['remote-owner-start.sh', 'remote-owner-health.sh', 'remote-owner-infra-acceptance.sh']) {
+    for (const name of ['remote-owner-start.sh', 'remote-owner-health.sh']) {
       const script = readFileSync(join(root, 'scripts', name), 'utf8');
       expect(script, name).toContain('RUNTIME_ROOT="$REPO_ROOT"');
       expect(script, name).toContain('$RUNTIME_ROOT/config/clients.yaml');
       expect(script, name).toContain('QG_FILES=(-f "$RUNTIME_ROOT/compose.yaml")');
     }
+    const infra = readFileSync(join(root, 'scripts', 'remote-owner-infra-acceptance.sh'), 'utf8');
+    expect(infra).toContain('RUNTIME_ROOT="${QUARANGATE_RUNTIME_ROOT:-$REPO_ROOT}"');
+    expect(infra).toContain('$RUNTIME_ROOT/config/clients.yaml');
+    expect(infra).toContain('QG_FILES=(-f "$RUNTIME_ROOT/compose.yaml")');
   });
 
   it('preserves an explicitly configured Copilot overlay across unattended start, health, and infra acceptance', () => {
