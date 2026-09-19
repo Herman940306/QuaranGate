@@ -16,7 +16,8 @@
 # CHECKS:
 #   DOCKER_API             Host Docker API reachable
 #   HOST_DOCKER_SOCKET     Host /var/run/docker.sock is a Unix socket
-#   EXECUTOR_DOCKER_SOCKET Executor-mounted socket is a Unix socket
+#   DOCKER_AUTHORITY_DOCKER_SOCKET docker-authority-mounted socket is a Unix socket
+#   EXECUTOR_NO_DOCKER_SOCKET Executor has no raw Docker socket mount
 #   GATEWAY_CONFIG_BIND    Gateway /config mount has expected config files
 #   PROJECTS_WORK_BIND     Project workspace mounts are non-empty
 #   GATEWAY_READY          Gateway /readyz returns 200
@@ -109,24 +110,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CHECK: EXECUTOR_DOCKER_SOCKET — socket inside executor container is a socket
+# CHECK: DOCKER_AUTHORITY_DOCKER_SOCKET — only broker owns raw Docker socket
 # ---------------------------------------------------------------------------
+DOCKER_AUTHORITY_CONTAINER="$(docker ps --filter 'label=com.docker.compose.service=docker-authority' \
+  --filter 'label=com.docker.compose.project=quarangate' \
+  --format '{{.ID}}' 2>/dev/null | head -1)"
 EXECUTOR_CONTAINER="$(docker ps --filter 'label=com.docker.compose.service=executor' \
   --filter 'label=com.docker.compose.project=quarangate' \
   --format '{{.ID}}' 2>/dev/null | head -1)"
 
-if [[ -z "$EXECUTOR_CONTAINER" ]]; then
-  record EXECUTOR_DOCKER_SOCKET FAIL "Executor container not running (compose project=quarangate, service=executor)"
+if [[ -z "$DOCKER_AUTHORITY_CONTAINER" ]]; then
+  record DOCKER_AUTHORITY_DOCKER_SOCKET FAIL "docker-authority container not running (compose project=quarangate, service=docker-authority)"
 else
-  # Use stat inside the container to check the socket type without needing
-  # exec privileges — stat is available in alpine/debian images.
-  SOCK_TYPE="$(container_exec_bounded "$EXECUTOR_CONTAINER" stat -c '%F' /var/run/docker.sock 2>/dev/null || echo '')"
-  if [[ -z "$SOCK_TYPE" ]]; then
-    record EXECUTOR_DOCKER_SOCKET FAIL "Cannot stat /var/run/docker.sock inside executor container"
-  elif [[ "$SOCK_TYPE" == "socket" ]]; then
-    record EXECUTOR_DOCKER_SOCKET PASS "Executor /var/run/docker.sock is a socket"
+  AUTH_SOCK_TYPE="$(container_exec_bounded "$DOCKER_AUTHORITY_CONTAINER" stat -c '%F' /var/run/docker.sock 2>/dev/null || echo '')"
+  if [[ "$AUTH_SOCK_TYPE" == "socket" ]]; then
+    record DOCKER_AUTHORITY_DOCKER_SOCKET PASS "docker-authority /var/run/docker.sock is a socket"
+  elif [[ -z "$AUTH_SOCK_TYPE" ]]; then
+    record DOCKER_AUTHORITY_DOCKER_SOCKET FAIL "Cannot stat /var/run/docker.sock inside docker-authority container"
   else
-    record EXECUTOR_DOCKER_SOCKET FAIL "Executor /var/run/docker.sock is '$SOCK_TYPE', not a socket — STALE BIND"
+    record DOCKER_AUTHORITY_DOCKER_SOCKET FAIL "docker-authority /var/run/docker.sock is '$AUTH_SOCK_TYPE', not a socket — STALE BIND"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# CHECK: EXECUTOR_NO_DOCKER_SOCKET — executor must not receive raw Docker socket
+# ---------------------------------------------------------------------------
+if [[ -z "$EXECUTOR_CONTAINER" ]]; then
+  record EXECUTOR_NO_DOCKER_SOCKET FAIL "Executor container not running (compose project=quarangate, service=executor)"
+else
+  EXECUTOR_MOUNTS="$(docker inspect "$EXECUTOR_CONTAINER" --format '{{range .Mounts}}{{printf "%s|%s|%t\n" .Source .Destination .RW}}{{end}}' 2>/dev/null || true)"
+  if printf '%s\n' "$EXECUTOR_MOUNTS" | grep -q '|/var/run/docker.sock|'; then
+    record EXECUTOR_NO_DOCKER_SOCKET FAIL "Executor has forbidden /var/run/docker.sock mount"
+  else
+    record EXECUTOR_NO_DOCKER_SOCKET PASS "Executor has no raw Docker socket mount"
   fi
 fi
 
@@ -233,7 +249,7 @@ else
   if [[ "$EXEC_READYZ" == "200" ]]; then
     record EXECUTOR_READY PASS "Executor /readyz returned HTTP 200"
   elif [[ "$EXEC_READYZ" == "503" ]]; then
-    record EXECUTOR_READY FAIL "Executor /readyz returned 503 — Docker socket authority check failed"
+    record EXECUTOR_READY FAIL "Executor /readyz returned 503 — broker authority readiness check failed"
   else
     record EXECUTOR_READY FAIL "Executor /readyz returned: $EXEC_READYZ"
   fi
@@ -284,7 +300,8 @@ fi
 ORDERED_CHECKS=(
   DOCKER_API
   HOST_DOCKER_SOCKET
-  EXECUTOR_DOCKER_SOCKET
+  DOCKER_AUTHORITY_DOCKER_SOCKET
+  EXECUTOR_NO_DOCKER_SOCKET
   GATEWAY_CONFIG_BIND
   PROJECTS_WORK_BIND
   GATEWAY_READY

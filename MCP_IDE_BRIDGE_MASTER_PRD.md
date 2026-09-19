@@ -107,8 +107,9 @@ Current capability is built around two security domains:
 ```mermaid
 flowchart LR
     C["Approved MCP client"] --> G["Gateway<br/>auth · authz · schemas · audit<br/><b>NO Docker socket</b>"]
-    G --> E["Private Executor<br/>trusted policy · Docker authority<br/><b>no published ports</b>"]
-    E --> T["Authorized Docker targets"]
+    G --> E["Private Executor<br/>trusted policy · broker client<br/><b>no published ports · no Docker socket</b>"]
+    E --> DA["Docker-authority broker<br/>raw Docker socket holder<br/><b>private · unpublished</b>"]
+    DA --> T["Authorized Docker targets"]
     E --> A["Governed agent jobs"]
     A --> S["Isolated sandbox"]
     S --> D["Evidence + diff"]
@@ -169,7 +170,8 @@ Each client, component and worker receives only the authority required for its j
 Examples:
 
 - gateway: network-facing protocol and policy, **no Docker socket**;
-- executor: private Docker authority, no public listener;
+- executor: private policy authority and authenticated docker-authority client, no public listener, **no Docker socket**;
+- docker-authority: private unpublished broker and sole raw Docker socket holder;
 - review target: source read-only;
 - work target: source write where approved, Git metadata separately protected;
 - agent runner: sandbox only, no Docker socket;
@@ -297,31 +299,34 @@ QuaranGate does not expose:
 ```mermaid
 flowchart LR
     NET["External client"] --> GW["Gateway<br/>public boundary<br/>NO docker.sock"]
-    GW --> EX["Executor<br/>private boundary<br/>Docker socket"]
-    EX --> RES["Authorized resources"]
+    GW --> EX["Executor<br/>private boundary<br/>broker client<br/>NO docker.sock"]
+    EX --> DA["Docker-authority broker<br/>raw Docker socket"]
+    DA --> RES["Authorized Docker resources"]
 ```
 
 ### Why this implementation?
 
-Direct Docker control is high-impact. Eliminating Docker authority entirely would remove core QuaranGate functionality, so the design instead concentrates that authority into a private component and keeps it away from the internet-facing process.
+Direct Docker control is high-impact. Eliminating Docker authority entirely would remove core QuaranGate functionality, so the design instead confines raw daemon access to the private unpublished `docker-authority` broker. The executor keeps product policy authority and uses authenticated named broker operations; it does **not** receive `/var/run/docker.sock`.
 
-This does **not** mean a compromised gateway is harmless. It means a compromised gateway does not directly gain raw Docker/host authority and remains mediated by the executor's configured API and policy checks.
+This does **not** mean a compromised gateway is harmless. It means a compromised gateway does not directly gain raw Docker/host authority and remains mediated by the executor's configured API, policy checks and the docker-authority broker's independently validated named-operation contract.
 
 ## 7.2 Docker socket risk
 
-`/var/run/docker.sock` is effectively host-level authority. The executor therefore remains part of the trusted computing base.
+`/var/run/docker.sock` is effectively host-level authority. The `docker-authority` broker is therefore the sole raw Docker socket holder and remains a high-impact trusted boundary. The executor remains trusted policy code, but it reaches Docker only through authenticated named broker operations and must not receive the raw socket.
 
 Mitigations include:
 
-- no published executor ports;
+- no published executor or docker-authority ports;
 - private internal network;
+- docker-authority as the only raw socket mount;
+- executor/gateway/projects-work/GitHub components rejected if they hold `/var/run/docker.sock`;
 - non-root process where practical;
 - capability dropping/read-only filesystem hardening;
-- narrow application API instead of raw Docker passthrough;
+- named broker operations instead of raw Docker passthrough;
 - caller inability to choose arbitrary host paths/images/mounts;
 - audit and independent source validation.
 
-Residual risk remains high if the executor or Docker daemon itself is compromised.
+Residual risk remains high if the docker-authority broker, executor policy code or Docker daemon itself is compromised.
 
 ## 7.3 Workspace confinement
 
@@ -768,6 +773,7 @@ client -> operator-approved ingress -> MCP gateway
 
 PRIVATE PRIVILEGED PLANE
 gateway -> executor over private Docker network
+executor -> docker-authority broker over private Docker network
 
 AGENT DATA PLANE
 runner/backend -> only explicitly approved provider endpoints
@@ -1225,7 +1231,7 @@ Current known limitations/debt include:
 - IDE-host egress/air-gap qualification remains separate and unresolved;
 - macOS has not yet received the same acceptance evidence as the current WSL2 environment;
 - current MCP/SDK ecosystem has evolved beyond the original implementation baseline and requires a separate compatibility/migration decision rather than silent version churn;
-- the executor/Docker socket remains a high-impact trusted boundary by design.
+- the docker-authority broker/Docker socket remains a high-impact trusted boundary by design; executor policy code remains trusted but must not receive the raw Docker socket.
 
 This list should remain focused on real unresolved product/security work rather than every minor code-cleanliness item.
 

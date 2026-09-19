@@ -140,3 +140,43 @@ describe('workstation-doctor.sh --json structure', () => {
     }
   });
 });
+// ---------------------------------------------------------------------------
+// SH-06 broker-only Docker authority regression
+// ---------------------------------------------------------------------------
+
+describe('SH-06 broker-only Docker authority active tooling', () => {
+  const doctor = readFileSync(DOCTOR, 'utf8');
+  const recover = readFileSync(RECOVER, 'utf8');
+  const prd = readFileSync(join(REPO_ROOT, 'MCP_IDE_BRIDGE_MASTER_PRD.md'), 'utf8');
+
+  it('workstation doctor validates docker-authority socket ownership and executor socket absence', () => {
+    expect(doctor).toContain('DOCKER_AUTHORITY_DOCKER_SOCKET');
+    expect(doctor).toContain('EXECUTOR_NO_DOCKER_SOCKET');
+    expect(doctor).toContain('docker-authority /var/run/docker.sock is a socket');
+    expect(doctor).toContain('Executor has forbidden /var/run/docker.sock mount');
+    expect(doctor).not.toContain('EXECUTOR_DOCKER_SOCKET');
+    expect(doctor).not.toContain('Executor /var/run/docker.sock is a socket');
+  });
+
+  it('remote owner recovery targets docker-authority, not executor-owned socket recovery', () => {
+    expect(recover).toContain('TARGET_SERVICE="docker-authority"');
+    expect(recover).toContain("--service must be 'docker-authority' or 'gateway'");
+    expect(recover).toContain('Cannot recover docker-authority');
+    expect(recover).toContain('docker-authority /readyz: HTTP 200');
+    expect(recover).not.toContain('TARGET_SERVICE="executor"');
+    expect(recover).not.toContain("--service must be 'executor' or 'gateway'");
+    expect(recover).not.toContain('Cannot recover executor');
+    expect(recover).not.toContain('executor socket type is already correct');
+    expect(recover).not.toContain('Post-restart executor socket type');
+  });
+
+  it('canonical PRD no longer declares executor as the raw Docker socket authority', () => {
+    expect(prd).toContain('Docker-authority broker');
+    expect(prd).toContain('sole raw Docker socket holder');
+    expect(prd).toContain('executor: private policy authority and authenticated docker-authority client');
+    expect(prd).toContain('executor policy code remains trusted but must not receive the raw Docker socket');
+    expect(prd).not.toContain('executor: private Docker authority');
+    expect(prd).not.toContain('Executor<br/>private boundary<br/>Docker socket');
+    expect(prd).not.toContain('the executor/Docker socket remains a high-impact trusted boundary by design');
+  });
+});

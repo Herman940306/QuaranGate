@@ -5,8 +5,8 @@
 #   Repair exactly ONE stale-bind container. The algorithm is:
 #     1. Capture pre-recovery evidence (docker ps, docker inspect, readyz).
 #     2. Verify host Docker API is healthy.
-#     3. Verify host source bind/socket is correct (Unix socket for executor).
-#     4. Identify which QuaranGate-managed container has a stale bind.
+#     3. Verify host source bind/socket is correct when recovering docker-authority.
+#     4. Identify which QuaranGate-managed container has a stale bind/config.
 #     5. Restart ONLY that affected container (docker restart, not compose down).
 #     6. Re-verify mount identity after restart.
 #     7. Re-verify readiness.
@@ -24,7 +24,7 @@
 # USAGE:
 #   ./scripts/remote-owner-recover.sh [--service <name>] [--dry-run]
 #
-#   --service <name>  Target service to restart: "executor" (default) or "gateway"
+#   --service <name>  Target service to restart: "docker-authority" (default) or "gateway"
 #   --dry-run         Print what would be done without doing it
 #
 # EXIT CODES:
@@ -37,7 +37,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
-TARGET_SERVICE="executor"
+TARGET_SERVICE="docker-authority"
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -45,8 +45,8 @@ while [[ $# -gt 0 ]]; do
     --service)
       shift
       TARGET_SERVICE="${1:-}"
-      if [[ "$TARGET_SERVICE" != "executor" && "$TARGET_SERVICE" != "gateway" ]]; then
-        echo "ERROR: --service must be 'executor' or 'gateway'" >&2
+      if [[ "$TARGET_SERVICE" != "docker-authority" && "$TARGET_SERVICE" != "gateway" ]]; then
+        echo "ERROR: --service must be 'docker-authority' or 'gateway'" >&2
         exit 2
       fi
       ;;
@@ -107,14 +107,14 @@ log "Host Docker API: OK"
 # STEP 3: Verify host source bind/socket is correct
 # ---------------------------------------------------------------------------
 log "=== STEP 3: Verify host source bind/socket ==="
-if [[ "$TARGET_SERVICE" == "executor" ]]; then
+if [[ "$TARGET_SERVICE" == "docker-authority" ]]; then
   HOST_SOCK="/var/run/docker.sock"
   if [[ ! -e "$HOST_SOCK" ]]; then
-    fail "Host socket $HOST_SOCK does not exist. Cannot recover executor."
+    fail "Host socket $HOST_SOCK does not exist. Cannot recover docker-authority."
   fi
   if [[ ! -S "$HOST_SOCK" ]]; then
     HOST_TYPE="$(stat -c '%F' "$HOST_SOCK" 2>/dev/null || echo 'unknown')"
-    fail "Host $HOST_SOCK is a $HOST_TYPE, not a Unix socket. Host Docker bind is wrong — cannot recover."
+    fail "Host $HOST_SOCK is a $HOST_TYPE, not a Unix socket. Host Docker bind is wrong — cannot recover docker-authority."
   fi
   log "Host $HOST_SOCK: Unix socket (correct)"
 fi
@@ -148,10 +148,10 @@ log "Found: $CONTAINER_NAME ($CONTAINER_ID)"
 # Confirm it actually has a stale bind (or at least a problem) before touching it.
 log "Pre-restart readiness check..."
 BEFORE_STATUS="UNKNOWN"
-if [[ "$TARGET_SERVICE" == "executor" ]]; then
+if [[ "$TARGET_SERVICE" == "docker-authority" ]]; then
   SOCK_TYPE="$(docker exec --no-tty "$CONTAINER_ID" stat -c '%F' /var/run/docker.sock 2>/dev/null || echo 'error')"
   if [[ "$SOCK_TYPE" == "socket" ]]; then
-    log "WARNING: executor socket type is already correct ($SOCK_TYPE). Bind may not be stale."
+    log "WARNING: docker-authority socket type is already correct ($SOCK_TYPE). Bind may not be stale."
     log "Proceeding only if --dry-run; otherwise operator should investigate further."
     if [[ "$DRY_RUN" == "false" ]]; then
       log "Socket appears correct. Use workstation-doctor.sh to investigate before forcing a restart."
@@ -160,7 +160,7 @@ if [[ "$TARGET_SERVICE" == "executor" ]]; then
     fi
     BEFORE_STATUS="SOCKET_LOOKS_OK"
   else
-    log "Stale bind confirmed: socket type inside executor is '$SOCK_TYPE'"
+    log "Stale bind confirmed: socket type inside docker-authority is '$SOCK_TYPE'"
     BEFORE_STATUS="STALE_BIND"
   fi
 elif [[ "$TARGET_SERVICE" == "gateway" ]]; then
@@ -205,12 +205,12 @@ if [[ "$DRY_RUN" == "false" ]]; then
     fail "Container did not come back up after restart."
   fi
 
-  if [[ "$TARGET_SERVICE" == "executor" ]]; then
+  if [[ "$TARGET_SERVICE" == "docker-authority" ]]; then
     POST_SOCK_TYPE="$(docker exec --no-tty "$POST_CONTAINER_ID" stat -c '%F' /var/run/docker.sock 2>/dev/null || echo 'error')"
     if [[ "$POST_SOCK_TYPE" != "socket" ]]; then
-      fail "Post-restart: executor socket is still '$POST_SOCK_TYPE', not a Unix socket. Recovery FAILED."
+      fail "Post-restart: docker-authority socket is still '$POST_SOCK_TYPE', not a Unix socket. Recovery FAILED."
     fi
-    log "Post-restart executor socket type: $POST_SOCK_TYPE (PASS)"
+    log "Post-restart docker-authority socket type: $POST_SOCK_TYPE (PASS)"
   fi
 
   if [[ "$TARGET_SERVICE" == "gateway" ]]; then
@@ -230,14 +230,14 @@ if [[ "$DRY_RUN" == "false" ]]; then
   READY_WAIT=5
   sleep "$READY_WAIT"
 
-  if [[ "$TARGET_SERVICE" == "executor" ]]; then
-    EXEC_READYZ="$(docker exec --no-tty "$POST_CONTAINER_ID" \
-      node -e "fetch('http://127.0.0.1:8990/readyz').then(r=>process.stdout.write(String(r.status))).catch(()=>process.stdout.write('error'))" \
+  if [[ "$TARGET_SERVICE" == "docker-authority" ]]; then
+    AUTH_READYZ="$(docker exec --no-tty "$POST_CONTAINER_ID" \
+      node -e "fetch('http://127.0.0.1:8991/readyz',{headers:{'x-internal-token':process.env.DOCKER_AUTHORITY_TOKEN??''}}).then(r=>process.stdout.write(String(r.status))).catch(()=>process.stdout.write('error'))" \
       2>/dev/null || echo 'error')"
-    if [[ "$EXEC_READYZ" == "200" ]]; then
-      log "Executor /readyz: HTTP 200 (PASS)"
+    if [[ "$AUTH_READYZ" == "200" ]]; then
+      log "docker-authority /readyz: HTTP 200 (PASS)"
     else
-      fail "Executor /readyz returned '$EXEC_READYZ' after restart. Recovery FAILED."
+      fail "docker-authority /readyz returned '$AUTH_READYZ' after restart. Recovery FAILED."
     fi
   fi
 
