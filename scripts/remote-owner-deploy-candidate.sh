@@ -70,9 +70,12 @@ if docker ps -a --filter label=com.docker.compose.project=quarangate --filter la
 if [[ "$github_expected" == 1 ]]; then
   [[ -f "$REPO_ROOT/compose.github.yaml" ]] || fail 'candidate compose.github.yaml is missing'
   [[ -f "$MAIN_ROOT/config/github.yaml" ]] || fail 'GitHub control is active but runtime github.yaml is missing'
-  [[ -f "$MAIN_ROOT/compose.github.yaml" ]] || fail 'GitHub control is active but runtime compose.github.yaml is missing'
-  # Candidate deploy uses candidate overlay; rollback uses the exact runtime overlay.
-  BASE_QG_FILES+=(-f "$MAIN_ROOT/compose.github.yaml")
+  github_rollback_overlay="$MAIN_ROOT/compose.github.yaml"
+  if [[ ! -f "$github_rollback_overlay" ]]; then github_rollback_overlay="$REPO_ROOT/compose.github.yaml"; fi
+  [[ -f "$github_rollback_overlay" ]] || fail 'GitHub control is active but no rollback compose.github.yaml is available'
+  # Candidate deploy uses candidate overlay; rollback uses the runtime overlay
+  # when present, otherwise the accepted candidate-overlay fallback.
+  BASE_QG_FILES+=(-f "$github_rollback_overlay")
   QG_FILES+=(-f "$REPO_ROOT/compose.github.yaml")
 fi
 
@@ -120,6 +123,41 @@ fi
 RUNTIME_BUNDLE_PATH="$(read_runtime_value QUARANGATE_NPM_BUNDLE_PATH)" || fail 'runtime .env must contain exactly one non-empty QUARANGATE_NPM_BUNDLE_PATH'
 BUNDLE_PATH="${QUARANGATE_DEPLOY_NPM_BUNDLE_PATH:-$RUNTIME_BUNDLE_PATH}"
 [[ "$BUNDLE_PATH" == /* && -d "$BUNDLE_PATH" ]] || fail "candidate npm bundle directory missing or non-absolute: $BUNDLE_PATH"
+
+INTERNAL_TOKEN_VALUE="$(read_runtime_value INTERNAL_TOKEN)" || fail 'runtime .env must contain exactly one non-empty INTERNAL_TOKEN'
+if DOCKER_AUTHORITY_TOKEN_VALUE="$(read_runtime_value DOCKER_AUTHORITY_TOKEN 2>/dev/null)"; then
+  GENERATED_DOCKER_AUTHORITY_TOKEN=0
+else
+  DOCKER_AUTHORITY_TOKEN_VALUE="$(python3 - <<'PYTOKEN'
+import secrets
+print(secrets.token_urlsafe(32))
+PYTOKEN
+  )"
+  [[ -n "$DOCKER_AUTHORITY_TOKEN_VALUE" ]] || fail 'could not generate Docker-authority token'
+  GENERATED_DOCKER_AUTHORITY_TOKEN=1
+fi
+[[ "$DOCKER_AUTHORITY_TOKEN_VALUE" != "$INTERNAL_TOKEN_VALUE" ]] || fail 'authority tokens must be distinct'
+export DOCKER_AUTHORITY_TOKEN="$DOCKER_AUTHORITY_TOKEN_VALUE"
+
+RUNTIME_OLLAMA_IMAGE=''
+CANDIDATE_OLLAMA_IMAGE=''
+if [[ "$ollama_expected" == 1 ]]; then
+  RUNTIME_OLLAMA_IMAGE="$(read_runtime_value OLLAMA_IMAGE)" || fail 'O1 runtime requires exactly one non-empty OLLAMA_IMAGE'
+  if [[ "$RUNTIME_OLLAMA_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then
+    CANDIDATE_OLLAMA_IMAGE="$RUNTIME_OLLAMA_IMAGE"
+  else
+    mapfile -t live_ollama_ids < <(docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=ollama --format '{{.ID}}')
+    [[ ${#live_ollama_ids[@]} -eq 1 ]] || fail 'tag-to-digest O1 migration requires exactly one historical Ollama container'
+    live_ollama_image_id="$(docker inspect "${live_ollama_ids[0]}" --format '{{.Image}}')"
+    [[ "$live_ollama_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'historical Ollama image ID is invalid'
+    mapfile -t live_ollama_digests < <(docker image inspect "$live_ollama_image_id" --format '{{range .RepoDigests}}{{println .}}{{end}}' | sed '/^$/d')
+    [[ ${#live_ollama_digests[@]} -eq 1 ]] || fail 'historical Ollama image must expose exactly one repository digest'
+    CANDIDATE_OLLAMA_IMAGE="${live_ollama_digests[0]}"
+    [[ "$CANDIDATE_OLLAMA_IMAGE" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || fail 'derived Ollama repository digest is invalid'
+    [[ "$(docker image inspect "$CANDIDATE_OLLAMA_IMAGE" --format '{{.Id}}')" == "$live_ollama_image_id" ]] || fail 'derived Ollama repository digest does not preserve image identity'
+  fi
+  export OLLAMA_IMAGE="$CANDIDATE_OLLAMA_IMAGE"
+fi
 if KIRO_KEY_FILE="$(read_runtime_value AGENT_KIRO_KEY_FILE 2>/dev/null)"; then
   :
 else
@@ -133,7 +171,11 @@ export GATEWAY_IMAGE="$BASE_GATEWAY_IMAGE" EXECUTOR_IMAGE="$BASE_EXECUTOR_IMAGE"
 # Candidate topology is parsed from candidate source, while --project-directory
 # keeps relative live config/secret binds anchored to the operator runtime root.
 QG=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
-BASE_QG=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${BASE_QG_FILES[@]}")
+if [[ "$ollama_expected" == 1 ]]; then
+  BASE_QG=(env OLLAMA_IMAGE="$RUNTIME_OLLAMA_IMAGE" docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${BASE_QG_FILES[@]}")
+else
+  BASE_QG=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${BASE_QG_FILES[@]}")
+fi
 DEPLOY_SERVICES=(docker-authority gateway executor)
 if [[ "$github_expected" == 1 ]]; then DEPLOY_SERVICES+=(github-egress-proxy github-broker); fi
 # Build from the candidate worktree, but deploy from MAIN_ROOT so ignored live
@@ -440,7 +482,7 @@ fi
 GATEWAY_IMAGE="$NEW_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$NEW_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$NEW_EXECUTOR_IMAGE" QUARANGATE_RUNTIME_ENV="$RUNTIME_ENV" "$REPO_ROOT/scripts/remote-owner-infra-acceptance.sh"
 
 printf '%s\n' '=== PERSIST IMMUTABLE RUNTIME IMAGE IDENTITIES ==='
-python3 - "$RUNTIME_ENV" \
+CANDIDATE_OLLAMA_IMAGE="$CANDIDATE_OLLAMA_IMAGE" DOCKER_AUTHORITY_TOKEN="$DOCKER_AUTHORITY_TOKEN_VALUE" python3 - "$RUNTIME_ENV" \
   "$NEW_GATEWAY_IMAGE" "$new_gateway_id" \
   "$NEW_DOCKER_AUTHORITY_IMAGE" "$new_authority_id" \
   "$NEW_EXECUTOR_IMAGE" "$new_executor_id" "$BUNDLE_PATH" <<'PY'
@@ -456,7 +498,10 @@ updates = {
     'EXECUTOR_IMAGE': sys.argv[6],
     'EXECUTOR_IMAGE_ID': sys.argv[7],
     'QUARANGATE_NPM_BUNDLE_PATH': sys.argv[8],
+    'DOCKER_AUTHORITY_TOKEN': os.environ['DOCKER_AUTHORITY_TOKEN'],
 }
+if os.environ.get('CANDIDATE_OLLAMA_IMAGE'):
+    updates['OLLAMA_IMAGE'] = os.environ['CANDIDATE_OLLAMA_IMAGE']
 lines = path.read_text().splitlines(keepends=True)
 for key, value in updates.items():
     pat = re.compile(rf'^{re.escape(key)}=')
@@ -488,11 +533,11 @@ env_updated=1
 
 # Verify the persisted file directly. Ambient exports must not be able to make a
 # stale or incomplete runtime identity look accepted.
-python3 - "$RUNTIME_ENV" \
+CANDIDATE_OLLAMA_IMAGE="$CANDIDATE_OLLAMA_IMAGE" DOCKER_AUTHORITY_TOKEN="$DOCKER_AUTHORITY_TOKEN_VALUE" python3 - "$RUNTIME_ENV" \
   "$NEW_GATEWAY_IMAGE" "$new_gateway_id" \
   "$NEW_DOCKER_AUTHORITY_IMAGE" "$new_authority_id" \
   "$NEW_EXECUTOR_IMAGE" "$new_executor_id" "$BUNDLE_PATH" <<'PYVERIFY'
-import sys
+import os, sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
@@ -501,7 +546,10 @@ expected = {
     'DOCKER_AUTHORITY_IMAGE': sys.argv[4], 'DOCKER_AUTHORITY_IMAGE_ID': sys.argv[5],
     'EXECUTOR_IMAGE': sys.argv[6], 'EXECUTOR_IMAGE_ID': sys.argv[7],
     'QUARANGATE_NPM_BUNDLE_PATH': sys.argv[8],
+    'DOCKER_AUTHORITY_TOKEN': os.environ['DOCKER_AUTHORITY_TOKEN'],
 }
+if os.environ.get('CANDIDATE_OLLAMA_IMAGE'):
+    expected['OLLAMA_IMAGE'] = os.environ['CANDIDATE_OLLAMA_IMAGE']
 found = {}
 for raw in path.read_text().splitlines():
     if '=' not in raw or raw.lstrip().startswith('#'):

@@ -66,7 +66,7 @@ describe('remote owner projects-work hard boundary', () => {
     expect(script).toContain('QG_FILES=(-f "$REPO_ROOT/compose.yaml")');
     expect(script).toContain('BASE_QG_FILES=(-f "$MAIN_ROOT/compose.yaml")');
     expect(script).toContain('--project-directory "$MAIN_ROOT"');
-    expect(script).toContain('BASE_QG_FILES+=(-f "$MAIN_ROOT/compose.github.yaml")');
+    expect(script).toContain('BASE_QG_FILES+=(-f "$github_rollback_overlay")');
     expect(script).toContain('QG_FILES+=(-f "$REPO_ROOT/compose.github.yaml")');
   });
 
@@ -87,6 +87,31 @@ describe('remote owner projects-work hard boundary', () => {
     expect(script).toContain('scripts/npm-offline-bundle.mjs');
     expect(script).toContain("'QUARANGATE_NPM_BUNDLE_PATH': sys.argv[8]");
     expect(script).toContain("fail 'candidate npm bundle does not verify against exact source'");
+  });
+
+  it('generates a missing Docker-authority token independently and persists it without argv disclosure', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain("DOCKER_AUTHORITY_TOKEN_VALUE=\"$(python3 - <<'PYTOKEN'");
+    expect(script).toContain('secrets.token_urlsafe(32)');
+    expect(script).toContain('authority tokens must be distinct');
+    expect(script).toContain("'DOCKER_AUTHORITY_TOKEN': os.environ['DOCKER_AUTHORITY_TOKEN']");
+    expect(script).not.toContain("\"$DOCKER_AUTHORITY_TOKEN_VALUE\" <<'PY'");
+  });
+
+  it('migrates a legacy Ollama tag only through the exact local RepoDigest for the same image ID', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain('tag-to-digest O1 migration requires exactly one historical Ollama container');
+    expect(script).toContain("'{{range .RepoDigests}}{{println .}}{{end}}'");
+    expect(script).toContain('historical Ollama image must expose exactly one repository digest');
+    expect(script).toContain('derived Ollama repository digest does not preserve image identity');
+    expect(script).toContain("updates['OLLAMA_IMAGE'] = os.environ['CANDIDATE_OLLAMA_IMAGE']");
+  });
+
+  it('allows GitHub rollback overlay fallback when the legacy operator root predates that tracked overlay', () => {
+    const script = readFileSync(join(root, 'scripts', 'remote-owner-deploy-candidate.sh'), 'utf8');
+    expect(script).toContain('github_rollback_overlay="$MAIN_ROOT/compose.github.yaml"');
+    expect(script).toContain('github_rollback_overlay="$REPO_ROOT/compose.github.yaml"');
+    expect(script).toContain('BASE_QG_FILES+=(-f "$github_rollback_overlay")');
   });
 
   it('preflights and exports the exact file-backed Kiro secret source before Compose deployment', () => {
