@@ -26,37 +26,47 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import {
-  createContainer, startContainer, waitContainer, getContainerLogs, removeContainer,
+  createContainer, startContainer, waitContainer, getContainerLogs,
+  removeContainer, inspectImage,
 } from '../../src/executor/docker.js';
-import { LABEL_MANAGED, LABEL_JOB, LABEL_RESOURCE } from '../../src/executor/agents/sandboxSpec.js';
+import { ownershipLabels } from '../../src/executor/agents/sandboxSpec.js';
 import { buildTar, populateVolume } from '../../src/executor/agents/runnerAssets.js';
 import { removeVolume } from '../../src/executor/docker.js';
-import { parseRunnerResult, bridgeAgentConfig } from '../../src/executor/agents/kiroBackend.js';
+import {
+  parseRunnerResult,
+  bridgeAgentConfig,
+  controlVolumeName,
+} from '../../src/executor/agents/kiroBackend.js';
 import { newBridgeAgentName } from '../../src/executor/agents/acpDriver.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST = join(REPO_ROOT, 'dist');
 const FIXTURES = join(REPO_ROOT, 'tests', 'fixtures');
-const IMAGE = 'mcp-ide-bridge-kiro-runner:a4-prodtest';
+const RUNNER_TAG = 'qg-itest-kiro-runner:a4-prodtest-hardened';
+let runnerImageId = '';
+
 const newJobId = () => `job_${randomBytes(16).toString('hex')}`;
 
 /** Deliver the runner-internal driver bundle + control.json onto a control volume. */
 async function makeControlVolume(jobId: string, control: Record<string, unknown>): Promise<string> {
-  const vol = `io-mcp-ide-bridge-control-${jobId}`;
+  const vol = controlVolumeName(jobId);
   const tar = await buildTar({
     dirs: [{ name: 'executor/' }, { name: 'executor/agents/' }, { name: 'shared/' }],
     files: [
       { name: 'executor/agents/runnerMain.js', content: readFileSync(join(DIST, 'executor/agents/runnerMain.js')), mode: 0o500 },
       { name: 'executor/agents/acpDriver.js', content: readFileSync(join(DIST, 'executor/agents/acpDriver.js')), mode: 0o500 },
       { name: 'shared/errors.js', content: readFileSync(join(DIST, 'shared/errors.js')), mode: 0o500 },
+      { name: 'shared/agents.js', content: readFileSync(join(DIST, 'shared/agents.js')), mode: 0o500 },
       { name: 'mock-acp-server.mjs', content: readFileSync(join(FIXTURES, 'mock-acp-server.mjs')), mode: 0o500 },
       { name: 'control.json', content: Buffer.from(JSON.stringify(control), 'utf8'), mode: 0o400 },
     ],
   });
   await populateVolume({
     volumeName: vol,
-    labels: { [LABEL_MANAGED]: 'true', [LABEL_JOB]: jobId, [LABEL_RESOURCE]: 'control' },
-    helperImage: IMAGE, mountPath: '/run/control', tar,
+    labels: ownershipLabels('control', jobId),
+    helperImage: runnerImageId,
+    mountPath: '/run/control',
+    tar,
   });
   return vol;
 }
@@ -65,20 +75,46 @@ async function runDriver(control: Record<string, unknown>): Promise<{ stdout: st
   const jobId = newJobId();
   const vol = await makeControlVolume(jobId, control);
   const id = await createContainer(`a4prod-${jobId}`, {
-    Image: IMAGE, User: '1000:1000',
+    Image: runnerImageId,
+    User: '1000:1000',
     // The image ENTRYPOINT (kiro-acp-entrypoint) exec's this. Mirrors the exact
     // production Cmd. No API key here — dry driver run against the mock.
-    Cmd: ['node', '/run/control/executor/agents/runnerMain.js', '/run/control/control.json'],
+    Cmd: [
+      'node',
+      '/run/control/executor/agents/runnerMain.js',
+      '/run/control/control.json',
+    ],
+    Labels: ownershipLabels('runner', jobId),
     HostConfig: {
-      AutoRemove: false, ReadonlyRootfs: true, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'],
-      Mounts: [{ Type: 'volume', Source: vol, Target: '/run/control', ReadOnly: true }],
-      Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=8m' },
+      AutoRemove: false,
+      Privileged: false,
+      ReadonlyRootfs: true,
+      CapDrop: ['ALL'],
+      SecurityOpt: ['no-new-privileges'],
+      NetworkMode: 'none',
+      Mounts: [{
+        Type: 'volume',
+        Source: vol,
+        Target: '/run/control',
+        ReadOnly: true,
+      }],
+      Tmpfs: {
+        '/tmp': 'rw,nosuid,nodev,size=8m',
+      },
+      Memory: 268_435_456,
+      MemorySwap: 268_435_456,
+      PidsLimit: 64,
     },
   });
   try {
     await startContainer(id);
     const waited = await waitContainer(id, { timeoutMs: 20_000 });
     const logs = await getContainerLogs(id, 262_144);
+    if (!logs.stdout.includes('__ACP_RESULT__')) {
+      throw new Error(
+        `runner produced no ACP result: exit=${waited.statusCode} truncated=${logs.truncated} stdout=${JSON.stringify(logs.stdout.slice(0, 8192))} stderr=${JSON.stringify(logs.stderr.slice(0, 8192))}`,
+      );
+    }
     return { stdout: logs.stdout, exit: waited.statusCode };
   } finally {
     await removeContainer(id, true).catch(() => {});
@@ -89,7 +125,7 @@ async function runDriver(control: Record<string, unknown>): Promise<{ stdout: st
 describe('A4 production path — runner-internal ACP driver via Docker Engine API', () => {
   let buildDir: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     // Build the REAL runner Dockerfile with stub binaries (contract only). The
     // driver runs on `node` (present in the glibc base); the ACP conversation
     // uses the delivered mock, so no real kiro-cli is invoked here.
@@ -104,7 +140,16 @@ describe('A4 production path — runner-internal ACP driver via Docker Engine AP
     writeFileSync(join(buildDir, 'kiro-cli-chat'), stub, { mode: 0o755 });
     writeFileSync(join(buildDir, 'Dockerfile'), readFileSync(join(REPO_ROOT, 'runner', 'kiro', 'Dockerfile')));
     writeFileSync(join(buildDir, 'kiro-acp-entrypoint.sh'), readFileSync(join(REPO_ROOT, 'runner', 'kiro', 'kiro-acp-entrypoint.sh')));
-    execFileSync('docker', ['build', '-q', '-t', IMAGE, buildDir], { stdio: 'pipe' });
+    execFileSync(
+      'docker',
+      ['build', '--pull=false', '-q', '-t', RUNNER_TAG, buildDir],
+      { stdio: 'pipe' },
+    );
+
+    runnerImageId = (await inspectImage(RUNNER_TAG)).Id;
+
+    expect(runnerImageId)
+      .toMatch(/^sha256:[0-9a-f]{64}$/);
   }, 180_000);
 
   afterAll(() => { rmSync(buildDir, { recursive: true, force: true }); });
