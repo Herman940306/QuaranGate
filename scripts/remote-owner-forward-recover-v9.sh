@@ -185,6 +185,12 @@ log "MAIN_ROOT=$MAIN_ROOT"
 
 PRIMARY_IMAGE_REF="$QUARANGATE_FORWARD_RECOVERY_PRIMARY_IMAGE"
 FALLBACK_IMAGE_REF="$QUARANGATE_FORWARD_RECOVERY_FALLBACK_IMAGE"
+EXPECTED_PRIMARY_IMAGE_ID='sha256:2fe86e44ecc8bb85c1747ede467c92d865c35d503fe54f167deb2802fbd298fc'
+EXPECTED_FALLBACK_IMAGE_ID='sha256:720172e5c189398bd91e33e5fac1897f9e98f260d00a86a3d6e24656f55bd9f7'
+EXPECTED_LEGACY_IMAGE_ID='sha256:8457dcea1a00253fb6b09183d9bc21b2d50f6aef0e81e1845cebc3f7854bdfa0'
+EXPECTED_PRIMARY_REV='42d226803bfbc073f10570ed7f8579d3f19baa2f'
+EXPECTED_FALLBACK_REV='bd1a8a3f732b55515bca5e452140de132f3fb6d3'
+EXPECTED_LEGACY_REV='a7a61c1ef1949180dd544f557999ebc328800321'
 
 # Resolve to immutable image IDs immediately — never allow tag drift during operation
 PRIMARY_IMAGE_ID="$(docker image inspect "$PRIMARY_IMAGE_REF" --format '{{.Id}}' 2>/dev/null)" \
@@ -194,6 +200,10 @@ FALLBACK_IMAGE_ID="$(docker image inspect "$FALLBACK_IMAGE_REF" --format '{{.Id}
 
 [[ "$PRIMARY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]  || prefail "primary image ID is invalid: $PRIMARY_IMAGE_ID"
 [[ "$FALLBACK_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || prefail "fallback image ID is invalid: $FALLBACK_IMAGE_ID"
+[[ "$PRIMARY_IMAGE_ID" == "$EXPECTED_PRIMARY_IMAGE_ID" ]] \
+  || prefail "PRIMARY_IMAGE_ID_MISMATCH: expected=$EXPECTED_PRIMARY_IMAGE_ID actual=$PRIMARY_IMAGE_ID"
+[[ "$FALLBACK_IMAGE_ID" == "$EXPECTED_FALLBACK_IMAGE_ID" ]] \
+  || prefail "FALLBACK_IMAGE_ID_MISMATCH: expected=$EXPECTED_FALLBACK_IMAGE_ID actual=$FALLBACK_IMAGE_ID"
 
 # Verify OCI revision labels
 PRIMARY_REV="$(docker image inspect "$PRIMARY_IMAGE_ID" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null)" \
@@ -202,6 +212,11 @@ FALLBACK_REV="$(docker image inspect "$FALLBACK_IMAGE_ID" --format '{{index .Con
   || prefail 'fallback image revision label unavailable'
 [[ -n "$PRIMARY_REV" ]]  || prefail 'primary image has no org.opencontainers.image.revision label'
 [[ -n "$FALLBACK_REV" ]] || prefail 'fallback image has no org.opencontainers.image.revision label'
+
+[[ "$PRIMARY_REV" == "$EXPECTED_PRIMARY_REV" ]] \
+  || prefail "PRIMARY_REVISION_MISMATCH: expected=$EXPECTED_PRIMARY_REV actual=$PRIMARY_REV"
+[[ "$FALLBACK_REV" == "$EXPECTED_FALLBACK_REV" ]] \
+  || prefail "FALLBACK_REVISION_MISMATCH: expected=$EXPECTED_FALLBACK_REV actual=$FALLBACK_REV"
 
 log "PRIMARY  image_id=$PRIMARY_IMAGE_ID rev=$PRIMARY_REV"
 log "FALLBACK image_id=$FALLBACK_IMAGE_ID rev=$FALLBACK_REV"
@@ -235,6 +250,8 @@ LEGACY_EXECUTOR_IMAGE_ID="$(docker inspect "$LEGACY_EXECUTOR_CID" --format '{{.I
   || prefail 'cannot read legacy executor image ID'
 [[ "$LEGACY_EXECUTOR_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
   || prefail "legacy executor image ID is invalid: $LEGACY_EXECUTOR_IMAGE_ID"
+[[ "$LEGACY_EXECUTOR_IMAGE_ID" == "$EXPECTED_LEGACY_IMAGE_ID" ]] \
+  || prefail "LEGACY_IMAGE_ID_MISMATCH: expected=$EXPECTED_LEGACY_IMAGE_ID actual=$LEGACY_EXECUTOR_IMAGE_ID"
 LEGACY_EXECUTOR_REV="$(docker inspect "$LEGACY_EXECUTOR_CID" \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" || true
 
@@ -249,9 +266,9 @@ log "FALLBACK_SUPPORTED_SCHEMA=$FALLBACK_SUPPORTED_SCHEMA"
 [[ "$LEGACY_SUPPORTED_SCHEMA" -lt 9 ]] \
   || prefail "INCIDENT_STATE_MISMATCH: legacy executor supports schema $LEGACY_SUPPORTED_SCHEMA (expected <9); re-verify incident before recovery"
 
-# 4c. The legacy executor rev must match the expected a7a61c1 identity
-#     OR be an explicitly equivalent degraded incident identity.
-#     We confirm by checking its schema support (7) and that it is actively crash-looping.
+# 4c. The legacy executor must be the exact accepted degraded incident revision.
+[[ "$LEGACY_EXECUTOR_REV" == "$EXPECTED_LEGACY_REV" ]] \
+  || prefail "LEGACY_REVISION_MISMATCH: expected=$EXPECTED_LEGACY_REV actual=${LEGACY_EXECUTOR_REV:-missing}"
 LEGACY_STATE="$(docker inspect "$LEGACY_EXECUTOR_CID" --format '{{.State.Status}}')" || true
 [[ "$LEGACY_STATE" == restarting || "$LEGACY_STATE" == exited ]] \
   || prefail "INCIDENT_STATE_MISMATCH: legacy executor state=$LEGACY_STATE (expected restarting or exited)"
@@ -474,10 +491,111 @@ github_services_created=0
 NEW_GATEWAY_IMAGE="quarangate:gateway-${REV}"
 NEW_DOCKER_AUTHORITY_IMAGE="quarangate:docker-authority-${REV}"
 NEW_EXECUTOR_IMAGE="quarangate:executor-${REV}"
+FALLBACK_GATEWAY_IMAGE="quarangate:gateway-fallback-${FALLBACK_REV}"
+FALLBACK_DOCKER_AUTHORITY_IMAGE="quarangate:docker-authority-fallback-${FALLBACK_REV}"
 FALLBACK_EXECUTOR_IMAGE="quarangate:executor-fallback-${FALLBACK_REV}"
+
+persist_runtime_config() {
+  local gateway_image="$1" gateway_id="$2"
+  local authority_image="$3" authority_id="$4"
+  local executor_image="$5" executor_id="$6"
+  local fallback_image="$7" fallback_id="$8"
+  DOCKER_AUTHORITY_TOKEN="$DOCKER_AUTHORITY_TOKEN_VALUE" \
+  FINAL_OLLAMA_IMAGE="${FINAL_OLLAMA_IMAGE:-}" \
+  python3 - "$RUNTIME_ENV" \
+    "$gateway_image" "$gateway_id" \
+    "$authority_image" "$authority_id" \
+    "$executor_image" "$executor_id" \
+    "$fallback_image" "$fallback_id" <<'PYCONFIG'
+import os, re, stat, sys, tempfile
+from pathlib import Path
+path = Path(sys.argv[1])
+updates = {
+    'GATEWAY_IMAGE': sys.argv[2],
+    'GATEWAY_IMAGE_ID': sys.argv[3],
+    'DOCKER_AUTHORITY_IMAGE': sys.argv[4],
+    'DOCKER_AUTHORITY_IMAGE_ID': sys.argv[5],
+    'EXECUTOR_IMAGE': sys.argv[6],
+    'EXECUTOR_IMAGE_ID': sys.argv[7],
+    'FORWARD_RECOVERY_FALLBACK_IMAGE': sys.argv[8],
+    'FORWARD_RECOVERY_FALLBACK_IMAGE_ID': sys.argv[9],
+    'DOCKER_AUTHORITY_TOKEN': os.environ['DOCKER_AUTHORITY_TOKEN'],
+}
+if os.environ.get('FINAL_OLLAMA_IMAGE'):
+    updates['OLLAMA_IMAGE'] = os.environ['FINAL_OLLAMA_IMAGE']
+lines = path.read_text().splitlines(keepends=True)
+for key, value in updates.items():
+    pat = re.compile(rf'^{re.escape(key)}=')
+    matches = [i for i, line in enumerate(lines) if pat.match(line)]
+    if len(matches) > 1:
+        raise SystemExit(f'duplicate runtime key: {key}')
+    if matches:
+        i = matches[0]
+        end = '\n' if lines[i].endswith('\n') else ''
+        lines[i] = f'{key}={value}{end}'
+    else:
+        if lines and not lines[-1].endswith('\n'):
+            lines[-1] += '\n'
+        lines.append(f'{key}={value}\n')
+mode = stat.S_IMODE(path.stat().st_mode)
+fd, tmp = tempfile.mkstemp(prefix='.qg-recovery-env-', dir=str(path.parent))
+try:
+    with os.fdopen(fd, 'w') as f:
+        f.writelines(lines)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+PYCONFIG
+  env_updated=1
+}
+
+verify_runtime_config() {
+  local gateway_image="$1" gateway_id="$2"
+  local authority_image="$3" authority_id="$4"
+  local executor_image="$5" executor_id="$6"
+  local fallback_image="$7" fallback_id="$8"
+  DOCKER_AUTHORITY_TOKEN="$DOCKER_AUTHORITY_TOKEN_VALUE" \
+  python3 - "$RUNTIME_ENV" \
+    "$gateway_image" "$gateway_id" \
+    "$authority_image" "$authority_id" \
+    "$executor_image" "$executor_id" \
+    "$fallback_image" "$fallback_id" <<'PYVERIFYCONFIG'
+import os, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+expected = {
+    'GATEWAY_IMAGE': sys.argv[2],
+    'GATEWAY_IMAGE_ID': sys.argv[3],
+    'DOCKER_AUTHORITY_IMAGE': sys.argv[4],
+    'DOCKER_AUTHORITY_IMAGE_ID': sys.argv[5],
+    'EXECUTOR_IMAGE': sys.argv[6],
+    'EXECUTOR_IMAGE_ID': sys.argv[7],
+    'FORWARD_RECOVERY_FALLBACK_IMAGE': sys.argv[8],
+    'FORWARD_RECOVERY_FALLBACK_IMAGE_ID': sys.argv[9],
+    'DOCKER_AUTHORITY_TOKEN': os.environ['DOCKER_AUTHORITY_TOKEN'],
+}
+found = {}
+for raw in path.read_text().splitlines():
+    if '=' not in raw or raw.lstrip().startswith('#'):
+        continue
+    key, value = raw.split('=', 1)
+    if key in expected:
+        if key in found:
+            raise SystemExit(f'duplicate persisted {key}')
+        found[key] = value
+for key, value in expected.items():
+    if found.get(key) != value:
+        raise SystemExit(f'persisted {key} mismatch')
+PYVERIFYCONFIG
+}
 
 rollback() {
   local rc=$?
+  local fallback_ready=NO
   trap - EXIT
   if [[ $rc -ne 0 ]]; then
     printf '=== FORWARD RECOVERY ROLLBACK state=%s ===\n' "$RECOVERY_STATE" >&2
@@ -503,10 +621,7 @@ rollback() {
     if [[ "$runtime_mutated" == 1 ]]; then
       # Stop any recovery-created services (authority, executor, gateway)
       local candidate_services=(docker-authority executor gateway)
-      local QG_FILES_RB=(-f "$MAIN_ROOT/compose.yaml")
-      [[ -f "$MAIN_ROOT/compose.ollama.yaml" ]] && QG_FILES_RB+=(-f "$MAIN_ROOT/compose.ollama.yaml")
-      [[ -f "$MAIN_ROOT/compose.github.yaml" ]] && QG_FILES_RB+=(-f "$MAIN_ROOT/compose.github.yaml")
-      local QG_RB=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES_RB[@]}")
+      local QG_RB=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
 
       "${QG_RB[@]}" stop "${candidate_services[@]}" >/dev/null 2>&1 || true
 
@@ -546,9 +661,59 @@ rollback() {
         ROLLBACK_GITHUB_STATE=YES  # nothing created
       fi
 
-      # Image state: recovery images are local; no registry state to revert.
-      # The degraded baseline (legacy executor restarting) will resume automatically.
-      ROLLBACK_IMAGE_STATE=YES
+      # Never resume the legacy v7 baseline against schema-v9 state. Only the
+      # exact admitted R2 image may become the recovery fallback.
+      if [[ "$ROLLBACK_PERSISTENT_STATE" == YES && "$ROLLBACK_CONFIG_STATE" == YES ]]; then
+        ROLLBACK_CONFIG_STATE=NO
+        export GATEWAY_IMAGE="$FALLBACK_GATEWAY_IMAGE"
+        export DOCKER_AUTHORITY_IMAGE="$FALLBACK_DOCKER_AUTHORITY_IMAGE"
+        export EXECUTOR_IMAGE="$FALLBACK_EXECUTOR_IMAGE"
+
+        if "${QG_RB[@]}" up -d --no-deps --no-build --pull never docker-authority \
+          && wait_service_ready quarangate docker-authority 60 \
+          && "${QG_RB[@]}" up -d --no-deps --no-build --pull never executor \
+          && wait_service_ready quarangate executor 120 \
+          && "${QG_RB[@]}" up -d --no-deps --no-build --pull never gateway \
+          && wait_service_ready quarangate gateway 60; then
+          mapfile -t rb_authority_ids < <(service_ids quarangate docker-authority)
+          mapfile -t rb_executor_ids < <(service_ids quarangate executor)
+          mapfile -t rb_gateway_ids < <(service_ids quarangate gateway)
+          if [[ ${#rb_authority_ids[@]} -eq 1 && ${#rb_executor_ids[@]} -eq 1 && ${#rb_gateway_ids[@]} -eq 1 \
+             && "$(docker inspect "${rb_authority_ids[0]}" --format '{{.Image}}')" == "$FALLBACK_IMAGE_ID" \
+             && "$(docker inspect "${rb_executor_ids[0]}" --format '{{.Image}}')" == "$FALLBACK_IMAGE_ID" \
+             && "$(docker inspect "${rb_gateway_ids[0]}" --format '{{.Image}}')" == "$FALLBACK_IMAGE_ID" ]]; then
+            fallback_db_proof="$(docker run --rm --pull never --network none --read-only --cap-drop ALL \
+              --security-opt no-new-privileges:true --user 1000:1000 \
+              --mount type=volume,src=mcp-bridge-jobs,dst=/source,readonly \
+              --mount "type=bind,src=$snapshot_dir,dst=/snapshot" \
+              "$FALLBACK_IMAGE_ID" node /app/dist/operations/sh06JobDbRecovery.js \
+              snapshot /source/agents.db /snapshot/agents.db.fallback /snapshot/manifest.fallback.json \
+              2>/dev/null)" || true
+            if printf '%s' "$fallback_db_proof" | python3 -c \
+              'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="SNAPSHOT_VERIFIED" and d.get("userVersion")==9 and d.get("integrityCheck")=="ok" and d.get("foreignKeyViolations")==0' \
+              && persist_runtime_config \
+                "$FALLBACK_GATEWAY_IMAGE" "$FALLBACK_IMAGE_ID" \
+                "$FALLBACK_DOCKER_AUTHORITY_IMAGE" "$FALLBACK_IMAGE_ID" \
+                "$FALLBACK_EXECUTOR_IMAGE" "$FALLBACK_IMAGE_ID" \
+                "$FALLBACK_EXECUTOR_IMAGE" "$FALLBACK_IMAGE_ID" \
+              && verify_runtime_config \
+                "$FALLBACK_GATEWAY_IMAGE" "$FALLBACK_IMAGE_ID" \
+                "$FALLBACK_DOCKER_AUTHORITY_IMAGE" "$FALLBACK_IMAGE_ID" \
+                "$FALLBACK_EXECUTOR_IMAGE" "$FALLBACK_IMAGE_ID" \
+                "$FALLBACK_EXECUTOR_IMAGE" "$FALLBACK_IMAGE_ID"; then
+              fallback_ready=YES
+              ROLLBACK_IMAGE_STATE=YES
+              ROLLBACK_CONFIG_STATE=YES
+              RECOVERY_STATE='R2_FALLBACK_READY'
+            fi
+            rm -f "$snapshot_dir/agents.db.fallback" "$snapshot_dir/manifest.fallback.json" 2>/dev/null || true
+          fi
+        fi
+      fi
+
+      if [[ "$fallback_ready" != YES ]]; then
+        "${QG_RB[@]}" stop docker-authority executor gateway >/dev/null 2>&1 || true
+      fi
     else
       # No mutation reached; baseline is preserved
       ROLLBACK_IMAGE_STATE=YES
@@ -561,8 +726,12 @@ rollback() {
       "$ROLLBACK_IMAGE_STATE" "$ROLLBACK_PERSISTENT_STATE" "$ROLLBACK_CONFIG_STATE" \
       "$ROLLBACK_GITHUB_STATE" "$ROLLBACK_NETWORK_STATE" >&2
 
-    if [[ "$ROLLBACK_PERSISTENT_STATE" == NO || "$ROLLBACK_CONFIG_STATE" == NO ]]; then
+    if [[ "$runtime_mutated" == 1 && "$fallback_ready" != YES ]]; then
       printf 'FORWARD_RECOVERY_FAILED=CRITICAL_FORWARD_RECOVERY_FAILED state=%s\n' "$RECOVERY_STATE" >&2
+      printf 'CRITICAL_INVARIANT: DO NOT START LEGACY v7 EXECUTOR — db is schema v9\n' >&2
+    elif [[ "$fallback_ready" == YES ]]; then
+      printf 'FORWARD_RECOVERY=PASS_R2_FALLBACK\n'
+      printf 'R2_FALLBACK_READY=YES FALLBACK_IMAGE_ID=%s DB_SCHEMA_FINAL=9\n' "$FALLBACK_IMAGE_ID"
     fi
   fi
 
@@ -572,6 +741,10 @@ rollback() {
   unset INTERNAL_TOKEN_VALUE
   [[ -z "$env_backup" ]] || rm -f "$env_backup"
   rm -rf "$snapshot_parent_root" 2>/dev/null || true
+  if [[ "$fallback_ready" == YES ]]; then
+    exit 0
+  fi
+  exit "$rc"
 }
 
 # ARM THE TRAP before creating any secret temp material
@@ -595,6 +768,8 @@ log "=== IMAGE TAGGING ==="
 docker tag "$PRIMARY_IMAGE_ID"  "$NEW_GATEWAY_IMAGE"
 docker tag "$PRIMARY_IMAGE_ID"  "$NEW_DOCKER_AUTHORITY_IMAGE"
 docker tag "$PRIMARY_IMAGE_ID"  "$NEW_EXECUTOR_IMAGE"
+docker tag "$FALLBACK_IMAGE_ID" "$FALLBACK_GATEWAY_IMAGE"
+docker tag "$FALLBACK_IMAGE_ID" "$FALLBACK_DOCKER_AUTHORITY_IMAGE"
 docker tag "$FALLBACK_IMAGE_ID" "$FALLBACK_EXECUTOR_IMAGE"
 
 # Re-confirm image IDs after tagging (guard against race with another process)
@@ -608,6 +783,8 @@ assert_image_binding() {
 assert_image_binding "$NEW_GATEWAY_IMAGE"           "$PRIMARY_IMAGE_ID"
 assert_image_binding "$NEW_DOCKER_AUTHORITY_IMAGE"  "$PRIMARY_IMAGE_ID"
 assert_image_binding "$NEW_EXECUTOR_IMAGE"          "$PRIMARY_IMAGE_ID"
+assert_image_binding "$FALLBACK_GATEWAY_IMAGE"      "$FALLBACK_IMAGE_ID"
+assert_image_binding "$FALLBACK_DOCKER_AUTHORITY_IMAGE" "$FALLBACK_IMAGE_ID"
 assert_image_binding "$FALLBACK_EXECUTOR_IMAGE"     "$FALLBACK_IMAGE_ID"
 
 log "IMAGE_BINDINGS_CONFIRMED primary=$PRIMARY_IMAGE_ID fallback=$FALLBACK_IMAGE_ID"
@@ -707,6 +884,9 @@ printf 'GATEWAY_STARTED=YES GATEWAY_READY=YES\n'
 # --- Stage 4: GitHub services (if applicable) ---
 if [[ "$github_expected" == 1 ]]; then
   log "Stage 4: starting GitHub egress proxy..."
+  # Arm cleanup before the first create attempt: Compose may create a
+  # container and still return failure or fail readiness afterward.
+  github_services_created=1
   "${QG[@]}" up -d --no-deps --no-build --pull never github-egress-proxy \
     || fail 'github-egress-proxy startup failed'
   wait_service_ready quarangate github-egress-proxy 60 \
@@ -719,7 +899,6 @@ if [[ "$github_expected" == 1 ]]; then
     || fail 'github-broker startup failed'
   wait_service_ready quarangate github-broker 60 \
     || fail 'github-broker did not become ready within 60s'
-  github_services_created=1
   RECOVERY_STATE='GITHUB_BROKER_READY'
   log "RECOVERY_STATE=$RECOVERY_STATE"
   printf 'GITHUB_EGRESS_READY=YES GITHUB_BROKER_READY=YES\n'
@@ -889,93 +1068,16 @@ if [[ "$ollama_expected" == 1 ]]; then
   FINAL_OLLAMA_IMAGE="$RUNTIME_OLLAMA_IMAGE"
 fi
 
-# Atomic .env update — adds/updates all recovery keys
-DOCKER_AUTHORITY_TOKEN="$DOCKER_AUTHORITY_TOKEN_VALUE" \
-FINAL_OLLAMA_IMAGE="$FINAL_OLLAMA_IMAGE" \
-python3 - "$RUNTIME_ENV" \
-  "$NEW_GATEWAY_IMAGE"           "$PRIMARY_IMAGE_ID" \
-  "$NEW_DOCKER_AUTHORITY_IMAGE"  "$PRIMARY_IMAGE_ID" \
-  "$NEW_EXECUTOR_IMAGE"          "$PRIMARY_IMAGE_ID" \
-  "$FALLBACK_EXECUTOR_IMAGE"     "$FALLBACK_IMAGE_ID" <<'PY'
-import os, re, stat, sys, tempfile
-from pathlib import Path
-path = Path(sys.argv[1])
-updates = {
-    'GATEWAY_IMAGE':              sys.argv[2],
-    'GATEWAY_IMAGE_ID':           sys.argv[3],
-    'DOCKER_AUTHORITY_IMAGE':     sys.argv[4],
-    'DOCKER_AUTHORITY_IMAGE_ID':  sys.argv[5],
-    'EXECUTOR_IMAGE':             sys.argv[6],
-    'EXECUTOR_IMAGE_ID':          sys.argv[7],
-    'DOCKER_AUTHORITY_TOKEN':     os.environ['DOCKER_AUTHORITY_TOKEN'],
-}
-fallback_image  = sys.argv[8]
-fallback_img_id = sys.argv[9]
-if fallback_image and fallback_img_id:
-    updates['FORWARD_RECOVERY_FALLBACK_IMAGE']    = fallback_image
-    updates['FORWARD_RECOVERY_FALLBACK_IMAGE_ID'] = fallback_img_id
-if os.environ.get('FINAL_OLLAMA_IMAGE'):
-    updates['OLLAMA_IMAGE'] = os.environ['FINAL_OLLAMA_IMAGE']
-lines = path.read_text().splitlines(keepends=True)
-for key, value in updates.items():
-    pat = re.compile(rf'^{re.escape(key)}=')
-    matches = [i for i, line in enumerate(lines) if pat.match(line)]
-    if len(matches) > 1:
-        raise SystemExit(f'duplicate runtime key: {key}')
-    if matches:
-        i = matches[0]
-        end = '\n' if lines[i].endswith('\n') else ''
-        lines[i] = f'{key}={value}{end}'
-    else:
-        if lines and not lines[-1].endswith('\n'):
-            lines[-1] += '\n'
-        lines.append(f'{key}={value}\n')
-mode = stat.S_IMODE(path.stat().st_mode)
-fd, tmp = tempfile.mkstemp(prefix='.qg-recovery-env-', dir=str(path.parent))
-try:
-    with os.fdopen(fd, 'w') as f:
-        f.writelines(lines)
-        f.flush()
-        os.fsync(f.fileno())
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
-finally:
-    if os.path.exists(tmp):
-        os.unlink(tmp)
-PY
-env_updated=1
-
-# Verify persisted values
-DOCKER_AUTHORITY_TOKEN="$DOCKER_AUTHORITY_TOKEN_VALUE" \
-python3 - "$RUNTIME_ENV" \
-  "$NEW_GATEWAY_IMAGE"           "$PRIMARY_IMAGE_ID" \
-  "$NEW_DOCKER_AUTHORITY_IMAGE"  "$PRIMARY_IMAGE_ID" \
-  "$NEW_EXECUTOR_IMAGE"          "$PRIMARY_IMAGE_ID" <<'PYVERIFY'
-import os, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-expected = {
-    'GATEWAY_IMAGE':             sys.argv[2],
-    'GATEWAY_IMAGE_ID':          sys.argv[3],
-    'DOCKER_AUTHORITY_IMAGE':    sys.argv[4],
-    'DOCKER_AUTHORITY_IMAGE_ID': sys.argv[5],
-    'EXECUTOR_IMAGE':            sys.argv[6],
-    'EXECUTOR_IMAGE_ID':         sys.argv[7],
-    'DOCKER_AUTHORITY_TOKEN':    os.environ['DOCKER_AUTHORITY_TOKEN'],
-}
-found = {}
-for raw in path.read_text().splitlines():
-    if '=' not in raw or raw.lstrip().startswith('#'):
-        continue
-    key, value = raw.split('=', 1)
-    if key in expected:
-        if key in found:
-            raise SystemExit(f'duplicate persisted {key}')
-        found[key] = value
-for key, value in expected.items():
-    if found.get(key) != value:
-        raise SystemExit(f'persisted {key} mismatch')
-PYVERIFY
+persist_runtime_config \
+  "$NEW_GATEWAY_IMAGE" "$PRIMARY_IMAGE_ID" \
+  "$NEW_DOCKER_AUTHORITY_IMAGE" "$PRIMARY_IMAGE_ID" \
+  "$NEW_EXECUTOR_IMAGE" "$PRIMARY_IMAGE_ID" \
+  "$FALLBACK_EXECUTOR_IMAGE" "$FALLBACK_IMAGE_ID"
+verify_runtime_config \
+  "$NEW_GATEWAY_IMAGE" "$PRIMARY_IMAGE_ID" \
+  "$NEW_DOCKER_AUTHORITY_IMAGE" "$PRIMARY_IMAGE_ID" \
+  "$NEW_EXECUTOR_IMAGE" "$PRIMARY_IMAGE_ID" \
+  "$FALLBACK_EXECUTOR_IMAGE" "$FALLBACK_IMAGE_ID"
 log "RUNTIME_CONFIG_COMMITTED_AND_VERIFIED"
 
 RECOVERY_STATE='RUNTIME_CONFIG_COMMITTED'
