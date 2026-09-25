@@ -41,6 +41,7 @@ import {
 } from './acpDriver.js';
 import { CredentialManager, RUNNER_SECRET_PATH, secretVolumeName } from './credentialManager.js';
 import { buildTar, populateVolume } from './runnerAssets.js';
+import { buildAcpControlTar } from './acpControlAssets.js';
 import { RunnerSandbox, type StageResult } from './sandboxRunner.js';
 import {
   SANDBOX_LABEL_NS, LABEL_MANAGED, LABEL_JOB, LABEL_RESOURCE,
@@ -898,11 +899,6 @@ export class KiroBackend {
   private async provisionControl(): Promise<string> {
     const volName = controlVolumeName(this.job.jobId);
     const dir = this.opts.driverAssetsDir ?? dirname(fileURLToPath(import.meta.url));
-    const runnerMainJs = readFileSync(join(dir, 'runnerMain.js'));
-    const acpDriverJs = readFileSync(join(dir, 'acpDriver.js'));
-    const errorsJs = readFileSync(join(dir, '..', '..', 'shared', 'errors.js'));
-    const agentsJs = readFileSync(join(dir, '..', '..', 'shared', 'agents.js'));
-
     const control = {
       agent: this.agentName,
       model: this.model,
@@ -918,19 +914,10 @@ export class KiroBackend {
       resumeSessionId: this.resumableProviderSessionId ?? undefined,
     };
 
-    const tar = await buildTar({
-      dirs: [
-        { name: 'executor/', mode: 0o700 },
-        { name: 'executor/agents/', mode: 0o700 },
-        { name: 'shared/', mode: 0o700 },
-      ],
-      files: [
-        { name: 'executor/agents/runnerMain.js', content: runnerMainJs, mode: 0o500 },
-        { name: 'executor/agents/acpDriver.js', content: acpDriverJs, mode: 0o500 },
-        { name: 'shared/errors.js', content: errorsJs, mode: 0o500 },
-        { name: 'shared/agents.js', content: agentsJs, mode: 0o500 },
-        { name: 'control.json', content: Buffer.from(JSON.stringify(control), 'utf8'), mode: 0o400 },
-      ],
+    const tar = await buildAcpControlTar({
+      driverAssetsDir: dir,
+      runnerMainFile: 'runnerMain.js',
+      control,
     });
     await populateVolume({
       volumeName: volName,

@@ -19,6 +19,7 @@ import {
 } from '../docker.js';
 import { jobNetworkName } from './egressProxy.js';
 import { buildTar, populateVolume } from './runnerAssets.js';
+import { buildAcpControlTar } from './acpControlAssets.js';
 import { RunnerSandbox, type StageResult } from './sandboxRunner.js';
 import {
   LABEL_JOB,
@@ -331,20 +332,15 @@ export class CopilotBackend {
       maxAssistantBytes: Math.min(this.job.policy.maxOutputBytes, 16 * 1024),
     };
     const entrypoint = `#!/bin/sh\nset -eu\ntest -r ${COPILOT_RUNNER_SECRET_PATH}\nCOPILOT_GITHUB_TOKEN="$(cat ${COPILOT_RUNNER_SECRET_PATH})"\nexport COPILOT_GITHUB_TOKEN\nunset GH_TOKEN GITHUB_TOKEN\nexec "$@"\n`;
-    const tar = await buildTar({
-      dirs: [
-        { name: 'executor/', mode: 0o700 },
-        { name: 'executor/agents/', mode: 0o700 },
-        { name: 'shared/', mode: 0o700 },
-      ],
-      files: [
-        { name: 'executor/agents/copilotRunnerMain.js', content: readFileSync(join(dir, 'copilotRunnerMain.js')), mode: 0o500 },
-        { name: 'executor/agents/acpDriver.js', content: readFileSync(join(dir, 'acpDriver.js')), mode: 0o500 },
-        { name: 'shared/errors.js', content: readFileSync(join(dir, '..', '..', 'shared', 'errors.js')), mode: 0o500 },
-        { name: 'shared/agents.js', content: readFileSync(join(dir, '..', '..', 'shared', 'agents.js')), mode: 0o500 },
-        { name: 'control.json', content: Buffer.from(JSON.stringify(control), 'utf8'), mode: 0o400 },
-        { name: 'copilot-secret-entrypoint.sh', content: Buffer.from(entrypoint, 'utf8'), mode: 0o500 },
-      ],
+    const tar = await buildAcpControlTar({
+      driverAssetsDir: dir,
+      runnerMainFile: 'copilotRunnerMain.js',
+      control,
+      extraFiles: [{
+        name: 'copilot-secret-entrypoint.sh',
+        content: Buffer.from(entrypoint, 'utf8'),
+        mode: 0o500,
+      }],
     });
     await populateVolume({
       volumeName,
