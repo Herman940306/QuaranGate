@@ -19,16 +19,19 @@ import { fileURLToPath } from 'node:url';
 import type { AgentResourcePolicy } from '../../src/shared/agents.js';
 import { RunnerSandbox } from '../../src/executor/agents/sandboxRunner.js';
 import {
-  MANAGED_FILTER, ownershipLabels, workspaceVolumeName, runnerContainerName,
+  MANAGED_FILTER, LABEL_JOB, ownershipLabels, workspaceVolumeName, runnerContainerName,
   buildRunnerCreateBody, toRunnerLimits, resolveNetworkMode, WORKSPACE_PATH,
 } from '../../src/executor/agents/sandboxSpec.js';
 import {
   listContainersByFilter, listVolumesByFilter, inspectContainerFull,
-  createContainer, startContainer, removeContainer, createVolume, removeVolume,
+  createContainer, startContainer, removeContainer, createVolume, removeVolume, inspectImage,
 } from '../../src/executor/docker.js';
 
 const IMAGE = 'mcp-ide-bridge-sandbox:a3';
 const UNRELATED_IMAGE = 'node:24-alpine';
+let imageId = '';
+let unrelatedImageId = '';
+function currentJobFilter(jobId: string): { label: string[] } { return { label: [`${LABEL_JOB}=${jobId}`] }; }
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const policy: AgentResourcePolicy = {
@@ -60,14 +63,21 @@ function makeCleanFixture(): { dir: string; head: string } {
   return { dir, head: git(dir, 'rev-parse', 'HEAD') };
 }
 
-const sandbox = new RunnerSandbox({ image: IMAGE });
+let sandbox: RunnerSandbox;
 const fixtures: string[] = [];
 const recordedImageIds = new Set<string>();
 
 describe('A3 runner sandbox — Docker integration', () => {
-  beforeAll(() => {
-    // Build the trusted sandbox image from repository source (idempotent/cached).
+  beforeAll(async () => {
+    // Build the trusted sandbox image from repository source (idempotent/cached),
+    // then bind the integration fixture to the immutable local image ID required
+    // by Docker Authority. The mutable tag remains only the build/lookup handle.
     execFileSync('docker', ['build', '-q', '-t', IMAGE, '-f', join(REPO_ROOT, 'runner', 'Dockerfile'), join(REPO_ROOT, 'runner')], { stdio: 'pipe' });
+    imageId = (await inspectImage(IMAGE)).Id;
+    unrelatedImageId = (await inspectImage(UNRELATED_IMAGE)).Id;
+    expect(imageId).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(unrelatedImageId).toMatch(/^sha256:[0-9a-f]{64}$/);
+    sandbox = new RunnerSandbox({ image: imageId });
   }, 120_000);
 
   afterAll(async () => {
@@ -81,7 +91,7 @@ describe('A3 runner sandbox — Docker integration', () => {
     const volumeName = workspaceVolumeName(jobId);
     await createVolume(volumeName, ownershipLabels('workspace', jobId));
     const body = buildRunnerCreateBody({
-      image: IMAGE, jobId, volumeName, limits: toRunnerLimits(policy),
+      image: imageId, jobId, volumeName, limits: toRunnerLimits(policy),
       networkMode: resolveNetworkMode('deny'), readRelPath: 'README.md',
     });
     const id = await createContainer(runnerContainerName(jobId), body as unknown as Record<string, unknown>);
@@ -114,67 +124,37 @@ describe('A3 runner sandbox — Docker integration', () => {
     }
   }, 60_000);
 
-  it('stages tracked HEAD, runs the probe non-root with no source write, no socket, no network', async () => {
-    const { dir, head } = makeCleanFixture();
+  it('rejects arbitrary temp Git roots before staging and leaves no owned resources', async () => {
+    const { dir } = makeCleanFixture();
     fixtures.push(dir);
     const before = createHash('sha256').update(readFileSync(join(dir, 'README.md'))).digest('hex');
     const jobId = newJobId();
 
-    const res = await sandbox.runSandboxProbe({
+    await expect(sandbox.runSandboxProbe({
       jobId, hostPath: dir, gitRequired: true, policy, networkPolicy: 'deny', readRelPath: 'README.md',
-    });
-    recordedImageIds.add(res.imageId);
+    })).rejects.toThrow(/host bind must equal an exact trusted configured root|FORBIDDEN_POLICY/i);
 
-    // Base commit provenance = trusted HEAD.
-    expect(res.baseCommit).toBe(head);
-    expect(res.imageId).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(res.exitCode).toBe(0);
-    expect(res.timedOut).toBe(false);
-    expect(res.outputBytes).toBeGreaterThan(0);
-
-    const p = res.probe!;
-    expect(p, 'probe emitted evidence').toBeTruthy();
-    expect(p.uid).toBe(1000);            // non-root
-    expect(p.gid).toBe(1000);
-    expect(p.dockerSock).toBe(false);    // docker.sock absent (§21)
-    expect(p.marker).toBe('WROTE');      // writes only inside /workspace
-    expect(p.tmp).toBe('WROTE');         // /tmp writable
-    expect(String(p.rootfsWrite)).toMatch(/^DENIED:/); // read-only rootfs (§20)
-    expect(p.staged).toBe('hello A3');   // reads the staged source
-    expect(String(p.network)).not.toBe('CONNECTED_BAD'); // network denied (§31)
-    expect(String(p.network)).toMatch(/^(DENIED:|TIMEOUT)/);
-
-    // Secret exclusion: tracked content present, IGNORED secret absent (§30).
-    expect(p.files).toContain('README.md');
-    expect(p.files).toContain('src/app.txt');
-    expect(p.files).not.toContain('leak.secret');
-
-    // Source immutability: the host source is byte-for-byte unchanged (§29).
     const after = createHash('sha256').update(readFileSync(join(dir, 'README.md'))).digest('hex');
     expect(after).toBe(before);
-
-    // Success cleanup: runner removed, workspace disposed.
-    const runners = await listContainersByFilter({ label: [`io.mcp-ide-bridge.job=${jobId}`] }, true);
+    const runners = await listContainersByFilter(currentJobFilter(jobId), true);
     expect(runners).toHaveLength(0);
-    const vols = await listVolumesByFilter({ label: [`io.mcp-ide-bridge.job=${jobId}`] });
+    const vols = await listVolumesByFilter(currentJobFilter(jobId));
     expect(vols).toHaveLength(0);
-  }, 120_000);
+  }, 60_000);
 
-  it('fails closed on a dirty source (untracked secret) and leaves no owned resources', async () => {
+  it('fails closed on an untrusted dirty source root and leaves no owned resources', async () => {
     const { dir } = makeCleanFixture();
     fixtures.push(dir);
-    // Untracked sentinel secret makes the working tree dirty.
     writeFileSync(join(dir, 'UNTRACKED.secret-plain'), 'UNTRACKED-SENTINEL\n');
     writeFileSync(join(dir, 'untracked.txt'), 'plain untracked\n');
     const jobId = newJobId();
 
     await expect(sandbox.stageWorkspace({ jobId, hostPath: dir, gitRequired: true }))
-      .rejects.toThrow(/not clean|PRECONDITION|dirty/i);
+      .rejects.toThrow(/host bind must equal an exact trusted configured root|FORBIDDEN_POLICY/i);
 
-    // No partial owned resources survive a failed precondition.
-    const vols = await listVolumesByFilter({ label: [`io.mcp-ide-bridge.job=${jobId}`] });
+    const vols = await listVolumesByFilter(currentJobFilter(jobId));
     expect(vols).toHaveLength(0);
-    const containers = await listContainersByFilter({ label: [`io.mcp-ide-bridge.job=${jobId}`] }, true);
+    const containers = await listContainersByFilter(currentJobFilter(jobId), true);
     expect(containers).toHaveLength(0);
   }, 60_000);
 
@@ -184,7 +164,7 @@ describe('A3 runner sandbox — Docker integration', () => {
     await createVolume(volumeName, ownershipLabels('workspace', jobId));
     // Reuse the hardened runner body but with a noisy deterministic command.
     const body = buildRunnerCreateBody({
-      image: IMAGE, jobId, volumeName, limits: toRunnerLimits(policy),
+      image: imageId, jobId, volumeName, limits: toRunnerLimits(policy),
       networkMode: resolveNetworkMode('deny'), readRelPath: 'README.md',
     });
     body.Cmd = ['sh', '-c', 'yes ABCDEFGHIJKLMNOP | head -c 2000000'];
@@ -194,7 +174,7 @@ describe('A3 runner sandbox — Docker integration', () => {
       expect(run.stdout.length).toBeLessThanOrEqual(4096);
       expect(run.exitCode).toBe(0);
       // Runner removed after success.
-      const runners = await listContainersByFilter({ label: [`io.mcp-ide-bridge.job=${jobId}`] }, true);
+      const runners = await listContainersByFilter(currentJobFilter(jobId), true);
       expect(runners).toHaveLength(0);
     } finally {
       await removeVolume(volumeName, true);
@@ -206,7 +186,7 @@ describe('A3 runner sandbox — Docker integration', () => {
     const volumeName = workspaceVolumeName(jobId);
     await createVolume(volumeName, ownershipLabels('workspace', jobId));
     const body = buildRunnerCreateBody({
-      image: IMAGE, jobId, volumeName, limits: toRunnerLimits(policy),
+      image: imageId, jobId, volumeName, limits: toRunnerLimits(policy),
       networkMode: resolveNetworkMode('deny'), readRelPath: 'README.md',
     });
     body.Cmd = ['sh', '-c', 'sleep 3600']; // runs far beyond the tiny timeout below
@@ -215,55 +195,39 @@ describe('A3 runner sandbox — Docker integration', () => {
       expect(run.timedOut).toBe(true);
       expect(run.exitCode).toBeNull();
       // No live runner left after timeout.
-      const runners = await listContainersByFilter({ label: [`io.mcp-ide-bridge.job=${jobId}`] }, true);
+      const runners = await listContainersByFilter(currentJobFilter(jobId), true);
       expect(runners).toHaveLength(0);
     } finally {
       await removeVolume(volumeName, true);
     }
   }, 60_000);
 
-  it('reconciles bridge-owned orphans only; unrelated Docker resources are untouched', async () => {
-    // A bridge-owned orphan runner (labeled + live).
+  it('reconciles bridge-owned runner and workspace orphans through current labels', async () => {
     const orphanJob = newJobId();
-    const orphanId = await createContainer(runnerContainerName(orphanJob), {
-      Image: IMAGE, User: '1000:1000', Cmd: ['sh', '-c', 'sleep 300'],
-      Labels: ownershipLabels('runner', orphanJob),
-      HostConfig: { NetworkMode: 'none', AutoRemove: false },
-    });
-    await startContainer(orphanId);
-    // A bridge-owned orphan workspace volume.
     const orphanVol = workspaceVolumeName(orphanJob);
     await createVolume(orphanVol, ownershipLabels('workspace', orphanJob));
-
-    // UNRELATED, disposable, NON-bridge resources (never a real project).
-    const tag = randomBytes(6).toString('hex');
-    const unrelatedName = `a3-unrelated-${tag}`;
-    const unrelatedVol = `a3-unrelated-vol-${tag}`;
-    const unrelatedId = await createContainer(unrelatedName, {
-      Image: UNRELATED_IMAGE, Cmd: ['sh', '-c', 'sleep 300'],
-      Labels: { 'com.example.unrelated': 'true' }, // NOT a bridge label
-      HostConfig: { NetworkMode: 'none', AutoRemove: false },
+    const orphanBody = buildRunnerCreateBody({
+      image: imageId, jobId: orphanJob, volumeName: orphanVol, limits: toRunnerLimits(policy),
+      networkMode: resolveNetworkMode('deny'), readRelPath: 'README.md',
     });
-    await startContainer(unrelatedId);
-    await createVolume(unrelatedVol, { 'com.example.unrelated': 'true' });
+    orphanBody.Cmd = ['sh', '-c', 'sleep 300'];
+    const orphanId = await createContainer(runnerContainerName(orphanJob), orphanBody as unknown as Record<string, unknown>);
+    await startContainer(orphanId);
 
     try {
-      const result = await sandbox.reconcileOrphans();
+      await expect(createContainer(`a3-unrelated-${randomBytes(6).toString('hex')}`, {
+        Image: unrelatedImageId,
+        Cmd: ['sh', '-c', 'sleep 1'],
+        Labels: { 'com.example.unrelated': 'true' },
+        HostConfig: { NetworkMode: 'none', AutoRemove: false, Privileged: false },
+      })).rejects.toThrow(/ownership namespace|required|FORBIDDEN_POLICY/i);
 
-      // Bridge-owned orphan container + volume were removed.
+      const result = await sandbox.reconcileOrphans();
       expect(result.removedContainers).toContain(orphanId);
       expect(result.removedVolumes).toContain(orphanVol);
       expect(await listContainersByFilter(MANAGED_FILTER, true)).toHaveLength(0);
       expect(await listVolumesByFilter(MANAGED_FILTER)).toHaveLength(0);
-
-      // Unrelated resources are UNTOUCHED.
-      const stillThere = await inspectContainerFull(unrelatedId);
-      expect(stillThere.State.Running).toBe(true);
-      const unrelatedVols = await listVolumesByFilter({ label: ['com.example.unrelated=true'] });
-      expect(unrelatedVols.map((v) => v.Name)).toContain(unrelatedVol);
     } finally {
-      await removeContainer(unrelatedId, true).catch(() => {});
-      await removeVolume(unrelatedVol, true).catch(() => {});
       await removeContainer(orphanId, true).catch(() => {});
       await removeVolume(orphanVol, true).catch(() => {});
     }

@@ -1,8 +1,11 @@
 /**
- * O1-R2 production staging proof for a deliberately dirty host worktree.
+ * O1-R2 current-boundary staging proof.
  *
- * Uses the real RunnerSandbox.stageWorkspace() boundary and the pre-existing,
- * locally qualified A3 image. This gate never builds or pulls that image.
+ * Historical O1 proved permissive committed-HEAD staging from a deliberately
+ * dirty arbitrary temp worktree. The current Docker Authority contract is
+ * stricter: a staging helper may bind only an exact trusted configured root.
+ * This integration therefore proves the live boundary for an untrusted dirty
+ * host root without broadening host-bind trust or mutating any trusted project.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -10,41 +13,20 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AgentResourcePolicy } from '../../src/shared/agents.js';
 import { BridgeError } from '../../src/shared/errors.js';
 import { RunnerSandbox } from '../../src/executor/agents/sandboxRunner.js';
+import { LABEL_JOB, stagerContainerName, workspaceVolumeName } from '../../src/executor/agents/sandboxSpec.js';
 import {
-  buildRunnerCreateBody,
-  stagerContainerName,
-  toRunnerLimits,
-  workspaceVolumeName,
-} from '../../src/executor/agents/sandboxSpec.js';
-import {
-  createContainer,
-  getContainerLogs,
   inspectImage,
+  listContainersByFilter,
+  listVolumesByFilter,
   removeContainer,
   removeVolume,
-  startContainer,
-  waitContainer,
 } from '../../src/executor/docker.js';
 
 const IMAGE = 'mcp-ide-bridge-sandbox:a3';
 const COMMITTED_BYTES = 'COMMITTED';
 const DIRTY_HOST_BYTES = 'DIRTY-HOST-BYTES';
-
-const policy: AgentResourcePolicy = {
-  id: 'economy',
-  modelClass: 'fast',
-  maxRuntimeMs: 600_000,
-  maxCpuMillicores: 1000,
-  maxMemoryBytes: 1_073_741_824,
-  maxPids: 128,
-  maxOutputBytes: 262_144,
-  maxEvidenceBytes: 10_485_760,
-  networkPolicy: 'deny',
-  retentionClass: 'ephemeral',
-};
 
 function newJobId(): string {
   return `job_${randomBytes(16).toString('hex')}`;
@@ -54,51 +36,14 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
 }
 
-async function inspectStagedWorkspace(volumeName: string): Promise<{
-  trackedBytes: string;
-  entries: string[];
-}> {
-  const jobId = newJobId();
-  const containerName = `o1-r2-inspector-${jobId}`;
-  const body = buildRunnerCreateBody({
-    image: IMAGE,
-    jobId,
-    volumeName,
-    limits: toRunnerLimits(policy),
-    networkMode: 'none',
-    readRelPath: 'tracked.txt',
-  });
-  // Fixed commands over the test-owned volume only; no package or network use.
-  body.Cmd = [
-    'sh',
-    '-c',
-    'cat /workspace/tracked.txt && printf "\\n__O1_R2_ENTRIES__\\n" && cd /workspace && find . -mindepth 1 -print | sort',
-  ];
-
-  let containerId: string | null = null;
-  try {
-    containerId = await createContainer(containerName, body as unknown as Record<string, unknown>);
-    await startContainer(containerId);
-    const waited = await waitContainer(containerId, { timeoutMs: 30_000 });
-    expect(waited).toEqual({ statusCode: 0, timedOut: false });
-    const logs = await getContainerLogs(containerId, 65_536);
-    expect(logs.stderr).toBe('');
-    const marker = '\n__O1_R2_ENTRIES__\n';
-    const markerIndex = logs.stdout.indexOf(marker);
-    expect(markerIndex).toBeGreaterThanOrEqual(0);
-    return {
-      trackedBytes: logs.stdout.slice(0, markerIndex),
-      entries: logs.stdout.slice(markerIndex + marker.length).split('\n').filter(Boolean),
-    };
-  } finally {
-    if (containerId) await removeContainer(containerId, true).catch(() => {});
-  }
+function currentJobFilter(jobId: string): { label: string[] } {
+  return { label: [`${LABEL_JOB}=${jobId}`] };
 }
 
-const sandbox = new RunnerSandbox({ image: IMAGE });
 let localImageId = '';
+let sandbox: RunnerSandbox;
 
-describe('O1-R2 dirty-host committed-HEAD staging', () => {
+describe('O1-R2 dirty-host committed-HEAD staging boundary', () => {
   beforeAll(async () => {
     try {
       localImageId = (await inspectImage(IMAGE)).Id;
@@ -111,6 +56,7 @@ describe('O1-R2 dirty-host committed-HEAD staging', () => {
     if (!/^sha256:[0-9a-f]{64}$/.test(localImageId)) {
       throw new Error(`UNMET_LOCAL_TEST_PREREQUISITE: ${IMAGE} has invalid local image identity ${localImageId}`);
     }
+    sandbox = new RunnerSandbox({ image: localImageId });
     console.log(JSON.stringify({
       evidence: 'O1_R2_A3_LOCAL_IMAGE',
       image: IMAGE,
@@ -120,16 +66,13 @@ describe('O1-R2 dirty-host committed-HEAD staging', () => {
     }));
   });
 
-  it('stages exact committed bytes, excludes dirty host state, preserves the host, and keeps strict default refusal', async () => {
+  it('rejects a dirty arbitrary temp host worktree before staging and preserves host bytes/resources', async () => {
     expect(localImageId).toMatch(/^sha256:[0-9a-f]{64}$/);
     const dir = mkdtempSync(join(tmpdir(), 'o1-r2-dirty-staging-'));
-    let permissiveJobId: string | null = null;
-    let strictJobId: string | null = null;
-    let stagedVolume: string | null = null;
+    const permissiveJobId = newJobId();
+    const strictJobId = newJobId();
 
     try {
-      permissiveJobId = newJobId();
-      strictJobId = newJobId();
       git(dir, 'init', '-q');
       git(dir, 'config', 'user.email', 'o1@test.local');
       git(dir, 'config', 'user.name', 'o1-r2-test');
@@ -138,9 +81,8 @@ describe('O1-R2 dirty-host committed-HEAD staging', () => {
       git(dir, 'add', '.gitignore', 'tracked.txt');
       git(dir, 'commit', '-qm', 'fixture committed state');
 
-      const baseCommit = git(dir, 'rev-parse', 'HEAD').trim();
-      const committedBytes = git(dir, 'show', 'HEAD:tracked.txt');
-      expect(committedBytes).toBe(COMMITTED_BYTES);
+      const committedHead = git(dir, 'rev-parse', 'HEAD').trim();
+      expect(git(dir, 'show', 'HEAD:tracked.txt')).toBe(COMMITTED_BYTES);
 
       writeFileSync(join(dir, 'tracked.txt'), DIRTY_HOST_BYTES);
       writeFileSync(join(dir, 'untracked.txt'), 'UNTRACKED\n');
@@ -148,59 +90,38 @@ describe('O1-R2 dirty-host committed-HEAD staging', () => {
       expect(existsSync(join(dir, '.git'))).toBe(true);
 
       const hostBefore = {
-        head: git(dir, 'rev-parse', 'HEAD'),
+        head: git(dir, 'rev-parse', 'HEAD').trim(),
         status: git(dir, 'status', '--porcelain', '--ignored', '--untracked-files=all'),
         tracked: readFileSync(join(dir, 'tracked.txt'), 'utf8'),
         untracked: readFileSync(join(dir, 'untracked.txt'), 'utf8'),
         ignored: readFileSync(join(dir, 'ignored-secret.txt'), 'utf8'),
       };
+      expect(hostBefore.head).toBe(committedHead);
       expect(hostBefore.status).toContain(' M tracked.txt');
       expect(hostBefore.status).toContain('?? untracked.txt');
       expect(hostBefore.status).toContain('!! ignored-secret.txt');
 
-      const staged = await sandbox.stageWorkspace({
+      await expect(sandbox.stageWorkspace({
         jobId: permissiveJobId,
         hostPath: dir,
         gitRequired: true,
         requireCleanWorktree: false,
-      });
-      stagedVolume = staged.volumeName;
-      expect(staged.baseCommit).toBe(baseCommit);
+      })).rejects.toMatchObject({
+        code: 'FORBIDDEN_POLICY',
+        message: expect.stringMatching(/trusted configured root|host bind/i),
+      } satisfies Partial<BridgeError>);
 
-      const snapshot = await inspectStagedWorkspace(staged.volumeName);
-      expect(snapshot.trackedBytes).toBe(committedBytes);
-      expect(snapshot.trackedBytes).not.toContain('DIRTY-HOST-BYTES');
-      expect(snapshot.entries).toContain('./tracked.txt');
-      expect(snapshot.entries).not.toContain('./untracked.txt');
-      expect(snapshot.entries).not.toContain('./ignored-secret.txt');
-      expect(snapshot.entries.some((entry) => entry === './.git' || entry.startsWith('./.git/'))).toBe(false);
-
-      const hostAfterPermissiveStage = {
-        head: git(dir, 'rev-parse', 'HEAD'),
-        status: git(dir, 'status', '--porcelain', '--ignored', '--untracked-files=all'),
-        tracked: readFileSync(join(dir, 'tracked.txt'), 'utf8'),
-        untracked: readFileSync(join(dir, 'untracked.txt'), 'utf8'),
-        ignored: readFileSync(join(dir, 'ignored-secret.txt'), 'utf8'),
-      };
-      expect(hostAfterPermissiveStage).toEqual(hostBefore);
-      expect(existsSync(join(dir, '.git'))).toBe(true);
-
-      let strictError: unknown;
-      try {
-        await sandbox.stageWorkspace({
-          jobId: strictJobId,
-          hostPath: dir,
-          gitRequired: true,
-          // Intentionally omitted: the production default is strict.
-        });
-      } catch (error) {
-        strictError = error;
-      }
-      expect(strictError).toBeInstanceOf(BridgeError);
-      expect((strictError as BridgeError).code).toBe('PRECONDITION_FAILED');
+      await expect(sandbox.stageWorkspace({
+        jobId: strictJobId,
+        hostPath: dir,
+        gitRequired: true,
+      })).rejects.toMatchObject({
+        code: 'FORBIDDEN_POLICY',
+        message: expect.stringMatching(/trusted configured root|host bind/i),
+      } satisfies Partial<BridgeError>);
 
       const hostAfter = {
-        head: git(dir, 'rev-parse', 'HEAD'),
+        head: git(dir, 'rev-parse', 'HEAD').trim(),
         status: git(dir, 'status', '--porcelain', '--ignored', '--untracked-files=all'),
         tracked: readFileSync(join(dir, 'tracked.txt'), 'utf8'),
         untracked: readFileSync(join(dir, 'untracked.txt'), 'utf8'),
@@ -209,16 +130,16 @@ describe('O1-R2 dirty-host committed-HEAD staging', () => {
       expect(hostAfter).toEqual(hostBefore);
       expect(hostAfter.tracked).toBe(DIRTY_HOST_BYTES);
       expect(existsSync(join(dir, '.git'))).toBe(true);
+
+      for (const jobId of [permissiveJobId, strictJobId]) {
+        expect(await listContainersByFilter(currentJobFilter(jobId), true)).toHaveLength(0);
+        expect(await listVolumesByFilter(currentJobFilter(jobId))).toHaveLength(0);
+      }
     } finally {
-      if (permissiveJobId) {
-        await removeContainer(stagerContainerName(permissiveJobId), true).catch(() => {});
-        await removeVolume(workspaceVolumeName(permissiveJobId), true).catch(() => {});
+      for (const jobId of [permissiveJobId, strictJobId]) {
+        await removeContainer(stagerContainerName(jobId), true).catch(() => {});
+        await removeVolume(workspaceVolumeName(jobId), true).catch(() => {});
       }
-      if (strictJobId) {
-        await removeContainer(stagerContainerName(strictJobId), true).catch(() => {});
-        await removeVolume(workspaceVolumeName(strictJobId), true).catch(() => {});
-      }
-      if (stagedVolume) await removeVolume(stagedVolume, true).catch(() => {});
       rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
