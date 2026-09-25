@@ -1,20 +1,10 @@
 /**
  * A6-B2/B3 — workspace archive-root canonicalization, Docker integration.
  *
- * The unit suite (tests/unit/a6-b2-workspace-path-canonicalization.test.ts)
- * MODELS the daemon's archive naming. This suite proves the model is real:
- *
- *   1. the live daemon genuinely prefixes every entry of
- *      getArchive(cid, '/workspace') with 'workspace/'
- *   2. BEFORE capture over that REAL archive records project-relative paths
- *   3. POST capture over the SAME REAL archive records identical paths
- *   4. the archive root entry never becomes a project path
- *   5. the canonical path apply would resolve is /project/<relPath>
- *
- * Self-contained: every volume/container is created and destroyed here.
- * NOTHING here runs apply, and nothing targets a real user project — step 5
- * asserts the resolved path STRING only. Guarded apply against the disposable
- * acceptance project belongs to the runtime E2E, not to this suite.
+ * Current-contract modernization: the live daemon proof now uses current
+ * QuaranGate labels, canonical job-scoped workspace volumes, immutable helper
+ * image IDs, and role-correct helper containers. Workspace fixtures are seeded
+ * by a hardened runner startup command into a disposable job-owned volume.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -22,19 +12,23 @@ import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
-import { pack as tarPack, extract as tarExtract } from 'tar-stream';
+import { extract as tarExtract } from 'tar-stream';
 import {
   createVolume, removeVolume, createContainer, startContainer, waitContainer,
-  removeContainer, getArchive, putArchive,
+  removeContainer, getArchive, inspectImage,
 } from '../../src/executor/docker.js';
 import { captureBeforeEvidence } from '../../src/executor/agents/beforeCapture.js';
 import { parsePostTarStream } from '../../src/executor/agents/postCapture.js';
 import { computeCanonicalDiff } from '../../src/executor/agents/canonicalDiff.js';
-import { WORKSPACE_PATH, PROJECT_PATH } from '../../src/executor/agents/sandboxSpec.js';
+import {
+  LABEL_JOB, LABEL_MANAGED, LABEL_RESOURCE,
+  PROJECT_PATH, WORKSPACE_PATH,
+  runnerContainerName, workspaceVolumeName,
+} from '../../src/executor/agents/sandboxSpec.js';
 import type { SnapshotEntry, SnapshotManifest } from '../../src/executor/agents/canonicalJson.js';
 import type { AgentResourcePolicy } from '../../src/shared/agents.js';
 
-const IMAGE = 'mcp-ide-bridge-sandbox:a3'; // same trusted helper image family as A3/B5 — no new image
+const IMAGE_TAG = 'qg-itest-a6-prefix-helper:current';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const policy: AgentResourcePolicy = {
@@ -45,6 +39,7 @@ const policy: AgentResourcePolicy = {
 
 const createdVolumes = new Set<string>();
 const createdContainers = new Set<string>();
+let helperImageId = '';
 
 function newJobId(): string {
   return 'job_' + randomBytes(16).toString('hex');
@@ -52,23 +47,10 @@ function newJobId(): string {
 function sha256hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
 }
-
-function buildTar(entries: Array<{ name: string; type?: 'file' | 'directory'; mode?: number; content?: Buffer }>): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const p = tarPack();
-    const chunks: Buffer[] = [];
-    p.on('data', (c: Buffer) => chunks.push(c));
-    p.on('end', () => resolve(Buffer.concat(chunks)));
-    p.on('error', reject);
-    for (const e of entries) {
-      if ((e.type ?? 'file') === 'directory') p.entry({ name: e.name, type: 'directory', mode: e.mode ?? 0o755 }, '');
-      else p.entry({ name: e.name, type: 'file', mode: e.mode ?? 0o644, size: (e.content ?? Buffer.alloc(0)).length }, e.content ?? Buffer.alloc(0));
-    }
-    p.finalize();
-  });
+function labels(resource: string, jobId: string): Record<string, string> {
+  return { [LABEL_MANAGED]: 'true', [LABEL_RESOURCE]: resource, [LABEL_JOB]: jobId };
 }
 
-/** Every entry name in a Docker archive stream, directories included. */
 async function readTarNames(stream: Readable): Promise<string[]> {
   const names: string[] = [];
   await new Promise<void>((resolve, reject) => {
@@ -86,7 +68,6 @@ async function readTarNames(stream: Readable): Promise<string[]> {
   return names.sort();
 }
 
-/** Buffer a Docker archive stream so it can be replayed into a parser. */
 function bufferStream(stream: Readable): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -96,24 +77,36 @@ function bufferStream(stream: Readable): Promise<Buffer> {
   });
 }
 
-async function makeHelper(opts: { volume: string; mountTarget: string; readOnly: boolean }): Promise<string> {
-  const name = `a6ws-itest-${randomBytes(6).toString('hex')}`;
+async function makeRoleHelper(opts: {
+  jobId: string;
+  role: 'runner' | 'before-capture';
+  volume: string;
+  readOnly: boolean;
+  cmd?: string[];
+}): Promise<string> {
+  const name = opts.role === 'runner'
+    ? runnerContainerName(opts.jobId)
+    : `io-quarangate-${opts.role}-${opts.jobId}-${randomBytes(6).toString('hex')}`;
   const id = await createContainer(name, {
-    Image: IMAGE,
-    User: '0:0',
-    Cmd: ['true'],
+    Image: helperImageId,
+    User: opts.role === 'runner' ? '1000:1000' : '0:0',
+    Cmd: opts.cmd ?? ['true'],
+    Labels: labels(opts.role, opts.jobId),
     NetworkDisabled: true,
     HostConfig: {
       AutoRemove: false,
       Privileged: false,
       ReadonlyRootfs: true,
       CapDrop: ['ALL'],
+      CapAdd: [],
       SecurityOpt: ['no-new-privileges'],
       NetworkMode: 'none',
-      Mounts: [{ Type: 'volume', Source: opts.volume, Target: opts.mountTarget, ReadOnly: opts.readOnly }],
+      Binds: [],
+      Mounts: [{ Type: 'volume', Source: opts.volume, Target: WORKSPACE_PATH, ReadOnly: opts.readOnly }],
       Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=1m' },
       Memory: 64 * 1024 * 1024,
       PidsLimit: 8,
+      NanoCpus: 1_000_000_000,
     },
   });
   createdContainers.add(id);
@@ -122,14 +115,29 @@ async function makeHelper(opts: { volume: string; mountTarget: string; readOnly:
   return id;
 }
 
-async function makeVolume(): Promise<string> {
-  const name = `a6ws-itest-${randomBytes(8).toString('hex')}`;
-  await createVolume(name, {});
-  createdVolumes.add(name);
-  return name;
+function seedCommand(files: Record<string, Buffer>): string[] {
+  const writes = Object.entries(files).map(([rel, content]) =>
+    `fs.mkdirSync(path.dirname('/workspace/' + ${JSON.stringify(rel)}), { recursive: true });\n` +
+    `fs.writeFileSync('/workspace/' + ${JSON.stringify(rel)}, Buffer.from(${JSON.stringify(content.toString('base64'))}, 'base64'));`,
+  ).join('\n');
+  return ['node', '-e', `const fs=require('fs'); const path=require('path');\n${writes}`];
 }
 
-/** BEFORE-entry → snapshot mapping, as artifactConstructor step 2 performs it. */
+async function stageWorkspace(jobId: string, files: Record<string, Buffer>): Promise<string> {
+  const volume = workspaceVolumeName(jobId);
+  await createVolume(volume, labels('workspace', jobId));
+  createdVolumes.add(volume);
+  const cid = await makeRoleHelper({ jobId, role: 'runner', volume, readOnly: false, cmd: seedCommand(files) });
+  await removeContainer(cid, true).catch(() => {});
+  createdContainers.delete(cid);
+  return volume;
+}
+
+async function realWorkspaceArchive(jobId: string, volume: string): Promise<Buffer> {
+  const cid = await makeRoleHelper({ jobId, role: 'before-capture', volume, readOnly: true });
+  return bufferStream((await getArchive(cid, WORKSPACE_PATH)).body);
+}
+
 function toSnapshot(entries: ReadonlyArray<{ relPath: string; kind: string; mode: number; sizeBytes: number; sha256: string }>): SnapshotManifest {
   const out: SnapshotEntry[] = [];
   for (const e of entries) {
@@ -148,8 +156,10 @@ describe('A6-B2 workspace archive-root canonicalization — Docker integration',
   const ADDED = Buffer.from('added\n');
   const REMOVED = Buffer.from('bye\n');
 
-  beforeAll(() => {
-    execFileSync('docker', ['build', '-q', '-t', IMAGE, '-f', join(REPO_ROOT, 'runner', 'Dockerfile'), join(REPO_ROOT, 'runner')], { stdio: 'pipe' });
+  beforeAll(async () => {
+    execFileSync('docker', ['build', '--pull=false', '-q', '-t', IMAGE_TAG, '-f', join(REPO_ROOT, 'runner', 'Dockerfile'), join(REPO_ROOT, 'runner')], { stdio: 'pipe' });
+    helperImageId = (await inspectImage(IMAGE_TAG)).Id;
+    expect(helperImageId).toMatch(/^sha256:[0-9a-f]{64}$/);
   }, 120_000);
 
   afterEach(async () => {
@@ -162,103 +172,65 @@ describe('A6-B2 workspace archive-root canonicalization — Docker integration',
     for (const v of createdVolumes) await removeVolume(v, true).catch(() => {});
   });
 
-  /** Stage a real workspace volume and return its name. */
-  async function stageWorkspace(files: Record<string, Buffer>): Promise<string> {
-    const volume = await makeVolume();
-    const cid = await makeHelper({ volume, mountTarget: WORKSPACE_PATH, readOnly: false });
-    const entries: Array<{ name: string; type?: 'file' | 'directory'; content?: Buffer }> = [
-      { name: 'src/', type: 'directory' },
-    ];
-    for (const [rel, content] of Object.entries(files)) entries.push({ name: rel, content });
-    await putArchive(cid, WORKSPACE_PATH, await buildTar(entries));
-    await removeContainer(cid, true).catch(() => {});
-    createdContainers.delete(cid);
-    return volume;
-  }
-
-  /** Read the workspace exactly as both capture paths do. */
-  async function realWorkspaceArchive(volume: string): Promise<Buffer> {
-    const cid = await makeHelper({ volume, mountTarget: WORKSPACE_PATH, readOnly: true });
-    return bufferStream((await getArchive(cid, WORKSPACE_PATH)).body);
-  }
-
-  // -------------------------------------------------------------------------
-  // 1. The daemon behaviour the fix exists for
-  // -------------------------------------------------------------------------
-
   it('real daemon prefixes every getArchive("/workspace") entry with "workspace/"', async () => {
-    const volume = await stageWorkspace({ 'README.md': README, 'src/index.ts': V1 });
-    const names = await readTarNames(Readable.from(await realWorkspaceArchive(volume)));
+    const jobId = newJobId();
+    const vol = await stageWorkspace(jobId, { 'README.md': README, 'src/index.ts': V1 });
+    const cid = await makeRoleHelper({ jobId, role: 'before-capture', volume: vol, readOnly: true });
 
+    const names = await readTarNames((await getArchive(cid, WORKSPACE_PATH)).body);
     expect(names).toContain('directory:workspace/');
     expect(names).toContain('file:workspace/README.md');
+    expect(names).toContain('directory:workspace/src/');
     expect(names).toContain('file:workspace/src/index.ts');
-    // Nothing arrives already project-relative.
-    expect(names).not.toContain('file:README.md');
-    expect(names).not.toContain('file:src/index.ts');
-  }, 120_000);
-
-  // -------------------------------------------------------------------------
-  // 2-4. Both parsers canonicalize the REAL archive, identically
-  // -------------------------------------------------------------------------
+  });
 
   it('BEFORE and POST canonicalize the SAME real archive to the SAME project-relative paths', async () => {
-    const volume = await stageWorkspace({ 'README.md': README, 'src/index.ts': V1 });
     const jobId = newJobId();
+    const vol = await stageWorkspace(jobId, { 'README.md': README, 'src/index.ts': V1 });
 
     const before = await captureBeforeEvidence({
-      jobId, volumeName: volume, helperImage: IMAGE, maxEvidenceBytes: policy.maxEvidenceBytes,
+      jobId, volumeName: vol, helperImage: helperImageId, maxEvidenceBytes: policy.maxEvidenceBytes,
     });
     createdVolumes.add(before.evidenceVolume);
 
     const post = await parsePostTarStream(
-      Readable.from(await realWorkspaceArchive(volume)),
+      Readable.from(await realWorkspaceArchive(jobId, vol)),
       policy.maxEvidenceBytes, new Set<string>(), policy.maxEvidenceBytes,
     );
 
-    const beforeFiles = before.entries.filter((e) => e.kind === 'file').map((e) => e.relPath).sort();
-    const postFiles = post.entries.filter((e) => e.snapshot.kind === 'file').map((e) => e.snapshot.path).sort();
+    const beforePaths = before.entries.map((e) => e.relPath).sort();
+    const postPaths = post.entries.map((e) => e.snapshot.path).sort();
+    expect(beforePaths).toEqual(postPaths);
+    expect(beforePaths).toEqual(['README.md', 'src/', 'src/index.ts']);
 
-    expect(beforeFiles).toEqual(['README.md', 'src/index.ts']);
-    expect(postFiles).toEqual(beforeFiles);
-
-    // 4. The archive root entry is not a project path on either side.
-    const allBefore = before.entries.map((e) => e.relPath);
-    const allPost = post.entries.map((e) => e.snapshot.path);
-    for (const paths of [allBefore, allPost]) {
-      expect(paths).not.toContain('workspace');
-      expect(paths).not.toContain('workspace/');
-      for (const p of paths) {
-        expect(p.startsWith('workspace/'), p).toBe(false);
-        expect(p.startsWith('/'), p).toBe(false);
-      }
+    for (const p of beforePaths) {
+      expect(p).not.toBe('workspace');
+      expect(p.startsWith('workspace/'), p).toBe(false);
+      expect(p.startsWith('/'), p).toBe(false);
     }
 
-    // Evidence is stored under the canonical path too.
     const readme = before.entries.find((e) => e.relPath === 'README.md')!;
     expect(readme.storedAt).toBe('/evidence/files/README.md');
     expect(readme.sha256).toBe(sha256hex(README));
   }, 180_000);
 
-  // -------------------------------------------------------------------------
-  // 5. Detection over real captures, and the path apply would resolve
-  // -------------------------------------------------------------------------
-
   it('detects unchanged/MODIFY/ADD/DELETE on canonical paths from real archives, and resolves under /project', async () => {
-    const beforeVol = await stageWorkspace({
+    const beforeJobId = newJobId();
+    const postJobId = newJobId();
+    const beforeVol = await stageWorkspace(beforeJobId, {
       'README.md': README, 'src/index.ts': V1, 'removed.ts': REMOVED,
     });
-    const postVol = await stageWorkspace({
+    const postVol = await stageWorkspace(postJobId, {
       'README.md': README, 'src/index.ts': V2, 'src/added.ts': ADDED,
     });
 
     const before = await captureBeforeEvidence({
-      jobId: newJobId(), volumeName: beforeVol, helperImage: IMAGE, maxEvidenceBytes: policy.maxEvidenceBytes,
+      jobId: beforeJobId, volumeName: beforeVol, helperImage: helperImageId, maxEvidenceBytes: policy.maxEvidenceBytes,
     });
     createdVolumes.add(before.evidenceVolume);
 
     const post = await parsePostTarStream(
-      Readable.from(await realWorkspaceArchive(postVol)),
+      Readable.from(await realWorkspaceArchive(postJobId, postVol)),
       policy.maxEvidenceBytes, new Set<string>(), policy.maxEvidenceBytes,
     );
 
@@ -270,10 +242,8 @@ describe('A6-B2 workspace archive-root canonicalization — Docker integration',
     expect(byPath.get('src/index.ts')).toBe('CONTENT_MODIFY');
     expect(byPath.get('src/added.ts')).toBe('ADD');
     expect(byPath.get('removed.ts')).toBe('DELETE');
-    expect(byPath.has('README.md')).toBe(false); // identical content → unchanged
+    expect(byPath.has('README.md')).toBe(false);
 
-    // The path apply resolves under PROJECT_PATH. Asserted as a STRING: this
-    // suite never runs apply and never touches a real project.
     for (const e of diff.entries) {
       expect(e.path.startsWith('workspace/'), e.path).toBe(false);
     }

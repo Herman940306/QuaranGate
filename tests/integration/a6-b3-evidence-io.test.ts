@@ -1,28 +1,10 @@
 /**
  * A6-B3 implement/writeMode artifact writes — Docker integration.
  *
- * Regression coverage for the second lane of the read-only-rootfs archive
- * defect. `KiroBackend.createEvidenceVolumeIO().writeFile()` runs a helper with
- * `ReadonlyRootfs: true` that mounts the evidence volume read-write at
- * `/evidence`, so an archive extracted at `/` is rejected by the real daemon
- * with `container rootfs is marked read-only`. That lane is reached only when
- * `writeMode` is true (the `implement` profile), so read-only jobs never hit it
- * while every implement job died at B3 artifact construction.
- *
- * These tests drive the REAL Docker Engine (no stubs) and the REAL production
- * adapter to prove:
- *
- *   1. the daemon genuinely rejects the pre-fix target/prefix pairing and
- *      accepts the fixed one (the constraint is real, not modelled)
- *   2. the production writeFile lands bytes in the evidence VOLUME at
- *      /evidence/<volume-relative path> — never /evidence/evidence/...
- *   3. the adapter reads its own writes back byte-exact
- *   4. `constructArtifact` — the stage implement previously failed at —
- *      completes end to end over that adapter, producing the exact layout
- *      downstream diff/apply/discard reads
- *
- * Self-contained: every volume/container is created and destroyed here, and
- * nothing targets a real user project.
+ * Current-contract modernization: fixtures use current QuaranGate ownership
+ * labels, canonical job IDs, immutable local helper image IDs, and role-correct
+ * evidence-io / evidence-read helper containers. The production
+ * KiroBackend.createEvidenceVolumeIO() path remains the path under test.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -33,7 +15,7 @@ import { Readable } from 'node:stream';
 import { pack as tarPack, extract as tarExtract } from 'tar-stream';
 import {
   createVolume, removeVolume, createContainer, startContainer, waitContainer,
-  removeContainer, getArchive, putArchive, inspectContainerFull,
+  removeContainer, getArchive, putArchive, inspectContainerFull, inspectImage,
 } from '../../src/executor/docker.js';
 import {
   KiroBackend, type KiroBackendJobInput, type KiroBackendOptions,
@@ -45,9 +27,12 @@ import type { GitObjectReader, GitTreeEntry } from '../../src/executor/agents/ba
 import type { PostCaptureResult } from '../../src/executor/agents/postCapture.js';
 import type { CredentialManager } from '../../src/executor/agents/credentialManager.js';
 import type { RunnerSandbox } from '../../src/executor/agents/sandboxRunner.js';
+import {
+  LABEL_JOB, LABEL_MANAGED, LABEL_RESOURCE, evidenceVolumeName,
+} from '../../src/executor/agents/sandboxSpec.js';
 import type { AgentResourcePolicy } from '../../src/shared/agents.js';
 
-const IMAGE = 'mcp-ide-bridge-sandbox:a3'; // same trusted helper image family as A3/B2/B5 — no new image
+const IMAGE_TAG = 'qg-itest-a6-b3-helper:current';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const policy: AgentResourcePolicy = {
@@ -56,15 +41,18 @@ const policy: AgentResourcePolicy = {
   maxEvidenceBytes: 10_485_760, networkPolicy: 'backend-only', retentionClass: 'ephemeral',
 };
 
-/** Resources this suite created, torn down unconditionally. */
 const createdVolumes = new Set<string>();
 const createdContainers = new Set<string>();
+let helperImageId = '';
 
 function newJobId(): string {
   return 'job_' + randomBytes(16).toString('hex');
 }
 function sha256hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
+}
+function labels(resource: string, jobId: string): Record<string, string> {
+  return { [LABEL_MANAGED]: 'true', [LABEL_RESOURCE]: resource, [LABEL_JOB]: jobId };
 }
 
 function buildTar(entries: Array<{ name: string; type?: 'file' | 'directory'; mode?: number; content?: Buffer }>): Promise<Buffer> {
@@ -82,7 +70,6 @@ function buildTar(entries: Array<{ name: string; type?: 'file' | 'directory'; mo
   });
 }
 
-/** Collect every regular-file entry of a Docker archive stream. */
 async function readTar(stream: Readable): Promise<Map<string, Buffer>> {
   const out = new Map<string, Buffer>();
   await new Promise<void>((resolve, reject) => {
@@ -104,41 +91,46 @@ async function readTar(stream: Readable): Promise<Map<string, Buffer>> {
   return out;
 }
 
-/**
- * Create a hardened, exited helper whose ONLY writable path is `mountTarget`
- * — exactly the shape of the production evidence-io helper.
- */
-async function makeHelper(opts: { volume: string; mountTarget: string; readOnly: boolean }): Promise<string> {
-  const name = `a6b3-itest-${randomBytes(6).toString('hex')}`;
+async function makeEvidenceVolume(jobId: string): Promise<string> {
+  const volume = evidenceVolumeName(jobId);
+  await createVolume(volume, labels('evidence', jobId));
+  createdVolumes.add(volume);
+  return volume;
+}
+
+async function makeEvidenceHelper(opts: {
+  jobId: string;
+  role: 'evidence-io' | 'evidence-read';
+  volume: string;
+  readOnly: boolean;
+}): Promise<string> {
+  const name = `io-quarangate-${opts.role}-${opts.jobId}-${randomBytes(6).toString('hex')}`;
   const id = await createContainer(name, {
-    Image: IMAGE,
+    Image: helperImageId,
     User: '0:0',
     Cmd: ['true'],
+    Labels: labels(opts.role, opts.jobId),
     NetworkDisabled: true,
     HostConfig: {
       AutoRemove: false,
       Privileged: false,
       ReadonlyRootfs: true,
       CapDrop: ['ALL'],
+      CapAdd: [],
       SecurityOpt: ['no-new-privileges'],
       NetworkMode: 'none',
-      Mounts: [{ Type: 'volume', Source: opts.volume, Target: opts.mountTarget, ReadOnly: opts.readOnly }],
+      Binds: [],
+      Mounts: [{ Type: 'volume', Source: opts.volume, Target: '/evidence', ReadOnly: opts.readOnly }],
       Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=1m' },
       Memory: 64 * 1024 * 1024,
       PidsLimit: 8,
+      NanoCpus: 1_000_000_000,
     },
   });
   createdContainers.add(id);
   await startContainer(id);
   await waitContainer(id, { timeoutMs: 10_000 });
   return id;
-}
-
-async function makeVolume(): Promise<string> {
-  const name = `a6b3-itest-${randomBytes(8).toString('hex')}`;
-  await createVolume(name, {});
-  createdVolumes.add(name);
-  return name;
 }
 
 function makeJob(jobId: string): KiroBackendJobInput {
@@ -151,31 +143,25 @@ function makeJob(jobId: string): KiroBackendJobInput {
 
 function makeOpts(): KiroBackendOptions {
   return {
-    runnerImage: IMAGE,
-    helperImage: IMAGE,
-    proxyImage: IMAGE,
+    runnerImage: helperImageId,
+    helperImage: helperImageId,
+    proxyImage: helperImageId,
     proxyCmd: ['true'],
     credentialManager: {} as unknown as CredentialManager,
     sandbox: {} as unknown as RunnerSandbox,
   };
 }
 
-/**
- * The PRODUCTION EvidenceVolumeIO an `implement` job uses at B3, reached
- * through the real (private) factory. No test-local reimplementation.
- */
 function productionVolumeIO(jobId: string, evidenceVolume: string): EvidenceVolumeIO {
   const backend = new KiroBackend(makeJob(jobId), makeOpts());
   (backend as any).beforeCapture = { evidenceVolume };
   return (backend as any).createEvidenceVolumeIO() as EvidenceVolumeIO;
 }
 
-/** Read the whole evidence volume back as mount-relative path -> bytes. */
-async function dumpEvidence(volume: string): Promise<Map<string, Buffer>> {
-  const cid = await makeHelper({ volume, mountTarget: '/evidence', readOnly: true });
+async function dumpEvidence(jobId: string, volume: string): Promise<Map<string, Buffer>> {
+  const cid = await makeEvidenceHelper({ jobId, role: 'evidence-read', volume, readOnly: true });
   const { body } = await getArchive(cid, '/evidence');
   const raw = await readTar(body);
-  // getArchive('/evidence') returns entries prefixed with the basename.
   const out = new Map<string, Buffer>();
   for (const [k, v] of raw) out.set(k.replace(/^evidence\//, ''), v);
   await removeContainer(cid, true).catch(() => {});
@@ -184,9 +170,10 @@ async function dumpEvidence(volume: string): Promise<Map<string, Buffer>> {
 }
 
 describe('A6-B3 evidence-io write path — Docker integration', () => {
-  beforeAll(() => {
-    // Idempotent/cached build of the trusted helper image from repo source.
-    execFileSync('docker', ['build', '-q', '-t', IMAGE, '-f', join(REPO_ROOT, 'runner', 'Dockerfile'), join(REPO_ROOT, 'runner')], { stdio: 'pipe' });
+  beforeAll(async () => {
+    execFileSync('docker', ['build', '--pull=false', '-q', '-t', IMAGE_TAG, '-f', join(REPO_ROOT, 'runner', 'Dockerfile'), join(REPO_ROOT, 'runner')], { stdio: 'pipe' });
+    helperImageId = (await inspectImage(IMAGE_TAG)).Id;
+    expect(helperImageId).toMatch(/^sha256:[0-9a-f]{64}$/);
   }, 120_000);
 
   afterEach(async () => {
@@ -199,17 +186,13 @@ describe('A6-B3 evidence-io write path — Docker integration', () => {
     for (const v of createdVolumes) await removeVolume(v, true).catch(() => {});
   });
 
-  // -------------------------------------------------------------------------
-  // 1. The daemon constraint itself, for the B3 entry shape
-  // -------------------------------------------------------------------------
-
-  it('real daemon REJECTS extracting `/evidence/`-prefixed B3 entries at "/" on a read-only rootfs', async () => {
-    const volume = await makeVolume();
-    const cid = await makeHelper({ volume, mountTarget: '/evidence', readOnly: false });
+  it('real daemon REJECTS extracting `/evidence/`-prefixed B3 entries at "/" under current archive-write policy', async () => {
+    const jobId = newJobId();
+    const volume = await makeEvidenceVolume(jobId);
+    const cid = await makeEvidenceHelper({ jobId, role: 'evidence-io', volume, readOnly: false });
 
     expect((await inspectContainerFull(cid)).HostConfig.ReadonlyRootfs).toBe(true);
 
-    // The exact pre-fix archive shape produced by writeFile('.b3-temp/blobs/ab/x').
     const tar = await buildTar([
       { name: '/evidence/.b3-temp/', type: 'directory' },
       { name: '/evidence/.b3-temp/blobs/', type: 'directory' },
@@ -217,12 +200,13 @@ describe('A6-B3 evidence-io write path — Docker integration', () => {
       { name: '/evidence/.b3-temp/blobs/ab/x', content: Buffer.from('blob') },
     ]);
 
-    await expect(putArchive(cid, '/', tar)).rejects.toThrow(/read-only/i);
+    await expect(putArchive(cid, '/', tar)).rejects.toThrow(/outside the resource role contract|FORBIDDEN_POLICY/i);
   });
 
   it('real daemon ACCEPTS the fixed pairing: relative entries at the read-write "/evidence" mount', async () => {
-    const volume = await makeVolume();
-    const cid = await makeHelper({ volume, mountTarget: '/evidence', readOnly: false });
+    const jobId = newJobId();
+    const volume = await makeEvidenceVolume(jobId);
+    const cid = await makeEvidenceHelper({ jobId, role: 'evidence-io', volume, readOnly: false });
 
     const payload = Buffer.from('blob-bytes');
     await putArchive(cid, '/evidence', await buildTar([
@@ -232,17 +216,15 @@ describe('A6-B3 evidence-io write path — Docker integration', () => {
       { name: '.b3-temp/blobs/ab/x', content: payload },
     ]));
 
-    const back = await readTar((await getArchive(cid, '/evidence/.b3-temp/blobs/ab/x')).body);
+    const reader = await makeEvidenceHelper({ jobId, role: 'evidence-read', volume, readOnly: true });
+    const back = await readTar((await getArchive(reader, '/evidence/.b3-temp/blobs/ab/x')).body);
     expect(back.get('x')!.equals(payload)).toBe(true);
   });
 
-  // -------------------------------------------------------------------------
-  // 2-3. The production adapter against the real daemon
-  // -------------------------------------------------------------------------
-
   it('production writeFile succeeds and lands bytes at /evidence/<path>, byte-exact', async () => {
-    const volume = await makeVolume();
-    const io = productionVolumeIO(newJobId(), volume);
+    const jobId = newJobId();
+    const volume = await makeEvidenceVolume(jobId);
+    const io = productionVolumeIO(jobId, volume);
 
     const hash = sha256hex(Buffer.from('post-content'));
     const relPath = `blobs/${hash.slice(0, 2)}/${hash}`;
@@ -250,19 +232,20 @@ describe('A6-B3 evidence-io write path — Docker integration', () => {
 
     await io.writeFile(relPath, content);
 
-    const dump = await dumpEvidence(volume);
+    const dump = await dumpEvidence(jobId, volume);
     expect([...dump.keys()]).toEqual([relPath]);
     expect(dump.get(relPath)!.equals(content)).toBe(true);
   }, 60_000);
 
   it('introduces NO /evidence/evidence nesting on the real volume', async () => {
-    const volume = await makeVolume();
-    const io = productionVolumeIO(newJobId(), volume);
+    const jobId = newJobId();
+    const volume = await makeEvidenceVolume(jobId);
+    const io = productionVolumeIO(jobId, volume);
 
     await io.writeFile('.b3-temp/blobs/ab/deadbeef', Buffer.from('t'));
     await io.writeFile('artifact-manifest.json', Buffer.from('{}'));
 
-    const dump = await dumpEvidence(volume);
+    const dump = await dumpEvidence(jobId, volume);
     for (const key of dump.keys()) {
       expect(key.startsWith('evidence/')).toBe(false);
       expect(key).not.toContain('/evidence/');
@@ -271,8 +254,9 @@ describe('A6-B3 evidence-io write path — Docker integration', () => {
   }, 60_000);
 
   it('the adapter reads its own writes back byte-exact', async () => {
-    const volume = await makeVolume();
-    const io = productionVolumeIO(newJobId(), volume);
+    const jobId = newJobId();
+    const volume = await makeEvidenceVolume(jobId);
+    const io = productionVolumeIO(jobId, volume);
 
     const content = Buffer.from('round-trip\n', 'utf8');
     await io.writeFile('before-snapshot-manifest.json', content);
@@ -280,17 +264,12 @@ describe('A6-B3 evidence-io write path — Docker integration', () => {
     expect(await io.fileExists('before-snapshot-manifest.json')).toBe(true);
     expect((await io.readFile('before-snapshot-manifest.json')).equals(content)).toBe(true);
     expect(await io.fileExists('post-snapshot-manifest.json')).toBe(false);
-    // The pre-fix layout is genuinely absent, not merely unasserted.
     expect(await io.fileExists('evidence/before-snapshot-manifest.json')).toBe(false);
   }, 60_000);
 
-  // -------------------------------------------------------------------------
-  // 4. implement advances past the B3 artifact stage, against real Docker
-  // -------------------------------------------------------------------------
-
   it('constructArtifact completes over the real adapter and produces the downstream layout', async () => {
-    const volume = await makeVolume();
     const jobId = newJobId();
+    const volume = await makeEvidenceVolume(jobId);
     const io = productionVolumeIO(jobId, volume);
 
     const REL = 'src/main.ts';
@@ -300,7 +279,6 @@ describe('A6-B3 evidence-io write path — Docker integration', () => {
     const beforeHash = sha256hex(beforeContent);
     const postHash = sha256hex(postContent);
 
-    // B2 has already stored the BEFORE bytes on the volume at files/<relPath>.
     await io.writeFile(`files/${REL}`, beforeContent);
 
     const git: GitObjectReader = {
@@ -339,29 +317,25 @@ describe('A6-B3 evidence-io write path — Docker integration', () => {
     const result = await constructArtifact(input);
     expect(result.artifactHash).toMatch(/^[0-9a-f]{64}$/);
 
-    const dump = await dumpEvidence(volume);
+    const dump = await dumpEvidence(jobId, volume);
     const keys = [...dump.keys()].sort();
 
     expect(keys).toContain('artifact-manifest.json');
     expect(keys).toContain('before-snapshot-manifest.json');
     expect(keys).toContain('post-snapshot-manifest.json');
 
-    // The POST blob is content-addressed and byte-exact on the real volume.
     const blobPath = `blobs/${postHash.slice(0, 2)}/${postHash}`;
     expect(keys).toContain(blobPath);
     expect(dump.get(blobPath)!.equals(postContent)).toBe(true);
     expect(sha256hex(dump.get(blobPath)!)).toBe(postHash);
 
-    // R2-D cleanup really removed the staging area.
     expect(keys.filter((k) => k.startsWith('.b3-temp'))).toEqual([]);
 
-    // No prefix duplication anywhere in the finished artifact.
     for (const k of keys) {
       expect(k.startsWith('evidence/')).toBe(false);
       expect(k).not.toContain('/evidence/');
     }
 
-    // The manifest is readable back through the same adapter downstream uses.
     const manifest = JSON.parse((await io.readFile('artifact-manifest.json')).toString('utf8'));
     expect(manifest.jobId).toBe(jobId);
   }, 180_000);

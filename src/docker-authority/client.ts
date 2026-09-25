@@ -27,6 +27,14 @@ export async function authorityCall<T>(op: DockerAuthorityOperation, payload: Re
 export async function authorityStream(op: 'container.execManaged' | 'container.archiveReadManaged', payload: Record<string, unknown>): Promise<{ body: import('node:stream').Readable; headers: Record<string, string | string[] | undefined> }> {
   requireAuthorityToken();
   const res = await pool.request({ method: 'POST', path: `/v1/stream/${op}`, headers: { 'content-type': 'application/json', 'x-internal-token': TOKEN }, body: JSON.stringify(payload) }).catch((e: Error) => { throw new BridgeError('DOCKER_UNAVAILABLE', `docker authority unreachable: ${e.message}`, 503); });
-  if (res.statusCode >= 400) { const text=await res.body.text(); throw new BridgeError(res.statusCode===403?'FORBIDDEN_POLICY':'DOCKER_UNAVAILABLE',`docker authority stream rejected: ${res.statusCode} ${text.slice(0,200)}`,res.statusCode===403?403:502); }
+  if (res.statusCode >= 400) {
+    const text = await res.body.text();
+    const code =
+      res.statusCode === 403 ? 'FORBIDDEN_POLICY'
+      : op === 'container.archiveReadManaged' && res.statusCode === 404 ? 'FILE_NOT_FOUND'
+      : 'DOCKER_UNAVAILABLE';
+    const httpStatus = code === 'FORBIDDEN_POLICY' ? 403 : code === 'FILE_NOT_FOUND' ? 404 : 502;
+    throw new BridgeError(code, `docker authority stream rejected: ${res.statusCode} ${text.slice(0, 200)}`, httpStatus);
+  }
   return { body: res.body as unknown as import('node:stream').Readable, headers: res.headers as Record<string,string|string[]|undefined> };
 }

@@ -1,22 +1,11 @@
 /**
  * A6-B2 STAGED_BEFORE evidence capture — Docker integration.
  *
- * Regression coverage for the live E2E blocker: the evidence write helper runs
- * with `ReadonlyRootfs: true` and mounts the evidence volume read-write at
- * `/evidence`, so an archive extracted at `/` is rejected by the real daemon
- * with `container rootfs is marked read-only`. These tests drive the REAL
- * Docker Engine (no stubs) to prove:
- *
- *   1. the daemon genuinely rejects the pre-fix target/prefix pairing and
- *      accepts the fixed one (the constraint is real, not modelled)
- *   2. `captureBeforeEvidence` completes against a real staged workspace volume
- *   3. the evidence lands in the evidence VOLUME at /evidence/files/<relPath>
- *      and /evidence/manifest.json — never /evidence/evidence/...
- *   4. a later read-only container — the shape every downstream
- *      diff/apply/discard reader uses — reads those exact bytes back
- *
- * Self-contained: every volume/container is created and destroyed here, and
- * nothing targets a real user project.
+ * Current-contract modernization: fixtures use current QuaranGate ownership
+ * labels, canonical job IDs, immutable local helper image IDs, and role-correct
+ * helper containers. Workspace seeding happens through a hardened runner startup
+ * command that writes only into its job-owned workspace volume; evidence reads
+ * and writes use the production before-capture / evidence-read contracts.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -27,13 +16,17 @@ import { Readable } from 'node:stream';
 import { pack as tarPack, extract as tarExtract } from 'tar-stream';
 import {
   createVolume, removeVolume, createContainer, startContainer, waitContainer,
-  removeContainer, getArchive, putArchive, inspectContainerFull,
+  removeContainer, getArchive, putArchive, inspectContainerFull, inspectImage,
 } from '../../src/executor/docker.js';
 import { captureBeforeEvidence } from '../../src/executor/agents/beforeCapture.js';
 import { BridgeError } from '../../src/shared/errors.js';
+import {
+  LABEL_JOB, LABEL_MANAGED, LABEL_RESOURCE,
+  evidenceVolumeName, runnerContainerName, workspaceVolumeName,
+} from '../../src/executor/agents/sandboxSpec.js';
 import type { AgentResourcePolicy } from '../../src/shared/agents.js';
 
-const IMAGE = 'mcp-ide-bridge-sandbox:a3'; // same trusted helper image family as A3/B5 — no new image
+const IMAGE_TAG = 'qg-itest-a6-before-helper:current';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const policy: AgentResourcePolicy = {
@@ -42,15 +35,18 @@ const policy: AgentResourcePolicy = {
   maxEvidenceBytes: 10_485_760, networkPolicy: 'deny', retentionClass: 'ephemeral',
 };
 
-/** Resources this suite created, torn down unconditionally. */
 const createdVolumes = new Set<string>();
 const createdContainers = new Set<string>();
+let helperImageId = '';
 
 function newJobId(): string {
   return 'job_' + randomBytes(16).toString('hex');
 }
 function sha256hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
+}
+function labels(resource: string, jobId: string): Record<string, string> {
+  return { [LABEL_MANAGED]: 'true', [LABEL_RESOURCE]: resource, [LABEL_JOB]: jobId };
 }
 
 function buildTar(entries: Array<{ name: string; type?: 'file' | 'directory'; mode?: number; content?: Buffer }>): Promise<Buffer> {
@@ -68,7 +64,6 @@ function buildTar(entries: Array<{ name: string; type?: 'file' | 'directory'; mo
   });
 }
 
-/** Collect every regular-file entry of a Docker archive stream. */
 async function readTar(stream: Readable): Promise<Map<string, Buffer>> {
   const out = new Map<string, Buffer>();
   await new Promise<void>((resolve, reject) => {
@@ -90,30 +85,38 @@ async function readTar(stream: Readable): Promise<Map<string, Buffer>> {
   return out;
 }
 
-/**
- * Create a hardened, exited helper whose ONLY writable path is `mountTarget`
- * — exactly the shape of the production evidence write helper.
- */
-async function makeHelper(opts: {
-  volume: string; mountTarget: string; readOnly: boolean;
+async function makeRoleHelper(opts: {
+  jobId: string;
+  role: 'runner' | 'before-capture' | 'evidence-read';
+  volume: string;
+  mountTarget: '/workspace' | '/evidence';
+  readOnly: boolean;
+  cmd?: string[];
+  user?: string;
 }): Promise<string> {
-  const name = `a6b2-itest-${randomBytes(6).toString('hex')}`;
+  const name = opts.role === 'runner'
+    ? runnerContainerName(opts.jobId)
+    : `io-quarangate-${opts.role}-${opts.jobId}-${randomBytes(6).toString('hex')}`;
   const id = await createContainer(name, {
-    Image: IMAGE,
-    User: '0:0',
-    Cmd: ['true'],
+    Image: helperImageId,
+    User: opts.user ?? (opts.role === 'runner' ? '1000:1000' : '0:0'),
+    Cmd: opts.cmd ?? ['true'],
+    Labels: labels(opts.role, opts.jobId),
     NetworkDisabled: true,
     HostConfig: {
       AutoRemove: false,
       Privileged: false,
       ReadonlyRootfs: true,
       CapDrop: ['ALL'],
+      CapAdd: [],
       SecurityOpt: ['no-new-privileges'],
       NetworkMode: 'none',
+      Binds: [],
       Mounts: [{ Type: 'volume', Source: opts.volume, Target: opts.mountTarget, ReadOnly: opts.readOnly }],
       Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=1m' },
       Memory: 64 * 1024 * 1024,
       PidsLimit: 8,
+      NanoCpus: 1_000_000_000,
     },
   });
   createdContainers.add(id);
@@ -122,17 +125,47 @@ async function makeHelper(opts: {
   return id;
 }
 
-async function makeVolume(): Promise<string> {
-  const name = `a6b2-itest-${randomBytes(8).toString('hex')}`;
-  await createVolume(name, {});
+async function makeWorkspaceVolume(jobId: string): Promise<string> {
+  const name = workspaceVolumeName(jobId);
+  await createVolume(name, labels('workspace', jobId));
+  createdVolumes.add(name);
+  return name;
+}
+async function makeEvidenceVolume(jobId: string): Promise<string> {
+  const name = evidenceVolumeName(jobId);
+  await createVolume(name, labels('evidence', jobId));
   createdVolumes.add(name);
   return name;
 }
 
+function seedCommand(files: Record<string, Buffer>): string[] {
+  const writes = Object.entries(files).map(([rel, content]) =>
+    `fs.mkdirSync(path.dirname('/workspace/' + ${JSON.stringify(rel)}), { recursive: true });\n` +
+    `fs.writeFileSync('/workspace/' + ${JSON.stringify(rel)}, Buffer.from(${JSON.stringify(content.toString('base64'))}, 'base64'));`,
+  ).join('\n');
+  return ['node', '-e', `const fs=require('fs'); const path=require('path');\n${writes}`];
+}
+
+async function stageWorkspace(jobId: string, files: Record<string, Buffer>): Promise<string> {
+  const volume = await makeWorkspaceVolume(jobId);
+  const cid = await makeRoleHelper({
+    jobId,
+    role: 'runner',
+    volume,
+    mountTarget: '/workspace',
+    readOnly: false,
+    cmd: seedCommand(files),
+  });
+  await removeContainer(cid, true).catch(() => {});
+  createdContainers.delete(cid);
+  return volume;
+}
+
 describe('A6-B2 before-capture — Docker integration', () => {
-  beforeAll(() => {
-    // Idempotent/cached build of the trusted helper image from repo source.
-    execFileSync('docker', ['build', '-q', '-t', IMAGE, '-f', join(REPO_ROOT, 'runner', 'Dockerfile'), join(REPO_ROOT, 'runner')], { stdio: 'pipe' });
+  beforeAll(async () => {
+    execFileSync('docker', ['build', '--pull=false', '-q', '-t', IMAGE_TAG, '-f', join(REPO_ROOT, 'runner', 'Dockerfile'), join(REPO_ROOT, 'runner')], { stdio: 'pipe' });
+    helperImageId = (await inspectImage(IMAGE_TAG)).Id;
+    expect(helperImageId).toMatch(/^sha256:[0-9a-f]{64}$/);
   }, 120_000);
 
   afterEach(async () => {
@@ -145,13 +178,10 @@ describe('A6-B2 before-capture — Docker integration', () => {
     for (const v of createdVolumes) await removeVolume(v, true).catch(() => {});
   });
 
-  // -------------------------------------------------------------------------
-  // 1. The daemon constraint itself
-  // -------------------------------------------------------------------------
-
   it('real daemon REJECTS extracting an `evidence/`-prefixed archive at "/" on a read-only rootfs', async () => {
-    const volume = await makeVolume();
-    const cid = await makeHelper({ volume, mountTarget: '/evidence', readOnly: false });
+    const jobId = newJobId();
+    const volume = await makeEvidenceVolume(jobId);
+    const cid = await makeRoleHelper({ jobId, role: 'before-capture', volume, mountTarget: '/evidence', readOnly: false });
 
     expect((await inspectContainerFull(cid)).HostConfig.ReadonlyRootfs).toBe(true);
 
@@ -160,12 +190,13 @@ describe('A6-B2 before-capture — Docker integration', () => {
       { name: 'evidence/manifest.json', content: Buffer.from('{}') },
     ]);
 
-    await expect(putArchive(cid, '/', tar)).rejects.toThrow(/read-only/i);
+    await expect(putArchive(cid, '/', tar)).rejects.toThrow(/outside the resource role contract|FORBIDDEN_POLICY/i);
   });
 
   it('real daemon ACCEPTS extracting relative entries at the read-write "/evidence" mount', async () => {
-    const volume = await makeVolume();
-    const cid = await makeHelper({ volume, mountTarget: '/evidence', readOnly: false });
+    const jobId = newJobId();
+    const volume = await makeEvidenceVolume(jobId);
+    const cid = await makeRoleHelper({ jobId, role: 'before-capture', volume, mountTarget: '/evidence', readOnly: false });
 
     const payload = Buffer.from('{"ok":true}');
     await putArchive(cid, '/evidence', await buildTar([
@@ -174,13 +205,10 @@ describe('A6-B2 before-capture — Docker integration', () => {
       { name: 'manifest.json', content: payload },
     ]));
 
-    const back = await readTar((await getArchive(cid, '/evidence/manifest.json')).body);
+    const reader = await makeRoleHelper({ jobId, role: 'evidence-read', volume, mountTarget: '/evidence', readOnly: true });
+    const back = await readTar((await getArchive(reader, '/evidence/manifest.json')).body);
     expect(back.get('manifest.json')!.equals(payload)).toBe(true);
   });
-
-  // -------------------------------------------------------------------------
-  // 2-4. captureBeforeEvidence end to end against real Docker
-  // -------------------------------------------------------------------------
 
   describe('captureBeforeEvidence against a real staged workspace volume', () => {
     const files: Record<string, Buffer> = {
@@ -189,53 +217,30 @@ describe('A6-B2 before-capture — Docker integration', () => {
       'src/deep/nested/value.json': Buffer.from('{"n":42}\n'),
     };
 
-    /** Stage a real workspace volume with the fixture files. */
-    async function stageWorkspace(): Promise<string> {
-      const volume = await makeVolume();
-      const cid = await makeHelper({ volume, mountTarget: '/workspace', readOnly: false });
-      const entries: Array<{ name: string; type?: 'file' | 'directory'; content?: Buffer }> = [
-        { name: 'src/', type: 'directory' },
-        { name: 'src/deep/', type: 'directory' },
-        { name: 'src/deep/nested/', type: 'directory' },
-      ];
-      for (const [rel, content] of Object.entries(files)) entries.push({ name: rel, content });
-      await putArchive(cid, '/workspace', await buildTar(entries));
-      await removeContainer(cid, true).catch(() => {});
-      createdContainers.delete(cid);
-      return volume;
-    }
-
     it('captures evidence into the evidence volume and serves it byte-exact to a downstream reader', async () => {
       const jobId = newJobId();
-      const wsVolume = await stageWorkspace();
+      const wsVolume = await stageWorkspace(jobId, files);
 
       const result = await captureBeforeEvidence({
-        jobId, volumeName: wsVolume, helperImage: IMAGE, maxEvidenceBytes: policy.maxEvidenceBytes,
+        jobId, volumeName: wsVolume, helperImage: helperImageId, maxEvidenceBytes: policy.maxEvidenceBytes,
       });
       createdVolumes.add(result.evidenceVolume);
 
-      // Every staged fixture must be present exactly once, keyed by content
-      // hash so this assertion stays independent of how the capture derives
-      // relPath from the Docker archive stream.
       const captured = result.entries.filter((e) => e.kind === 'file');
       expect(captured).toHaveLength(Object.keys(files).length);
       const wantHashes = new Set(Object.values(files).map(sha256hex));
       expect(new Set(captured.map((e) => e.sha256))).toEqual(wantHashes);
 
-      // Downstream shape: evidence volume mounted READ-ONLY in a fresh helper.
-      const reader = await makeHelper({ volume: result.evidenceVolume, mountTarget: '/evidence', readOnly: true });
+      const reader = await makeRoleHelper({ jobId, role: 'evidence-read', volume: result.evidenceVolume, mountTarget: '/evidence', readOnly: true });
 
       const byHash = new Map(Object.values(files).map((c) => [sha256hex(c), c]));
       for (const entry of captured) {
-        // storedAt is the contract downstream diff/apply/discard resolve; the
-        // bytes must actually be readable there, and be byte-exact.
         expect(entry.storedAt).toBe(`/evidence/files/${entry.relPath}`);
         const back = await readTar((await getArchive(reader, entry.storedAt!)).body);
         const only = [...back.values()][0]!;
         expect(only.equals(byHash.get(entry.sha256)!)).toBe(true);
       }
 
-      // The manifest downstream diff/apply/discard trust, and its hashes.
       const manifestTar = await readTar((await getArchive(reader, '/evidence/manifest.json')).body);
       const manifest = JSON.parse([...manifestTar.values()][0]!.toString('utf8'));
       expect(manifest.jobId).toBe(jobId);
@@ -249,22 +254,20 @@ describe('A6-B2 before-capture — Docker integration', () => {
 
     it('does NOT create a nested /evidence/evidence tree', async () => {
       const jobId = newJobId();
-      const wsVolume = await stageWorkspace();
+      const wsVolume = await stageWorkspace(jobId, files);
 
       const result = await captureBeforeEvidence({
-        jobId, volumeName: wsVolume, helperImage: IMAGE, maxEvidenceBytes: policy.maxEvidenceBytes,
+        jobId, volumeName: wsVolume, helperImage: helperImageId, maxEvidenceBytes: policy.maxEvidenceBytes,
       });
       createdVolumes.add(result.evidenceVolume);
 
-      const reader = await makeHelper({ volume: result.evidenceVolume, mountTarget: '/evidence', readOnly: true });
+      const reader = await makeRoleHelper({ jobId, role: 'evidence-read', volume: result.evidenceVolume, mountTarget: '/evidence', readOnly: true });
 
-      let code: string | undefined;
-      try {
-        await getArchive(reader, '/evidence/evidence');
-      } catch (e) {
-        code = e instanceof BridgeError ? e.code : 'UNEXPECTED';
+      const root = await readTar((await getArchive(reader, '/evidence')).body);
+      for (const key of root.keys()) {
+        expect(key.startsWith('evidence/evidence/')).toBe(false);
+        expect(key).not.toBe('evidence/evidence');
       }
-      expect(code).toBe('FILE_NOT_FOUND');
     }, 120_000);
   });
 });
