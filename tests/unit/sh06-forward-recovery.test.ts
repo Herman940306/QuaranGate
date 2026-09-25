@@ -185,6 +185,36 @@ describe('F8 docker-authority startup failure blocks executor', () => {
     expect(authorityUp).toBeLessThan(executorUp);
     expect(authorityReady).toBeLessThan(executorUp);
   });
+
+  it('explicitly stops and verifies the bound legacy executor before authority and replacement admission', () => {
+    const capture = recoverySh.indexOf('LEGACY_EXECUTOR_CID="${live_executor_ids[0]}"');
+    const stop = primaryRecoverySh.indexOf('docker stop "$LEGACY_EXECUTOR_CID"');
+    const firstVerify = primaryRecoverySh.indexOf('verify_legacy_executor_quiesced');
+    const authorityUp = primaryRecoverySh.indexOf('up -d --no-deps --no-build --pull never docker-authority');
+    const authorityReady = primaryRecoverySh.indexOf("primary_authority_ready=1");
+    const finalVerify = primaryRecoverySh.lastIndexOf('verify_legacy_executor_quiesced');
+    const executorUp = primaryRecoverySh.indexOf('up -d --no-deps --no-build --pull never executor');
+    expect(capture).toBeGreaterThanOrEqual(0);
+    expect(stop).toBeGreaterThanOrEqual(0);
+    expect(firstVerify).toBeGreaterThan(stop);
+    expect(authorityUp).toBeGreaterThan(firstVerify);
+    expect(authorityReady).toBeGreaterThan(authorityUp);
+    expect(finalVerify).toBeGreaterThan(authorityReady);
+    expect(executorUp).toBeGreaterThan(finalVerify);
+  });
+
+  it('binds quiescence to exact project, service, image, revision, ID, and non-running state', () => {
+    expect(recoverySh).toContain('LEGACY_EXECUTOR_PROJECT');
+    expect(recoverySh).toContain('LEGACY_EXECUTOR_SERVICE');
+    expect(recoverySh).toContain('executor identity became ambiguous or changed');
+    expect(recoverySh).toContain('captured executor identity drifted');
+    expect(recoverySh).toContain("'{{.State.Running}}'");
+    expect(recoverySh).toContain('ALL_RELEVANT_EXECUTORS_QUIESCED=YES');
+  });
+
+  it('does not admit R2 when primary authority never became ready', () => {
+    expect(rollbackSh).toContain('[[ "$primary_authority_ready" == 1');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -458,7 +488,7 @@ esac
       writeFileSync(join(bin, 'git'), gitShim, { mode: 0o700 });
 
       const dockerShim = String.raw`#!/usr/bin/env bash
-set -eu
+set -e
 primary=sha256:2fe86e44ecc8bb85c1747ede467c92d865c35d503fe54f167deb2802fbd298fc
 fallback=sha256:720172e5c189398bd91e33e5fac1897f9e98f260d00a86a3d6e24656f55bd9f7
 legacy=sha256:8457dcea1a00253fb6b09183d9bc21b2d50f6aef0e81e1845cebc3f7854bdfa0
@@ -496,9 +526,16 @@ case "$cmd" in
   ps)
     service="$(service_from_args "$@")"
     [ -n "$service" ] || exit 0
+    printf 'DISCOVER|%s\n' "$service" >>"$log"
     if [ -f "$QG_FAKE_STATE/$service" ]; then cat "$QG_FAKE_STATE/$service"; exit 0; fi
-    [ ! -f "$QG_FAKE_STATE/operation-started" ] || exit 0
-    case "$service" in executor) echo legacy-executor ;; gateway) echo legacy-gateway ;; esac
+    [ ! -f "$QG_FAKE_STATE/$service-replaced" ] || exit 0
+    case "$service" in
+      executor)
+        echo legacy-executor
+        [ "$QG_SECOND_EXECUTOR_PRESENT" != 1 ] || echo unrelated-project-executor
+        ;;
+      gateway) echo legacy-gateway ;;
+    esac
     ;;
   inspect)
     cid="$1"; shift
@@ -506,10 +543,38 @@ case "$cmd" in
     while [ "$#" -gt 0 ]; do [ "$1" = --format ] && fmt="$2" && break; shift; done
     mode="$(container_mode "$cid")"
     case "$fmt" in
-      *org.opencontainers.image.revision*) echo a7a61c1ef1949180dd544f557999ebc328800321 ;;
+      *com.docker.compose.project*)
+        if [ "$cid" = legacy-executor ] && [ "$QG_AMBIGUOUS_EXECUTOR_IDENTITY" = 1 ]; then echo wrong-project; else echo quarangate; fi
+        ;;
+      *com.docker.compose.service*) echo executor ;;
+      *org.opencontainers.image.revision*)
+        case "$mode" in
+          legacy) echo a7a61c1ef1949180dd544f557999ebc328800321 ;;
+          fallback) echo bd1a8a3f732b55515bca5e452140de132f3fb6d3 ;;
+          *) echo 42d226803bfbc073f10570ed7f8579d3f19baa2f ;;
+        esac
+        ;;
       *'.Image'*) case "$mode" in legacy) echo "$legacy" ;; primary) echo "$primary" ;; fallback) echo "$fallback" ;; esac ;;
-      *'.State.Status'*) case "$cid" in legacy-executor) echo exited ;; *) echo running ;; esac ;;
+      *'.State.Running'*)
+        printf 'INSPECT_RUNNING|%s\n' "$cid" >>"$log"
+        case "$cid" in
+          legacy-executor)
+            if [ -f "$QG_FAKE_STATE/legacy-stopped" ] && [ "$QG_STILL_RUNNING_AFTER_STOP" != 1 ]; then echo false; else echo true; fi
+            ;;
+          unrelated-project-executor) echo true ;;
+          *) echo true ;;
+        esac
+        ;;
+      *'.State.Status'*)
+        case "$cid" in
+          legacy-executor)
+            if [ -f "$QG_FAKE_STATE/legacy-stopped" ] && [ "$QG_STILL_RUNNING_AFTER_STOP" != 1 ]; then echo exited; else echo restarting; fi
+            ;;
+          *) echo running ;;
+        esac
+        ;;
       *'.State.Health'*)
+        printf 'READY_CHECK|%s\n' "$cid" >>"$log"
         case "$cid" in
           legacy-gateway) echo unhealthy ;;
           primary-gateway) [ "$QG_PRIMARY_GATEWAY_HEALTHY" = 1 ] && echo healthy || echo unhealthy ;;
@@ -548,6 +613,11 @@ case "$cmd" in
       github-egress-proxy|github-broker) image=primary ;;
     esac
     case "$image" in *fallback*) mode=fallback ;; *) mode=primary ;; esac
+    if [ "$service" = docker-authority ] && [ "$QG_FAIL_AUTHORITY_UP" = 1 ]; then
+      printf 'UP_FAILED|%s|%s\n' "$mode" "$service" >>"$log"
+      exit 1
+    fi
+    case "$service" in executor|gateway) touch "$QG_FAKE_STATE/$service-replaced" ;; esac
     echo "$mode-$service" >"$QG_FAKE_STATE/$service"
     printf 'UP|%s|%s\n' "$mode" "$service" >>"$log"
     ;;
@@ -573,6 +643,11 @@ case "$cmd" in
   stop|rm)
     cid="$1"
     printf '%s|%s\n' "$cmd" "$*" >>"$log"
+    if [ "$cmd" = stop ] && [ "$cid" = legacy-executor ]; then
+      [ "$QG_FAIL_LEGACY_STOP" != 1 ] || exit 1
+      touch "$QG_FAKE_STATE/legacy-stopped"
+      exit 0
+    fi
     if [ "$QG_FAIL_GITHUB_CLEANUP" = 1 ]; then exit 1; fi
     case "$cid" in
       primary-github-broker) rm -f "$QG_FAKE_STATE/github-broker" ;;
@@ -585,6 +660,51 @@ esac
       writeFileSync(join(bin, 'docker'), dockerShim, { mode: 0o700 });
       chmodSync(join(bin, 'git'), 0o700);
       chmodSync(join(bin, 'docker'), 0o700);
+
+      const resetRuntime = (): void => {
+        rmSync(state, { recursive: true, force: true });
+        mkdirSync(state, { recursive: true });
+        rmSync(join(runtime, 'config', 'github.yaml'), { force: true });
+        writeFileSync(join(runtime, '.env'), [
+          'INTERNAL_TOKEN=test-internal-token',
+          'GATEWAY_IMAGE=legacy-gateway',
+          'DOCKER_AUTHORITY_IMAGE=legacy-authority',
+          'EXECUTOR_IMAGE=legacy-executor',
+          '',
+        ].join('\n'), { mode: 0o600 });
+      };
+      const runRecovery = (overrides: Record<string, string> = {}) => spawnSync(
+        'bash',
+        [join(root, 'scripts', 'remote-owner-forward-recover-v9.sh')],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ''}`,
+            QG_FAKE_STATE: state,
+            QG_FAIL_FALLBACK_GATEWAY: '0',
+            QG_PRIMARY_GATEWAY_HEALTHY: '1',
+            QG_FAIL_GITHUB_BROKER: '0',
+            QG_FAIL_COMPOSE_STOP: '0',
+            QG_FAIL_GITHUB_CLEANUP: '0',
+            PROJECTS_ROOT: projects,
+            QUARANGATE_RUNTIME_ROOT: runtime,
+            QUARANGATE_FORWARD_RECOVERY_PRIMARY_IMAGE: 'quarangate:forensic-42d226803bfb',
+            QUARANGATE_FORWARD_RECOVERY_FALLBACK_IMAGE: 'quarangate:r2-review-bd1a8a3f732b',
+            ...overrides,
+          },
+        },
+      );
+
+      const dockerShimProbe = spawnSync(join(bin, 'docker'), ['info'], {
+        encoding: 'utf8',
+        env: { ...process.env, QG_FAKE_STATE: state },
+      });
+      expect(
+        dockerShimProbe.status,
+        `docker shim must accept info: error=${String(dockerShimProbe.error)} stdout=${dockerShimProbe.stdout} stderr=${dockerShimProbe.stderr}`,
+      ).toBe(0);
 
       const result = spawnSync('bash', [join(root, 'scripts', 'remote-owner-forward-recover-v9.sh')], {
         cwd: root,
@@ -612,6 +732,18 @@ esac
       expect(combined).toContain('LEGACY_EXECUTOR_START_ATTEMPTED=NO');
 
       const dockerLog = readFileSync(join(state, 'docker.log'), 'utf8');
+      const legacyStop = dockerLog.indexOf('stop|legacy-executor');
+      const legacyStoppedInspect = dockerLog.indexOf('INSPECT_RUNNING|legacy-executor', legacyStop);
+      const primaryAuthority = dockerLog.indexOf('UP|primary|docker-authority');
+      const primaryAuthorityReady = dockerLog.indexOf('READY_CHECK|primary-docker-authority');
+      const primaryExecutor = dockerLog.indexOf('UP|primary|executor');
+      const primaryGateway = dockerLog.indexOf('UP|primary|gateway');
+      expect(legacyStop).toBeGreaterThanOrEqual(0);
+      expect(legacyStoppedInspect).toBeGreaterThan(legacyStop);
+      expect(primaryAuthority).toBeGreaterThan(legacyStoppedInspect);
+      expect(primaryAuthorityReady).toBeGreaterThan(primaryAuthority);
+      expect(primaryExecutor).toBeGreaterThan(primaryAuthorityReady);
+      expect(primaryGateway).toBeGreaterThan(primaryExecutor);
       const restore = dockerLog.indexOf('RUN|restore');
       const authority = dockerLog.indexOf('UP|fallback|docker-authority');
       const executor = dockerLog.indexOf('UP|fallback|executor');
@@ -774,6 +906,29 @@ esac
       expect(githubCleanupCombined).toContain('CRITICAL_FORWARD_RECOVERY_FAILED');
       const githubCleanupLog = readFileSync(join(state, 'docker.log'), 'utf8');
       expect(githubCleanupLog).not.toContain('UP|fallback');
+
+      for (const scenario of [
+        { name: 'stop failure', env: { QG_FAIL_LEGACY_STOP: '1' }, expected: 'exact legacy executor stop failed', status: 1 },
+        { name: 'still running', env: { QG_STILL_RUNNING_AFTER_STOP: '1' }, expected: 'captured executor is not quiescent', status: 1 },
+        { name: 'second executor', env: { QG_SECOND_EXECUTOR_PRESENT: '1' }, expected: 'expected exactly 1 legacy executor container', status: 2 },
+        { name: 'ambiguous identity', env: { QG_AMBIGUOUS_EXECUTOR_IDENTITY: '1' }, expected: 'legacy executor labels mismatch', status: 2 },
+        { name: 'authority failure', env: { QG_FAIL_AUTHORITY_UP: '1' }, expected: 'docker-authority startup failed', status: 1 },
+      ]) {
+        resetRuntime();
+        const failed = runRecovery(scenario.env);
+        const failedOutput = `${failed.stdout}${failed.stderr}`;
+        expect(failed.status, `${scenario.name}: ${failedOutput}`).toBe(scenario.status);
+        expect(failedOutput).toContain(scenario.expected);
+        const failureLog = readFileSync(join(state, 'docker.log'), 'utf8');
+        expect(failureLog, scenario.name).not.toContain('UP|primary|executor');
+        expect(failureLog, scenario.name).not.toContain('UP|primary|gateway');
+        expect(failureLog, scenario.name).not.toContain('UP|fallback');
+        expect(failureLog, scenario.name).not.toMatch(/stop\|(projects-work|owner-host-control|github|qualification)/u);
+        if (scenario.name !== 'authority failure') {
+          expect(failureLog, scenario.name).not.toContain('UP|primary|docker-authority');
+        }
+        expect(failureLog, scenario.name).not.toContain('UP|legacy');
+      }
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

@@ -254,6 +254,14 @@ LEGACY_EXECUTOR_IMAGE_ID="$(docker inspect "$LEGACY_EXECUTOR_CID" --format '{{.I
   || prefail "LEGACY_IMAGE_ID_MISMATCH: expected=$EXPECTED_LEGACY_IMAGE_ID actual=$LEGACY_EXECUTOR_IMAGE_ID"
 LEGACY_EXECUTOR_REV="$(docker inspect "$LEGACY_EXECUTOR_CID" \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" || true
+LEGACY_EXECUTOR_PROJECT="$(docker inspect "$LEGACY_EXECUTOR_CID" \
+  --format '{{index .Config.Labels "com.docker.compose.project"}}')" \
+  || prefail 'cannot read legacy executor Compose project label'
+LEGACY_EXECUTOR_SERVICE="$(docker inspect "$LEGACY_EXECUTOR_CID" \
+  --format '{{index .Config.Labels "com.docker.compose.service"}}')" \
+  || prefail 'cannot read legacy executor Compose service label'
+[[ "$LEGACY_EXECUTOR_PROJECT" == quarangate && "$LEGACY_EXECUTOR_SERVICE" == executor ]] \
+  || prefail "legacy executor labels mismatch: project=$LEGACY_EXECUTOR_PROJECT service=$LEGACY_EXECUTOR_SERVICE"
 
 LEGACY_SUPPORTED_SCHEMA="$(probe_image_schema "$LEGACY_EXECUTOR_IMAGE_ID")" \
   || prefail 'legacy executor image schema probe failed'
@@ -486,6 +494,7 @@ env_updated=0
 runtime_mutated=0
 persistent_state_may_have_mutated=0
 github_services_created=0
+primary_authority_ready=0
 
 # Tag variants for the recovery images
 NEW_GATEWAY_IMAGE="quarangate:gateway-${REV}"
@@ -723,7 +732,8 @@ rollback() {
 
       # Never resume the legacy v7 baseline against schema-v9 state. Only the
       # exact admitted R2 image may become the recovery fallback.
-      if [[ "$ROLLBACK_PERSISTENT_STATE" == YES && "$ROLLBACK_CONFIG_STATE" == YES \
+      if [[ "$primary_authority_ready" == 1 \
+         && "$ROLLBACK_PERSISTENT_STATE" == YES && "$ROLLBACK_CONFIG_STATE" == YES \
          && "$ROLLBACK_GITHUB_STATE" == YES && "$writers_quiesced" == YES ]]; then
         ROLLBACK_CONFIG_STATE=NO
         export GATEWAY_IMAGE="$FALLBACK_GATEWAY_IMAGE"
@@ -889,12 +899,65 @@ if [[ "$github_expected" == 1 ]]; then
 fi
 
 QG=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
+
+verify_legacy_executor_quiesced() {
+  local ids_output cid running status image revision project service
+  local -a executor_ids=()
+
+  ids_output="$(service_ids quarangate executor)" \
+    || fail 'LEGACY_EXECUTOR_QUIESCENCE: cannot enumerate QuaranGate executors'
+  [[ -n "$ids_output" ]] || fail 'LEGACY_EXECUTOR_QUIESCENCE: captured executor disappeared'
+  mapfile -t executor_ids <<<"$ids_output"
+  [[ ${#executor_ids[@]} -eq 1 && "${executor_ids[0]}" == "$LEGACY_EXECUTOR_CID" ]] \
+    || fail 'LEGACY_EXECUTOR_QUIESCENCE: executor identity became ambiguous or changed'
+
+  cid="${executor_ids[0]}"
+  image="$(docker inspect "$cid" --format '{{.Image}}')" \
+    || fail 'LEGACY_EXECUTOR_QUIESCENCE: cannot re-read captured executor image'
+  revision="$(docker inspect "$cid" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" \
+    || fail 'LEGACY_EXECUTOR_QUIESCENCE: cannot re-read captured executor revision'
+  project="$(docker inspect "$cid" --format '{{index .Config.Labels "com.docker.compose.project"}}')" \
+    || fail 'LEGACY_EXECUTOR_QUIESCENCE: cannot re-read captured executor project label'
+  service="$(docker inspect "$cid" --format '{{index .Config.Labels "com.docker.compose.service"}}')" \
+    || fail 'LEGACY_EXECUTOR_QUIESCENCE: cannot re-read captured executor service label'
+  [[ "$image" == "$EXPECTED_LEGACY_IMAGE_ID" && "$revision" == "$EXPECTED_LEGACY_REV" \
+     && "$project" == quarangate && "$service" == executor ]] \
+    || fail 'LEGACY_EXECUTOR_QUIESCENCE: captured executor identity drifted'
+
+  running="$(docker inspect "$cid" --format '{{.State.Running}}')" \
+    || fail 'LEGACY_EXECUTOR_QUIESCENCE: cannot read captured executor running state'
+  status="$(docker inspect "$cid" --format '{{.State.Status}}')" \
+    || fail 'LEGACY_EXECUTOR_QUIESCENCE: cannot read captured executor status'
+  [[ "$running" == false && ( "$status" == created || "$status" == exited || "$status" == dead ) ]] \
+    || fail "LEGACY_EXECUTOR_QUIESCENCE: captured executor is not quiescent (running=$running status=$status)"
+
+  printf 'LEGACY_EXECUTOR_VERIFIED_STOPPED=YES container_id=%s\n' "$cid"
+  printf 'ALL_RELEVANT_EXECUTORS_QUIESCED=YES count=1\n'
+}
+
 # ---------------------------------------------------------------------------
 # SECTION 11 — STAGED SERVICE RECOVERY (Sections 12 of spec)
 # Strict dependency order: docker-authority → executor → gateway → GitHub
 # ---------------------------------------------------------------------------
 
 log "=== STAGED SERVICE RECOVERY ==="
+
+# Bind, stop, and verify the exact socket-bearing legacy executor before any
+# replacement Docker authority or application executor can start. Never select
+# containers by name substring and never act outside project=quarangate,
+# service=executor.
+mapfile -t pre_stop_executor_ids < <(service_ids quarangate executor)
+[[ ${#pre_stop_executor_ids[@]} -eq 1 && "${pre_stop_executor_ids[0]}" == "$LEGACY_EXECUTOR_CID" ]] \
+  || fail 'LEGACY_EXECUTOR_QUIESCENCE: executor identity became ambiguous before stop'
+docker stop "$LEGACY_EXECUTOR_CID" >/dev/null \
+  || fail 'LEGACY_EXECUTOR_QUIESCENCE: exact legacy executor stop failed'
+verify_legacy_executor_quiesced
+
+# Re-check immediately before the first replacement-service mutation. A new or
+# restarted executor between stop and admission is an identity/quiescence
+# failure, not a reason to stop an arbitrary container.
+verify_legacy_executor_quiesced
+
 runtime_mutated=1   # Set before first compose up so rollback knows to clean up
 
 # --- Stage 1: docker-authority ---
@@ -903,6 +966,7 @@ log "Stage 1: starting docker-authority..."
   || fail 'docker-authority startup failed'
 wait_service_ready quarangate docker-authority 60 \
   || fail 'docker-authority did not become ready within 60s'
+primary_authority_ready=1
 
 RECOVERY_STATE='DOCKER_AUTHORITY_READY'
 log "RECOVERY_STATE=$RECOVERY_STATE"
@@ -910,6 +974,10 @@ printf 'DOCKER_AUTHORITY_STARTED=YES DOCKER_AUTHORITY_READY=YES\n'
 
 # --- Stage 2: executor ---
 log "Stage 2: starting executor..."
+# Close the stop-to-replacement TOCTOU window as tightly as the current
+# single-host Compose architecture permits. Any changed or running executor
+# fails closed before the replacement admission command.
+verify_legacy_executor_quiesced
 persistent_state_may_have_mutated=1  # executor can write to mcp-bridge-jobs
 "${QG[@]}" up -d --no-deps --no-build --pull never executor \
   || fail 'executor startup failed'
