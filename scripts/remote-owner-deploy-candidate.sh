@@ -94,10 +94,18 @@ if [[ "$copilot_expected" == 1 ]]; then
   QG_FILES+=(-f "$REPO_ROOT/compose.copilot.yaml")
 fi
 
+# GitHub baseline discovery must not depend on the candidate Compose graph. A
+# candidate overlay can differ from the running topology and previously caused
+# both pre-existing services to be misclassified as absent during rollback.
+mapfile -t old_github_ids < <(docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-broker --format '{{.ID}}')
+mapfile -t old_github_proxy_ids < <(docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-egress-proxy --format '{{.ID}}')
+[[ ${#old_github_ids[@]} -le 1 ]] || fail 'ambiguous predeploy GitHub broker baseline'
+[[ ${#old_github_proxy_ids[@]} -le 1 ]] || fail 'ambiguous predeploy GitHub egress proxy baseline'
+[[ ${#old_github_ids[@]} -eq ${#old_github_proxy_ids[@]} ]] || fail 'incomplete predeploy GitHub control baseline'
+OLD_GITHUB_PRESENT=${#old_github_ids[@]}
+github_preexisting="$OLD_GITHUB_PRESENT"
 github_expected=0
-if [[ -f "$MAIN_ROOT/config/github.yaml" ]]; then github_expected=1; fi
-if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-broker --format '{{.ID}}' | grep -q .; then github_expected=1; fi
-if docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-egress-proxy --format '{{.ID}}' | grep -q .; then github_expected=1; fi
+if [[ -f "$MAIN_ROOT/config/github.yaml" || "$OLD_GITHUB_PRESENT" == 1 ]]; then github_expected=1; fi
 if [[ "$github_expected" == 1 ]]; then
   [[ -f "$REPO_ROOT/compose.github.yaml" ]] || fail 'candidate compose.github.yaml is missing'
   [[ -f "$MAIN_ROOT/config/github.yaml" ]] || fail 'GitHub control is active but runtime github.yaml is missing'
@@ -157,7 +165,7 @@ BUNDLE_PATH="${QUARANGATE_DEPLOY_NPM_BUNDLE_PATH:-$RUNTIME_BUNDLE_PATH}"
 
 INTERNAL_TOKEN_VALUE="$(read_runtime_value INTERNAL_TOKEN)" || fail 'runtime .env must contain exactly one non-empty INTERNAL_TOKEN'
 if DOCKER_AUTHORITY_TOKEN_VALUE="$(read_runtime_value DOCKER_AUTHORITY_TOKEN 2>/dev/null)"; then
-  GENERATED_DOCKER_AUTHORITY_TOKEN=0
+  :
 else
   [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 ]] || fail 'existing Docker-authority requires a persisted DOCKER_AUTHORITY_TOKEN for exact rollback'
   DOCKER_AUTHORITY_TOKEN_VALUE="$(python3 - <<'PYTOKEN'
@@ -166,7 +174,6 @@ print(secrets.token_urlsafe(32))
 PYTOKEN
   )"
   [[ -n "$DOCKER_AUTHORITY_TOKEN_VALUE" ]] || fail 'could not generate Docker-authority token'
-  GENERATED_DOCKER_AUTHORITY_TOKEN=1
 fi
 [[ "$DOCKER_AUTHORITY_TOKEN_VALUE" != "$INTERNAL_TOKEN_VALUE" ]] || fail 'authority tokens must be distinct'
 export DOCKER_AUTHORITY_TOKEN="$DOCKER_AUTHORITY_TOKEN_VALUE"
@@ -208,8 +215,6 @@ if [[ "$ollama_expected" == 1 ]]; then
 else
   BASE_QG=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${BASE_QG_FILES[@]}")
 fi
-DEPLOY_SERVICES=(docker-authority gateway executor)
-if [[ "$github_expected" == 1 ]]; then DEPLOY_SERVICES+=(github-egress-proxy github-broker); fi
 # Build from the candidate worktree, but deploy from MAIN_ROOT so ignored live
 # config/ files are mounted from the operator runtime rather than disappearing.
 PW=(docker compose --env-file "$RUNTIME_ENV" -p projects-work -f "$REPO_ROOT/projects-work-target/compose.yaml")
@@ -233,11 +238,14 @@ if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then
   [[ "$OLD_DOCKER_AUTHORITY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'could not capture immutable Docker-authority rollback image ID'
 fi
 [[ "$OLD_GATEWAY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$OLD_EXECUTOR_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'could not capture immutable rollback image IDs'
-OLD_GITHUB_PRESENT=0
 OLD_GITHUB_IMAGE=''
 OLD_GITHUB_IMAGE_ID=''
 OLD_GITHUB_PROXY_IMAGE=''
 OLD_GITHUB_PROXY_IMAGE_ID=''
+OLD_GITHUB_HEALTH=''
+OLD_GITHUB_PROXY_HEALTH=''
+OLD_GITHUB_NETWORKS=''
+OLD_GITHUB_PROXY_NETWORKS=''
 OLD_GITHUB_CONTROL_NETWORK_PRESENT=0
 OLD_GITHUB_CONTROL_NETWORK_ID=''
 OLD_GITHUB_EGRESS_NETWORK_PRESENT=0
@@ -252,20 +260,21 @@ if docker network inspect quarangate-github-egress >/dev/null 2>&1; then
   OLD_GITHUB_EGRESS_NETWORK_ID="$(docker network inspect quarangate-github-egress --format '{{.Id}}')"
   [[ -n "$OLD_GITHUB_EGRESS_NETWORK_ID" ]] || fail 'could not capture predeploy GitHub egress network identity'
 fi
-if [[ "$github_expected" == 1 ]]; then
-  old_github_id="$("${QG[@]}" ps -q github-broker 2>/dev/null || true)"
-  old_github_proxy_id="$("${QG[@]}" ps -q github-egress-proxy 2>/dev/null || true)"
-  if [[ -n "$old_github_id" || -n "$old_github_proxy_id" ]]; then
-    [[ -n "$old_github_id" && -n "$old_github_proxy_id" ]] || fail 'incomplete predeploy GitHub control baseline'
-    OLD_GITHUB_PRESENT=1
-    OLD_GITHUB_IMAGE="$(docker inspect "$old_github_id" --format '{{.Config.Image}}')"
-    OLD_GITHUB_IMAGE_ID="$(docker inspect "$old_github_id" --format '{{.Image}}')"
-    OLD_GITHUB_PROXY_IMAGE="$(docker inspect "$old_github_proxy_id" --format '{{.Config.Image}}')"
-    OLD_GITHUB_PROXY_IMAGE_ID="$(docker inspect "$old_github_proxy_id" --format '{{.Image}}')"
-    [[ "$OLD_GITHUB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$OLD_GITHUB_PROXY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'could not capture immutable GitHub rollback image IDs'
-  fi
+if [[ "$OLD_GITHUB_PRESENT" == 1 ]]; then
+  old_github_id="${old_github_ids[0]}"
+  old_github_proxy_id="${old_github_proxy_ids[0]}"
+  OLD_GITHUB_IMAGE="$(docker inspect "$old_github_id" --format '{{.Config.Image}}')"
+  OLD_GITHUB_IMAGE_ID="$(docker inspect "$old_github_id" --format '{{.Image}}')"
+  OLD_GITHUB_HEALTH="$(docker inspect "$old_github_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')"
+  OLD_GITHUB_NETWORKS="$(docker inspect "$old_github_id" --format '{{range $name, $network := .NetworkSettings.Networks}}{{$name}}={{$network.NetworkID}};{{end}}')"
+  OLD_GITHUB_PROXY_IMAGE="$(docker inspect "$old_github_proxy_id" --format '{{.Config.Image}}')"
+  OLD_GITHUB_PROXY_IMAGE_ID="$(docker inspect "$old_github_proxy_id" --format '{{.Image}}')"
+  OLD_GITHUB_PROXY_HEALTH="$(docker inspect "$old_github_proxy_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')"
+  OLD_GITHUB_PROXY_NETWORKS="$(docker inspect "$old_github_proxy_id" --format '{{range $name, $network := .NetworkSettings.Networks}}{{$name}}={{$network.NetworkID}};{{end}}')"
+  [[ "$OLD_GITHUB_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$OLD_GITHUB_PROXY_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'could not capture immutable GitHub rollback image IDs'
+  [[ -n "$OLD_GITHUB_NETWORKS" && -n "$OLD_GITHUB_PROXY_NETWORKS" ]] || fail 'could not capture predeploy GitHub network identity'
 fi
-printf 'OLD_GATEWAY_IMAGE=%s\nOLD_DOCKER_AUTHORITY_PRESENT=%s\nOLD_DOCKER_AUTHORITY_IMAGE=%s\nOLD_EXECUTOR_IMAGE=%s\nOLD_GITHUB_PRESENT=%s\nOLD_GITHUB_CONTROL_NETWORK_PRESENT=%s\nOLD_GITHUB_EGRESS_NETWORK_PRESENT=%s\n' "$OLD_GATEWAY_IMAGE" "$OLD_DOCKER_AUTHORITY_PRESENT" "$OLD_DOCKER_AUTHORITY_IMAGE" "$OLD_EXECUTOR_IMAGE" "$OLD_GITHUB_PRESENT" "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" "$OLD_GITHUB_EGRESS_NETWORK_PRESENT"
+printf 'OLD_GATEWAY_IMAGE=%s\nOLD_DOCKER_AUTHORITY_PRESENT=%s\nOLD_DOCKER_AUTHORITY_IMAGE=%s\nOLD_EXECUTOR_IMAGE=%s\nOLD_GITHUB_PRESENT=%s\nOLD_GITHUB_HEALTH=%s\nOLD_GITHUB_PROXY_HEALTH=%s\nOLD_GITHUB_CONTROL_NETWORK_PRESENT=%s\nOLD_GITHUB_EGRESS_NETWORK_PRESENT=%s\n' "$OLD_GATEWAY_IMAGE" "$OLD_DOCKER_AUTHORITY_PRESENT" "$OLD_DOCKER_AUTHORITY_IMAGE" "$OLD_EXECUTOR_IMAGE" "$OLD_GITHUB_PRESENT" "${OLD_GITHUB_HEALTH:-absent}" "${OLD_GITHUB_PROXY_HEALTH:-absent}" "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" "$OLD_GITHUB_EGRESS_NETWORK_PRESENT"
 
 # Build through the governed local-base helper. It verifies the exact npm bundle,
 # resolves the pinned Node base only from the local Docker image store through a
@@ -303,7 +312,7 @@ if [[ "$existing_release_refs" == 0 ]]; then
 elif [[ "$existing_release_refs" == 3 ]]; then
   RELEASE_RECEIPT="${QUARANGATE_DEPLOY_RELEASE_RECEIPT:-}"
   [[ "$RELEASE_RECEIPT" == /* && -f "$RELEASE_RECEIPT" ]] || fail 'existing release refs require absolute QUARANGATE_DEPLOY_RELEASE_RECEIPT'
-  receipt_core_id="$(python3 - "$RELEASE_RECEIPT" "$REV" "$(git rev-parse HEAD^{tree})"     "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE" "$NEW_EXECUTOR_IMAGE" <<'PYRECEIPT'
+  receipt_core_id="$(python3 - "$RELEASE_RECEIPT" "$REV" "$(git rev-parse 'HEAD^{tree}')"     "$NEW_GATEWAY_IMAGE" "$NEW_DOCKER_AUTHORITY_IMAGE" "$NEW_EXECUTOR_IMAGE" <<'PYRECEIPT'
 import json, re, sys
 path, rev, tree, gateway, authority, executor = sys.argv[1:]
 doc = json.load(open(path))
@@ -366,126 +375,309 @@ assert_candidate_image_bindings() {
 assert_candidate_image_bindings
 printf 'NEW_SHARED_IMAGE_ID=%s\n' "$new_gateway_id"
 
+# Derive schema support from the exact immutable image payloads. The probe is a
+# read-only parser mounted into a networkless, pull-disabled container; neither
+# candidate nor rollback support is accepted from caller input.
+probe_image_schema() {
+  local image_id="$1"
+  docker run --rm --pull never --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges:true --entrypoint node \
+    --mount "type=bind,src=$REPO_ROOT/scripts/sh06-image-schema-probe.mjs,dst=/sh06-image-schema-probe.mjs,readonly" \
+    "$image_id" /sh06-image-schema-probe.mjs
+}
+CANDIDATE_SUPPORTED_SCHEMA="$(probe_image_schema "$new_executor_id")" || fail 'candidate-supported job DB schema unavailable from exact image'
+ROLLBACK_IMAGE_SUPPORTED_SCHEMA="$(probe_image_schema "$OLD_EXECUTOR_IMAGE_ID")" || fail 'rollback-supported job DB schema unavailable from exact image'
+[[ "$CANDIDATE_SUPPORTED_SCHEMA" =~ ^[0-9]+$ && "$ROLLBACK_IMAGE_SUPPORTED_SCHEMA" =~ ^[0-9]+$ ]] || fail 'image schema evidence is invalid'
+
+# Create a transactionally consistent rollback snapshot before any candidate
+# service starts. The live volume is read-only to the helper; backup bytes stay
+# in an owner-private operation directory and are never copied into release
+# evidence. No registry or network access is possible.
+docker volume inspect mcp-bridge-jobs >/dev/null 2>&1 || fail 'persistent mcp-bridge-jobs volume is unavailable'
+rollback_state_root="$MAIN_ROOT/.quarangate-rollback"
+if [[ ! -e "$rollback_state_root" ]]; then mkdir -m 0700 "$rollback_state_root"; fi
+[[ -d "$rollback_state_root" && ! -L "$rollback_state_root" ]] || fail 'rollback-state root is unsafe'
+[[ "$(stat -c '%a' "$rollback_state_root")" == 700 ]] || fail 'rollback-state root must have mode 0700'
+snapshot_parent="$rollback_state_root/sh06"
+if [[ ! -e "$snapshot_parent" ]]; then mkdir -m 0700 "$snapshot_parent"; fi
+[[ -d "$snapshot_parent" && ! -L "$snapshot_parent" ]] || fail 'SH-06 rollback-state root is unsafe'
+[[ "$(stat -c '%a' "$snapshot_parent")" == 700 ]] || fail 'SH-06 rollback-state root must have mode 0700'
+operation_id="${REV:0:12}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+snapshot_dir="$snapshot_parent/$operation_id"
+[[ ! -e "$snapshot_dir" ]] || fail 'operation-scoped snapshot destination already exists'
+mkdir -m 0700 "$snapshot_dir"
+snapshot_path="$snapshot_dir/agents.db"
+snapshot_manifest="$snapshot_dir/manifest.json"
+snapshot_created=0
+snapshot_verified=0
+snapshot_result="$(docker run --rm --pull never --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --user 1000:1000 \
+  --mount type=volume,src=mcp-bridge-jobs,dst=/source,readonly \
+  --mount "type=bind,src=$snapshot_dir,dst=/snapshot" \
+  "$new_executor_id" node /app/dist/operations/sh06JobDbRecovery.js \
+  snapshot /source/agents.db /snapshot/agents.db /snapshot/manifest.json)" \
+  || fail 'transactionally consistent job DB snapshot failed'
+[[ -f "$snapshot_path" && -f "$snapshot_manifest" ]] || fail 'job DB snapshot outputs are missing'
+printf '%s' "$snapshot_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="SNAPSHOT_VERIFIED" and d.get("integrityCheck")=="ok"' \
+  || fail 'job DB snapshot creation proof is invalid'
+snapshot_created=1
+snapshot_verify_result="$(docker run --rm --pull never --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --user 1000:1000 \
+  --mount "type=bind,src=$snapshot_dir,dst=/snapshot,readonly" \
+  "$new_executor_id" node /app/dist/operations/sh06JobDbRecovery.js \
+  verify /snapshot/agents.db /snapshot/manifest.json)" \
+  || fail 'job DB snapshot verification failed'
+CURRENT_DB_SCHEMA="$(printf '%s' "$snapshot_verify_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="SNAPSHOT_VERIFIED"; v=d.get("userVersion"); assert isinstance(v,int) and v>=0; print(v)')" \
+  || fail 'verified current job DB schema evidence is invalid'
+SNAPSHOT_SHA256="$(printf '%s' "$snapshot_verify_result" | python3 -c 'import json,re,sys; v=json.load(sys.stdin).get("sha256",""); assert re.fullmatch(r"[0-9a-f]{64}",v); print(v)')" \
+  || fail 'verified snapshot digest evidence is invalid'
+SNAPSHOT_SIZE_BYTES="$(printf '%s' "$snapshot_verify_result" | python3 -c 'import json,sys; v=json.load(sys.stdin).get("sizeBytes"); assert isinstance(v,int) and v>0; print(v)')" \
+  || fail 'verified snapshot size evidence is invalid'
+snapshot_verified=1
+[[ "$CURRENT_DB_SCHEMA" -le "$CANDIDATE_SUPPORTED_SCHEMA" ]] || fail 'current job DB schema is newer than candidate support'
+if [[ "$CANDIDATE_SUPPORTED_SCHEMA" -gt "$ROLLBACK_IMAGE_SUPPORTED_SCHEMA" ]]; then
+  [[ "$snapshot_created" == 1 && "$snapshot_verified" == 1 ]] || fail 'candidate schema exceeds rollback support without verified snapshot'
+fi
+[[ "$snapshot_created" == 1 && "$snapshot_verified" == 1 ]] || fail 'verified persistent-state snapshot is mandatory before mutation'
+printf 'SCHEMA_PREFLIGHT=PASS CURRENT_DB_SCHEMA=%s CANDIDATE_SUPPORTED_SCHEMA=%s ROLLBACK_IMAGE_SUPPORTED_SCHEMA=%s SNAPSHOT_CREATED=%s SNAPSHOT_VERIFIED=%s\n' \
+  "$CURRENT_DB_SCHEMA" "$CANDIDATE_SUPPORTED_SCHEMA" "$ROLLBACK_IMAGE_SUPPORTED_SCHEMA" "$snapshot_created" "$snapshot_verified"
+printf 'SNAPSHOT_IDENTITY_SHA256=%s SNAPSHOT_SIZE_BYTES=%s SNAPSHOT_CONTENT_EXPOSED=NO\n' "$SNAPSHOT_SHA256" "$SNAPSHOT_SIZE_BYTES"
+
 # Preserve the ignored runtime env byte-for-byte for rollback without printing
 # its contents. The temporary copy is mode 0600 and deleted on every exit path.
 env_backup="$(mktemp)"
 chmod 0600 "$env_backup"
 cp "$RUNTIME_ENV" "$env_backup"
+env_backup_sha256="$(sha256sum "$env_backup" | cut -d' ' -f1)"
 mutated=0
+runtime_mutated=0
+persistent_state_may_have_mutated=0
 env_updated=0
+docker_authority_preexisting="$OLD_DOCKER_AUTHORITY_PRESENT"
+printf 'ROLLBACK_STATE snapshot_created=%s snapshot_verified=%s runtime_mutated=%s persistent_state_may_have_mutated=%s env_updated=%s github_preexisting=%s docker_authority_preexisting=%s\n' \
+  "$snapshot_created" "$snapshot_verified" "$runtime_mutated" "$persistent_state_may_have_mutated" "$env_updated" "$github_preexisting" "$docker_authority_preexisting"
+
+service_ids() {
+  local project="$1" service="$2"
+  docker ps -a --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service" --format '{{.ID}}'
+}
+
+safe_health_reason() {
+  local container_id="$1"
+  docker inspect "$container_id" --format '{{json .State.Health.Log}}' 2>/dev/null \
+    | node "$REPO_ROOT/scripts/sh06-redact-diagnostic.mjs"
+}
+
+emit_service_diagnostics() {
+  local project="$1" service="$2" container_id="$3"
+  if [[ -z "$container_id" ]]; then
+    printf 'CANDIDATE_DIAGNOSTIC service=%s state=MISSING health=unknown reason=container_not_found\n' "$service" >&2
+    return
+  fi
+  local runtime_state health_state restart_count exit_code image_id build_revision reason
+  runtime_state="$(docker inspect "$container_id" --format '{{.State.Status}}' 2>/dev/null || true)"
+  health_state="$(docker inspect "$container_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
+  restart_count="$(docker inspect "$container_id" --format '{{.RestartCount}}' 2>/dev/null || true)"
+  exit_code="$(docker inspect "$container_id" --format '{{.State.ExitCode}}' 2>/dev/null || true)"
+  image_id="$(docker inspect "$container_id" --format '{{.Image}}' 2>/dev/null || true)"
+  build_revision="$(docker inspect "$container_id" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null || true)"
+  reason="$(safe_health_reason "$container_id" 2>/dev/null || printf '%s' 'health output unavailable')"
+  printf 'CANDIDATE_DIAGNOSTIC service=%s project=%s state=%s health=%s restart_count=%s exit_code=%s build_revision=%s image_id=%s reason=%s\n' \
+    "$service" "$project" "${runtime_state:-unknown}" "${health_state:-unknown}" "${restart_count:-unknown}" \
+    "${exit_code:-unknown}" "${build_revision:-unknown}" "${image_id:-unknown}" "$reason" >&2
+}
+
+wait_service_ready() {
+  local project="$1" service="$2" timeout_seconds="$3"
+  local elapsed=0 container_id='' runtime_state='' health_state=''
+  while (( elapsed < timeout_seconds )); do
+    mapfile -t readiness_ids < <(service_ids "$project" "$service")
+    if [[ ${#readiness_ids[@]} -gt 1 ]]; then
+      printf 'READINESS_GATE=FAIL service=%s classification=AMBIGUOUS\n' "$service" >&2
+      return 1
+    fi
+    container_id="${readiness_ids[0]:-}"
+    if [[ -n "$container_id" ]]; then
+      runtime_state="$(docker inspect "$container_id" --format '{{.State.Status}}' 2>/dev/null || true)"
+      health_state="$(docker inspect "$container_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
+      if [[ "$runtime_state" == running && ( "$health_state" == healthy || "$health_state" == none ) ]]; then
+        printf 'READINESS_GATE=PASS service=%s state=%s health=%s\n' "$service" "$runtime_state" "$health_state"
+        return 0
+      fi
+      if [[ "$runtime_state" == exited || "$runtime_state" == dead || "$runtime_state" == removing ]]; then
+        emit_service_diagnostics "$project" "$service" "$container_id"
+        printf 'READINESS_GATE=FAIL service=%s classification=EXITED\n' "$service" >&2
+        return 1
+      fi
+      if [[ "$health_state" == unhealthy ]]; then
+        emit_service_diagnostics "$project" "$service" "$container_id"
+        printf 'READINESS_GATE=FAIL service=%s classification=UNHEALTHY\n' "$service" >&2
+        return 1
+      fi
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  emit_service_diagnostics "$project" "$service" "$container_id"
+  printf 'READINESS_GATE=FAIL service=%s classification=STARTING timeout_seconds=%s\n' "$service" "$timeout_seconds" >&2
+  return 1
+}
 
 rollback() {
   rc=$?
   trap - EXIT
   if [[ "$rc" -ne 0 ]]; then
     printf '%s\n' '=== DEPLOY ROLLBACK ===' >&2
-    rollback_ok=1
+    ROLLBACK_IMAGE_STATE=NO
+    ROLLBACK_PERSISTENT_STATE=NO
+    ROLLBACK_CONFIG_STATE=NO
+    ROLLBACK_GITHUB_STATE=NO
+    ROLLBACK_NETWORK_STATE=NO
+    ROLLBACK_HEALTH_STATE=NO
     if [[ "$env_updated" == 1 ]]; then
-      cp "$env_backup" "$RUNTIME_ENV" || rollback_ok=0
+      if cp "$env_backup" "$RUNTIME_ENV" && [[ "$(sha256sum "$RUNTIME_ENV" | cut -d' ' -f1)" == "$env_backup_sha256" ]]; then
+        ROLLBACK_CONFIG_STATE=YES
+      fi
+    else
+      ROLLBACK_CONFIG_STATE=YES
     fi
-    if [[ "$mutated" == 1 ]]; then
-      # Remove forward-only services that were absent in the predeploy topology
-      # before restoring the legacy Compose graph.
-      if [[ "$github_expected" == 1 && "$OLD_GITHUB_PRESENT" == 0 ]]; then
-        "${QG[@]}" rm -sf github-broker github-egress-proxy >/dev/null 2>&1 || rollback_ok=0
+    if [[ "$runtime_mutated" == 1 ]]; then
+      candidate_services=(gateway executor docker-authority)
+      if [[ "$github_expected" == 1 ]]; then candidate_services+=(github-broker github-egress-proxy); fi
+      candidate_quiesced=0
+      if "${QG[@]}" stop "${candidate_services[@]}" >/dev/null 2>&1; then
+        candidate_quiesced=1
+        for candidate_service in "${candidate_services[@]}"; do
+          mapfile -t stopped_ids < <(service_ids quarangate "$candidate_service")
+          for stopped_id in "${stopped_ids[@]}"; do
+            stopped_state="$(docker inspect "$stopped_id" --format '{{.State.Status}}' 2>/dev/null || true)"
+            if [[ "$stopped_state" == running || "$stopped_state" == restarting || "$stopped_state" == paused ]]; then
+              candidate_quiesced=0
+            fi
+          done
+        done
       fi
-      if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 ]]; then
-        "${QG[@]}" rm -sf docker-authority >/dev/null 2>&1 || rollback_ok=0
-      fi
-
-      rollback_services=(gateway executor)
-      if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then rollback_services=(docker-authority "${rollback_services[@]}"); fi
-      if [[ "$OLD_GITHUB_PRESENT" == 1 ]]; then rollback_services+=(github-egress-proxy github-broker); fi
-
-      if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then
-        if ! GATEWAY_IMAGE="$OLD_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$OLD_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$OLD_EXECUTOR_IMAGE" \
-          "${BASE_QG[@]}" up -d --no-deps --force-recreate --no-build --pull never "${rollback_services[@]}" >/dev/null 2>&1; then
-          rollback_ok=0
+      if [[ "$candidate_quiesced" == 1 ]]; then
+        if [[ "$github_expected" == 1 && "$OLD_GITHUB_PRESENT" == 0 ]]; then
+          "${QG[@]}" rm -sf github-broker github-egress-proxy >/dev/null 2>&1 || candidate_quiesced=0
         fi
+        if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 ]]; then
+          "${QG[@]}" rm -sf docker-authority >/dev/null 2>&1 || candidate_quiesced=0
+        fi
+      fi
+
+      if [[ "$persistent_state_may_have_mutated" == 1 && "$candidate_quiesced" == 1 ]]; then
+        if restore_result="$(docker run --rm --pull never --network none --read-only --cap-drop ALL \
+          --security-opt no-new-privileges:true --user 1000:1000 \
+          --mount "type=bind,src=$snapshot_dir,dst=/snapshot,readonly" \
+          --mount type=volume,src=mcp-bridge-jobs,dst=/jobs \
+          "$new_executor_id" node /app/dist/operations/sh06JobDbRecovery.js \
+          restore /snapshot/agents.db /snapshot/manifest.json /jobs/agents.db 2>/dev/null)" && \
+          printf '%s' "$restore_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="PERSISTENT_STATE_RESTORED" and d.get("integrityCheck")=="ok"' ; then
+          ROLLBACK_PERSISTENT_STATE=YES
+        else
+          printf '%s\n' 'PERSISTENT_RESTORE_REASON=restore_or_verification_failed' >&2
+        fi
+      elif [[ "$persistent_state_may_have_mutated" == 0 && "$candidate_quiesced" == 1 ]]; then
+        ROLLBACK_PERSISTENT_STATE=YES
       else
-        if ! GATEWAY_IMAGE="$OLD_GATEWAY_IMAGE" EXECUTOR_IMAGE="$OLD_EXECUTOR_IMAGE" \
-          "${BASE_QG[@]}" up -d --no-deps --force-recreate --no-build --pull never "${rollback_services[@]}" >/dev/null 2>&1; then
-          rollback_ok=0
+        printf '%s\n' 'PERSISTENT_RESTORE_REASON=candidate_services_not_proven_stopped' >&2
+      fi
+
+      # A failed persistent restore is a hard stop: never start the rollback
+      # executor against a database that may have advanced beyond its support.
+      if [[ "$ROLLBACK_PERSISTENT_STATE" == YES ]]; then
+        rollback_services=(gateway executor)
+        if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then rollback_services=(docker-authority "${rollback_services[@]}"); fi
+        if [[ "$OLD_GITHUB_PRESENT" == 1 ]]; then rollback_services+=(github-egress-proxy github-broker); fi
+        if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then
+          GATEWAY_IMAGE="$OLD_GATEWAY_IMAGE" DOCKER_AUTHORITY_IMAGE="$OLD_DOCKER_AUTHORITY_IMAGE" EXECUTOR_IMAGE="$OLD_EXECUTOR_IMAGE" \
+            "${BASE_QG[@]}" up -d --no-deps --force-recreate --no-build --pull never "${rollback_services[@]}" >/dev/null 2>&1 || true
+        else
+          GATEWAY_IMAGE="$OLD_GATEWAY_IMAGE" EXECUTOR_IMAGE="$OLD_EXECUTOR_IMAGE" \
+            "${BASE_QG[@]}" up -d --no-deps --force-recreate --no-build --pull never "${rollback_services[@]}" >/dev/null 2>&1 || true
         fi
+
+        mapfile -t rollback_gateway_ids < <(service_ids quarangate gateway)
+        mapfile -t rollback_executor_ids < <(service_ids quarangate executor)
+        mapfile -t rollback_authority_ids < <(service_ids quarangate docker-authority)
+        if [[ ${#rollback_gateway_ids[@]} -eq 1 && ${#rollback_executor_ids[@]} -eq 1 ]]; then
+          rollback_gateway_image="$(docker inspect "${rollback_gateway_ids[0]}" --format '{{.Config.Image}}' 2>/dev/null || true)"
+          rollback_gateway_image_id="$(docker inspect "${rollback_gateway_ids[0]}" --format '{{.Image}}' 2>/dev/null || true)"
+          rollback_executor_image="$(docker inspect "${rollback_executor_ids[0]}" --format '{{.Config.Image}}' 2>/dev/null || true)"
+          rollback_executor_image_id="$(docker inspect "${rollback_executor_ids[0]}" --format '{{.Image}}' 2>/dev/null || true)"
+          authority_image_restored=0
+          if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 && ${#rollback_authority_ids[@]} -eq 1 ]]; then
+            rollback_authority_image="$(docker inspect "${rollback_authority_ids[0]}" --format '{{.Config.Image}}' 2>/dev/null || true)"
+            rollback_authority_image_id="$(docker inspect "${rollback_authority_ids[0]}" --format '{{.Image}}' 2>/dev/null || true)"
+            [[ "$rollback_authority_image" == "$OLD_DOCKER_AUTHORITY_IMAGE" && "$rollback_authority_image_id" == "$OLD_DOCKER_AUTHORITY_IMAGE_ID" ]] && authority_image_restored=1
+          elif [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 && ${#rollback_authority_ids[@]} -eq 0 ]]; then
+            authority_image_restored=1
+          fi
+          if [[ "$rollback_gateway_image" == "$OLD_GATEWAY_IMAGE" && "$rollback_gateway_image_id" == "$OLD_GATEWAY_IMAGE_ID" && \
+            "$rollback_executor_image" == "$OLD_EXECUTOR_IMAGE" && "$rollback_executor_image_id" == "$OLD_EXECUTOR_IMAGE_ID" && \
+            "$authority_image_restored" == 1 ]]; then
+            ROLLBACK_IMAGE_STATE=YES
+          fi
+        fi
+
+        authority_health_restored=1
+        if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]] && ! wait_service_ready quarangate docker-authority 120; then authority_health_restored=0; fi
+        if [[ "$authority_health_restored" == 1 ]] && wait_service_ready quarangate executor 120 && wait_service_ready quarangate gateway 120; then
+          ROLLBACK_HEALTH_STATE=YES
+        fi
+      fi
+
+      mapfile -t rollback_github_ids < <(service_ids quarangate github-broker)
+      mapfile -t rollback_github_proxy_ids < <(service_ids quarangate github-egress-proxy)
+      if [[ "$OLD_GITHUB_PRESENT" == 1 && ${#rollback_github_ids[@]} -eq 1 && ${#rollback_github_proxy_ids[@]} -eq 1 ]]; then
+        rollback_github_image="$(docker inspect "${rollback_github_ids[0]}" --format '{{.Config.Image}}' 2>/dev/null || true)"
+        rollback_github_image_id="$(docker inspect "${rollback_github_ids[0]}" --format '{{.Image}}' 2>/dev/null || true)"
+        rollback_github_networks="$(docker inspect "${rollback_github_ids[0]}" --format '{{range $name, $network := .NetworkSettings.Networks}}{{$name}}={{$network.NetworkID}};{{end}}' 2>/dev/null || true)"
+        rollback_github_proxy_image="$(docker inspect "${rollback_github_proxy_ids[0]}" --format '{{.Config.Image}}' 2>/dev/null || true)"
+        rollback_github_proxy_image_id="$(docker inspect "${rollback_github_proxy_ids[0]}" --format '{{.Image}}' 2>/dev/null || true)"
+        rollback_github_proxy_networks="$(docker inspect "${rollback_github_proxy_ids[0]}" --format '{{range $name, $network := .NetworkSettings.Networks}}{{$name}}={{$network.NetworkID}};{{end}}' 2>/dev/null || true)"
+        if [[ "$rollback_github_image" == "$OLD_GITHUB_IMAGE" && "$rollback_github_image_id" == "$OLD_GITHUB_IMAGE_ID" && \
+          "$rollback_github_proxy_image" == "$OLD_GITHUB_PROXY_IMAGE" && "$rollback_github_proxy_image_id" == "$OLD_GITHUB_PROXY_IMAGE_ID" && \
+          "$rollback_github_networks" == "$OLD_GITHUB_NETWORKS" && "$rollback_github_proxy_networks" == "$OLD_GITHUB_PROXY_NETWORKS" ]] && \
+          wait_service_ready quarangate github-egress-proxy 120 && wait_service_ready quarangate github-broker 120; then
+          ROLLBACK_GITHUB_STATE=YES
+        fi
+      elif [[ "$OLD_GITHUB_PRESENT" == 0 && ${#rollback_github_ids[@]} -eq 0 && ${#rollback_github_proxy_ids[@]} -eq 0 ]]; then
+        ROLLBACK_GITHUB_STATE=YES
       fi
 
       if [[ "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" == 0 ]] && docker network inspect quarangate-github-control >/dev/null 2>&1; then
-        docker network rm quarangate-github-control >/dev/null 2>&1 || rollback_ok=0
+        docker network rm quarangate-github-control >/dev/null 2>&1 || true
       fi
       if [[ "$OLD_GITHUB_EGRESS_NETWORK_PRESENT" == 0 ]] && docker network inspect quarangate-github-egress >/dev/null 2>&1; then
-        docker network rm quarangate-github-egress >/dev/null 2>&1 || rollback_ok=0
+        docker network rm quarangate-github-egress >/dev/null 2>&1 || true
       fi
-
-      rollback_gateway_id="$("${BASE_QG[@]}" ps -q gateway 2>/dev/null || true)"
-      rollback_executor_id="$("${BASE_QG[@]}" ps -q executor 2>/dev/null || true)"
-      if [[ -z "$rollback_gateway_id" || -z "$rollback_executor_id" ]]; then
-        rollback_ok=0
-      else
-        rollback_healthy=0
-        for _ in $(seq 1 60); do
-          rollback_state="$(docker inspect "$rollback_gateway_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
-          if [[ "$rollback_state" == healthy ]]; then rollback_healthy=1; break; fi
-          sleep 2
-        done
-        [[ "$rollback_healthy" == 1 ]] || rollback_ok=0
-        rollback_gateway_image="$(docker inspect "$rollback_gateway_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
-        rollback_executor_image="$(docker inspect "$rollback_executor_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
-        rollback_gateway_image_id="$(docker inspect "$rollback_gateway_id" --format '{{.Image}}' 2>/dev/null || true)"
-        rollback_executor_image_id="$(docker inspect "$rollback_executor_id" --format '{{.Image}}' 2>/dev/null || true)"
-        [[ "$rollback_gateway_image" == "$OLD_GATEWAY_IMAGE" && "$rollback_gateway_image_id" == "$OLD_GATEWAY_IMAGE_ID" ]] || rollback_ok=0
-        [[ "$rollback_executor_image" == "$OLD_EXECUTOR_IMAGE" && "$rollback_executor_image_id" == "$OLD_EXECUTOR_IMAGE_ID" ]] || rollback_ok=0
-      fi
-
-      rollback_authority_id="$(docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=docker-authority --format '{{.ID}}')"
-      if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 1 ]]; then
-        if [[ -z "$rollback_authority_id" ]]; then
-          rollback_ok=0
-        else
-          rollback_authority_image="$(docker inspect "$rollback_authority_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
-          rollback_authority_image_id="$(docker inspect "$rollback_authority_id" --format '{{.Image}}' 2>/dev/null || true)"
-          [[ "$rollback_authority_image" == "$OLD_DOCKER_AUTHORITY_IMAGE" && "$rollback_authority_image_id" == "$OLD_DOCKER_AUTHORITY_IMAGE_ID" ]] || rollback_ok=0
-        fi
-      elif [[ -n "$rollback_authority_id" ]]; then
-        rollback_ok=0
-      fi
-
-      if [[ "$OLD_GITHUB_PRESENT" == 1 ]]; then
-        rollback_github_id="$("${BASE_QG[@]}" ps -q github-broker 2>/dev/null || true)"
-        rollback_github_proxy_id="$("${BASE_QG[@]}" ps -q github-egress-proxy 2>/dev/null || true)"
-        if [[ -z "$rollback_github_id" || -z "$rollback_github_proxy_id" ]]; then
-          rollback_ok=0
-        else
-          rollback_github_image="$(docker inspect "$rollback_github_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
-          rollback_github_health="$(docker inspect "$rollback_github_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
-          rollback_github_image_id="$(docker inspect "$rollback_github_id" --format '{{.Image}}' 2>/dev/null || true)"
-          rollback_github_proxy_image="$(docker inspect "$rollback_github_proxy_id" --format '{{.Config.Image}}' 2>/dev/null || true)"
-          rollback_github_proxy_image_id="$(docker inspect "$rollback_github_proxy_id" --format '{{.Image}}' 2>/dev/null || true)"
-          rollback_github_proxy_health="$(docker inspect "$rollback_github_proxy_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
-          [[ "$rollback_github_image" == "$OLD_GITHUB_IMAGE" && "$rollback_github_image_id" == "$OLD_GITHUB_IMAGE_ID" ]] || rollback_ok=0
-          [[ "$rollback_github_proxy_image" == "$OLD_GITHUB_PROXY_IMAGE" && "$rollback_github_proxy_image_id" == "$OLD_GITHUB_PROXY_IMAGE_ID" ]] || rollback_ok=0
-          [[ "$rollback_github_health" == healthy ]] || rollback_ok=0
-          [[ "$rollback_github_proxy_health" == healthy ]] || rollback_ok=0
-        fi
-      elif docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-broker --format '{{.ID}}' | grep -q . || \
-           docker ps -a --filter label=com.docker.compose.project=quarangate --filter label=com.docker.compose.service=github-egress-proxy --format '{{.ID}}' | grep -q .; then
-        rollback_ok=0
-      fi
-
       rollback_github_control_network_id="$(docker network inspect quarangate-github-control --format '{{.Id}}' 2>/dev/null || true)"
-      if [[ "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" == 1 ]]; then
-        [[ -n "$rollback_github_control_network_id" && "$rollback_github_control_network_id" == "$OLD_GITHUB_CONTROL_NETWORK_ID" ]] || rollback_ok=0
-      elif [[ -n "$rollback_github_control_network_id" ]]; then
-        rollback_ok=0
-      fi
       rollback_github_egress_network_id="$(docker network inspect quarangate-github-egress --format '{{.Id}}' 2>/dev/null || true)"
-      if [[ "$OLD_GITHUB_EGRESS_NETWORK_PRESENT" == 1 ]]; then
-        [[ -n "$rollback_github_egress_network_id" && "$rollback_github_egress_network_id" == "$OLD_GITHUB_EGRESS_NETWORK_ID" ]] || rollback_ok=0
-      elif [[ -n "$rollback_github_egress_network_id" ]]; then
-        rollback_ok=0
+      control_network_restored=0
+      egress_network_restored=0
+      if [[ "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" == 1 && "$rollback_github_control_network_id" == "$OLD_GITHUB_CONTROL_NETWORK_ID" ]] || \
+        [[ "$OLD_GITHUB_CONTROL_NETWORK_PRESENT" == 0 && -z "$rollback_github_control_network_id" ]]; then control_network_restored=1; fi
+      if [[ "$OLD_GITHUB_EGRESS_NETWORK_PRESENT" == 1 && "$rollback_github_egress_network_id" == "$OLD_GITHUB_EGRESS_NETWORK_ID" ]] || \
+        [[ "$OLD_GITHUB_EGRESS_NETWORK_PRESENT" == 0 && -z "$rollback_github_egress_network_id" ]]; then egress_network_restored=1; fi
+      if [[ "$control_network_restored" == 1 && "$egress_network_restored" == 1 ]]; then
+        ROLLBACK_NETWORK_STATE=YES
       fi
+    else
+      ROLLBACK_IMAGE_STATE=YES
+      ROLLBACK_PERSISTENT_STATE=YES
+      ROLLBACK_GITHUB_STATE=YES
+      ROLLBACK_NETWORK_STATE=YES
+      ROLLBACK_HEALTH_STATE=YES
     fi
 
-    if [[ "$rollback_ok" == 1 ]]; then
+    printf 'ROLLBACK_IMAGE_STATE=%s\nROLLBACK_PERSISTENT_STATE=%s\nROLLBACK_CONFIG_STATE=%s\nROLLBACK_GITHUB_STATE=%s\nROLLBACK_NETWORK_STATE=%s\nROLLBACK_HEALTH_STATE=%s\n' \
+      "$ROLLBACK_IMAGE_STATE" "$ROLLBACK_PERSISTENT_STATE" "$ROLLBACK_CONFIG_STATE" "$ROLLBACK_GITHUB_STATE" "$ROLLBACK_NETWORK_STATE" "$ROLLBACK_HEALTH_STATE" >&2
+    if [[ "$ROLLBACK_IMAGE_STATE" == YES && "$ROLLBACK_PERSISTENT_STATE" == YES && "$ROLLBACK_CONFIG_STATE" == YES && \
+      "$ROLLBACK_GITHUB_STATE" == YES && "$ROLLBACK_NETWORK_STATE" == YES && "$ROLLBACK_HEALTH_STATE" == YES ]]; then
+      printf '%s\n' 'RUNTIME_IMAGE_STATE_RESTORED=YES' >&2
+      printf '%s\n' 'PERSISTENT_STATE_RESTORED=YES' >&2
       printf '%s\n' 'REMOTE_OWNER_ROLLBACK=PASS' >&2
     else
       printf '%s\n' 'REMOTE_OWNER_ROLLBACK=FAIL' >&2
@@ -503,43 +695,54 @@ printf '%s\n' '=== CONTROLLED DEPLOY ==='
 assert_candidate_image_bindings
 export GATEWAY_IMAGE="$new_gateway_id" DOCKER_AUTHORITY_IMAGE="$new_authority_id" EXECUTOR_IMAGE="$new_executor_id"
 mutated=1
-GIT_REVISION="$REV" "${QG[@]}" up -d --no-build --pull never "${DEPLOY_SERVICES[@]}"
-"${PW[@]}" up -d --no-build --pull never
+runtime_mutated=1
 
-printf '%s\n' '=== WAIT FOR GATEWAY ==='
-gateway_id="$("${QG[@]}" ps -q gateway)"
-healthy=0
-for _ in $(seq 1 60); do
-  state="$(docker inspect "$gateway_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
-  if [[ "$state" == healthy ]]; then healthy=1; break; fi
-  sleep 2
-done
-[[ "$healthy" == 1 ]] || fail 'candidate gateway did not become healthy after 120 seconds'
+printf '%s\n' '=== READINESS PHASE: DOCKER AUTHORITY ==='
+GIT_REVISION="$REV" "${QG[@]}" up -d --no-deps --no-build --pull never docker-authority
+wait_service_ready quarangate docker-authority 120 || fail 'candidate readiness failed at docker-authority gate'
+
+printf '%s\n' '=== READINESS PHASE: EXECUTOR ==='
+# The executor opens and may migrate the durable DB during startup. Arm the
+# persistent-state rollback requirement before Compose can create the process.
+persistent_state_may_have_mutated=1
+GIT_REVISION="$REV" "${QG[@]}" up -d --no-deps --no-build --pull never executor
+wait_service_ready quarangate executor 120 || fail 'candidate readiness failed at executor gate'
+
+printf '%s\n' '=== READINESS PHASE: GATEWAY ==='
+GIT_REVISION="$REV" "${QG[@]}" up -d --no-deps --no-build --pull never gateway
+wait_service_ready quarangate gateway 120 || fail 'candidate readiness failed at gateway gate'
 
 if [[ "$github_expected" == 1 ]]; then
-  github_id="$("${QG[@]}" ps -q github-broker)"
-  github_proxy_id="$("${QG[@]}" ps -q github-egress-proxy)"
-  [[ -n "$github_id" ]] || fail 'candidate GitHub broker missing after deploy'
-  [[ -n "$github_proxy_id" ]] || fail 'candidate GitHub egress proxy missing after deploy'
-  github_healthy=0
-  github_proxy_healthy=0
-  for _ in $(seq 1 60); do
-    github_state="$(docker inspect "$github_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
-    github_proxy_state="$(docker inspect "$github_proxy_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
-    [[ "$github_state" == healthy ]] && github_healthy=1
-    [[ "$github_proxy_state" == healthy ]] && github_proxy_healthy=1
-    if [[ "$github_healthy" == 1 && "$github_proxy_healthy" == 1 ]]; then break; fi
-    sleep 2
-  done
-  [[ "$github_healthy" == 1 ]] || fail 'candidate GitHub broker did not become healthy after 120 seconds'
-  [[ "$github_proxy_healthy" == 1 ]] || fail 'candidate GitHub egress proxy did not become healthy after 120 seconds'
+  printf '%s\n' '=== READINESS PHASE: GITHUB EGRESS PROXY ==='
+  GIT_REVISION="$REV" "${QG[@]}" up -d --no-deps --no-build --pull never github-egress-proxy
+  wait_service_ready quarangate github-egress-proxy 120 || fail 'candidate readiness failed at GitHub egress proxy gate'
+  printf '%s\n' '=== READINESS PHASE: GITHUB BROKER ==='
+  GIT_REVISION="$REV" "${QG[@]}" up -d --no-deps --no-build --pull never github-broker
+  wait_service_ready quarangate github-broker 120 || fail 'candidate readiness failed at GitHub broker gate'
+fi
+
+printf '%s\n' '=== READINESS PHASE: PROJECTS WORK ==='
+"${PW[@]}" up -d --no-deps --no-build --pull never work
+wait_service_ready projects-work work 120 || fail 'candidate readiness failed at projects-work gate'
+
+mapfile -t gateway_ids < <(service_ids quarangate gateway)
+mapfile -t authority_ids < <(service_ids quarangate docker-authority)
+mapfile -t executor_ids < <(service_ids quarangate executor)
+[[ ${#gateway_ids[@]} -eq 1 && ${#authority_ids[@]} -eq 1 && ${#executor_ids[@]} -eq 1 ]] || fail 'candidate primary-service cardinality changed after readiness'
+gateway_id="${gateway_ids[0]}"
+authority_id="${authority_ids[0]}"
+executor_id="${executor_ids[0]}"
+if [[ "$github_expected" == 1 ]]; then
+  mapfile -t github_ids < <(service_ids quarangate github-broker)
+  mapfile -t github_proxy_ids < <(service_ids quarangate github-egress-proxy)
+  [[ ${#github_ids[@]} -eq 1 && ${#github_proxy_ids[@]} -eq 1 ]] || fail 'candidate GitHub-service cardinality changed after readiness'
+  github_id="${github_ids[0]}"
+  github_proxy_id="${github_proxy_ids[0]}"
 fi
 
 # Verify exact deployed images before persisting the new runtime selection.
 gateway_image_live="$(docker inspect "$gateway_id" --format '{{.Config.Image}}')"
 gateway_image_id_live="$(docker inspect "$gateway_id" --format '{{.Image}}')"
-authority_id="$("${QG[@]}" ps -q docker-authority)"
-executor_id="$("${QG[@]}" ps -q executor)"
 authority_image_live="$(docker inspect "$authority_id" --format '{{.Config.Image}}')"
 authority_image_id_live="$(docker inspect "$authority_id" --format '{{.Image}}')"
 executor_image_live="$(docker inspect "$executor_id" --format '{{.Config.Image}}')"

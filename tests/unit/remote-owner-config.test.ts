@@ -57,7 +57,7 @@ describe('remote owner projects-work hard boundary', () => {
     expect(script).toContain("[[ ${#legacy_authority_ids[@]} -le 1 ]]");
     expect(script).toContain('if [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 ]]');
     expect(script).toContain('rm -sf docker-authority');
-    expect(script).toContain('elif [[ -n "$rollback_authority_id" ]]');
+    expect(script).toContain('elif [[ "$OLD_DOCKER_AUTHORITY_PRESENT" == 0 && ${#rollback_authority_ids[@]} -eq 0 ]]');
     expect(script).not.toContain("cannot derive one-time SH-06 Docker-authority baseline image");
   });
 
