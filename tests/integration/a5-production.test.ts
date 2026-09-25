@@ -1,21 +1,18 @@
 /**
  * A5 production path — runner-internal ACP driver with a WRITABLE workspace,
  * driven purely through the Docker Engine API (create → start → wait → logs),
- * NO `docker` CLI, NO interactive attach, NO host bind, NO paid provider call.
+ * NO interactive attach, NO host project bind in the runner, NO paid provider.
  *
- * This exercises the exact production mechanism for an IMPLEMENT job:
- *   - the driver bundle (runnerMain + the SAME AcpDriver + its dep) and a
- *     trusted control.json with the implement trust-tools (read,grep,glob —
- *     write is path-scoped via toolsSettings, never globally trusted) are
- *     delivered on a READ-ONLY control volume,
- *   - `node runnerMain.js` runs in the hardened runner with the workspace
- *     mounted WRITABLE and drives ACP over a child's stdio to a delivered
- *     deterministic mock that writes files IN-PROCESS (the correct write path —
- *     Kiro's fsWrite operates directly, no server->client fs/* delegation),
- *   - the single __ACP_RESULT__ line is parsed by the real parseRunnerResult(),
- *   - deterministic change detection (the real buildManifestCreateBody +
- *     parseManifest + diffManifests) reports what changed in the volume,
- *   - the host project is never bound and no APPLY occurs (COMPLETED != APPLIED).
+ * Current-contract guarantees:
+ *   - job resources use current io.quarangate ownership + canonical names,
+ *   - authority-managed containers receive immutable image IDs,
+ *   - disposable seed fixtures are baked into the test runner image and copied
+ *     into each fresh job-owned volume by Docker's standard empty-volume copy-up,
+ *   - the control archive carries runnerMain + AcpDriver + all runtime shared
+ *     dependencies required by the accepted ACP bundle contract,
+ *   - the runner is non-root, read-only rootfs, CapDrop ALL,
+ *     no-new-privileges, network none, writable workspace + read-only control,
+ *   - deterministic change detection proves the mock's in-process write path.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -24,79 +21,242 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+
 import {
-  createVolume, removeVolume, createContainer, startContainer, waitContainer,
-  getContainerLogs, inspectContainerFull, removeContainer,
+  createVolume,
+  removeVolume,
+  createContainer,
+  startContainer,
+  waitContainer,
+  getContainerLogs,
+  inspectContainerFull,
+  removeContainer,
+  inspectImage,
 } from '../../src/executor/docker.js';
+
 import {
-  LABEL_MANAGED, LABEL_JOB, LABEL_RESOURCE, buildManifestCreateBody, toRunnerLimits,
+  ownershipLabels,
+  workspaceVolumeName,
+  runnerContainerName,
+  buildManifestCreateBody,
+  buildRunnerCreateBody as buildSandboxRunnerCreateBody,
+  toRunnerLimits,
 } from '../../src/executor/agents/sandboxSpec.js';
-import { buildTar, populateVolume } from '../../src/executor/agents/runnerAssets.js';
-import { parseRunnerResult, bridgeAgentConfig } from '../../src/executor/agents/kiroBackend.js';
-import { parseManifest, diffManifests } from '../../src/executor/agents/changeDetection.js';
-import { ACP_IMPL_AGENT_NAME_PATTERN, resolveProfileCapability } from '../../src/executor/agents/acpDriver.js';
+
+import {
+  buildTar,
+  populateVolume,
+} from '../../src/executor/agents/runnerAssets.js';
+
+import {
+  parseRunnerResult,
+  bridgeAgentConfig,
+  controlVolumeName,
+} from '../../src/executor/agents/kiroBackend.js';
+
+import {
+  parseManifest,
+  diffManifests,
+} from '../../src/executor/agents/changeDetection.js';
+
+import {
+  ACP_IMPL_AGENT_NAME_PATTERN,
+  resolveProfileCapability,
+} from '../../src/executor/agents/acpDriver.js';
+
 import { canTransitionAgentJob } from '../../src/shared/agents.js';
 import type { AgentResourcePolicy } from '../../src/shared/agents.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST = join(REPO_ROOT, 'dist');
 const FIXTURES = join(REPO_ROOT, 'tests', 'fixtures');
-const IMAGE = 'mcp-ide-bridge-kiro-runner:a5-prodtest';
-const newJobId = () => `job_${randomBytes(16).toString('hex')}`;
+const RUNNER_TAG = 'qg-itest-kiro-runner:a5-prod-current';
+const newJobId = (): string => `job_${randomBytes(16).toString('hex')}`;
 
 const policy: AgentResourcePolicy = {
-  id: 'standard', modelClass: 'standard', maxRuntimeMs: 120_000, maxCpuMillicores: 2000,
-  maxMemoryBytes: 2_147_483_648, maxPids: 256, maxOutputBytes: 262_144,
-  maxEvidenceBytes: 52_428_800, networkPolicy: 'backend-only', retentionClass: 'short',
+  id: 'standard',
+  modelClass: 'standard',
+  maxRuntimeMs: 120_000,
+  maxCpuMillicores: 2000,
+  maxMemoryBytes: 2_147_483_648,
+  maxPids: 256,
+  maxOutputBytes: 262_144,
+  maxEvidenceBytes: 52_428_800,
+  networkPolicy: 'backend-only',
+  retentionClass: 'short',
 };
 
-async function seedWorkspace(vol: string, files: Record<string, string>): Promise<void> {
-  await createVolume(vol, { [LABEL_MANAGED]: 'true', [LABEL_JOB]: 'seed', [LABEL_RESOURCE]: 'workspace' });
-  const script = Object.entries(files)
-    .map(([p, c]) => `printf '%s' '${c}' > /workspace/${p}`)
-    .join('; ') + '; chown -R 1000:1000 /workspace';
-  const id = await createContainer(`seed-${randomBytes(6).toString('hex')}`, {
-    Image: IMAGE, User: '0:0', Cmd: ['sh', '-c', script],
-    HostConfig: { AutoRemove: false, Mounts: [{ Type: 'volume', Source: vol, Target: '/workspace', ReadOnly: false }], Tmpfs: { '/tmp': 'rw,size=4m' } },
-  });
-  await startContainer(id); await waitContainer(id, { timeoutMs: 15_000 }); await removeContainer(id, true);
+let buildDir = '';
+let runnerImageId = '';
+
+async function initializeWorkspace(
+  jobId: string,
+  volumeName: string,
+): Promise<void> {
+  await createVolume(
+    volumeName,
+    ownershipLabels('workspace', jobId),
+  );
+
+  const body = buildSandboxRunnerCreateBody({
+    image: runnerImageId,
+    jobId,
+    volumeName,
+    limits: toRunnerLimits(policy),
+    networkMode: 'none',
+    readRelPath: 'package.json',
+  }) as unknown as {
+    Cmd: string[];
+    Env: string[];
+  };
+
+  body.Cmd = ['sh', '-c', 'test -f /workspace/.a5-seed-ready'];
+  body.Env = ['HOME=/tmp'];
+
+  const id = await createContainer(
+    runnerContainerName(jobId),
+    body as unknown as Record<string, unknown>,
+  );
+
+  try {
+    await startContainer(id);
+    const waited = await waitContainer(id, { timeoutMs: 30_000 });
+    expect(waited.statusCode).toBe(0);
+  } finally {
+    await removeContainer(id, true).catch(() => {});
+  }
 }
 
-async function makeControlVolume(jobId: string, control: Record<string, unknown>): Promise<string> {
-  const vol = `io-mcp-ide-bridge-control-${jobId}`;
+async function runWorkspaceCommand(
+  jobId: string,
+  volumeName: string,
+  command: string,
+): Promise<void> {
+  const body = buildSandboxRunnerCreateBody({
+    image: runnerImageId,
+    jobId,
+    volumeName,
+    limits: toRunnerLimits(policy),
+    networkMode: 'none',
+    readRelPath: 'package.json',
+  }) as unknown as {
+    Cmd: string[];
+    Env: string[];
+  };
+
+  body.Cmd = ['sh', '-c', command];
+  body.Env = ['HOME=/tmp'];
+
+  const id = await createContainer(
+    runnerContainerName(jobId),
+    body as unknown as Record<string, unknown>,
+  );
+
+  try {
+    await startContainer(id);
+    const waited = await waitContainer(id, { timeoutMs: 30_000 });
+    expect(waited.statusCode).toBe(0);
+  } finally {
+    await removeContainer(id, true).catch(() => {});
+  }
+}
+
+async function seedWorkspace(jobId: string, volumeName: string): Promise<void> {
+  await initializeWorkspace(jobId, volumeName);
+  await runWorkspaceCommand(
+    jobId,
+    volumeName,
+    [
+      "printf 'export const target = 1;\\n' > /workspace/target.ts",
+      "printf 'export const keep = true;\\n' > /workspace/keep.ts",
+    ].join('; '),
+  );
+}
+
+async function makeControlVolume(
+  jobId: string,
+  control: Record<string, unknown>,
+): Promise<string> {
+  const volumeName = controlVolumeName(jobId);
   const tar = await buildTar({
-    dirs: [{ name: 'executor/' }, { name: 'executor/agents/' }, { name: 'shared/' }],
+    dirs: [
+      { name: 'executor/' },
+      { name: 'executor/agents/' },
+      { name: 'shared/' },
+    ],
     files: [
-      { name: 'executor/agents/runnerMain.js', content: readFileSync(join(DIST, 'executor/agents/runnerMain.js')), mode: 0o500 },
-      { name: 'executor/agents/acpDriver.js', content: readFileSync(join(DIST, 'executor/agents/acpDriver.js')), mode: 0o500 },
-      { name: 'shared/errors.js', content: readFileSync(join(DIST, 'shared/errors.js')), mode: 0o500 },
-      { name: 'mock-acp-impl-server.mjs', content: readFileSync(join(FIXTURES, 'mock-acp-impl-server.mjs')), mode: 0o500 },
-      { name: 'control.json', content: Buffer.from(JSON.stringify(control), 'utf8'), mode: 0o400 },
+      {
+        name: 'executor/agents/runnerMain.js',
+        content: readFileSync(join(DIST, 'executor/agents/runnerMain.js')),
+        mode: 0o500,
+      },
+      {
+        name: 'executor/agents/acpDriver.js',
+        content: readFileSync(join(DIST, 'executor/agents/acpDriver.js')),
+        mode: 0o500,
+      },
+      {
+        name: 'shared/errors.js',
+        content: readFileSync(join(DIST, 'shared/errors.js')),
+        mode: 0o500,
+      },
+      {
+        name: 'shared/agents.js',
+        content: readFileSync(join(DIST, 'shared/agents.js')),
+        mode: 0o500,
+      },
+      {
+        name: 'mock-acp-impl-server.mjs',
+        content: readFileSync(join(FIXTURES, 'mock-acp-impl-server.mjs')),
+        mode: 0o500,
+      },
+      {
+        name: 'control.json',
+        content: Buffer.from(JSON.stringify(control), 'utf8'),
+        mode: 0o400,
+      },
     ],
   });
+
   await populateVolume({
-    volumeName: vol,
-    labels: { [LABEL_MANAGED]: 'true', [LABEL_JOB]: jobId, [LABEL_RESOURCE]: 'control' },
-    helperImage: IMAGE, mountPath: '/run/control', tar,
+    volumeName,
+    labels: ownershipLabels('control', jobId),
+    helperImage: runnerImageId,
+    mountPath: '/run/control',
+    tar,
   });
-  return vol;
+
+  return volumeName;
 }
 
-async function manifestOf(jobId: string, vol: string) {
-  const body = buildManifestCreateBody({ image: IMAGE, jobId, volumeName: vol, limits: toRunnerLimits(policy) });
-  const id = await createContainer(`a5p-manifest-${jobId}-${randomBytes(4).toString('hex')}`, body as any);
+async function manifestOf(jobId: string, volumeName: string) {
+  const body = buildManifestCreateBody({
+    image: runnerImageId,
+    jobId,
+    volumeName,
+    limits: toRunnerLimits(policy),
+  });
+
+  const id = await createContainer(
+    runnerContainerName(jobId),
+    body as unknown as Record<string, unknown>,
+  );
+
   try {
-    await startContainer(id); await waitContainer(id, { timeoutMs: 30_000 });
-    const m = parseManifest((await getContainerLogs(id, 262_144)).stdout);
-    expect(m).not.toBeNull();
-    return m!;
-  } finally { await removeContainer(id, true).catch(() => {}); }
+    await startContainer(id);
+    await waitContainer(id, { timeoutMs: 30_000 });
+    const manifest = parseManifest(
+      (await getContainerLogs(id, 262_144)).stdout,
+    );
+    expect(manifest).not.toBeNull();
+    return manifest!;
+  } finally {
+    await removeContainer(id, true).catch(() => {});
+  }
 }
 
 describe('A5 production path — implement write turn via Docker Engine API', () => {
-  let buildDir: string;
-
-  beforeAll(() => {
+  beforeAll(async () => {
     buildDir = mkdtempSync(join(tmpdir(), 'a5pb-'));
     const stub = [
       '#!/bin/sh',
@@ -104,101 +264,180 @@ describe('A5 production path — implement write turn via Docker Engine API', ()
       'if [ "$1" = "acp" ] && [ "$2" = "--help" ]; then echo "stub acp help"; exit 0; fi',
       'exit 1',
     ].join('\n');
+
     writeFileSync(join(buildDir, 'kiro-cli'), stub, { mode: 0o755 });
     writeFileSync(join(buildDir, 'kiro-cli-chat'), stub, { mode: 0o755 });
-    writeFileSync(join(buildDir, 'Dockerfile'), readFileSync(join(REPO_ROOT, 'runner', 'kiro', 'Dockerfile')));
-    writeFileSync(join(buildDir, 'kiro-acp-entrypoint.sh'), readFileSync(join(REPO_ROOT, 'runner', 'kiro', 'kiro-acp-entrypoint.sh')));
-    execFileSync('docker', ['build', '-q', '-t', IMAGE, buildDir], { stdio: 'pipe' });
+    writeFileSync(
+      join(buildDir, 'Dockerfile'),
+      readFileSync(join(REPO_ROOT, 'runner', 'kiro', 'Dockerfile')),
+    );
+    writeFileSync(
+      join(buildDir, 'kiro-acp-entrypoint.sh'),
+      readFileSync(join(REPO_ROOT, 'runner', 'kiro', 'kiro-acp-entrypoint.sh')),
+    );
+    writeFileSync(join(buildDir, '.a5-seed-ready'), 'ready\n');
+    writeFileSync(join(buildDir, 'package.json'), '{"name":"a5-seed"}\n');
+    writeFileSync(
+      join(buildDir, 'Dockerfile'),
+      readFileSync(join(buildDir, 'Dockerfile'), 'utf8')
+        + '\nCOPY --chown=1000:1000 .a5-seed-ready /workspace/.a5-seed-ready'
+        + '\nCOPY --chown=1000:1000 package.json /workspace/package.json\n',
+    );
+
+    execFileSync(
+      'docker',
+      ['build', '--pull=false', '-q', '-t', RUNNER_TAG, buildDir],
+      { stdio: 'pipe' },
+    );
+
+    runnerImageId = (await inspectImage(RUNNER_TAG)).Id;
+    expect(runnerImageId).toMatch(/^sha256:[0-9a-f]{64}$/);
   }, 180_000);
 
-  afterAll(() => { rmSync(buildDir, { recursive: true, force: true }); });
+  afterAll(() => {
+    if (buildDir) rmSync(buildDir, { recursive: true, force: true });
+  });
 
   const implControl = (jobId: string) => ({
     agent: 'mcp_impl_' + randomBytes(16).toString('hex'),
     model: 'claude-sonnet-4.5',
-    trustTools: resolveProfileCapability('implement').trustTools, // read,grep,glob (write is path-scoped)
+    trustTools: resolveProfileCapability('implement').trustTools,
     cwd: '/workspace',
     prompt: 'IMPLEMENT the feature',
     dryRun: false,
     acpCommand: 'node',
     acpPrefixArgs: ['/run/control/mock-acp-impl-server.mjs'],
-    // No clientFsRoot / clientFsWrite — Kiro writes IN-PROCESS via fsWrite.
   });
 
   it('drives an implement turn that writes files in a WRITABLE workspace; change detection is deterministic; no host bind; no apply', async () => {
     const jobId = newJobId();
-    const wsVol = `io-mcp-ide-bridge-ws-${jobId}`;
-    await seedWorkspace(wsVol, { 'target.ts': 'export const target = 1;\n', 'keep.ts': 'export const keep = true;\n' });
-    const baseline = await manifestOf(jobId, wsVol);
-    const ctlVol = await makeControlVolume(jobId, implControl(jobId));
-    const runner = await createContainer(`a5prod-${jobId}`, {
-      Image: IMAGE, User: '1000:1000',
-      Cmd: ['node', '/run/control/executor/agents/runnerMain.js', '/run/control/control.json'],
-      HostConfig: {
-        AutoRemove: false, ReadonlyRootfs: true, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'],
-        NetworkMode: 'none',
-        Mounts: [
-          // A5 core: workspace WRITABLE; control READ-ONLY. No host bind anywhere.
-          { Type: 'volume', Source: wsVol, Target: '/workspace', ReadOnly: false },
-          { Type: 'volume', Source: ctlVol, Target: '/run/control', ReadOnly: true },
+    const workspaceVolume = workspaceVolumeName(jobId);
+
+    await seedWorkspace(jobId, workspaceVolume);
+    const baseline = await manifestOf(jobId, workspaceVolume);
+    const controlVolume = await makeControlVolume(jobId, implControl(jobId));
+
+    const limits = toRunnerLimits(policy);
+    const runner = await createContainer(
+      runnerContainerName(jobId),
+      {
+        Image: runnerImageId,
+        User: '1000:1000',
+        WorkingDir: '/workspace',
+        Cmd: [
+          'node',
+          '/run/control/executor/agents/runnerMain.js',
+          '/run/control/control.json',
         ],
-        Tmpfs: { '/tmp': 'rw,nosuid,nodev,size=16m' },
+        Env: [
+          'HOME=/tmp',
+          'ACP_MOCK_WORKSPACE=/workspace',
+        ],
+        Labels: ownershipLabels('runner', jobId),
+        NetworkDisabled: true,
+        HostConfig: {
+          AutoRemove: false,
+          Privileged: false,
+          ReadonlyRootfs: true,
+          CapDrop: ['ALL'],
+          CapAdd: [],
+          SecurityOpt: ['no-new-privileges'],
+          GroupAdd: [],
+          Devices: [],
+          Binds: [],
+          PidMode: '',
+          IpcMode: 'private',
+          UTSMode: '',
+          UsernsMode: '',
+          NetworkMode: 'none',
+          Mounts: [
+            {
+              Type: 'volume',
+              Source: workspaceVolume,
+              Target: '/workspace',
+              ReadOnly: false,
+            },
+            {
+              Type: 'volume',
+              Source: controlVolume,
+              Target: '/run/control',
+              ReadOnly: true,
+            },
+          ],
+          Tmpfs: {
+            '/tmp': 'rw,nosuid,nodev,size=16m',
+          },
+          Memory: limits.memoryBytes,
+          MemorySwap: limits.memorySwapBytes,
+          NanoCpus: limits.nanoCpus,
+          PidsLimit: limits.pidsLimit,
+        },
       },
-    });
+    );
+
     try {
       await startContainer(runner);
       const waited = await waitContainer(runner, { timeoutMs: 30_000 });
       const logs = await getContainerLogs(runner, 262_144);
 
-      // Result-line proofs (production mechanism).
-      const r = parseRunnerResult(logs.stdout);
-      expect(r).not.toBeNull();
-      expect(r!.ok).toBe(true);
-      expect(r!.stopReason).toBe('end_turn');
-      // The mock emits read + edit tool_call updates — both kinds present.
-      expect(r!.toolCalls.map((t) => t.kind).sort()).toEqual(['edit', 'read']);
+      const result = parseRunnerResult(logs.stdout);
+      expect(result).not.toBeNull();
+      expect(result!.ok).toBe(true);
+      expect(result!.stopReason).toBe('end_turn');
+      expect(result!.toolCalls.map((tool) => tool.kind).sort())
+        .toEqual(['edit', 'read']);
       expect(waited.statusCode).toBe(0);
 
-      // Host-bind proof: the runner's HostConfig has ONLY volume mounts.
       const info = await inspectContainerFull(runner);
-      const binds = (info.HostConfig as any)?.Binds ?? [];
-      expect(binds).toEqual([]);
+      expect(info.Config.Image).toBe(runnerImageId);
+      expect(info.Config.User).toBe('1000:1000');
+      expect(info.HostConfig.ReadonlyRootfs).toBe(true);
+      expect(info.HostConfig.Privileged).toBe(false);
+      expect(info.HostConfig.CapDrop).toEqual(['ALL']);
+      expect(info.HostConfig.NetworkMode).toBe('none');
+      expect(info.HostConfig.Binds ?? []).toEqual([]);
       expect(JSON.stringify(info.HostConfig ?? {})).not.toContain('docker.sock');
-      expect(JSON.stringify(info.HostConfig ?? {})).not.toContain(REPO_ROOT);
 
-      // Deterministic change detection from the volume.
-      const post = await manifestOf(jobId, wsVol);
-      const d = diffManifests(baseline, post);
-      expect(d.added).toContain('generated.ts');
-      expect(d.modified).toContain('target.ts');
-      expect(d.changedFiles).not.toContain('keep.ts'); // unchanged ignored
-      expect(d.changedCount).toBeGreaterThanOrEqual(2);
+      // The manifest helper uses the same canonical runner name for this job.
+      // Remove the completed implementation runner before creating the post-run
+      // manifest helper rather than weakening the authority naming contract.
+      await removeContainer(runner, true);
 
-      // No apply: COMPLETED is reachable, but APPLY is never automatic.
+      const post = await manifestOf(jobId, workspaceVolume);
+      const diff = diffManifests(baseline, post);
+
+      expect(diff.added).toContain('generated.ts');
+      expect(diff.modified).toContain('target.ts');
+      expect(diff.changedFiles).not.toContain('keep.ts');
+      expect(diff.changedCount).toBeGreaterThanOrEqual(2);
+
       expect(canTransitionAgentJob('VALIDATING', 'COMPLETED')).toBe(true);
       expect(canTransitionAgentJob('VALIDATING', 'APPLIED')).toBe(false);
-      expect(canTransitionAgentJob('COMPLETED', 'APPLIED')).toBe(true); // A6-owned, explicit only
+      expect(canTransitionAgentJob('COMPLETED', 'APPLIED')).toBe(true);
     } finally {
       await removeContainer(runner, true).catch(() => {});
-      await removeVolume(ctlVol, true).catch(() => {});
-      await removeVolume(wsVol, true).catch(() => {});
+      await removeVolume(controlVolume, true).catch(() => {});
+      await removeVolume(workspaceVolume, true).catch(() => {});
     }
   });
 
-  it('the delivered implement agent config uses canonical `write`: available in tools, path-scoped, NOT in allowedTools', () => {
-    const cfg = bridgeAgentConfig('mcp_impl_' + 'a'.repeat(32), { write: true });
-    // tools available to agent (canonical write name)
+  it('the delivered implement agent config uses canonical write: available in tools, path-scoped, NOT in allowedTools', () => {
+    const cfg = bridgeAgentConfig(
+      'mcp_impl_' + 'a'.repeat(32),
+      { write: true },
+    );
+
     expect(cfg.tools).toEqual(['read', 'grep', 'glob', 'write']);
-    // allowedTools pre-approves ONLY read-only tools; write is path-scoped, so
-    // it must NOT appear here (allowedTools would override toolsSettings).
     expect(cfg.allowedTools).toEqual(['read', 'grep', 'glob']);
+
     for (const alias of ['write', 'fsWrite', 'fs_write']) {
       expect(cfg.allowedTools as string[]).not.toContain(alias);
     }
-    // toolsSettings confines write to /workspace and denies non-workspace paths
-    expect((cfg.toolsSettings as any)?.write?.allowedPaths).toEqual(['/workspace']);
-    expect((cfg.toolsSettings as any)?.write?.deniedPaths).toEqual(['/home/runner', '/tmp', '/run/secrets', '/run/control']);
-    // No MCP, no hooks, no wildcards
+
+    expect((cfg.toolsSettings as any)?.write?.allowedPaths)
+      .toEqual(['/workspace']);
+    expect((cfg.toolsSettings as any)?.write?.deniedPaths)
+      .toEqual(['/home/runner', '/tmp', '/run/secrets', '/run/control']);
     expect(cfg.mcpServers).toEqual({});
     expect(cfg.includeMcpJson).toBe(false);
     expect(ACP_IMPL_AGENT_NAME_PATTERN.test(String(cfg.name))).toBe(true);
