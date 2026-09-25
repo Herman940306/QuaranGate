@@ -623,47 +623,108 @@ rollback() {
       local candidate_services=(docker-authority executor gateway)
       local QG_RB=(docker compose --project-directory "$MAIN_ROOT" --env-file "$RUNTIME_ENV" -p quarangate "${QG_FILES[@]}")
 
-      "${QG_RB[@]}" stop "${candidate_services[@]}" >/dev/null 2>&1 || true
+      stop_services_verified() {
+        local stop_rc=0 service ids_output cid status
+        local -a services=("$@") ids=()
+        "${QG_RB[@]}" stop "${services[@]}" >/dev/null 2>&1 || stop_rc=$?
+        for service in "${services[@]}"; do
+          ids_output="$(service_ids quarangate "$service")" || {
+            log "ROLLBACK cannot enumerate service=$service after stop" >&2
+            return 1
+          }
+          ids=()
+          [[ -z "$ids_output" ]] || mapfile -t ids <<<"$ids_output"
+          for cid in "${ids[@]}"; do
+            status="$(docker inspect "$cid" --format '{{.State.Status}}' 2>/dev/null)" || {
+              log "ROLLBACK cannot verify service=$service container=$cid after stop" >&2
+              return 1
+            }
+            case "$status" in
+              created|exited|dead) ;;
+              *)
+                log "ROLLBACK writer still active service=$service container=$cid state=$status" >&2
+                return 1
+                ;;
+            esac
+          done
+        done
+        if [[ "$stop_rc" -ne 0 ]]; then
+          log "ROLLBACK compose stop returned rc=$stop_rc but all targeted services are verified quiescent" >&2
+        fi
+        return 0
+      }
+
+      local writers_quiesced=NO
+      if stop_services_verified "${candidate_services[@]}"; then
+        writers_quiesced=YES
+        log "ROLLBACK_WRITERS_QUIESCED=YES"
+      else
+        log "ROLLBACK_WRITERS_QUIESCED=NO — refusing writable-volume restore" >&2
+      fi
 
       # Persistent state: if executor was ever started, restore from v9 snapshot
       if [[ "$persistent_state_may_have_mutated" == 1 && -f "$snapshot_path" && -f "$snapshot_manifest" ]]; then
-        # Restore via the same immutable image used for snapshot — networkless
-        restore_result="$(docker run --rm --pull never --network none --read-only --cap-drop ALL \
-          --security-opt no-new-privileges:true --user 1000:1000 \
-          --mount type=volume,src=mcp-bridge-jobs,dst=/jobs \
-          --mount "type=bind,src=$snapshot_dir,dst=/snapshot,readonly" \
-          "$PRIMARY_IMAGE_ID" node /app/dist/operations/sh06JobDbRecovery.js \
-          restore /snapshot/agents.db /snapshot/manifest.json /jobs/agents.db 2>&1)" || true
-        if printf '%s' "$restore_result" | grep -q 'PERSISTENT_STATE_RESTORED'; then
-          ROLLBACK_PERSISTENT_STATE=YES
-          log "ROLLBACK persistent state restored from v9 snapshot"
+        if [[ "$writers_quiesced" == YES ]]; then
+          # Restore via the same immutable image used for snapshot — networkless.
+          # This write is forbidden unless every candidate writer was verified stopped.
+          restore_result="$(docker run --rm --pull never --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true --user 1000:1000 \
+            --mount type=volume,src=mcp-bridge-jobs,dst=/jobs \
+            --mount "type=bind,src=$snapshot_dir,dst=/snapshot,readonly" \
+            "$PRIMARY_IMAGE_ID" node /app/dist/operations/sh06JobDbRecovery.js \
+            restore /snapshot/agents.db /snapshot/manifest.json /jobs/agents.db 2>&1)" || true
+          if printf '%s' "$restore_result" | grep -q 'PERSISTENT_STATE_RESTORED'; then
+            ROLLBACK_PERSISTENT_STATE=YES
+            log "ROLLBACK persistent state restored from v9 snapshot"
+          else
+            log "ROLLBACK persistent state restore FAILED — manual intervention required" >&2
+            printf 'CRITICAL: persistent state restore failed after post-executor failure\n' >&2
+            printf 'CRITICAL_INVARIANT: DO NOT START LEGACY v7 EXECUTOR — db may be v9\n' >&2
+          fi
         else
-          log "ROLLBACK persistent state restore FAILED — manual intervention required" >&2
-          printf 'CRITICAL: persistent state restore failed after post-executor failure\n' >&2
+          printf 'CRITICAL: persistent state restore refused because writer quiescence is unproven\n' >&2
           printf 'CRITICAL_INVARIANT: DO NOT START LEGACY v7 EXECUTOR — db may be v9\n' >&2
         fi
       else
-        ROLLBACK_PERSISTENT_STATE=YES  # executor never started; no mutation possible
+        if [[ "$persistent_state_may_have_mutated" == 0 ]]; then
+          ROLLBACK_PERSISTENT_STATE=YES  # executor never started; no mutation possible
+        fi
       fi
 
       # Remove only recovery-created GitHub services (baseline was ABSENT)
       # Baseline was ABSENT; remove only recovery-created services (REMOVE_CANDIDATE_CREATED path)
       if [[ "$github_services_created" == 1 ]]; then
-        mapfile -t rb_broker_ids < <(service_ids quarangate github-broker)
-        mapfile -t rb_proxy_ids  < <(service_ids quarangate github-egress-proxy)
+        local github_cleanup_ok=YES
+        local github_ids_output=''
+        local -a rb_broker_ids=() rb_proxy_ids=()
+        github_ids_output="$(service_ids quarangate github-broker)" || github_cleanup_ok=NO
+        rb_broker_ids=()
+        [[ -z "$github_ids_output" ]] || mapfile -t rb_broker_ids <<<"$github_ids_output"
+        github_ids_output="$(service_ids quarangate github-egress-proxy)" || github_cleanup_ok=NO
+        rb_proxy_ids=()
+        [[ -z "$github_ids_output" ]] || mapfile -t rb_proxy_ids <<<"$github_ids_output"
         for cid in "${rb_broker_ids[@]}" "${rb_proxy_ids[@]}"; do
-          docker stop "$cid" >/dev/null 2>&1 || true
-          docker rm   "$cid" >/dev/null 2>&1 || true
+          docker stop "$cid" >/dev/null 2>&1 || github_cleanup_ok=NO
+          docker rm   "$cid" >/dev/null 2>&1 || github_cleanup_ok=NO
         done
-        ROLLBACK_GITHUB_STATE=YES
-        log "ROLLBACK removed recovery-created GitHub services"
+        github_ids_output="$(service_ids quarangate github-broker)" || github_cleanup_ok=NO
+        [[ -z "$github_ids_output" ]] || github_cleanup_ok=NO
+        github_ids_output="$(service_ids quarangate github-egress-proxy)" || github_cleanup_ok=NO
+        [[ -z "$github_ids_output" ]] || github_cleanup_ok=NO
+        if [[ "$github_cleanup_ok" == YES ]]; then
+          ROLLBACK_GITHUB_STATE=YES
+          log "ROLLBACK removed and verified absent recovery-created GitHub services"
+        else
+          log "ROLLBACK GitHub cleanup FAILED or could not be verified" >&2
+        fi
       else
         ROLLBACK_GITHUB_STATE=YES  # nothing created
       fi
 
       # Never resume the legacy v7 baseline against schema-v9 state. Only the
       # exact admitted R2 image may become the recovery fallback.
-      if [[ "$ROLLBACK_PERSISTENT_STATE" == YES && "$ROLLBACK_CONFIG_STATE" == YES ]]; then
+      if [[ "$ROLLBACK_PERSISTENT_STATE" == YES && "$ROLLBACK_CONFIG_STATE" == YES \
+         && "$ROLLBACK_GITHUB_STATE" == YES && "$writers_quiesced" == YES ]]; then
         ROLLBACK_CONFIG_STATE=NO
         export GATEWAY_IMAGE="$FALLBACK_GATEWAY_IMAGE"
         export DOCKER_AUTHORITY_IMAGE="$FALLBACK_DOCKER_AUTHORITY_IMAGE"
@@ -712,7 +773,13 @@ rollback() {
       fi
 
       if [[ "$fallback_ready" != YES ]]; then
-        "${QG_RB[@]}" stop docker-authority executor gateway >/dev/null 2>&1 || true
+        if stop_services_verified docker-authority executor gateway; then
+          ROLLBACK_IMAGE_STATE=YES
+          log "ROLLBACK_PARTIAL_R2_QUIESCED=YES"
+        else
+          ROLLBACK_IMAGE_STATE=NO
+          log "ROLLBACK_PARTIAL_R2_QUIESCED=NO" >&2
+        fi
       fi
     else
       # No mutation reached; baseline is preserved

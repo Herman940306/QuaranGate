@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -244,6 +244,16 @@ describe('F12 snapshot restore in rollback after executor starts', () => {
     const executorUp  = primaryRecoverySh.indexOf('up -d --no-deps --no-build --pull never executor');
     expect(mutatedFlag).toBeLessThan(executorUp);
   });
+
+  it('refuses writable-volume restore unless every candidate writer is verified quiescent', () => {
+    const quiescence = rollbackSh.indexOf('ROLLBACK_WRITERS_QUIESCED=YES');
+    const restoreGuard = rollbackSh.indexOf('if [[ "$writers_quiesced" == YES ]]');
+    const restore = rollbackSh.indexOf('restore /snapshot/agents.db /snapshot/manifest.json /jobs/agents.db');
+    expect(quiescence).toBeGreaterThanOrEqual(0);
+    expect(restoreGuard).toBeGreaterThan(quiescence);
+    expect(restore).toBeGreaterThan(restoreGuard);
+    expect(rollbackSh).toContain('persistent state restore refused because writer quiescence is unproven');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -296,6 +306,12 @@ describe('F15 GitHub absent baseline — cleanup of recovery-created services', 
     expect(recoverySh).toContain('"$github_services_created" == 1');
     // The initial value is 0 (absent baseline assumption)
     expect(recoverySh).toContain('github_services_created=0');
+  });
+
+  it('verifies GitHub resources are absent and blocks fallback when cleanup is unproven', () => {
+    expect(rollbackSh).toContain('ROLLBACK removed and verified absent recovery-created GitHub services');
+    expect(rollbackSh).toContain('ROLLBACK GitHub cleanup FAILED or could not be verified');
+    expect(rollbackSh).toContain('&& "$ROLLBACK_GITHUB_STATE" == YES && "$writers_quiesced" == YES');
   });
 });
 
@@ -407,6 +423,8 @@ describe('R1 remediation — production R2 fallback transaction', () => {
     expect(rollbackSh).toContain('FORWARD_RECOVERY_FAILED=CRITICAL_FORWARD_RECOVERY_FAILED');
     expect(rollbackSh).toContain('CRITICAL_INVARIANT: DO NOT START LEGACY v7 EXECUTOR');
     expect(rollbackSh).not.toContain('legacy executor restarting) will resume automatically');
+    expect(rollbackSh).toContain('ROLLBACK_PARTIAL_R2_QUIESCED=YES');
+    expect(rollbackSh).toContain('ROLLBACK_PARTIAL_R2_QUIESCED=NO');
   });
 
   it('executes actual production shell: primary failure restores v9 then admits exact R2 fallback', () => {
@@ -478,7 +496,8 @@ case "$cmd" in
   ps)
     service="$(service_from_args "$@")"
     [ -n "$service" ] || exit 0
-    if [ -f "$QG_FAKE_STATE/$service" ]; then cat "$QG_FAKE_STATE/$service"; return; fi
+    if [ -f "$QG_FAKE_STATE/$service" ]; then cat "$QG_FAKE_STATE/$service"; exit 0; fi
+    [ ! -f "$QG_FAKE_STATE/operation-started" ] || exit 0
     case "$service" in executor) echo legacy-executor ;; gateway) echo legacy-gateway ;; esac
     ;;
   inspect)
@@ -512,11 +531,16 @@ case "$cmd" in
       case "$arg" in up|stop) action="$arg" ;; docker-authority|executor|gateway|github-egress-proxy|github-broker) service="$arg" ;; esac
     done
     if [ "$action" = stop ]; then
+      if [ "$QG_FAIL_COMPOSE_STOP" = 1 ]; then
+        printf 'STOP_FAILED|primary-services\n' >>"$log"
+        exit 1
+      fi
       rm -f "$QG_FAKE_STATE/docker-authority" "$QG_FAKE_STATE/executor" "$QG_FAKE_STATE/gateway"
       printf 'STOP|primary-services\n' >>"$log"
       exit 0
     fi
     [ "$action" = up ] || exit 0
+    touch "$QG_FAKE_STATE/operation-started"
     case "$service" in
       docker-authority) image="$DOCKER_AUTHORITY_IMAGE" ;;
       executor) image="$EXECUTOR_IMAGE" ;;
@@ -546,7 +570,15 @@ case "$cmd" in
       *) exit 2 ;;
     esac
     ;;
-  stop|rm) printf '%s|%s\n' "$cmd" "$*" >>"$log" ;;
+  stop|rm)
+    cid="$1"
+    printf '%s|%s\n' "$cmd" "$*" >>"$log"
+    if [ "$QG_FAIL_GITHUB_CLEANUP" = 1 ]; then exit 1; fi
+    case "$cid" in
+      primary-github-broker) rm -f "$QG_FAKE_STATE/github-broker" ;;
+      primary-github-egress-proxy) rm -f "$QG_FAKE_STATE/github-egress-proxy" ;;
+    esac
+    ;;
   *) exit 2 ;;
 esac
 `;
@@ -564,6 +596,8 @@ esac
           QG_FAIL_FALLBACK_GATEWAY: '0',
           QG_PRIMARY_GATEWAY_HEALTHY: '0',
           QG_FAIL_GITHUB_BROKER: '0',
+          QG_FAIL_COMPOSE_STOP: '0',
+          QG_FAIL_GITHUB_CLEANUP: '0',
           PROJECTS_ROOT: projects,
           QUARANGATE_RUNTIME_ROOT: runtime,
           QUARANGATE_FORWARD_RECOVERY_PRIMARY_IMAGE: 'quarangate:forensic-42d226803bfb',
@@ -612,6 +646,8 @@ esac
           QG_FAIL_FALLBACK_GATEWAY: '1',
           QG_PRIMARY_GATEWAY_HEALTHY: '0',
           QG_FAIL_GITHUB_BROKER: '0',
+          QG_FAIL_COMPOSE_STOP: '0',
+          QG_FAIL_GITHUB_CLEANUP: '0',
           PROJECTS_ROOT: projects,
           QUARANGATE_RUNTIME_ROOT: runtime,
           QUARANGATE_FORWARD_RECOVERY_PRIMARY_IMAGE: 'quarangate:forensic-42d226803bfb',
@@ -623,6 +659,46 @@ esac
       expect(failedCombined).toContain('FORWARD_RECOVERY_FAILED=CRITICAL_FORWARD_RECOVERY_FAILED');
       expect(failedCombined).toContain('LEGACY_EXECUTOR_START_ATTEMPTED=NO');
       expect(failedCombined).not.toContain('FORWARD_RECOVERY=PASS_R2_FALLBACK');
+      expect(failedCombined).toContain('ROLLBACK_PARTIAL_R2_QUIESCED=YES');
+      expect(existsSync(join(state, 'docker-authority'))).toBe(false);
+      expect(existsSync(join(state, 'executor'))).toBe(false);
+      expect(existsSync(join(state, 'gateway'))).toBe(false);
+
+      rmSync(state, { recursive: true, force: true });
+      mkdirSync(state, { recursive: true });
+      writeFileSync(join(runtime, '.env'), [
+        'INTERNAL_TOKEN=test-internal-token',
+        'GATEWAY_IMAGE=legacy-gateway',
+        'DOCKER_AUTHORITY_IMAGE=legacy-authority',
+        'EXECUTOR_IMAGE=legacy-executor',
+        '',
+      ].join('\n'), { mode: 0o600 });
+      const unquiescedWriter = spawnSync('bash', [join(root, 'scripts', 'remote-owner-forward-recover-v9.sh')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ''}`,
+          QG_FAKE_STATE: state,
+          QG_FAIL_COMPOSE_STOP: '1',
+          QG_FAIL_GITHUB_CLEANUP: '0',
+          QG_FAIL_FALLBACK_GATEWAY: '0',
+          QG_PRIMARY_GATEWAY_HEALTHY: '0',
+          QG_FAIL_GITHUB_BROKER: '0',
+          PROJECTS_ROOT: projects,
+          QUARANGATE_RUNTIME_ROOT: runtime,
+          QUARANGATE_FORWARD_RECOVERY_PRIMARY_IMAGE: 'quarangate:forensic-42d226803bfb',
+          QUARANGATE_FORWARD_RECOVERY_FALLBACK_IMAGE: 'quarangate:r2-review-bd1a8a3f732b',
+        },
+      });
+      const unquiescedCombined = `${unquiescedWriter.stdout}${unquiescedWriter.stderr}`;
+      expect(unquiescedWriter.status, unquiescedCombined).toBe(1);
+      expect(unquiescedCombined).toContain('ROLLBACK_WRITERS_QUIESCED=NO');
+      expect(unquiescedCombined).toContain('persistent state restore refused because writer quiescence is unproven');
+      expect(unquiescedCombined).toContain('CRITICAL_FORWARD_RECOVERY_FAILED');
+      const unquiescedLog = readFileSync(join(state, 'docker.log'), 'utf8');
+      expect(unquiescedLog).not.toContain('RUN|restore');
+      expect(unquiescedLog).not.toContain('UP|fallback');
 
       rmSync(state, { recursive: true, force: true });
       mkdirSync(state, { recursive: true });
@@ -644,6 +720,8 @@ esac
           QG_FAIL_FALLBACK_GATEWAY: '0',
           QG_PRIMARY_GATEWAY_HEALTHY: '1',
           QG_FAIL_GITHUB_BROKER: '1',
+          QG_FAIL_COMPOSE_STOP: '0',
+          QG_FAIL_GITHUB_CLEANUP: '0',
           PROJECTS_ROOT: projects,
           QUARANGATE_RUNTIME_ROOT: runtime,
           QUARANGATE_FORWARD_RECOVERY_PRIMARY_IMAGE: 'quarangate:forensic-42d226803bfb',
@@ -653,7 +731,7 @@ esac
       const githubCombined = `${githubFailure.stdout}${githubFailure.stderr}`;
       expect(githubFailure.status, githubCombined).toBe(0);
       expect(githubCombined).toContain('FORWARD_RECOVERY=PASS_R2_FALLBACK');
-      expect(githubCombined).toContain('ROLLBACK removed recovery-created GitHub services');
+      expect(githubCombined).toContain('ROLLBACK removed and verified absent recovery-created GitHub services');
       const githubLog = readFileSync(join(state, 'docker.log'), 'utf8');
       const proxyStop = githubLog.indexOf('stop|primary-github-egress-proxy');
       const brokerStop = githubLog.indexOf('stop|primary-github-broker');
@@ -662,6 +740,40 @@ esac
       expect(brokerStop).toBeGreaterThanOrEqual(0);
       expect(githubFallback).toBeGreaterThan(proxyStop);
       expect(githubFallback).toBeGreaterThan(brokerStop);
+
+      rmSync(state, { recursive: true, force: true });
+      mkdirSync(state, { recursive: true });
+      writeFileSync(join(runtime, '.env'), [
+        'INTERNAL_TOKEN=test-internal-token',
+        'GATEWAY_IMAGE=legacy-gateway',
+        'DOCKER_AUTHORITY_IMAGE=legacy-authority',
+        'EXECUTOR_IMAGE=legacy-executor',
+        '',
+      ].join('\n'), { mode: 0o600 });
+      const githubCleanupFailure = spawnSync('bash', [join(root, 'scripts', 'remote-owner-forward-recover-v9.sh')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ''}`,
+          QG_FAKE_STATE: state,
+          QG_FAIL_FALLBACK_GATEWAY: '0',
+          QG_PRIMARY_GATEWAY_HEALTHY: '1',
+          QG_FAIL_GITHUB_BROKER: '1',
+          QG_FAIL_COMPOSE_STOP: '0',
+          QG_FAIL_GITHUB_CLEANUP: '1',
+          PROJECTS_ROOT: projects,
+          QUARANGATE_RUNTIME_ROOT: runtime,
+          QUARANGATE_FORWARD_RECOVERY_PRIMARY_IMAGE: 'quarangate:forensic-42d226803bfb',
+          QUARANGATE_FORWARD_RECOVERY_FALLBACK_IMAGE: 'quarangate:r2-review-bd1a8a3f732b',
+        },
+      });
+      const githubCleanupCombined = `${githubCleanupFailure.stdout}${githubCleanupFailure.stderr}`;
+      expect(githubCleanupFailure.status, githubCleanupCombined).toBe(1);
+      expect(githubCleanupCombined).toContain('ROLLBACK GitHub cleanup FAILED or could not be verified');
+      expect(githubCleanupCombined).toContain('CRITICAL_FORWARD_RECOVERY_FAILED');
+      const githubCleanupLog = readFileSync(join(state, 'docker.log'), 'utf8');
+      expect(githubCleanupLog).not.toContain('UP|fallback');
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
