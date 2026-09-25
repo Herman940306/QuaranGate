@@ -341,6 +341,7 @@ export class CopilotBackend {
         { name: 'executor/agents/copilotRunnerMain.js', content: readFileSync(join(dir, 'copilotRunnerMain.js')), mode: 0o500 },
         { name: 'executor/agents/acpDriver.js', content: readFileSync(join(dir, 'acpDriver.js')), mode: 0o500 },
         { name: 'shared/errors.js', content: readFileSync(join(dir, '..', '..', 'shared', 'errors.js')), mode: 0o500 },
+        { name: 'shared/agents.js', content: readFileSync(join(dir, '..', '..', 'shared', 'agents.js')), mode: 0o500 },
         { name: 'control.json', content: Buffer.from(JSON.stringify(control), 'utf8'), mode: 0o400 },
         { name: 'copilot-secret-entrypoint.sh', content: Buffer.from(entrypoint, 'utf8'), mode: 0o500 },
       ],

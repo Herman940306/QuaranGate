@@ -891,7 +891,7 @@ export class KiroBackend {
 
   /**
    * Build the per-job control volume: the runner-internal ACP driver code
-   * (runnerMain + the SAME AcpDriver + its one dependency) plus the trusted,
+   * (runnerMain + the SAME AcpDriver + its runtime dependencies) plus the trusted,
    * NON-SECRET control.json. The API key is NEVER placed here — it is delivered
    * only via the RO secret volume + entrypoint.
    */
@@ -901,6 +901,7 @@ export class KiroBackend {
     const runnerMainJs = readFileSync(join(dir, 'runnerMain.js'));
     const acpDriverJs = readFileSync(join(dir, 'acpDriver.js'));
     const errorsJs = readFileSync(join(dir, '..', '..', 'shared', 'errors.js'));
+    const agentsJs = readFileSync(join(dir, '..', '..', 'shared', 'agents.js'));
 
     const control = {
       agent: this.agentName,
@@ -927,6 +928,7 @@ export class KiroBackend {
         { name: 'executor/agents/runnerMain.js', content: runnerMainJs, mode: 0o500 },
         { name: 'executor/agents/acpDriver.js', content: acpDriverJs, mode: 0o500 },
         { name: 'shared/errors.js', content: errorsJs, mode: 0o500 },
+        { name: 'shared/agents.js', content: agentsJs, mode: 0o500 },
         { name: 'control.json', content: Buffer.from(JSON.stringify(control), 'utf8'), mode: 0o400 },
       ],
     });
