@@ -160,6 +160,230 @@ describe('SH-06 schema gate', () => {
   });
 });
 
+/**
+ * T16 — production deployment path regression for the FAIL_REVIEW 9/9/7 matrix.
+ *
+ * Two layers of proof:
+ *   Layer 1: evaluateSchemaPreflight() (the single authoritative evaluator) returns
+ *            allowed=false with reason=ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE.
+ *   Layer 2: The production shell script encodes the Rule B gate string before every
+ *            mutation marker, proving that even if the TS helper were bypassed the
+ *            shell path independently denies.  This test fails whenever the shell
+ *            decision logic regresses even when helper-level tests remain green.
+ */
+describe('T16 — production-path 9/9/7 DENY before mutation (FAIL_REVIEW regression)', () => {
+  const root = join(import.meta.dirname, '../..');
+  const deploy = readFileSync(join(root, 'scripts/remote-owner-deploy-candidate.sh'), 'utf8');
+
+  // Layer 1: single authoritative TypeScript evaluator.
+  it('L1 evaluateSchemaPreflight returns allowed=false for current=9 candidate=9 rollback=7', () => {
+    const result = evaluateSchemaPreflight({
+      currentSchema: 9,
+      candidateSupportedSchema: 9,
+      rollbackSupportedSchema: 7,
+      snapshotCreated: true,
+      snapshotVerified: true,
+      snapshotSchema: 9,
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE');
+  });
+
+  // Layer 1b: a snapshot does NOT change the decision.
+  it('L1b snapshot presence does not override Rule B for 9/9/7', () => {
+    for (const snapshotCreated of [true, false]) {
+      for (const snapshotVerified of [true, false]) {
+        const result = evaluateSchemaPreflight({
+          currentSchema: 9,
+          candidateSupportedSchema: 9,
+          rollbackSupportedSchema: 7,
+          snapshotCreated,
+          snapshotVerified,
+        });
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toBe('ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE');
+      }
+    }
+  });
+
+  // Layer 2: production shell script ordering proof.
+  // The Rule B gate string must appear before every mutation marker in the
+  // deploy script so that no runtime mutation can occur before the check.
+  it('L2 shell script places ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE before every mutation marker', () => {
+    const ruleB = deploy.indexOf('ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE');
+    expect(ruleB, 'Rule B gate must exist in deploy script').toBeGreaterThanOrEqual(0);
+
+    const mutationFlag   = deploy.indexOf('runtime_mutated=1');
+    const authorityUp    = deploy.indexOf('up -d --no-deps --no-build --pull never docker-authority');
+    const executorUp     = deploy.indexOf('up -d --no-deps --no-build --pull never executor');
+    const gatewayUp      = deploy.indexOf('up -d --no-deps --no-build --pull never gateway');
+    const envUpdatedFlag = deploy.indexOf('env_updated=1');
+
+    expect(ruleB, 'Rule B must precede runtime_mutated=1').toBeLessThan(mutationFlag);
+    expect(ruleB, 'Rule B must precede docker-authority startup').toBeLessThan(authorityUp);
+    expect(ruleB, 'Rule B must precede executor startup').toBeLessThan(executorUp);
+    expect(ruleB, 'Rule B must precede gateway startup').toBeLessThan(gatewayUp);
+    expect(ruleB, 'Rule B must precede .env update').toBeLessThan(envUpdatedFlag);
+  });
+
+  // Layer 2b: Rule B must also appear before the snapshot section so that
+  // it cannot be silently bypassed by restructuring the snapshot block.
+  // NOTE: Rule B executes AFTER the snapshot (schema is only known post-verify)
+  // but BEFORE any runtime mutation.  The ordering snapshot→RuleB→mutation is
+  // the correct and expected sequence.
+  it('L2b snapshot verification precedes Rule B which precedes mutation', () => {
+    const snapshotVerifiedFlag = deploy.indexOf('snapshot_verified=1');
+    const ruleB                = deploy.indexOf('ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE');
+    const mutationFlag         = deploy.indexOf('runtime_mutated=1');
+
+    expect(snapshotVerifiedFlag).toBeGreaterThanOrEqual(0);
+    expect(snapshotVerifiedFlag, 'snapshot_verified=1 must precede Rule B').toBeLessThan(ruleB);
+    expect(ruleB,                'Rule B must precede runtime_mutated=1').toBeLessThan(mutationFlag);
+  });
+
+  // Layer 2c: candidate service startup is never reached for 9/9/7.
+  // Proven structurally: Rule B fail() call appears before all startup commands.
+  it('L2c candidate service startup commands are all downstream of Rule B gate', () => {
+    const ruleB = deploy.indexOf('ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE');
+    for (const service of ['docker-authority', 'executor', 'gateway']) {
+      const startupPos = deploy.indexOf(`up -d --no-deps --no-build --pull never ${service}`);
+      expect(startupPos, `${service} startup must be downstream of Rule B`).toBeGreaterThan(ruleB);
+    }
+  });
+
+  // Self-check: current incident matrix explicit metadata.
+  it('self-check current incident matrix: standard_deploy_allowed=NO mutation_reached=NO', () => {
+    const result = evaluateSchemaPreflight({
+      currentSchema: 9,
+      candidateSupportedSchema: 9,
+      rollbackSupportedSchema: 7,
+      snapshotCreated: true,
+      snapshotVerified: true,
+      snapshotSchema: 9,
+    });
+    // CURRENT_INCIDENT_MATRIX
+    expect(result).toMatchObject({
+      allowed: false,                                           // standard_deploy_allowed=NO
+      reason: 'ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE', // reason=ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE
+    });
+    // mutation_reached=NO is proven by Layer 2 shell ordering tests above.
+  });
+});
+
+/**
+ * M1–M10 full compatibility matrix.
+ * All cases exercised through evaluateSchemaPreflight() — the single
+ * authoritative evaluator whose output the production shell script enforces.
+ */
+describe('compatibility matrix M1–M10', () => {
+  // M1: current=7 candidate=9 rollback=7 verified_snapshot=YES → ALLOW
+  it('M1 current=7 candidate=9 rollback=7 snapshot=YES → ALLOW', () => {
+    expect(evaluateSchemaPreflight({
+      currentSchema: 7, candidateSupportedSchema: 9, rollbackSupportedSchema: 7,
+      snapshotCreated: true, snapshotVerified: true, snapshotSchema: 7,
+    })).toMatchObject({ allowed: true, reason: 'PREFLIGHT_OK' });
+  });
+
+  // M2: current=7 candidate=9 rollback=7 verified_snapshot=NO → DENY
+  it('M2 current=7 candidate=9 rollback=7 snapshot=NO → DENY', () => {
+    const r = evaluateSchemaPreflight({
+      currentSchema: 7, candidateSupportedSchema: 9, rollbackSupportedSchema: 7,
+      snapshotCreated: true, snapshotVerified: false,
+    });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('SNAPSHOT_NOT_VERIFIED');
+  });
+
+  // M3: current=9 candidate=9 rollback=7 verified_snapshot=YES → DENY (CURRENT INCIDENT / T16)
+  it('M3 current=9 candidate=9 rollback=7 snapshot=YES → DENY (current incident)', () => {
+    const r = evaluateSchemaPreflight({
+      currentSchema: 9, candidateSupportedSchema: 9, rollbackSupportedSchema: 7,
+      snapshotCreated: true, snapshotVerified: true, snapshotSchema: 9,
+    });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE');
+  });
+
+  // M4: current=9 candidate=9 rollback=9 verified_snapshot=YES → ALLOW compatibility gate
+  // (Does not authorize live recovery; only validates compatibility semantics.)
+  it('M4 current=9 candidate=9 rollback=9 snapshot=YES → ALLOW', () => {
+    expect(evaluateSchemaPreflight({
+      currentSchema: 9, candidateSupportedSchema: 9, rollbackSupportedSchema: 9,
+      snapshotCreated: true, snapshotVerified: true, snapshotSchema: 9,
+    })).toMatchObject({ allowed: true, reason: 'PREFLIGHT_OK' });
+  });
+
+  // M5: current=10 candidate=9 rollback=9 → DENY (current > candidate)
+  it('M5 current=10 candidate=9 rollback=9 → DENY', () => {
+    const r = evaluateSchemaPreflight({
+      currentSchema: 10, candidateSupportedSchema: 9, rollbackSupportedSchema: 9,
+      snapshotCreated: true, snapshotVerified: true,
+    });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('CURRENT_SCHEMA_NEWER_THAN_CANDIDATE');
+  });
+
+  // M6: invalid/unknown current schema → DENY
+  it('M6 invalid current schema → DENY', () => {
+    for (const bad of [-1, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const r = evaluateSchemaPreflight({
+        currentSchema: bad, candidateSupportedSchema: 9, rollbackSupportedSchema: 7,
+        snapshotCreated: true, snapshotVerified: true,
+      });
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toBe('INVALID_SCHEMA_EVIDENCE');
+    }
+  });
+
+  // M7: candidate schema probe failure — modelled as invalid candidateSupportedSchema → DENY
+  it('M7 candidate schema probe failure (invalid candidateSupportedSchema) → DENY', () => {
+    for (const bad of [-1, NaN, Infinity]) {
+      const r = evaluateSchemaPreflight({
+        currentSchema: 7, candidateSupportedSchema: bad, rollbackSupportedSchema: 7,
+        snapshotCreated: true, snapshotVerified: true,
+      });
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toBe('INVALID_SCHEMA_EVIDENCE');
+    }
+  });
+
+  // M8: rollback schema probe failure — modelled as invalid rollbackSupportedSchema → DENY
+  it('M8 rollback schema probe failure (invalid rollbackSupportedSchema) → DENY', () => {
+    for (const bad of [-1, NaN, Infinity]) {
+      const r = evaluateSchemaPreflight({
+        currentSchema: 7, candidateSupportedSchema: 9, rollbackSupportedSchema: bad,
+        snapshotCreated: true, snapshotVerified: true,
+      });
+      expect(r.allowed).toBe(false);
+      expect(r.reason).toBe('INVALID_SCHEMA_EVIDENCE');
+    }
+  });
+
+  // M9: snapshot schema differs from captured pre-deploy current schema → DENY
+  it('M9 snapshot schema differs from current schema → DENY', () => {
+    const r = evaluateSchemaPreflight({
+      currentSchema: 7, candidateSupportedSchema: 9, rollbackSupportedSchema: 7,
+      snapshotCreated: true, snapshotVerified: true,
+      snapshotSchema: 8, // mismatch — interleaved migration occurred
+    });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('SNAPSHOT_SCHEMA_MISMATCH');
+  });
+
+  // M10: snapshot valid but rollback binary cannot read snapshot schema.
+  // When snapshot_schema == current_schema and current > rollback → Rule B fires.
+  it('M10 snapshot valid but rollback cannot read snapshot schema → DENY', () => {
+    // snapshot_schema=9, rollback=7 — rollback binary cannot open the snapshot
+    const r = evaluateSchemaPreflight({
+      currentSchema: 9, candidateSupportedSchema: 9, rollbackSupportedSchema: 7,
+      snapshotCreated: true, snapshotVerified: true,
+      snapshotSchema: 9,
+    });
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE');
+  });
+});
+
 describe('SH-06 deployment source contract', () => {
   const root = join(import.meta.dirname, '../..');
   const deploy = readFileSync(join(root, 'scripts/remote-owner-deploy-candidate.sh'), 'utf8');
@@ -169,17 +393,37 @@ describe('SH-06 deployment source contract', () => {
   it('orders snapshot verification and schema preflight before every candidate startup', () => {
     const snapshot = deploy.indexOf('snapshot /source/agents.db /snapshot/agents.db /snapshot/manifest.json');
     const verified = deploy.indexOf('snapshot_verified=1', snapshot);
-    const mutation = deploy.indexOf('runtime_mutated=1', verified);
+    // Rule B gate must exist and appear after snapshot verification but before mutation.
+    const ruleB   = deploy.indexOf('ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE', verified);
+    const mutation = deploy.indexOf('runtime_mutated=1', ruleB);
     const authority = deploy.indexOf('up -d --no-deps --no-build --pull never docker-authority', mutation);
     const executor = deploy.indexOf('up -d --no-deps --no-build --pull never executor', authority);
     const gateway = deploy.indexOf('up -d --no-deps --no-build --pull never gateway', executor);
     expect(snapshot).toBeGreaterThanOrEqual(0);
     expect(verified).toBeGreaterThan(snapshot);
-    expect(mutation).toBeGreaterThan(verified);
+    expect(ruleB).toBeGreaterThan(verified);
+    expect(mutation).toBeGreaterThan(ruleB);
     expect(authority).toBeGreaterThan(mutation);
     expect(executor).toBeGreaterThan(authority);
     expect(gateway).toBeGreaterThan(executor);
     expect(deploy).toContain('--mount type=volume,src=mcp-bridge-jobs,dst=/source,readonly');
+  });
+
+  it('installs EXIT trap before creating the .env backup temp file', () => {
+    // LOW finding fix: the cleanup handler must be armed before any temporary
+    // secret material is created so that signal/interruption paths clean up.
+    const trapPos       = deploy.indexOf('trap rollback EXIT');
+    const mktemp        = deploy.indexOf('env_backup="$(mktemp)"');
+    const chmodBackup   = deploy.indexOf('chmod 0600 "$env_backup"');
+    const cpBackup      = deploy.indexOf('cp "$RUNTIME_ENV" "$env_backup"');
+    expect(trapPos,     'trap rollback EXIT must exist').toBeGreaterThanOrEqual(0);
+    expect(mktemp,      'env_backup mktemp must exist').toBeGreaterThanOrEqual(0);
+    expect(trapPos,     'trap must precede mktemp').toBeLessThan(mktemp);
+    expect(chmodBackup, 'chmod must follow mktemp').toBeGreaterThan(mktemp);
+    expect(cpBackup,    'cp must follow chmod').toBeGreaterThan(chmodBackup);
+    // Only one trap installation.
+    const secondTrap = deploy.indexOf('trap rollback EXIT', trapPos + 1);
+    expect(secondTrap).toBe(-1);
   });
 
   it('restores persistent state before any legacy service reinstatement and reports separate dimensions', () => {

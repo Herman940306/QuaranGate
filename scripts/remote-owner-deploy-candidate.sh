@@ -434,26 +434,65 @@ SNAPSHOT_SHA256="$(printf '%s' "$snapshot_verify_result" | python3 -c 'import js
 SNAPSHOT_SIZE_BYTES="$(printf '%s' "$snapshot_verify_result" | python3 -c 'import json,sys; v=json.load(sys.stdin).get("sizeBytes"); assert isinstance(v,int) and v>0; print(v)')" \
   || fail 'verified snapshot size evidence is invalid'
 snapshot_verified=1
+
+# M9: confirm the snapshot captured exactly the pre-deploy schema.  The verify
+# step reads userVersion from the snapshot manifest; it must equal the schema
+# we just extracted from the same verify output (they are the same field, but
+# an explicit cross-check future-proofs against any pre-snapshot inspection
+# step that might diverge).
+SNAPSHOT_SCHEMA="$(printf '%s' "$snapshot_verify_result" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="SNAPSHOT_VERIFIED"; v=d.get("userVersion"); assert isinstance(v,int) and v>=0; print(v)')" \
+  || fail 'snapshot schema evidence is invalid'
+[[ "$SNAPSHOT_SCHEMA" == "$CURRENT_DB_SCHEMA" ]] || fail 'snapshot schema differs from pre-deploy current schema (M9: interleaved migration)'
+
+# Schema compatibility gate — evaluated in strict priority order.
+# Rule A: candidate cannot open a database whose schema it does not support.
 [[ "$CURRENT_DB_SCHEMA" -le "$CANDIDATE_SUPPORTED_SCHEMA" ]] || fail 'current job DB schema is newer than candidate support'
+
+# Rule B (CRITICAL): if the current database schema exceeds the rollback
+# executor's supported schema, standard deployment is unconditionally blocked
+# regardless of whether a snapshot exists.  A v9 snapshot does not make a v7
+# rollback binary capable of reading v9 — that binary will crash deterministically.
+# This is the primary fix for the FAIL_REVIEW finding on the 9/9/7 incident matrix.
+[[ "$CURRENT_DB_SCHEMA" -le "$ROLLBACK_IMAGE_SUPPORTED_SCHEMA" ]] \
+  || fail 'ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE: standard deployment blocked — current DB schema exceeds rollback executor support'
+
+# Rule C: when a migration would occur (candidate > rollback), the verified
+# snapshot is the only restoration path.  Already enforced by the unconditional
+# snapshot requirement below, but stated explicitly for clarity.
 if [[ "$CANDIDATE_SUPPORTED_SCHEMA" -gt "$ROLLBACK_IMAGE_SUPPORTED_SCHEMA" ]]; then
   [[ "$snapshot_created" == 1 && "$snapshot_verified" == 1 ]] || fail 'candidate schema exceeds rollback support without verified snapshot'
 fi
 [[ "$snapshot_created" == 1 && "$snapshot_verified" == 1 ]] || fail 'verified persistent-state snapshot is mandatory before mutation'
-printf 'SCHEMA_PREFLIGHT=PASS CURRENT_DB_SCHEMA=%s CANDIDATE_SUPPORTED_SCHEMA=%s ROLLBACK_IMAGE_SUPPORTED_SCHEMA=%s SNAPSHOT_CREATED=%s SNAPSHOT_VERIFIED=%s\n' \
-  "$CURRENT_DB_SCHEMA" "$CANDIDATE_SUPPORTED_SCHEMA" "$ROLLBACK_IMAGE_SUPPORTED_SCHEMA" "$snapshot_created" "$snapshot_verified"
+printf 'SCHEMA_PREFLIGHT=PASS CURRENT_DB_SCHEMA=%s CANDIDATE_SUPPORTED_SCHEMA=%s ROLLBACK_IMAGE_SUPPORTED_SCHEMA=%s SNAPSHOT_SCHEMA=%s SNAPSHOT_CREATED=%s SNAPSHOT_VERIFIED=%s\n' \
+  "$CURRENT_DB_SCHEMA" "$CANDIDATE_SUPPORTED_SCHEMA" "$ROLLBACK_IMAGE_SUPPORTED_SCHEMA" "$SNAPSHOT_SCHEMA" "$snapshot_created" "$snapshot_verified"
 printf 'SNAPSHOT_IDENTITY_SHA256=%s SNAPSHOT_SIZE_BYTES=%s SNAPSHOT_CONTENT_EXPOSED=NO\n' "$SNAPSHOT_SHA256" "$SNAPSHOT_SIZE_BYTES"
 
-# Preserve the ignored runtime env byte-for-byte for rollback without printing
-# its contents. The temporary copy is mode 0600 and deleted on every exit path.
-env_backup="$(mktemp)"
-chmod 0600 "$env_backup"
-cp "$RUNTIME_ENV" "$env_backup"
-env_backup_sha256="$(sha256sum "$env_backup" | cut -d' ' -f1)"
+# Initialise all mutable-state flags and the env-backup path BEFORE installing
+# the EXIT trap so that the trap's cleanup is correct even if the process is
+# interrupted between trap installation and the actual mktemp call.
+# env_backup='' is safe: rm -f '' is a no-op, and the cp restore branch is
+# only reached when env_updated==1, which is only set after the backup exists.
+env_backup=''
+env_backup_sha256=''
 mutated=0
 runtime_mutated=0
 persistent_state_may_have_mutated=0
 env_updated=0
 docker_authority_preexisting="$OLD_DOCKER_AUTHORITY_PRESENT"
+
+# Install the EXIT trap HERE — before any temporary secret material is created —
+# so that every exit path after this point (success, failure, or signal) cleans
+# up the .env backup.  Resolves the LOW finding from the independent review.
+trap rollback EXIT
+
+# Create the .env backup immediately after the trap is armed so the file never
+# exists outside the trap's protection window.  Mode 0600 before the copy so
+# the secret bytes are never world-readable even transiently.
+env_backup="$(mktemp)"
+chmod 0600 "$env_backup"
+cp "$RUNTIME_ENV" "$env_backup"
+env_backup_sha256="$(sha256sum "$env_backup" | cut -d' ' -f1)"
+
 printf 'ROLLBACK_STATE snapshot_created=%s snapshot_verified=%s runtime_mutated=%s persistent_state_may_have_mutated=%s env_updated=%s github_preexisting=%s docker_authority_preexisting=%s\n' \
   "$snapshot_created" "$snapshot_verified" "$runtime_mutated" "$persistent_state_may_have_mutated" "$env_updated" "$github_preexisting" "$docker_authority_preexisting"
 
@@ -687,7 +726,6 @@ rollback() {
   rm -f "$env_backup"
   exit "$rc"
 }
-trap rollback EXIT
 
 printf '%s\n' '=== CONTROLLED DEPLOY ==='
 # Recheck the attested aliases, then select the immutable IDs for Compose so

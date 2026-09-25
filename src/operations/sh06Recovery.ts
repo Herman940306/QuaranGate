@@ -7,6 +7,14 @@ export interface SchemaPreflightInput {
   rollbackSupportedSchema: number;
   snapshotCreated: boolean;
   snapshotVerified: boolean;
+  /**
+   * The schema version read back from the verified snapshot.  When provided,
+   * the evaluator enforces that it equals currentSchema (M9 guard: snapshot
+   * captured after an interleaved migration is unusable for restoration to the
+   * pre-deploy state).  Omit or pass undefined only when snapshotVerified is
+   * false (i.e. the snapshot step has not yet completed).
+   */
+  snapshotSchema?: number | undefined;
 }
 
 export interface SchemaPreflightResult {
@@ -17,15 +25,41 @@ export interface SchemaPreflightResult {
 }
 
 export function evaluateSchemaPreflight(input: SchemaPreflightInput): SchemaPreflightResult {
-  const values = [input.currentSchema, input.candidateSupportedSchema, input.rollbackSupportedSchema];
-  if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+  // Validate all numeric evidence before any comparison.
+  const requiredValues = [input.currentSchema, input.candidateSupportedSchema, input.rollbackSupportedSchema];
+  if (requiredValues.some((value) => !Number.isSafeInteger(value) || value < 0)) {
     return { allowed: false, migrationPossible: false, snapshotMandatory: true, reason: 'INVALID_SCHEMA_EVIDENCE' };
   }
+  if (input.snapshotSchema !== undefined && (!Number.isSafeInteger(input.snapshotSchema) || input.snapshotSchema < 0)) {
+    return { allowed: false, migrationPossible: false, snapshotMandatory: true, reason: 'INVALID_SCHEMA_EVIDENCE' };
+  }
+
+  // Rule A: candidate cannot read a database it does not support.
   if (input.currentSchema > input.candidateSupportedSchema) {
     return { allowed: false, migrationPossible: false, snapshotMandatory: true, reason: 'CURRENT_SCHEMA_NEWER_THAN_CANDIDATE' };
   }
+
+  // Rule B (CRITICAL): if the live database is already at a schema the rollback
+  // binary cannot read, a standard deployment is unconditionally unsafe.  A
+  // verified snapshot does NOT change this — it captures a v9 state that the
+  // v7 rollback binary still cannot open.  Any deployment that could leave the
+  // system in a state where the rollback executor would crash is blocked here
+  // before any runtime mutation occurs.
+  if (input.currentSchema > input.rollbackSupportedSchema) {
+    return {
+      allowed: false,
+      migrationPossible: false,
+      snapshotMandatory: true,
+      reason: 'ROLLBACK_SCHEMA_INCOMPATIBLE_WITH_CURRENT_STATE',
+    };
+  }
+
   const migrationPossible = input.currentSchema < input.candidateSupportedSchema;
+  // Snapshot is mandatory whenever the candidate could migrate the DB to a
+  // version the rollback binary cannot read, or when a migration will occur at
+  // all.  SH-06 also requires it unconditionally before any executor startup.
   const snapshotMandatory = migrationPossible || input.candidateSupportedSchema > input.rollbackSupportedSchema;
+
   // SH-06 always requires a verified snapshot before candidate executor startup,
   // even when the version relationship would otherwise be rollback-compatible.
   if (!input.snapshotCreated) {
@@ -34,6 +68,15 @@ export function evaluateSchemaPreflight(input: SchemaPreflightInput): SchemaPref
   if (!input.snapshotVerified) {
     return { allowed: false, migrationPossible, snapshotMandatory: true, reason: 'SNAPSHOT_NOT_VERIFIED' };
   }
+
+  // M9: the snapshot must have captured the schema that was current at the
+  // point the snapshot was taken.  A mismatch means an interleaved write
+  // changed the schema between the snapshot and its verification, making the
+  // snapshot useless for restoration to the pre-deploy state.
+  if (input.snapshotSchema !== undefined && input.snapshotSchema !== input.currentSchema) {
+    return { allowed: false, migrationPossible, snapshotMandatory: true, reason: 'SNAPSHOT_SCHEMA_MISMATCH' };
+  }
+
   return { allowed: true, migrationPossible, snapshotMandatory, reason: 'PREFLIGHT_OK' };
 }
 
