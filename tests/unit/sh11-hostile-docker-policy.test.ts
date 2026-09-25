@@ -235,7 +235,8 @@ describe('SH-11 managed post-create authority', () => {
   });
 
   it('confines managed archive writes to exact mounted roots', () => {
-    expect(() => validateManagedArchivePath(managedIdentity(labels('secret')), 'write', '/run/secrets')).not.toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('secret')), 'write', '/secrets')).not.toThrow();
+    expect(() => validateManagedArchivePath(managedIdentity(labels('secret')), 'write', '/run/secrets')).toThrow();
     expect(() => validateManagedArchivePath(managedIdentity(labels('home')), 'write', '/home/runner')).not.toThrow();
     expect(() => validateManagedArchivePath(managedIdentity(labels('control')), 'write', '/run/control')).not.toThrow();
     expect(() => validateManagedArchivePath(managedIdentity(labels('evidence-io')), 'write', '/evidence')).not.toThrow();

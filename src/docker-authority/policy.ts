@@ -361,7 +361,7 @@ export function validateManagedArchivePath(identity: ManagedIdentity, action: 'r
   }
   if (action === 'write') {
     const exact: Record<string, string> = {
-      secret: '/run/secrets', home: '/home/runner', control: '/run/control',
+      secret: '/secrets', home: '/home/runner', control: '/run/control',
       'before-capture': '/evidence', 'evidence-io': '/evidence', applier: '/control',
     };
     if (exact[identity.resource] === pathValue) return;
