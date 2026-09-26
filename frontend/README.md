@@ -228,3 +228,16 @@ Changed existing route `src/app/(foundation)/security/page.tsx` owns only route 
 | `tests/e2e/audit-evidence.spec.ts` | responsive/axe/storage/unavailable; no exports | FE13 tests; browser memory | Playwright/synthetic MCP; live qualification separate | Test fixture |
 
 Existing shell owns the added navigation and identity-epoch remount; client owns the closed activity read. Lineage stops at request → job UNKNOWN. No raw payload export or inferred relationship exists.
+
+
+## FE14 Recovery & Backups
+
+| File | Purpose / exports | Route / owned state | API / future integration | Readiness |
+|---|---|---|---|---|
+| `src/app/(foundation)/recovery-backups/page.tsx` | Page/metadata | `/recovery-backups`; none | RecoveryBackups; deployment separate | Scaffold-only candidate |
+| `src/components/recovery-backups.tsx` | RecoveryBackups | Recovery; read receipts in memory | control recovery/resources; actual recovery evidence requires a new accepted contract | Scaffold-only candidate |
+| `src/lib/operational/recovery.ts` | ResourceBoundary/resources projection | Recovery; none | existing resource boundary metadata; no cleanup API | Source candidate |
+| `tests/unit/recovery.test.ts` | unknown/projection/bounds; no exports | FE14 tests; fixtures | Vitest; integration separate | Test fixture |
+| `tests/e2e/recovery-backups.spec.ts` | read-only/axe/keyboard/responsive/storage/unavailable; no exports | FE14 tests; ephemeral browser | Playwright/synthetic MCP; live qualification separate | Test fixture |
+
+Existing shell and client own navigation/context invalidation and closed read transport. CONFIGURED is not recovery success. Unsupported mutations remain external.

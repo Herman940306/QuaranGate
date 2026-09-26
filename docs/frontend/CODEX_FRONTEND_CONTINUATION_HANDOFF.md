@@ -478,3 +478,20 @@ Qualification: lint PASS (147 files), typecheck PASS, activity-focused unit 3/3 
 Changed paths: audit route, AuditEvidence component, activity decoder, purpose-specific client, shell, operational method-list unit regression, activity unit tests, audit browser tests, frontend README, this handoff and FE13 screenshots. New files are registered in README. Integration/deployment and durable audit availability remain unqualified.
 
 NEXT: FE14 Recovery & Backups, read-only existing recovery metadata; no browser restore/backup/cleanup/quarantine release/rollback.
+
+
+## FE14 checkpoint — Recovery & Backups
+
+FE13 freeze: commit `6fd8a6d64b91763a2d6f3bed0b2fa6e0f1482d52`, tree `61f03907de229958fc991796f124646116e14950`, parent `7d6cf14db578c45c19ba137b3b1a9a65c90478b0`, subject `feat(frontend): add bounded audit and evidence metadata`. Clean worktree verified before FE14.
+
+STATUS: IMPLEMENTATION CANDIDATE — READ-ONLY METADATA — NOT SELF-ACCEPTED.
+
+Added `/recovery-backups`, shell navigation and identity-context invalidation. Only existing `control_center_query` recovery/resources views are used. Startup configuration is explicitly not recovery success. Server ownership/session/rollback/backup/owner-host declarations remain verbatim safe metadata with UNKNOWN for missing values. Resource state is projected without enumeration or raw resource objects. AVAILABLE/NOT_AVAILABLE/NOT_IMPLEMENTED/NOT_QUALIFIED/UNKNOWN/DEFERRED vocabulary is explained without assigning fake health. No restore, backup, deletion, cleanup, quarantine release, rollback or filesystem-recovery control is present.
+
+Contract gaps: current `src/gateway/controlCenterTools.ts` recovery view returns startupRecovery/providerSessionRecovery/backups/rollback/ownerHost only; resources view explicitly states RUNTIME_RESOURCE_ENUMERATION_NOT_EXPOSED/NO_GENERIC_CLEANUP_API. Quarantine/refusal details, inventory, uncertainty records and recovery evidence identifiers are not publicly exposed. Safest backend request: separately accept bounded principal-authorized read metadata for these exact states/identifiers, preserving external mutation ownership. No unsupported success is mocked.
+
+Qualification: lint PASS (152 files); typecheck PASS; recovery unit 3/3 PASS in full unit 154/154 PASS; Chromium 3/3 PASS at 1280/360px, keyboard Enter, axe zero violations, no page overflow/persistence and unavailable fail-closed behavior. Production build PASS (34 static routes); diff check PASS. Screenshots preserved under `docs/frontend/evidence/FE14/recovery-{1280,360}.png`.
+
+Changed paths: recovery route/component/decoder, shell, closed operational client, operational method-list regression, recovery unit/browser tests, frontend README, this handoff and FE14 screenshots. New frontend files are documented. Runtime recovery, live integration, owner-host and production qualification are not claimed.
+
+NEXT: FE15 Settings — page-memory appearance and read-only identity/capability/configuration visibility only.
