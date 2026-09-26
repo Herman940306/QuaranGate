@@ -104,7 +104,7 @@ After orchestrator/independent acceptance, integration may update shared archite
 ## Contradictions / risks
 
 1. The old continuation handoff is chronological and contains superseded CURRENT_NEXT blocks. The newest applicable control block must win.
-2. Canonical source used for this product lane is the orchestration-approved `52b78f1...` base even though older project-control sections record later historical North-Star canonical points. Product orchestration must explicitly reconcile this before final integration rather than silently assuming ancestry/equivalence.
+2. Historical North-Star state `53a2b8f8538e6d2b979c3b42bf1050ecf62f1473` is confirmed by Git ancestry to be an ancestor of current canonical `52b78f1723e798aeec80c020065846b1b0efeabe`, with merge-base exactly `53a2b8f8538e6d2b979c3b42bf1050ecf62f1473`. No branch-history ancestry reconciliation is required. Historical status claims remain historical, however, and do not by themselves prove that current live/runtime/release gates are complete; current source, runtime and project-control evidence remain authoritative.
 3. ACP execution is globally serialized today; BE1A changes scheduler semantics and is security-sensitive.
 4. Current live-writer lease identity is project/worktree based and must not be weakened by broader resource leasing.
 5. Current Control Center statistics are bounded/in-memory and cannot satisfy durable 24h/7d/30d product analytics.

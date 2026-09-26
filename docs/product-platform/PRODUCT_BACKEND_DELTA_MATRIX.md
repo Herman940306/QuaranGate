@@ -68,6 +68,7 @@ At minimum:
 - release/signing/trust material;
 - production deployment target;
 - mutable shared caches/registries where writes can conflict.
+- globally shared test/runtime temp roots where the tool contract is exclusive. The current root Vitest wrapper uses the exclusive Unix temp root `/tmp/q`, so concurrent root Vitest executions across otherwise isolated worktrees can conflict. Current orchestration must serialize that shared test resource; future BE1A resource modeling should represent such shared temp roots as explicit leaseable resources where appropriate rather than assuming worktree isolation is sufficient.
 
 ### Operations that remain globally exclusive
 Unless later independently proven narrower:
