@@ -495,3 +495,18 @@ Qualification: lint PASS (152 files); typecheck PASS; recovery unit 3/3 PASS in 
 Changed paths: recovery route/component/decoder, shell, closed operational client, operational method-list regression, recovery unit/browser tests, frontend README, this handoff and FE14 screenshots. New frontend files are documented. Runtime recovery, live integration, owner-host and production qualification are not claimed.
 
 NEXT: FE15 Settings — page-memory appearance and read-only identity/capability/configuration visibility only.
+
+
+## FE15 checkpoint — Settings
+
+FE14 freeze: commit `eda4461fb589062b6f8884461fe96a06a3d760af`, tree `7c1b7dac19a964b9699eadab84d4fd33033e30a8`, parent `6fd8a6d64b91763a2d6f3bed0b2fa6e0f1482d52`, subject `feat(frontend): add read-only recovery and backup boundaries`. Clean worktree verified before FE15.
+
+STATUS: IMPLEMENTATION CANDIDATE — LOCAL APPEARANCE / READ-ONLY STATE — NOT SELF-ACCEPTED.
+
+Added `/settings`, shell navigation and identity invalidation. Existing Mode/Palette/Density preferences remain page-memory-only and reset on reload. Safe IdentityState projection displays only session kind, display identity, workspace and principal mapping/reference; roles/capabilities do not become operational grants. Package version comes from the existing frontend manifest and is explicitly a declared build input, not deployed runtime evidence. Capability/provider reads use existing metadata contracts; missing values remain UNKNOWN. Backend policy/configuration mutation, credential storage, Docker/provider key/host secret/scope/grant/GitHub installation administration are unavailable.
+
+Qualification: lint PASS (157 files), typecheck PASS, focused settings unit 2/2 PASS in full unit 156/156 PASS; Chromium 3/3 PASS at 1280/360px with appearance reset, keyboard activation, axe zero violations, no page overflow, no browser persistence, read-only/unavailable state. Production build PASS (35 static routes); diff check PASS. Screenshots preserved in `docs/frontend/evidence/FE15/settings-{1280,360}.png`.
+
+Changed paths: settings route/component/pure identity projection, shell, settings unit/browser tests, README, this handoff and FE15 screenshots. New files registered. Source metadata is implemented; live identity, provider entitlement, settings mutation and deployment remain integration-pending or unavailable.
+
+NEXT: FE16 Tool Lab — current-source expected catalog, exact tools/list discovery drift, closed metadata/navigation, no arbitrary invocation or endpoint.

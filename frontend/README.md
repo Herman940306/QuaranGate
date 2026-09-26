@@ -241,3 +241,16 @@ Existing shell owns the added navigation and identity-epoch remount; client owns
 | `tests/e2e/recovery-backups.spec.ts` | read-only/axe/keyboard/responsive/storage/unavailable; no exports | FE14 tests; ephemeral browser | Playwright/synthetic MCP; live qualification separate | Test fixture |
 
 Existing shell and client own navigation/context invalidation and closed read transport. CONFIGURED is not recovery success. Unsupported mutations remain external.
+
+
+## FE15 Settings
+
+| File | Purpose / exports | Route / owned state | API / future integration | Readiness |
+|---|---|---|---|---|
+| `src/app/(foundation)/settings/page.tsx` | Page/metadata; package-version input | `/settings`; none | existing package manifest; no runtime/deployment inference | Scaffold-only candidate |
+| `src/components/settings-center.tsx` | SettingsCenter | Settings; appearance context and read receipts in memory | existing identity, capability/provider reads; settings mutation unavailable | Scaffold-only candidate |
+| `src/lib/settings.ts` | settingsIdentity | Settings; none | existing safe IdentityState; integrated session adapter still pending | Source candidate |
+| `tests/unit/settings.test.ts` | missing identity/authority separation; no exports | FE15 tests; fixtures | Vitest; live integration separate | Test fixture |
+| `tests/e2e/settings.spec.ts` | local reset/read-only/axe/storage/keyboard/responsive; no exports | FE15 tests; ephemeral browser | Playwright/synthetic MCP; no live configuration qualification | Test fixture |
+
+Existing shell owns navigation/context invalidation. Existing AppearanceControls remain memory-only. Backend policy and credential editing are unavailable; declared frontend version is distinct from deployed runtime evidence.
