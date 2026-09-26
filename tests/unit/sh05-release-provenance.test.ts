@@ -10,6 +10,7 @@ import {
   initializeDisposableGitRepository,
   runDisposableGit,
 } from '../helpers/disposableGit.js';
+import { createExecutableFixtureRoot } from '../helpers/executableFixture.js';
 import {
   BUILD_TYPE,
   BUILDER_ID,
@@ -83,7 +84,8 @@ function git(cwd: string, args: string[], inherited = process.env) {
 
 function e2eFixture(inherited = process.env) {
   const root = createDisposableGitRoot('qg-prov-'); createdRoots.push(root);
-  const repo = createDisposableGitChildRoot(root, 'repo'); const ev = join(root, 'evidence'); const bin = join(repo, 'test-bin');
+  const execRoot = createExecutableFixtureRoot('qg-sh05-cosign-'); createdRoots.push(execRoot);
+  const repo = createDisposableGitChildRoot(root, 'repo'); const ev = join(root, 'evidence'); const bin = join(execRoot, 'bin');
   mkdirSync(ev); mkdirSync(bin);
   mkdirSync(join(repo, 'security'));
   const policyBytes = readFileSync('security/release-policy.json');
