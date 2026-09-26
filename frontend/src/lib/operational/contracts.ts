@@ -33,6 +33,24 @@ export const controlViews = ["summary", "authority", "topology", "providers", "c
 export type ControlView = typeof controlViews[number];
 export interface MetadataRow { label: string; value: string }
 export interface ControlSnapshot { view: ControlView; generatedAt: string; rows: MetadataRow[] }
+export interface StatisticsSnapshot {
+  view: "statistics";
+  generatedAt: string;
+  activity: {
+    retained: number;
+    windowMs: number;
+    total: number;
+    allowed: number;
+    denied: number;
+    failures: number;
+    p50Ms: number | null;
+    p95Ms: number | null;
+    topTools: Array<{ tool: string; count: number }>;
+  };
+  jobs: { active: number | null; queued: number | null };
+  targets: { visible: number; running: number };
+  backends: { visible: number; available: number };
+}
 const metadataFields: Record<ControlView, string[]> = {
   summary: ["principal.id", "principal.name", "buildRevision", "targets.visible", "targets.running", "executor.dockerReachable", "executor.activeJobs", "executor.queuedJobs", "capabilityState.sessionContinuity", "capabilityState.providerAdmissionControl", "capabilityState.ideSessionControl"],
   authority: ["principal.id", "principal.name", "principal.scopes", "principal.targets", "principal.projects", "principal.agentBackends", "principal.agentProfiles", "principal.githubAccounts", "principal.githubProjects", "preflight.advisory", "preflight.evaluated"],
@@ -46,6 +64,50 @@ function metadataValue(value: unknown): string {
   if (typeof value === "string") return text(value, 256);
   if (Array.isArray(value) && value.length <= 256) return value.map(v => text(v)).join(", ") || "None exposed";
   throw new OperationalError("unknown");
+}
+function nullableCount(value: unknown): number | null {
+  if (value === null) return null;
+  return count(value);
+}
+function boundedWindow(value: unknown): number {
+  const result = count(value);
+  if (result < 60_000 || result > 86_400_000) throw new OperationalError("unknown");
+  return result;
+}
+export function statistics(value: Record<string, unknown>): StatisticsSnapshot {
+  if (value.view !== "statistics") throw new OperationalError("unknown");
+  const data = record(value.data);
+  const activity = record(data.activity);
+  const jobs = record(data.jobs);
+  const targets = record(data.targets);
+  const backends = record(data.backends);
+  const retained = count(activity.retained);
+  const windowMs = boundedWindow(activity.windowMs);
+  const total = count(activity.total);
+  const allowed = count(activity.allowed);
+  const denied = count(activity.denied);
+  const failures = count(activity.failures);
+  const p50Ms = nullableCount(activity.p50Ms);
+  const p95Ms = nullableCount(activity.p95Ms);
+  const topTools = list(activity.topTools, row => ({ tool: text(row.tool, 128), count: count(row.count) }), 10);
+  const active = nullableCount(jobs.active);
+  const queued = nullableCount(jobs.queued);
+  const visibleTargets = count(targets.visible);
+  const runningTargets = count(targets.running);
+  const visibleBackends = count(backends.visible);
+  const availableBackends = count(backends.available);
+  if (retained > 2048 || total > retained || allowed + denied !== total || failures > total) throw new OperationalError("unknown");
+  if (p50Ms !== null && p95Ms !== null && p50Ms > p95Ms) throw new OperationalError("unknown");
+  if (topTools.reduce((sum, row) => sum + row.count, 0) > total) throw new OperationalError("unknown");
+  if (runningTargets > visibleTargets || availableBackends > visibleBackends) throw new OperationalError("unknown");
+  return {
+    view: "statistics",
+    generatedAt: text(value.generatedAt, 64),
+    activity: { retained, windowMs, total, allowed, denied, failures, p50Ms, p95Ms, topTools },
+    jobs: { active, queued },
+    targets: { visible: visibleTargets, running: runningTargets },
+    backends: { visible: visibleBackends, available: availableBackends },
+  };
 }
 export function control(view: ControlView, value: Record<string, unknown>): ControlSnapshot {
   if (value.view !== view) throw new OperationalError("unknown");

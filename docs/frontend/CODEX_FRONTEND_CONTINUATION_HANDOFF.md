@@ -343,6 +343,54 @@ FILES:
 NEXT:
 - FE11 Statistics: use only current aggregate/read contracts; do not fabricate analytics, historical retention or business/product metrics without an accepted data source.
 
+## FE11 checkpoint
+
+CHECKPOINT: FE11 — Statistics
+STATUS: FROZEN IMPLEMENTATION CANDIDATE — OPERATIONAL WINDOW ONLY — NOT SELF-ACCEPTED
+
+IMPLEMENTED:
+- `/statistics` reads the existing `control_center_query` `statistics` view through a dedicated purpose-specific frontend client method.
+- The page exposes bounded current-window choices only: 15 minutes, 1 hour, 6 hours and the contract maximum of 24 hours.
+- Activity projection includes retained principal entries, entries in the selected window, allowed/denied/failure counts, p50/p95 duration and up to ten server-returned top-tool counts.
+- Current runtime aggregates include active/queued jobs, visible/running targets and visible/available backends. Server `null` counts remain `UNKNOWN`; the frontend never invents zero.
+- Decoder invariants fail closed on impossible totals, invalid percentiles, invalid window bounds, ring overflow, impossible target/backend counts or top-tool totals exceeding the activity total.
+- Changing the window performs a fresh snapshot read only. No historical series, chart, warehouse query or reconstruction is synthesized.
+
+CONTRACT / DATA TRUTH:
+- Current gateway contract: `src/gateway/controlCenterTools.ts` exposes the read-only `statistics` view and accepts `sinceMs` only from 60,000 through 86,400,000 ms.
+- Current activity source: `src/gateway/audit.ts` retains an in-memory ring capped at 2,048 entries and 24 hours. Statistics are principal-scoped operational-window aggregates over retained entries.
+- Current product docs explicitly state that these statistics are not durable 24h/7d/30d analytics and that durable rolling analytics remain a future product service.
+- No Supabase/PostgreSQL schema, view, migration or client integration was added. Supabase documentation was consulted for future database-view security context only; current FE11 has no accepted durable database source to bind.
+- No token usage, provider cost, billing, business/product KPI, durable retention, trend or historical completeness claim is made.
+
+QUALIFICATION:
+- `npm run lint`: PASS, 137 files checked.
+- `npm run typecheck`: PASS.
+- FE11 focused unit tests: 4/4 PASS.
+- Full frontend unit suite: 144/144 PASS.
+- `npm run build`: PASS, 32 static routes generated including `/statistics`.
+- `npm audit --audit-level=high`: zero vulnerabilities.
+- `git diff --check`: PASS.
+- Governed Chromium FE11 qualification: 3/3 PASS — 1280px, 360px and bounded 6-hour window change, including accessibility, no overflow and no browser persistence.
+- Owner-host job: `ohj_8a3fb7ba8830690e67340acc165b8aa0`.
+- Browser image: `mcr.microsoft.com/playwright:v1.63.0-noble@sha256:bc6ab0d6d44ff4826e4cb8c1e6d801e185bfc42bb0753f8e2a30efc70db054c7`.
+- Browser container ran `--network none`, 1 GB shm and a read-only host worktree mount. Only the disposable container copy was adjusted for the Next 16 dev harness (`allowedDevOrigins: ["127.0.0.1"]` and direct Node CLI invocation); host source was unchanged.
+- Host Git status SHA-256 remained `94296aa9e2bc4fdd55c5365025e57a5f396f0e56d60ae4a40a8beac3da498130` before and after the successful qualification.
+- Earlier browser attempts failed only in disposable harness setup / pre-interaction hydration conditions and did not mutate source; they are not counted as FE11 product failures.
+
+FILES:
+- `frontend/src/app/(foundation)/statistics/page.tsx`
+- `frontend/src/components/statistics-center.tsx`
+- `frontend/src/components/shell.tsx`
+- `frontend/src/lib/operational/client.ts`
+- `frontend/src/lib/operational/contracts.ts`
+- `frontend/tests/unit/statistics.test.ts`
+- `frontend/tests/unit/operational.test.ts`
+- `frontend/tests/e2e/statistics.spec.ts`
+
+NEXT:
+- FE12 Security & Authority Explorer: use current authority/capability metadata and existing safe preflight semantics only; do not fabricate risk scores, vulnerability findings or authorization outcomes.
+
 ## Phase commit ledger
 
 | Phase | Commit | Tree | Parent | Subject | Tests |
@@ -353,4 +401,5 @@ NEXT:
 | FE7 | `af878246675adf203670e2b36e06e54fed477962` | `e9fadd93e4c44c20108dd87ea3e8456a019e2d8b` | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `feat(frontend): add IDE session readiness center` | Local gates PASS; governed Chromium 2/2 PASS |
 | FE8 | `424bf907f1677f0cd4c22467bb06b41dc105c96f` | `7725a0d111744830fa1c03d1b2db364176a70111` | `af878246675adf203670e2b36e06e54fed477962` | `feat(frontend): add GitHub product experience` | Local gates PASS; governed Chromium 11/11 PASS |
 | FE9 | `438ab446093d43a3251bd5beaf5ef76d344b4671` | `3dc669788e459d47ac830af2168de3eac281bd40` | `424bf907f1677f0cd4c22467bb06b41dc105c96f` | `feat(frontend): add Local AI model readiness` | Local gates PASS; governed Chromium 2/2 PASS |
-| FE10 | Pending immutable commit | Pending | `438ab446093d43a3251bd5beaf5ef76d344b4671` | `feat(frontend): add monitoring metadata center` | Local gates PASS; governed Chromium 2/2 PASS |
+| FE10 | `d8e335812b48a520c7f520dcccfd664609d5ff80` | `e1bf058c49ed99d2b44e9fa82e645ebcd6574922` | `438ab446093d43a3251bd5beaf5ef76d344b4671` | `feat(frontend): add monitoring metadata center` | Local gates PASS; governed Chromium 2/2 PASS |
+| FE11 | Pending immutable commit | Pending | `d8e335812b48a520c7f520dcccfd664609d5ff80` | `feat(frontend): add bounded statistics center` | Local gates PASS; governed Chromium 3/3 PASS |

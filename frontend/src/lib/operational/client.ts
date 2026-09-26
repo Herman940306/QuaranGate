@@ -18,6 +18,10 @@ export function createOperationalClient(transport?: Transport) {
     gitDiff: (target: string, signal?: AbortSignal) => read("git_diff", { target: logical(target) }, decode.gitOutput, signal),
     gitLog: (target: string, signal?: AbortSignal) => read("git_log", { target: logical(target) }, decode.gitOutput, signal),
     repositories: (signal?: AbortSignal) => read("github_repositories", {}, decode.repositories, signal),
+    statistics: (windowMs: number, signal?: AbortSignal) => {
+      if (!Number.isSafeInteger(windowMs) || windowMs < 60_000 || windowMs > 86_400_000) throw new OperationalError("unknown");
+      return read("control_center_query", { view: "statistics", sinceMs: windowMs }, decode.statistics, signal);
+    },
     control: (view: decode.ControlView, signal?: AbortSignal) => { if (!decode.controlViews.includes(view)) throw new OperationalError("unknown"); return read("control_center_query", { view, limit: 50 }, value => decode.control(view, value), signal); },
   };
 }
