@@ -404,6 +404,12 @@ NEXT:
 | FE10 | `d8e335812b48a520c7f520dcccfd664609d5ff80` | `e1bf058c49ed99d2b44e9fa82e645ebcd6574922` | `438ab446093d43a3251bd5beaf5ef76d344b4671` | `feat(frontend): add monitoring metadata center` | Local gates PASS; governed Chromium 2/2 PASS |
 | FE11 | `57ca3679c0386612d0117ff9a4b36e1c8d1bdab9` | `5ddbf22873fabeeda83f81f877adf39bf4f1befc` | `d8e335812b48a520c7f520dcccfd664609d5ff80` | `feat(frontend): add bounded statistics center` | Local gates PASS; governed Chromium 3/3 PASS |
 
+| FE11 clean closure | `6a5caa4fbc19f33d3ada95b1545b5cfc9a382117` | `5a16bbf5e5fba07a5312e85671a77fbfefb81b07` | `076394aae607a1855243e5ff555d2f63017da579` | `chore(frontend): freeze clean FE11 generated type closure` | See phase checkpoint; independent review required |
+| FE12 | `7d6cf14db578c45c19ba137b3b1a9a65c90478b0` | `c2b0b746544f28e23b56ab23f340635bc35370ad` | `6a5caa4fbc19f33d3ada95b1545b5cfc9a382117` | `feat(frontend): add server-backed authority explorer` | See phase checkpoint; independent review required |
+| FE13 | `6fd8a6d64b91763a2d6f3bed0b2fa6e0f1482d52` | `61f03907de229958fc991796f124646116e14950` | `7d6cf14db578c45c19ba137b3b1a9a65c90478b0` | `feat(frontend): add bounded audit and evidence metadata` | See phase checkpoint; independent review required |
+| FE14 | `eda4461fb589062b6f8884461fe96a06a3d760af` | `7c1b7dac19a964b9699eadab84d4fd33033e30a8` | `6fd8a6d64b91763a2d6f3bed0b2fa6e0f1482d52` | `feat(frontend): add read-only recovery and backup boundaries` | See phase checkpoint; independent review required |
+| FE15 | `91c998ca416a49f86493a1c672561cfaf45b2d43` | `c8ac3bf0a67bcac928e51c91e2b9a8309a45e606` | `eda4461fb589062b6f8884461fe96a06a3d760af` | `feat(frontend): add truthful read-only settings surface` | See phase checkpoint; independent review required |
+| FE16 | `f1d80955859c01fbcca37a8e8c5dafca04a07c6d` | `540741d3433933cd00bc6d955398f35f383d5916` | `91c998ca416a49f86493a1c672561cfaf45b2d43` | `feat(frontend): add bounded Tool Lab discovery and navigation` | See phase checkpoint; independent review required |
 
 ## FE11 continuation verification — 2026-09-26
 
@@ -529,3 +535,113 @@ Changed paths: Tool Lab route/component; discovery DTO/comparison; fixed transpo
 Integration limitation: browser qualification uses explicit synthetic interception. Actual deployed tool discovery/identity/adapter integration is unverified and cannot be inferred from fixture name matches. No production or live mutation was attempted.
 
 NEXT: frontend-wide convergence gate with all 21 required product surfaces, full unit/browser/build/audit/source-secret/persistence/route/navigation checks and preservation of accepted visual evidence.
+
+
+## Immutable continuation path inventory
+
+These paths are mechanically derived from each frozen commit. Implementation freeze is not independent acceptance.
+
+### FE11 clean closure changed paths
+
+- `docs/frontend/CODEX_FRONTEND_CONTINUATION_HANDOFF.md`
+- `frontend/next-env.d.ts`
+
+### FE12 changed paths
+
+- `docs/frontend/CODEX_FRONTEND_CONTINUATION_HANDOFF.md`
+- `docs/frontend/evidence/FE12/security-1280.png`
+- `docs/frontend/evidence/FE12/security-360.png`
+- `frontend/README.md`
+- `frontend/src/app/(foundation)/security/page.tsx`
+- `frontend/src/components/security-explorer.tsx`
+- `frontend/src/lib/operational/authority.ts`
+- `frontend/src/lib/operational/client.ts`
+- `frontend/src/lib/operational/tool-catalog.ts`
+- `frontend/tests/e2e/security.spec.ts`
+- `frontend/tests/unit/authority.test.ts`
+- `frontend/tests/unit/operational.test.ts`
+
+### FE13 changed paths
+
+- `docs/frontend/CODEX_FRONTEND_CONTINUATION_HANDOFF.md`
+- `docs/frontend/evidence/FE13/audit-1280.png`
+- `docs/frontend/evidence/FE13/audit-360.png`
+- `frontend/README.md`
+- `frontend/src/app/(foundation)/audit-evidence/page.tsx`
+- `frontend/src/components/audit-evidence.tsx`
+- `frontend/src/components/shell.tsx`
+- `frontend/src/lib/operational/activity.ts`
+- `frontend/src/lib/operational/client.ts`
+- `frontend/tests/e2e/audit-evidence.spec.ts`
+- `frontend/tests/unit/activity.test.ts`
+- `frontend/tests/unit/operational.test.ts`
+
+### FE14 changed paths
+
+- `docs/frontend/CODEX_FRONTEND_CONTINUATION_HANDOFF.md`
+- `docs/frontend/evidence/FE14/recovery-1280.png`
+- `docs/frontend/evidence/FE14/recovery-360.png`
+- `frontend/README.md`
+- `frontend/src/app/(foundation)/recovery-backups/page.tsx`
+- `frontend/src/components/recovery-backups.tsx`
+- `frontend/src/components/shell.tsx`
+- `frontend/src/lib/operational/client.ts`
+- `frontend/src/lib/operational/recovery.ts`
+- `frontend/tests/e2e/recovery-backups.spec.ts`
+- `frontend/tests/unit/operational.test.ts`
+- `frontend/tests/unit/recovery.test.ts`
+
+### FE15 changed paths
+
+- `docs/frontend/CODEX_FRONTEND_CONTINUATION_HANDOFF.md`
+- `docs/frontend/evidence/FE15/settings-1280.png`
+- `docs/frontend/evidence/FE15/settings-360.png`
+- `frontend/README.md`
+- `frontend/src/app/(foundation)/settings/page.tsx`
+- `frontend/src/components/settings-center.tsx`
+- `frontend/src/components/shell.tsx`
+- `frontend/src/lib/settings.ts`
+- `frontend/tests/e2e/settings.spec.ts`
+- `frontend/tests/unit/settings.test.ts`
+
+### FE16 changed paths
+
+- `docs/frontend/CODEX_FRONTEND_CONTINUATION_HANDOFF.md`
+- `docs/frontend/evidence/FE16/tools-1280.png`
+- `docs/frontend/evidence/FE16/tools-360.png`
+- `frontend/README.md`
+- `frontend/src/app/(foundation)/tool-lab/page.tsx`
+- `frontend/src/components/command-discovery.tsx`
+- `frontend/src/components/shell.tsx`
+- `frontend/src/components/tool-lab.tsx`
+- `frontend/src/lib/navigation.ts`
+- `frontend/src/lib/operational/client.ts`
+- `frontend/src/lib/operational/tool-catalog.ts`
+- `frontend/src/lib/operational/tool-discovery.ts`
+- `frontend/src/lib/operational/transport.ts`
+- `frontend/tests/e2e/tool-lab.spec.ts`
+- `frontend/tests/unit/operational.test.ts`
+- `frontend/tests/unit/tool-lab.test.ts`
+
+
+## Frontend convergence checkpoint — 2026-09-26
+
+STATUS: IMPLEMENTATION COMPLETE / QUALIFIED CANDIDATE — INDEPENDENT REVIEW REQUIRED. This checkpoint supersedes earlier next-phase and resolved blocker statements; historical evidence is preserved.
+
+FE16 freeze: commit `f1d80955859c01fbcca37a8e8c5dafca04a07c6d`, tree `540741d3433933cd00bc6d955398f35f383d5916`, parent `91c998ca416a49f86493a1c672561cfaf45b2d43`, subject `feat(frontend): add bounded Tool Lab discovery and navigation`.
+
+All 21 required primary surfaces are present with existing accepted names and navigation: Overview, Agent Arena (Chat/governed agent experience), Projects, Targets, Files, Terminal, Git, Processes, Agents, Jobs, Review & Approvals, IDE Sessions, GitHub, Local AI & Models, Monitoring, Statistics, Security & Access, Audit & Evidence, Recovery & Backups, Settings and Tool Lab. A source unit gate checks all route files and shell entries. Production browser qualification visits every route at 1280/360px. No accepted earlier route was removed or renamed.
+
+Final gates: lint PASS (167 files); typecheck PASS; full frontend unit PASS (164/164); production build PASS (36 static routes); npm audit --audit-level=high PASS (zero vulnerabilities); git diff --check PASS; bounded high-signal frontend source/test secret scan PASS (157 files; reproducible scan-source.py and hash inventory); development Chromium suite PASS (72/72); production Chromium convergence PASS (2/2, each all 21 routes); existing production smoke PASS (fifteen product routes plus root, synthetic previews absent, headers and storage). Accessibility axe zero violations across all 21 production routes at both widths and existing workflow tests. Keyboard, focus restoration/trapping, reduced motion, 200% zoom, authority warnings, identity/authorization separation, COMPLETED != APPLIED, stale/error/unavailable fail-closed behavior and expected-vs-live catalog drift regressions pass. Strict production localStorage/sessionStorage/IndexedDB/cookie assertions remain zero. Secret scan is pattern-based and bounded, not exhaustive dedicated scanner assurance.
+
+Investigated failures: initial full run 71/74 passed. Two strict IndexedDB assertions failed because installed Next development debug-channel.js creates __next_debug_channel; classified TEST/HARNESS FAILURE. The production-only harness retains strict zero-persistence assertions, rather than disabling security or permitting product storage. One zoom test found 13px overflow introduced by the palette header control; classified PRODUCT FAILURE and repaired with minimal account-context wrapping/max-width CSS. Focused zoom rerun and final full suite pass. An intermediate run was interrupted by the owner's pause (7 passed, 3 interrupted, 62 not run); it is not represented as qualification. After the owner resumed, final full run passed. All local servers are disposable loopback-only.
+
+Visual preservation: eight historical FE2/FE3 PNGs were rewritten by existing browser tests. Generated versions are preserved separately under evidence/CONVERGENCE/generated-final; original bytes restored from pre-run backups. All 22 pre-existing tracked PNG SHA-256 values verified. snapshot-preservation.json records the original hashes. New production desktop/narrow images inspected and preserved as convergence-1280.png and convergence-360.png. Earlier initial-run versions remain in /tmp/qg-convergence-rewritten-pngs; original failure log is preserved in evidence. No accepted visual bytes were changed. Evidence text logs are whitespace-normalized for diff qualification; raw/normalized SHA-256 values are recorded in log-provenance.json, with original raw logs retained in /tmp.
+
+Changed convergence paths: frontend README, package script, dev/production Playwright configs, globals.css header fix, convergence unit/browser tests, this handoff and new evidence/CONVERGENCE artifacts. No backend, dependency, lockfile, runtime policy, deployment or browser credential change. Production build restored generated next-env.d.ts to exact frozen bytes; that file has no staged change. New frontend files are registered in README.
+
+Remaining contract/integration boundaries: live product identity and FE3 semantic adapters remain integration-pending; deployment/paid entitlement/runtime/owner-host are not qualified. Audit request-to-job/evidence/review/apply lineage and recovery quarantine/inventory/evidence metadata are unavailable at documented backend contracts. Features stop honestly at UNKNOWN/NOT_AVAILABLE with separately accepted backend requests documented in FE13/FE14. These gaps are not represented as working backend capabilities. Real deployed discovery has not been qualified by synthetic browser fixtures. No implementation blocker remains for these bounded surfaces; independent acceptance and integration remain open.
+
+Separate owner-requested editor configuration: repaired only the QuaranGate Authorization input reference in /home/herman/.vscode-server/data/User/mcp.json to its existing password:true promptString. Endpoint and other configuration preserved; no raw credentials entered, printed or written. Opened using supported code --reuse-window. The available tools cannot launch an interactive editor terminal; VS Code prompts securely when the QuaranGate server is started. One credential accepts either OAuth bearer token or static API key under current gateway authentication; both are not required. The callable QuaranGate_MCP connector returned metadata-only authority successfully, which is separate from VS Code activation and frontend integration. No live operation/mutation followed that read. This editor configuration is outside the frontend commit.
+
+NEXT_EXACT_ACTION: freeze the convergence implementation/evidence, record immutable commit/tree/parent/subject and leave this lane clean for independent review. Do not merge, push, deploy or self-accept.

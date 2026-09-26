@@ -1,0 +1,245 @@
+
+> @quarangate/frontend@0.1.0 test:e2e
+> playwright test --output test-results/convergence-full
+
+[WebServer] (node:301636) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:301648) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:301819) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 74 tests using 3 workers
+
+(node:301849) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:301859) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:301852) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   2 [chromium] › tests/e2e/audit-evidence.spec.ts:4:33 › FE13 safe metadata and stopped lineage at 1280 (4.5s)
+  ✓   1 [chromium] › tests/e2e/approvals.spec.ts:16:3 › FE6 approval inbox is responsive, accessible and authority-honest at 1280 (4.6s)
+  ✓   3 [chromium] › tests/e2e/arena.spec.ts:18:3 › Agent Arena is responsive and honest at 1280 (4.7s)
+  ✓   5 [chromium] › tests/e2e/approvals.spec.ts:16:3 › FE6 approval inbox is responsive, accessible and authority-honest at 360 (3.0s)
+  ✓   4 [chromium] › tests/e2e/audit-evidence.spec.ts:4:33 › FE13 safe metadata and stopped lineage at 360 (3.1s)
+  ✓   6 [chromium] › tests/e2e/arena.spec.ts:18:3 › Agent Arena is responsive and honest at 360 (3.8s)
+  ✓   8 [chromium] › tests/e2e/audit-evidence.spec.ts:16:1 › FE13 unavailable does not create evidence (1.8s)
+[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)
+  ✓   7 [chromium] › tests/e2e/approvals.spec.ts:28:1 › FE6 explicit approval records a decision without implying execution (3.6s)
+  ✘  10 [chromium] › tests/e2e/convergence.spec.ts:4:32 › all 21 product surfaces: shell, axe, unknown state and storage at 1280 (2.9s)
+(node:303651) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   9 [chromium] › tests/e2e/arena.spec.ts:41:1 › synthetic Arena dispatch, review and explicit apply remain separate (5.6s)
+[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)
+  ✓  11 [chromium] › tests/e2e/approvals.spec.ts:40:1 › FE6 stale and unavailable decisions fail closed (3.8s)
+  ✓  13 [chromium] › tests/e2e/foundation.spec.ts:32:1 › foundation shell is honest, responsive, and free of persistent browser data (1.3s)
+  ✘  12 [chromium] › tests/e2e/convergence.spec.ts:4:32 › all 21 product surfaces: shell, axe, unknown state and storage at 360 (2.9s)
+  ✓  15 [chromium] › tests/e2e/foundation.spec.ts:60:1 › appearance exposes every approved value and resets on reload (1.5s)
+(node:304181) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  14 [chromium] › tests/e2e/github-experience.spec.ts:22:3 › FE8 GitHub experience is governed and responsive at 1280 (4.2s)
+  ✓  17 [chromium] › tests/e2e/ide-sessions.spec.ts:21:3 › FE7 IDE Session Center stays metadata-only at 1280 (4.3s)
+  ✓  16 [chromium] › tests/e2e/foundation.spec.ts:82:1 › design route covers validation, tabs, dialog focus, drawer, toast and accessibility (5.7s)
+  ✓  18 [chromium] › tests/e2e/github-experience.spec.ts:22:3 › FE8 GitHub experience is governed and responsive at 360 (4.3s)
+[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)
+  ✓  19 [chromium] › tests/e2e/ide-sessions.spec.ts:21:3 › FE7 IDE Session Center stays metadata-only at 360 (2.4s)
+  ✓  20 [chromium] › tests/e2e/foundation.spec.ts:135:1 › reduced motion keeps state and removes spatial movement (1.6s)
+  ✓  21 [chromium] › tests/e2e/identity.spec.ts:22:1 › production-shaped default sign-in and account remain integration pending (2.3s)
+  ✓  22 [chromium] › tests/e2e/models.spec.ts:4:3 › FE9 Local AI models remains readiness-only at 1280 (2.7s)
+  ✓  25 [chromium] › tests/e2e/models.spec.ts:4:3 › FE9 Local AI models remains readiness-only at 360 (3.5s)
+  ✓  24 [chromium] › tests/e2e/identity.spec.ts:34:3 › signed-out and active synthetic account, appearance and axe at 1280 (8.1s)
+  ✓  26 [chromium] › tests/e2e/monitoring.spec.ts:16:3 › FE10 Monitoring stays metadata-only at 1280 (4.3s)
+  ✓  23 [chromium] › tests/e2e/foundation.spec.ts:148:1 › local fonts and representative theme combinations remain accessible (10.8s)
+  ✓  27 [chromium] › tests/e2e/identity.spec.ts:51:3 › keyboard workspace switch and stale conflict at 1280 (3.8s)
+  ✓  28 [chromium] › tests/e2e/monitoring.spec.ts:16:3 › FE10 Monitoring stays metadata-only at 360 (2.9s)
+  ✓  29 [chromium] › tests/e2e/foundation.spec.ts:178:1 › forced colors preserves navigation, controls and modal keyboard operation (4.6s)
+  ✘  32 [chromium] › tests/e2e/foundation.spec.ts:205:1 › 200 percent layout zoom keeps desktop and narrow actions and overlays reachable (3.6s)
+  ✓  31 [chromium] › tests/e2e/operational.spec.ts:28:3 › overview and targets are truthful and accessible at 1280 (6.1s)
+(node:307554) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  30 [chromium] › tests/e2e/identity.spec.ts:34:3 › signed-out and active synthetic account, appearance and axe at 360 (6.7s)
+  ✓  35 [chromium] › tests/e2e/identity.spec.ts:51:3 › keyboard workspace switch and stale conflict at 360 (4.1s)
+  ✓  33 [chromium] › tests/e2e/operational.spec.ts:28:3 › overview and targets are truthful and accessible at 360 (6.0s)
+  ✓  34 [chromium] › tests/e2e/product.spec.ts:26:3 › provider inventory, setup, write-only lifecycle and visual evidence at 1280 (6.5s)
+  ✓  37 [chromium] › tests/e2e/operational.spec.ts:43:1 › known-job lookup preserves completion, safe evidence and no discovery (3.6s)
+  ✓  38 [chromium] › tests/e2e/product.spec.ts:26:3 › provider inventory, setup, write-only lifecycle and visual evidence at 360 (4.9s)
+  ✓  39 [chromium] › tests/e2e/operational.spec.ts:53:3 › forbidden is explicit and does not leak backend copy (3.0s)
+  ✓  41 [chromium] › tests/e2e/operational.spec.ts:53:3 › unavailable is explicit and does not leak backend copy (2.8s)
+[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)
+  ✓  42 [chromium] › tests/e2e/operational.spec.ts:55:1 › keyboard navigation, reduced motion and appearance survive product navigation (1.3s)
+  ✓  40 [chromium] › tests/e2e/product.spec.ts:65:1 › provider validation, stale mutation, unavailable, forbidden and empty states (7.1s)
+  ✓  36 [chromium] › tests/e2e/identity.spec.ts:65:1 › principal and session lifecycle states render safely with axe (15.1s)
+  ✓  43 [chromium] › tests/e2e/operational.spec.ts:60:1 › Git failure/truncation, backend availability and GitHub authority stay distinct (5.2s)
+  ✓  44 [chromium] › tests/e2e/product.spec.ts:85:1 › profile editor invalid input, save, edit and workspace isolation (4.4s)
+  ✓  45 [chromium] › tests/e2e/identity.spec.ts:70:1 › workspace membership denial and conflict never retain account or workspace choices (4.4s)
+  ✓  47 [chromium] › tests/e2e/product.spec.ts:117:1 › slow request cancellation and identity switch suppress late product results (2.9s)
+  ✓  48 [chromium] › tests/e2e/identity.spec.ts:75:1 › workspace/account changes drop receipts and suppress late operational output (2.8s)
+  ✓  46 [chromium] › tests/e2e/operational.spec.ts:66:1 › Control Center and Security views remain metadata-only with generated time (6.4s)
+  ✓  51 [chromium] › tests/e2e/operational.spec.ts:75:1 › cancelled reads reject late output (1.2s)
+  ✓  50 [chromium] › tests/e2e/identity.spec.ts:80:1 › pending switch cancel clears account, late reply ignored; explicit check reconciles (3.3s)
+  ✓  49 [chromium] › tests/e2e/product.spec.ts:130:1 › asynchronous provider submit clears the field before settlement and cancellation hides late results (3.8s)
+[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)
+  ✓  52 [chromium] › tests/e2e/recovery-backups.spec.ts:3:33 › FE14 read-only recovery truth at 1280 (3.6s)
+  ✓  53 [chromium] › tests/e2e/identity.spec.ts:85:1 › reduced motion and keyboard shell navigation retain appearance (3.2s)
+  ✓  54 [chromium] › tests/e2e/product.spec.ts:149:1 › production-shaped provider and profile routes stay integration pending (4.2s)
+[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)
+  ✓  55 [chromium] › tests/e2e/recovery-backups.spec.ts:3:33 › FE14 read-only recovery truth at 360 (3.7s)
+  ✓  56 [chromium] › tests/e2e/security.spec.ts:12:34 › FE12 server authority and advisory denial at 1280 (4.3s)
+  ✓  57 [chromium] › tests/e2e/product.spec.ts:156:1 › reduced motion, forced colors and 200 percent layout zoom preserve product controls (4.1s)
+  ✓  58 [chromium] › tests/e2e/recovery-backups.spec.ts:8:1 › FE14 unavailable is never recovered (1.5s)
+  ✓  59 [chromium] › tests/e2e/security.spec.ts:12:34 › FE12 server authority and advisory denial at 360 (4.2s)
+  ✓  60 [chromium] › tests/e2e/product.spec.ts:170:1 › desktop 200 percent layout zoom and keyboard-only provider editor remain reachable (4.1s)
+  ✓  61 [chromium] › tests/e2e/settings.spec.ts:3:33 › FE15 local appearance and read-only state at 1280 (5.2s)
+  ✓  62 [chromium] › tests/e2e/security.spec.ts:31:1 › FE12 unavailable authority remains closed (2.9s)
+  ✓  63 [chromium] › tests/e2e/statistics.spec.ts:26:3 › FE11 Statistics stays bounded and snapshot-only at 1280 (3.5s)
+  ✓  64 [chromium] › tests/e2e/settings.spec.ts:3:33 › FE15 local appearance and read-only state at 360 (3.7s)
+  ✓  67 [chromium] › tests/e2e/settings.spec.ts:10:1 › FE15 unavailable backend state has no editor (1.5s)
+  ✓  66 [chromium] › tests/e2e/statistics.spec.ts:26:3 › FE11 Statistics stays bounded and snapshot-only at 360 (3.0s)
+  ✓  65 [chromium] › tests/e2e/tool-lab.spec.ts:4:32 › FE16 exact discovery, missing/extra and safe navigation at 1280 (5.6s)
+  ✓  69 [chromium] › tests/e2e/statistics.spec.ts:45:1 › FE11 changes only the bounded current window (1.8s)
+  ✓  71 [chromium] › tests/e2e/statistics.spec.ts:56:1 › FE11 hides the old window when the new snapshot is unavailable (1.9s)
+  ✓  68 [chromium] › tests/e2e/workstation.spec.ts:19:3 › FE4 files and processes respect read and identity boundaries at 1280 (5.9s)
+  ✓  70 [chromium] › tests/e2e/tool-lab.spec.ts:4:32 › FE16 exact discovery, missing/extra and safe navigation at 360 (5.4s)
+  ✓  73 [chromium] › tests/e2e/tool-lab.spec.ts:11:1 › FE16 discovery failure never claims match (1.3s)
+  ✓  72 [chromium] › tests/e2e/workstation.spec.ts:19:3 › FE4 files and processes respect read and identity boundaries at 360 (4.3s)
+  ✓  74 [chromium] › tests/e2e/workstation.spec.ts:37:1 › FE4 terminal and target control stay gated without product identity (2.4s)
+
+
+  1) [chromium] › tests/e2e/convergence.spec.ts:4:32 › all 21 product surfaces: shell, axe, unknown state and storage at 1280
+
+    Error: /overview
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 1
+
+      Object {
+    -   "databases": 0,
+    +   "databases": 1,
+        "hash": "",
+        "local": 0,
+        "search": "",
+        "session": 0,
+      }
+
+       9 |     await expect(page.locator(`aside.rail nav a[href="${route}"]`)).toHaveCount(1);await expect(page.getByText("Product authority is enforced by the server.")).toBeVisible();
+      10 |     expect((await new AxeBuilder({page}).analyze()).violations,route).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth-document.documentElement.clientWidth),route).toBeLessThanOrEqual(1);
+    > 11 |     expect(await page.evaluate(async()=>({local:localStorage.length,session:sessionStorage.length,databases:(await indexedDB.databases()).length,search:location.search,hash:location.hash})),route).toEqual({local:0,session:0,databases:0,search:"",hash:""});expect(await context.cookies()).toEqual([]);
+         |                                                                                                                                                                                                      ^
+      12 |   }
+      13 |   expect(errors).toEqual([]);expect(await page.evaluate(()=>matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
+      14 |   if(width===360){await page.getByRole("button",{name:"Open navigation"}).focus();await page.keyboard.press("Enter");for(const route of primary)await expect(page.getByRole("dialog").locator(`a[href="${route}"]`)).toBeVisible();await page.keyboard.press("Escape");await expect(page.getByRole("button",{name:"Open navigation"})).toBeFocused();}
+        at /home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/convergence.spec.ts:11:198
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/convergence-full/convergence-all-21-product-7ac31-n-state-and-storage-at-1280-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/convergence-full/convergence-all-21-product-7ac31-n-state-and-storage-at-1280-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/convergence-full/convergence-all-21-product-7ac31-n-state-and-storage-at-1280-chromium/video-1.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/convergence-full/convergence-all-21-product-7ac31-n-state-and-storage-at-1280-chromium/error-context.md
+
+    attachment #5: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/convergence-full/convergence-all-21-product-7ac31-n-state-and-storage-at-1280-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/convergence-full/convergence-all-21-product-7ac31-n-state-and-storage-at-1280-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [chromium] › tests/e2e/convergence.spec.ts:4:32 › all 21 product surfaces: shell, axe, unknown state and storage at 360
+
+    Error: /overview
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 1
+
+      Object {
+    -   "databases": 0,
+    +   "databases": 1,
+        "hash": "",
+        "local": 0,
+        "search": "",
+        "session": 0,
+      }
+
+       9 |     await expect(page.locator(`aside.rail nav a[href="${route}"]`)).toHaveCount(1);await expect(page.getByText("Product authority is enforced by the server.")).toBeVisible();
+      10 |     expect((await new AxeBuilder({page}).analyze()).violations,route).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth-document.documentElement.clientWidth),route).toBeLessThanOrEqual(1);
+    > 11 |     expect(await page.evaluate(async()=>({local:localStorage.length,session:sessionStorage.length,databases:(await indexedDB.databases()).length,search:location.search,hash:location.hash})),route).toEqual({local:0,session:0,databases:0,search:"",hash:""});expect(await context.cookies()).toEqual([]);
+         |                                                                                                                                                                                                      ^
+      12 |   }
+      13 |   expect(errors).toEqual([]);expect(await page.evaluate(()=>matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
+      14 |   if(width===360){await page.getByRole("button",{name:"Open navigation"}).focus();await page.keyboard.press("Enter");for(const route of primary)await expect(page.getByRole("dialog").locator(`a[href="${route}"]`)).toBeVisible();await page.keyboard.press("Escape");await expect(page.getByRole("button",{name:"Open navigation"})).toBeFocused();}
+        at /home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/convergence.spec.ts:11:198
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/convergence-full/convergence-all-21-product-c8931-wn-state-and-storage-at-360-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/convergence-full/convergence-all-21-product-c8931-wn-state-and-storage-at-360-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/convergence-full/convergence-all-21-product-c8931-wn-state-and-storage-at-360-chromium/video-1.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/convergence-full/convergence-all-21-product-c8931-wn-state-and-storage-at-360-chromium/error-context.md
+
+    attachment #5: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/convergence-full/convergence-all-21-product-c8931-wn-state-and-storage-at-360-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/convergence-full/convergence-all-21-product-c8931-wn-state-and-storage-at-360-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) [chromium] › tests/e2e/foundation.spec.ts:205:1 › 200 percent layout zoom keeps desktop and narrow actions and overlays reachable
+
+    Error: expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 1
+    Received:    13
+
+      27 | async function assertNoPageOverflow(page: Page) {
+      28 |   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    > 29 |   expect(overflow).toBeLessThanOrEqual(1);
+         |                    ^
+      30 | }
+      31 |
+      32 | test("foundation shell is honest, responsive, and free of persistent browser data", async ({ page }) => {
+        at assertNoPageOverflow (/home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/foundation.spec.ts:29:20)
+        at /home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/foundation.spec.ts:213:5
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/convergence-full/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/convergence-full/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/convergence-full/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/convergence-full/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/convergence-full/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3 failed
+    [chromium] › tests/e2e/convergence.spec.ts:4:32 › all 21 product surfaces: shell, axe, unknown state and storage at 1280
+    [chromium] › tests/e2e/convergence.spec.ts:4:32 › all 21 product surfaces: shell, axe, unknown state and storage at 360
+    [chromium] › tests/e2e/foundation.spec.ts:205:1 › 200 percent layout zoom keeps desktop and narrow actions and overlays reachable
+  71 passed (1.8m)

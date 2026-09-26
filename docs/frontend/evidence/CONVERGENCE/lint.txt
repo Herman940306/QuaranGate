@@ -1,0 +1,5 @@
+
+> @quarangate/frontend@0.1.0 lint
+> biome lint .
+
+Checked 167 files in 226ms. No fixes applied.

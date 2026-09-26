@@ -269,3 +269,22 @@ Existing shell owns navigation/context invalidation. Existing AppearanceControls
 | `tests/e2e/tool-lab.spec.ts` | exact/drift/palette/focus/axe/storage/responsive; no exports | FE16 tests; browser state | Playwright/synthetic tools/list; actual deployment discovery remains unverified | Test fixture |
 
 Existing transport adds only fixed bounded MCP discovery (10 pages, 1,000 tools, 2 MB per page, 30-second aggregate timeout); client exposes discoverTools. Existing catalog is checked against current gateway registrations, not a hard-coded historical tool count. Extra tools have UNKNOWN authority and remain unsupported. Destructive/execution requests stay in existing governed workflows; palette navigation never dispatches. Browser credentials/configuration are unchanged.
+
+
+## Frontend convergence qualification
+
+| File | Purpose / exports | Feature / owned state | API / future integration | Readiness |
+|---|---|---|---|---|
+| `tests/unit/convergence.test.ts` | required 21 routes and shell coverage; no exports | Convergence; none | current route files/navigation; deployment separate | Test fixture |
+| `tests/e2e/convergence.spec.ts` | 21 routes at 1280/360, axe, storage/IDB/cookies, focus/keyboard/reduced-motion; no exports | Convergence; ephemeral browser | explicitly unavailable MCP fixture; no live integration/acceptance claim | Test fixture |
+
+Chat/governed agent experience uses the existing accepted `/arena` route. No accepted route is renamed or removed. Bounded tables own intentional horizontal scrolling. Convergence checks source/browser behavior; identity/adapter/live deployment acceptance remains separate.
+
+
+`npm run test:e2e` qualifies development-only fixture workflows. `npm run test:e2e:production` requires a prior production build and qualifies all 21 primary product routes, including strict zero IndexedDB/cookie/storage checks. The installed Next development debug channel creates its own IndexedDB database; strict production persistence is therefore checked on the production bundle without disabling framework behavior or relaxing assertions.
+
+| File | Purpose / exports | Feature / owned state | API / future integration | Readiness |
+|---|---|---|---|---|
+| `playwright.production.config.ts` | fixed loopback production harness; default config | Production convergence; temporary runner/server | existing production start script; no deployed/live backend claim | Test harness |
+
+Existing package scripts add only the production browser qualification command; no dependency changes. Development harness excludes the production-only convergence spec. Existing header CSS allows the palette control to wrap at magnified/narrow layouts.

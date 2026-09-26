@@ -1,0 +1,103 @@
+{
+  "restored_paths": [
+    "docs/frontend/fe2-evidence/fe2-account-1280.png",
+    "docs/frontend/fe2-evidence/fe2-account-360.png",
+    "docs/frontend/fe2-evidence/fe2-stale-1280.png",
+    "docs/frontend/fe2-evidence/fe2-stale-360.png",
+    "docs/frontend/fe3-evidence/fe3-forced-zoom-360.png",
+    "docs/frontend/fe3-evidence/fe3-profile-1280.png",
+    "docs/frontend/fe3-evidence/fe3-provider-1280.png",
+    "docs/frontend/fe3-evidence/fe3-provider-360.png"
+  ],
+  "baseline_pngs_verified": 22,
+  "original_hashes": [
+    {
+      "path": "docs/frontend/evidence/FE12/security-1280.png",
+      "sha256": "df7853395420225a39abe5a4454e5fb15bf80a3a7ddbd58931ddf0c9e0d58cce"
+    },
+    {
+      "path": "docs/frontend/evidence/FE12/security-360.png",
+      "sha256": "095b624272628be266312f4fca37a22b975a2838c7c89aa624264549cc0a5a99"
+    },
+    {
+      "path": "docs/frontend/evidence/FE13/audit-1280.png",
+      "sha256": "140dca032a0951ddeacf99f659b3a51695ea006fbfb1340ea4b1cf1ea77b5258"
+    },
+    {
+      "path": "docs/frontend/evidence/FE13/audit-360.png",
+      "sha256": "d3bb43379938ca4eef735712953c9ad548b031cdaa0d22b6b26cf3e21bbe43c2"
+    },
+    {
+      "path": "docs/frontend/evidence/FE14/recovery-1280.png",
+      "sha256": "427a06ec45191fa45860cf40401b0d167f89f1ca0359bd9f100943809c05fa15"
+    },
+    {
+      "path": "docs/frontend/evidence/FE14/recovery-360.png",
+      "sha256": "7ca2b2ab2b0f0f414a9a5a14a60864bce1509f69ceec8c5f611dd4ec92c08769"
+    },
+    {
+      "path": "docs/frontend/evidence/FE15/settings-1280.png",
+      "sha256": "051ae3f4630d8f92b109cea693a119867348c9d4bec43dfe680d523dbb3733c1"
+    },
+    {
+      "path": "docs/frontend/evidence/FE15/settings-360.png",
+      "sha256": "75b91530b7a0aa5ccde7160585b1971e327c401aac65322b2eae3f441e6ab913"
+    },
+    {
+      "path": "docs/frontend/evidence/FE16/tools-1280.png",
+      "sha256": "f7c9ea510bdc0fa6cadd904c3ce7011ec60ca29e16081b4695971520b3ed8802"
+    },
+    {
+      "path": "docs/frontend/evidence/FE16/tools-360.png",
+      "sha256": "1be07534e3af195f53e753c38fa2c4039bb5b421ef1545e7fcdfdff42dc39b93"
+    },
+    {
+      "path": "docs/frontend/fe1-evidence/fe1-overview-1280.png",
+      "sha256": "1984db13ecc0afb36e193fa42f85eb24feb961dd766f547a2199c8c65dafffd4"
+    },
+    {
+      "path": "docs/frontend/fe1-evidence/fe1-overview-360.png",
+      "sha256": "e2818d41f1511ed9b6d4d031101a397390b68cd18ae1856f64b0b553c1a2e8af"
+    },
+    {
+      "path": "docs/frontend/fe1-evidence/fe1-targets-1280.png",
+      "sha256": "16e2739560406601608a0f443b9d1b82055e76c33447f90ed19209154fd287c0"
+    },
+    {
+      "path": "docs/frontend/fe1-evidence/fe1-targets-360.png",
+      "sha256": "2e0a1aa0ddb56081fe3ef253e513c6a135cccd1782e9e89c0af2ef6685a4c992"
+    },
+    {
+      "path": "docs/frontend/fe2-evidence/fe2-account-1280.png",
+      "sha256": "e80fcdc414d2f69edb4653fe2e2f7cf326949b5c303752dc3d8315a5124e893c"
+    },
+    {
+      "path": "docs/frontend/fe2-evidence/fe2-account-360.png",
+      "sha256": "3b169cb051246b3d034e4889171419110d03717d5458c7b6a897c8df320212bd"
+    },
+    {
+      "path": "docs/frontend/fe2-evidence/fe2-stale-1280.png",
+      "sha256": "e32c4c0597060d89c539e206f38eb6c71ef76272dc0886baff08da4c82c07b6f"
+    },
+    {
+      "path": "docs/frontend/fe2-evidence/fe2-stale-360.png",
+      "sha256": "6facfa1953258b5f6b750d99ffbb2db17b3f4d9c8cc4f90dbcb7a1f54f479731"
+    },
+    {
+      "path": "docs/frontend/fe3-evidence/fe3-forced-zoom-360.png",
+      "sha256": "68ee1e8effd79ffa95dda749cb213d3c8c87ea2526e18ec4909902c6526016ca"
+    },
+    {
+      "path": "docs/frontend/fe3-evidence/fe3-profile-1280.png",
+      "sha256": "b7f2b3177a34c632c86fbe9c35ae16761220cc9907bc16597b7dbba2248f9321"
+    },
+    {
+      "path": "docs/frontend/fe3-evidence/fe3-provider-1280.png",
+      "sha256": "d0138567ad9e2b408d5c471b3a308e918559a4c90b01c4e7fe929a34f8d51fd5"
+    },
+    {
+      "path": "docs/frontend/fe3-evidence/fe3-provider-360.png",
+      "sha256": "165132f985f04c812a3588f46880a5b768f47af60fa5561ab8dcae44ee4bdf0f"
+    }
+  ]
+}

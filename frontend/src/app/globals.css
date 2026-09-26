@@ -140,6 +140,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .workspace { min-inline-size: 0; }
 .command-bar { position: sticky; z-index: 20; inset-block-start: 0; display: flex; justify-content: space-between; align-items: center; min-block-size: 4.35rem; padding: 0.65rem clamp(1rem, 3vw, 2.5rem); background: color-mix(in srgb, var(--surface) 94%, transparent); border-block-end: 1px solid var(--boundary); }
 .header-context, .account-context { display: flex; align-items: center; gap: 0.85rem; }
+.account-context { flex-wrap: wrap; min-inline-size: 0; }
 .context-label { color: var(--ink); font-size: 0.8rem; font-weight: 500; }
 .context-label small { color: var(--muted); }
 .narrow-menu { display: none; }
@@ -189,6 +190,7 @@ h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
 .button:disabled { opacity: 0.52; }
 .button-label-busy { opacity: 0; }
 .button-busy { position: absolute; font-family: "IBM Plex Mono", monospace; letter-spacing: 0.2em; }
+.account-context .button { max-inline-size: 100%; }
 .icon-button { min-inline-size: var(--row-height); padding-inline: 0.65rem; }
 .cluster { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; margin-block-end: 1rem; }
 .badge { display: inline-flex; gap: 0.35rem; align-items: center; min-block-size: 1.65rem; padding: 0.25rem 0.5rem; color: var(--muted); background: var(--surface-muted); border: 1px solid var(--boundary); border-radius: 999px; font: 500 0.65rem "IBM Plex Mono", monospace; letter-spacing: 0.03em; }

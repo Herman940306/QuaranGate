@@ -15,7 +15,8 @@
     "lint": "biome lint .",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:production-smoke": "node tests/production-smoke.mjs"
+    "test:production-smoke": "node tests/production-smoke.mjs",
+    "test:e2e:production": "playwright test --config playwright.production.config.ts"
   },
   "dependencies": {
     "next": "16.3.6",

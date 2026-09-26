@@ -1,0 +1,50 @@
+{
+  "normalization": "Trailing whitespace/CR and empty EOF lines removed for git diff --check; original run logs retained in /tmp; test output content unchanged",
+  "logs": [
+    {
+      "path": "docs/frontend/evidence/CONVERGENCE/audit.txt",
+      "raw_sha256": "6d8c5c8f3d7684adb070417bd608d01ae90aa3dc26a65af03ffda4955f38d9a3",
+      "normalized_sha256": "6d8c5c8f3d7684adb070417bd608d01ae90aa3dc26a65af03ffda4955f38d9a3"
+    },
+    {
+      "path": "docs/frontend/evidence/CONVERGENCE/browser-development.txt",
+      "raw_sha256": "54b24f0921c1942fbb61b2635264465b1ac45df944c73128d37949c17e9452e5",
+      "normalized_sha256": "54b24f0921c1942fbb61b2635264465b1ac45df944c73128d37949c17e9452e5"
+    },
+    {
+      "path": "docs/frontend/evidence/CONVERGENCE/browser-production.txt",
+      "raw_sha256": "d624a83522154af4a191f2615c9864208ad10ef61f9f35decef5b13f0eb326d9",
+      "normalized_sha256": "d624a83522154af4a191f2615c9864208ad10ef61f9f35decef5b13f0eb326d9"
+    },
+    {
+      "path": "docs/frontend/evidence/CONVERGENCE/build.txt",
+      "raw_sha256": "9f00500049d470d12f8cefac1b9ea3d27309a1397fb8fa1280f8776622bc584c",
+      "normalized_sha256": "122abf1017752ccf58f296cfd1d7a72ac7c4ca2788e1ae2e4a7d021aa9b99100"
+    },
+    {
+      "path": "docs/frontend/evidence/CONVERGENCE/initial-convergence-failures.txt",
+      "raw_sha256": "fc2ae41f413cbf36e24516b2f429d5eaa8fc155f0503eff6800abb935f5cf2ce",
+      "normalized_sha256": "5c37ca59ff36c7251ebaca6d1b42934f133f6c92c7c421e108d746820373a2f2"
+    },
+    {
+      "path": "docs/frontend/evidence/CONVERGENCE/lint.txt",
+      "raw_sha256": "0379e11c4795c371ec2a4158d4274cbf64f848cd9c62a31338fd63defef15ccc",
+      "normalized_sha256": "0379e11c4795c371ec2a4158d4274cbf64f848cd9c62a31338fd63defef15ccc"
+    },
+    {
+      "path": "docs/frontend/evidence/CONVERGENCE/production-smoke.txt",
+      "raw_sha256": "31b80a40244857edf4d273e8a9b738c8399043d1b2f534842ed478b36535ae92",
+      "normalized_sha256": "31b80a40244857edf4d273e8a9b738c8399043d1b2f534842ed478b36535ae92"
+    },
+    {
+      "path": "docs/frontend/evidence/CONVERGENCE/typecheck.txt",
+      "raw_sha256": "3646b7d7131bd48956fde3b5e0cb50ec307ddcb2a7830b2acf94972fd291c9d8",
+      "normalized_sha256": "aa62338622848362573a5ffa3a1c488d796b90e32c2bbcc1066e77111582abaf"
+    },
+    {
+      "path": "docs/frontend/evidence/CONVERGENCE/unit.txt",
+      "raw_sha256": "b616afaa8407ba69b1a42f3199b379c75482f5cd1357eaa94a67115c8b2a1975",
+      "normalized_sha256": "1d34d58bd6a26bf80a88675deb2412adabf9ccf59f2920191ce861119f2fdbc1"
+    }
+  ]
+}
