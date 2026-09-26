@@ -64,7 +64,7 @@ export function StatisticsCenter() {
       </Select>
       <p className="muted">Changing the window requests a fresh aggregate snapshot only. It does not query a durable warehouse or reconstruct missing activity.</p>
     </Panel>
-    <ReadPanel key={windowMs} title="Statistics snapshot" action="Read statistics" operation={signal => client.statistics(windowMs, signal)}>
+    <ReadPanel key={windowMs} autoRead title="Statistics snapshot" action="Read statistics" operation={signal => client.statistics(windowMs, signal)}>
       {snapshot => <Snapshot snapshot={snapshot} />}
     </ReadPanel>
     <Panel title="Statistics boundary">

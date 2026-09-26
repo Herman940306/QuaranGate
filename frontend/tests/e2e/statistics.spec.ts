@@ -46,7 +46,20 @@ test("FE11 changes only the bounded current window", async ({ page }) => {
   await mockMcp(page);
   await page.goto("/statistics");
   await page.waitForLoadState("networkidle");
+  await expect(page.getByRole("table", { name: "Activity statistics" })).toContainText("1 hour");
+  const nextSnapshot = page.waitForRequest(request => request.url().endsWith("/mcp") && request.postDataJSON().params.arguments.sinceMs === 6 * 60 * 60 * 1000);
   await page.getByLabel("Current in-memory window").selectOption(String(6 * 60 * 60 * 1000));
-  await page.getByRole("button", { name: "Read statistics" }).click();
+  await nextSnapshot;
   await expect(page.getByRole("table", { name: "Activity statistics" })).toContainText("6 hours");
+});
+
+test("FE11 hides the old window when the new snapshot is unavailable", async ({ page }) => {
+  await mockMcp(page);
+  await page.goto("/statistics");
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByRole("table", { name: "Activity statistics" })).toBeVisible();
+  await page.route("**/mcp", route => route.fulfill({ status: 503, body: "Unavailable" }));
+  await page.getByLabel("Current in-memory window").selectOption(String(6 * 60 * 60 * 1000));
+  await expect(page.getByRole("table", { name: "Activity statistics" })).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "unavailable" })).toBeVisible();
 });

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 import { useOperationalRead } from "../lib/client/use-operational-read";
 import { freshness, stateCopy, type OperationalState } from "../lib/operational/state";
 import type { ReadReceipt } from "../lib/operational/transport";
@@ -12,8 +12,10 @@ export function ReceiptTime({ receivedAt, generatedAt }: { receivedAt: string; g
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 10_000); return () => clearInterval(timer); }, []);
   return <p className="muted">Received: <time dateTime={receivedAt}>{receivedAt}</time>{generatedAt ? <> · Generated: <time dateTime={generatedAt}>{generatedAt}</time></> : null} · {freshness(generatedAt ?? receivedAt, now)}</p>;
 }
-export function ReadPanel<T>({ title, action, operation, children, ready = true }: { ready?: boolean; title: string; action: string; operation: (signal: AbortSignal) => Promise<ReadReceipt<T>>; children: (data: T) => ReactNode }) {
+export function ReadPanel<T>({ title, action, operation, children, ready = true, autoRead = false }: { ready?: boolean; autoRead?: boolean; title: string; action: string; operation: (signal: AbortSignal) => Promise<ReadReceipt<T>>; children: (data: T) => ReactNode }) {
   const read = useOperationalRead<T>();
+  const readOnMount = useEffectEvent(() => { void read.run(operation); });
+  useEffect(() => { if (autoRead && ready) readOnMount(); }, [autoRead, ready]);
   return <Panel title={title}><div className="form-actions"><Button disabled={!ready} busy={read.pending} onClick={() => void read.run(operation)}>{action}</Button>{read.pending ? <Button onClick={read.cancel}>Cancel read</Button> : null}</div>
     {read.pending ? <LoadingState label="Reading server state" /> : <OperationalStateView state={read.state} correlationId={read.correlationId} />}
     {read.receipt ? <><ReceiptTime receivedAt={read.receipt.receivedAt} />{children(read.receipt.data)}</> : null}

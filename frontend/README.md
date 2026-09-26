@@ -186,3 +186,17 @@ Additional FE2 evidence register (no product state or runtime exports; all sourc
 | `../docs/frontend/fe2-evidence/FREEZE.json` | Post-commit immutable identity, hashes, paths and gate receipt; no exports | Review; evidence only | Git/source/evidence SHA256; orchestrator review | Scaffold-only |
 
 `FREEZE.json` stays untracked after freezing to avoid altering the immutable candidate. Synthetic preview uses an injected fixed clock; production uses the browser clock only to restrict expired display. Appearance remains page-memory preview; preference sync stays integration pending.
+
+
+## FE11 Statistics continuation
+
+The Statistics surface reads only bounded principal-scoped `control_center_query` aggregates. Window selection remounts and automatically reads a new snapshot; previous requests are aborted and old values are cleared. The server remains the authority. Retention is gateway memory, at most 2,048 entries and 24 hours, with no durable analytics claim. These files are implementation candidates requiring independent review and live integration qualification.
+
+| File | Purpose / key exports | Owning route / owned state | API dependency / future integration | Readiness |
+|---|---|---|---|---|
+| `src/app/(foundation)/statistics/page.tsx` | Statistics route; default Page and metadata | `/statistics`; none | StatisticsCenter; accepted same-origin routing still requires deployment qualification | Scaffold-only candidate |
+| `src/components/statistics-center.tsx` | Bounded aggregate UI; StatisticsCenter | `/statistics`; page-memory selected window | OperationalClient statistics; current MCP read contract, no database adapter | Scaffold-only candidate |
+| `tests/unit/statistics.test.ts` | Projection, bounds and invariant regression; no exports | Statistics tests; isolated synthetic responses | Vitest and injected transport; no live integration claim | Test fixture |
+| `tests/e2e/statistics.spec.ts` | Desktop/narrow, axe, storage and window-read regression; no exports | Statistics tests; ephemeral browser state | Playwright/axe and explicitly synthetic MCP interception; later live qualification separate | Test fixture |
+
+Existing `src/components/operational-read.tsx` adds an opt-in automatic read on mount, disabled by default. Statistics owns that opt-in. Existing `src/lib/operational/client.ts` and `contracts.ts` own the purpose-specific statistics request and typed bounded decoder; `shell.tsx` owns Statistics navigation. All state remains page-memory-only.
