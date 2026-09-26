@@ -24,6 +24,9 @@ function mapError(error: unknown): { status: number; code: ProductErrorCode; mes
   if (value.includes("provider_not_found")) return { status: 404, code: "VALIDATION_FAILED", message: "Requested product data is unavailable." };
   if (value.includes("provider_request") || value.includes("provider_secret") || value.includes("provider_custody")) return { status: 400, code: "VALIDATION_FAILED", message: "Provider request was rejected." };
   if (value.includes("openbao_") || value.includes("secret_custody")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Provider custody service is unavailable." };
+  if (value.includes("collaboration_request") || value.includes("group_name") || value.includes("message_body") || value.includes("message_cursor") || value.includes("attachment_") || value.includes("approval_") || value.includes("event_cursor") || value.includes("event_payload") || value.includes("idempotency_key")) return { status: 400, code: "VALIDATION_FAILED", message: "Collaboration request was rejected." };
+  if (value.includes("collaboration_forbidden") || value.includes("collaboration_workspace_required")) return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };
+  if (value.includes("realtime_transport")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Realtime delivery is unavailable." };
   if (value.includes("workspace_request") || value.includes("login_transaction") || value.includes("identity_")) return { status: 400, code: "VALIDATION_FAILED", message: "Identity/session request was rejected." };
   if (value.includes("not_configured") || value.includes("adapter_") || value.includes("non_durable")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Product identity service is unavailable." };
   return { status: 500, code: "INTERNAL", message: "Request failed." };
