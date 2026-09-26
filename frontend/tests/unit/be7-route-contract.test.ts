@@ -28,6 +28,11 @@ const mocks = vi.hoisted(() => {
       transcript: vi.fn(),
       summary: vi.fn(),
       actionItems: vi.fn(),
+      optInRecording: vi.fn(),
+      attestRecording: vi.fn(),
+      startRecording: vi.fn(),
+      stopRecording: vi.fn(),
+      exportTranscript: vi.fn(),
     },
   };
 });
@@ -44,6 +49,11 @@ import { GET as getMeeting, PATCH as updateMeeting } from "../../src/app/api/pro
 import { GET as getTranscript } from "../../src/app/api/product/meetings/[id]/transcript/route";
 import { GET as getSummary } from "../../src/app/api/product/meetings/[id]/summary/route";
 import { GET as getActionItems } from "../../src/app/api/product/meetings/[id]/action-items/route";
+import { POST as optInRecording } from "../../src/app/api/product/meetings/[id]/recording/opt-in/route";
+import { POST as attestRecording } from "../../src/app/api/product/meetings/[id]/recording/attest/route";
+import { POST as startRecording } from "../../src/app/api/product/meetings/[id]/recording/start/route";
+import { POST as stopRecording } from "../../src/app/api/product/meetings/[id]/recording/stop/route";
+import { GET as exportTranscript } from "../../src/app/api/product/meetings/[id]/transcript/export/route";
 
 const root = process.cwd();
 
@@ -64,9 +74,9 @@ function methods(path: string): string[] {
     .map((match) => match[1] as string);
 }
 
-function mutation(path: string, body: unknown, headers: Record<string, string> = {}): Request {
+function mutation(path: string, body: unknown, method = "POST", headers: Record<string, string> = {}): Request {
   return new Request(`https://app.example.invalid${path}`, {
-    method: "POST",
+    method,
     headers: {
       cookie: "qg_product_session=sid",
       origin: "https://app.example.invalid",
@@ -79,25 +89,62 @@ function mutation(path: string, body: unknown, headers: Record<string, string> =
   });
 }
 
-describe("BE7 meeting route contract", () => {
+describe("BE7 R1 meeting route contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.current.mockReturnValue(mocks.session);
     mocks.meetings.list.mockResolvedValue([]);
     mocks.meetings.get.mockResolvedValue({ id: "m" });
-    mocks.meetings.create.mockResolvedValue({ id: "m", recordingState: "OWNER_DECISION_REQUIRED" });
+    mocks.meetings.create.mockResolvedValue({ id: "m", recordingState: "DISABLED" });
     mocks.meetings.update.mockResolvedValue({ id: "m", state: "READY" });
-    mocks.meetings.transcript.mockResolvedValue({ meetingId: "m", state: "NOT_AVAILABLE", contentAvailable: false });
-    mocks.meetings.summary.mockResolvedValue({ meetingId: "m", state: "NOT_AVAILABLE", contentAvailable: false });
-    mocks.meetings.actionItems.mockResolvedValue({ meetingId: "m", state: "OWNER_DECISION_REQUIRED", items: [], executionAuthority: false });
+    mocks.meetings.transcript.mockResolvedValue({
+      meetingId: "m",
+      state: "NOT_AVAILABLE",
+      contentAvailable: false,
+      retentionState: "NOT_CONFIGURED",
+      providerClass: "LOCAL_ONLY",
+    });
+    mocks.meetings.summary.mockResolvedValue({
+      meetingId: "m",
+      state: "NOT_AVAILABLE",
+      contentAvailable: false,
+      retentionMode: "EPHEMERAL_ONLY",
+    });
+    mocks.meetings.actionItems.mockResolvedValue({
+      meetingId: "m",
+      state: "NOT_AVAILABLE",
+      items: [],
+      executionAuthority: false,
+      retentionMode: "EPHEMERAL_ONLY",
+    });
+    mocks.meetings.optInRecording.mockResolvedValue({ id: "m", recordingState: "OPTED_IN" });
+    mocks.meetings.attestRecording.mockResolvedValue({
+      id: "m",
+      recordingState: "READY",
+      noticePolicy: "PERSISTENT_VISUAL",
+      noticeState: "CLIENT_ACKNOWLEDGED",
+      noticeRenderingVerified: false,
+    });
+    mocks.meetings.startRecording.mockResolvedValue({ id: "m", recordingState: "RECORDING" });
+    mocks.meetings.stopRecording.mockResolvedValue({ id: "m", recordingState: "STOPPED" });
+    mocks.meetings.exportTranscript.mockResolvedValue({
+      content: "bounded transcript",
+      filename: "meeting-m-transcript.txt",
+      retainedUntil: "2026-10-01T00:00:00.000Z",
+    });
   });
 
-  it("installs exactly the bounded BE7 meeting route files and seven operations", () => {
+  it("installs exactly the bounded R1 meeting route files and twelve operations", () => {
     const files = routeFiles(join(root, "src/app/api/product/meetings")).sort();
     expect(files).toEqual([
       "src/app/api/product/meetings/[id]/action-items/route.ts",
+      "src/app/api/product/meetings/[id]/recording/attest/route.ts",
+      "src/app/api/product/meetings/[id]/recording/opt-in/route.ts",
+      "src/app/api/product/meetings/[id]/recording/start/route.ts",
+      "src/app/api/product/meetings/[id]/recording/stop/route.ts",
       "src/app/api/product/meetings/[id]/route.ts",
       "src/app/api/product/meetings/[id]/summary/route.ts",
+      "src/app/api/product/meetings/[id]/transcript/export/route.ts",
       "src/app/api/product/meetings/[id]/transcript/route.ts",
       "src/app/api/product/meetings/route.ts",
     ]);
@@ -106,27 +153,89 @@ describe("BE7 meeting route contract", () => {
       "GET src/app/api/product/meetings/[id]/action-items/route.ts",
       "GET src/app/api/product/meetings/[id]/route.ts",
       "GET src/app/api/product/meetings/[id]/summary/route.ts",
+      "GET src/app/api/product/meetings/[id]/transcript/export/route.ts",
       "GET src/app/api/product/meetings/[id]/transcript/route.ts",
       "GET src/app/api/product/meetings/route.ts",
       "PATCH src/app/api/product/meetings/[id]/route.ts",
+      "POST src/app/api/product/meetings/[id]/recording/attest/route.ts",
+      "POST src/app/api/product/meetings/[id]/recording/opt-in/route.ts",
+      "POST src/app/api/product/meetings/[id]/recording/start/route.ts",
+      "POST src/app/api/product/meetings/[id]/recording/stop/route.ts",
       "POST src/app/api/product/meetings/route.ts",
     ]);
   });
 
-  it("has no recording/upload/transcription/provider/proxy/export mutation surface", () => {
+  it("has no raw-audio ingestion, arbitrary provider/model URL, generic proxy or generated-content export", () => {
     const source = routeFiles(join(root, "src/app/api/product/meetings"))
       .map((path) => readFileSync(join(root, path), "utf8"))
       .join("\n");
-    expect(source).not.toMatch(/startRecording|recording|audio|microphone|upload|transcribe\(|providerUrl|modelUrl|targetUrl|baseUrl|fetch\(|download|principalRef|scopes/i);
+    expect(source).not.toMatch(/audioBytes|rawAudio|uploadAudio|providerUrl|modelUrl|targetUrl|baseUrl|fetch\(|generic.?proxy/i);
+    expect(source).not.toMatch(/summary\/export|action-items\/export|audio\/export/i);
   });
 
-  it("create enforces CSRF/origin before delegation", async () => {
-    const response = await createMeeting(mutation("/api/product/meetings", { title: "Sync" }, {
-      origin: "https://evil.invalid",
-      "sec-fetch-site": "cross-site",
-    }));
+  it("recording mutations enforce CSRF/origin before delegation", async () => {
+    const response = await startRecording(mutation(
+      "/api/product/meetings/m/recording/start",
+      { expectedVersion: 3 },
+      "POST",
+      { origin: "https://evil.invalid", "sec-fetch-site": "cross-site" },
+    ), { params: Promise.resolve({ id: "m" }) });
     expect(response.status).toBe(403);
-    expect(mocks.meetings.create).not.toHaveBeenCalled();
+    expect(mocks.meetings.startRecording).not.toHaveBeenCalled();
+  });
+
+  it("opt-in forwards only expectedVersion and ignores browser authority fields", async () => {
+    const response = await optInRecording(mutation(
+      "/api/product/meetings/m/recording/opt-in",
+      { expectedVersion: 1, principalRef: "owner", role: "admin", scopes: ["*"], autoRecord: true },
+    ), { params: Promise.resolve({ id: "m" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.meetings.optInRecording).toHaveBeenCalledWith(mocks.session, "m", 1);
+  });
+
+  it("attestation requires explicit persistent-visual acknowledgement without claiming participant consent", async () => {
+    const response = await attestRecording(mutation(
+      "/api/product/meetings/m/recording/attest",
+      {
+        expectedVersion: 2,
+        persistentVisualNoticeAcknowledged: true,
+        allParticipantsConsented: true,
+      },
+    ), { params: Promise.resolve({ id: "m" }) });
+    expect(response.status).toBe(200);
+    expect(mocks.meetings.attestRecording).toHaveBeenCalledWith(mocks.session, "m", {
+      expectedVersion: 2,
+      persistentVisualNoticeAcknowledged: true,
+    });
+    expect(JSON.stringify(await response.json())).not.toMatch(/allParticipantsConsented/i);
+  });
+
+  it("start and stop forward only versioned recording commands", async () => {
+    await startRecording(mutation("/api/product/meetings/m/recording/start", {
+      expectedVersion: 3,
+      principalRef: "owner",
+    }), { params: Promise.resolve({ id: "m" }) });
+    expect(mocks.meetings.startRecording).toHaveBeenCalledWith(mocks.session, "m", 3);
+
+    await stopRecording(mutation("/api/product/meetings/m/recording/stop", {
+      expectedVersion: 4,
+      role: "admin",
+    }), { params: Promise.resolve({ id: "m" }) });
+    expect(mocks.meetings.stopRecording).toHaveBeenCalledWith(mocks.session, "m", 4);
+  });
+
+  it("transcript export is a read route with bounded no-store text response", async () => {
+    const response = await exportTranscript(
+      new Request("https://app.example.invalid/api/product/meetings/m/transcript/export", {
+        headers: { cookie: "qg_product_session=sid" },
+      }),
+      { params: Promise.resolve({ id: "m" }) },
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    expect(await response.text()).toBe("bounded transcript");
+    expect(mocks.meetings.exportTranscript).toHaveBeenCalledWith(mocks.session, "m");
   });
 
   it("create ignores browser tenant/Principal/recording authority fields", async () => {
@@ -144,25 +253,12 @@ describe("BE7 meeting route contract", () => {
     expect(JSON.stringify(await response.json())).not.toMatch(/evil-org|evil-ws|principalRef|providerUrl/);
   });
 
-  it("patch is CSRF protected and forwards only title/state/expectedVersion", async () => {
-    const request = new Request("https://app.example.invalid/api/product/meetings/m", {
-      method: "PATCH",
-      headers: {
-        cookie: "qg_product_session=sid",
-        origin: "https://app.example.invalid",
-        "sec-fetch-site": "same-origin",
-        "x-csrf-token": "csrf",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        title: "Sync",
-        state: "READY",
-        expectedVersion: 0,
-        recording: true,
-        principalRef: "owner",
-      }),
-    });
-    const response = await updateMeeting(request, { params: Promise.resolve({ id: "m" }) });
+  it("patch remains CSRF protected and forwards only title/state/expectedVersion", async () => {
+    const response = await updateMeeting(mutation(
+      "/api/product/meetings/m",
+      { title: "Sync", state: "READY", expectedVersion: 0, recording: true, principalRef: "owner" },
+      "PATCH",
+    ), { params: Promise.resolve({ id: "m" }) });
     expect(response.status).toBe(200);
     expect(mocks.meetings.update).toHaveBeenCalledWith(mocks.session, "m", {
       title: "Sync",
@@ -186,14 +282,12 @@ describe("BE7 meeting route contract", () => {
     expect(request.url).not.toMatch(/transcript=|audio=|content=/i);
   });
 
-  it("list is session-derived", async () => {
+  it("list remains session-derived and safe errors redact backend content", async () => {
     await listMeetings(new Request("https://app.example.invalid/api/product/meetings", {
       headers: { cookie: "qg_product_session=sid" },
     }));
     expect(mocks.meetings.list).toHaveBeenCalledWith(mocks.session);
-  });
 
-  it("safe error envelope redacts meeting backend detail", async () => {
     mocks.meetings.get.mockRejectedValueOnce(new Error("raw transcript secret /private/path"));
     const response = await getMeeting(
       new Request("https://app.example.invalid/api/product/meetings/m", {

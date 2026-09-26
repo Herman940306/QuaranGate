@@ -48,10 +48,14 @@ function meetingRow(state = "DRAFT", version = 0) {
     created_by: USER,
     title: "Weekly sync",
     state,
-    recording_state: "OWNER_DECISION_REQUIRED",
+    recording_state: "DISABLED",
+    recording_opt_in: false,
+    notice_policy: "PERSISTENT_VISUAL",
+    notice_state: "REQUIRED",
+    recording_policy_version: 1,
     transcription_state: "NOT_AVAILABLE",
     summary_state: "NOT_AVAILABLE",
-    retention_state: "OWNER_DECISION_REQUIRED",
+    retention_state: "NOT_CONFIGURED",
     version,
     created_at: NOW,
     updated_at: NOW,
@@ -63,7 +67,7 @@ function participantRow() {
     meeting_id: MEETING,
     product_user_id: USER,
     role: "owner",
-    consent_state: "OWNER_DECISION_REQUIRED",
+    consent_state: "OWNER_ATTESTATION_MODEL",
   };
 }
 
@@ -87,10 +91,10 @@ const context = {
 };
 
 describe("BE7 data/privacy foundation", () => {
-  it("composes accepted migrations through 0005", async () => {
+  it("composes accepted migrations through 0006", async () => {
     const migrations = await readProductMigrationsThroughBe7();
-    expect(migrations.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5]);
-    expect(migrations.at(-1)?.name).toBe("0005_meeting_foundation.sql");
+    expect(migrations.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(migrations.at(-1)?.name).toBe("0006_meeting_privacy_policy.sql");
     expect(migrations.every((migration) => /^[0-9a-f]{64}$/.test(migration.checksum))).toBe(true);
   });
 
@@ -111,7 +115,7 @@ describe("BE7 data/privacy foundation", () => {
     ]);
     const values = await new MeetingRepository(db).list(USER, ORG, WS);
     expect(values).toHaveLength(1);
-    expect(values[0]?.participants[0]?.consentState).toBe("OWNER_DECISION_REQUIRED");
+    expect(values[0]?.participants[0]?.consentState).toBe("OWNER_ATTESTATION_MODEL");
     expect(db.calls[0]?.values).toEqual([USER, ORG, WS]);
     expect(db.calls[0]?.text).toContain("meeting_participants");
     expect(db.calls[0]?.text).toContain("memberships");
@@ -133,7 +137,7 @@ describe("BE7 data/privacy foundation", () => {
     expect(value.participants).toEqual([{
       productUserId: USER,
       role: "owner",
-      consentState: "OWNER_DECISION_REQUIRED",
+      consentState: "OWNER_ATTESTATION_MODEL",
     }]);
     expect(db.calls[1]?.text).toContain("meeting_participants");
     expect(db.calls[1]?.values?.[0]).toMatch(/^[0-9a-f-]{36}$/);
@@ -164,6 +168,7 @@ describe("BE7 data/privacy foundation", () => {
     const pool = new ScriptedPool([
       { rows: [meetingRow()], rowCount: 1 },
       { rows: [participantRow()], rowCount: 1 },
+      { rows: [], rowCount: 0 },
       { rows: [meetingRow()], rowCount: 1 },
       { rows: [participantRow()], rowCount: 1 },
       { rows: [meetingRow()], rowCount: 1 },
@@ -176,8 +181,10 @@ describe("BE7 data/privacy foundation", () => {
     expect(transcript).toMatchObject({
       state: "NOT_AVAILABLE",
       contentAvailable: false,
-      providerState: "NOT_AVAILABLE",
-      retentionState: "OWNER_DECISION_REQUIRED",
+      providerClass: "LOCAL_ONLY",
+      retentionState: "NOT_CONFIGURED",
+      liveProviderQualification: "UNAVAILABLE_NOT_CLAIMED",
+      anonymousSpeakerLabels: [],
     });
     expect(summary).toMatchObject({
       generated: false,
@@ -186,9 +193,10 @@ describe("BE7 data/privacy foundation", () => {
       authoritativeHumanDecision: false,
     });
     expect(actionItems).toMatchObject({
-      state: "OWNER_DECISION_REQUIRED",
+      state: "NOT_AVAILABLE",
       items: [],
       executionAuthority: false,
+      retentionMode: "EPHEMERAL_ONLY",
     });
     expect(JSON.stringify({ transcript, summary, actionItems })).not.toMatch(/transcriptBody|audio|prompt|token|credential/i);
   });
@@ -196,26 +204,29 @@ describe("BE7 data/privacy foundation", () => {
   it("STT provider is explicitly unavailable and never fabricates a transcript", async () => {
     const provider = new UnavailableMeetingTranscriptionProvider();
     await expect(provider.status()).resolves.toBe("NOT_AVAILABLE");
+    expect(provider.classification()).toBe("LOCAL_ONLY");
     await expect(provider.transcribe({
       meetingId: MEETING,
-      attachmentId: "55555555-5555-4555-8555-555555555555",
-      mimeType: "audio/wav",
+      organizationId: ORG,
+      workspaceId: WS,
+      transientAudioSession: true,
     })).rejects.toThrow("meeting_stt_provider_unavailable");
   });
 
-  it("service source emits only metadata meeting events and has no recording/transcription mutation", () => {
+  it("service uses accepted metadata events and no raw-content event payloads or authority synthesis", () => {
     const source = readFileSync(join(process.cwd(), "src/server/product/meetings/service.ts"), "utf8");
     expect(source).toContain('"meeting.created"');
     expect(source).toContain('"meeting.started"');
     expect(source).toContain('"meeting.ended"');
-    expect(source).not.toMatch(/recordAudio|startRecording|uploadAudio|transcribe\(|transcriptBody|audioBlob|summaryBody/);
-    expect(source).not.toMatch(/principalRef|scopes|targetGrants|githubAccounts|dockerAuthority/);
+    expect(source).toContain('"meeting.recording_state_changed"');
+    expect(source).not.toMatch(/audioBlob|rawAudio|transcriptBody|summaryBody|actionItemText/);
+    expect(source).not.toMatch(/principalRef|targetGrants|githubAccounts|dockerAuthority/);
   });
 
   it("meeting state is distinct from recording/transcription/summary state", () => {
     const types = readFileSync(join(process.cwd(), "src/server/product/meetings/types.ts"), "utf8");
     expect(types).toContain("state: MeetingState");
-    expect(types).toContain("recordingState: OwnerDecisionState");
+    expect(types).toContain("recordingState: RecordingState");
     expect(types).toContain("transcriptionState: ProcessingState");
     expect(types).toContain("summaryState: ProcessingState");
   });
