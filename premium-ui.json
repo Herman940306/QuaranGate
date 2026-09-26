@@ -1,20 +1,26 @@
 {
   "profile": "product-admin",
-  "sourceRoots": ["console", "src/gateway"],
+  "sourceRoots": ["console", "src/gateway", "frontend/src"],
   "locale": "en",
   "canonicalMap": "UX-CONTRACT.md",
   "requiredCapabilities": ["Select/Listbox", "Form", "Scrollbar", "Toast"],
   "ownership": {
     "Select/Listbox": "native"
   },
-  "requiredCommands": ["typecheck", "unit", "console", "build"],
+  "requiredCommands": ["typecheck", "unit", "console", "build", "frontend-typecheck", "frontend-lint", "frontend-unit", "frontend-build", "frontend-e2e"],
   "commands": {
     "typecheck": "npm run typecheck",
     "unit": "npm test",
     "console": "npm run test:console",
-    "build": "npm run build"
+    "build": "npm run build",
+    "frontend-typecheck": "npm --prefix frontend run typecheck",
+    "frontend-lint": "npm --prefix frontend run lint",
+    "frontend-unit": "npm --prefix frontend test",
+    "frontend-build": "npm --prefix frontend run build",
+    "frontend-e2e": "npm --prefix frontend run test:e2e"
   },
   "evidence": {
-    "failurePaths": "tests/unit/console-mcp-client.test.ts"
+    "failurePaths": "frontend/tests/e2e/foundation.spec.ts",
+    "legacyFailurePaths": "tests/unit/console-mcp-client.test.ts"
   }
 }

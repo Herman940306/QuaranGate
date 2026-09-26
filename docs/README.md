@@ -19,14 +19,15 @@ This directory is organised by **how the documentation is used**, so operators, 
 
 ## Frontend documentation
 
-For QuaranGate Console work, use this sequence:
+For QuaranGate frontend work, use this sequence:
 
-1. [`frontend/CONTROL_CENTER.md`](frontend/CONTROL_CENTER.md) — owner-approved U1 product intent.
-2. [`frontend/CONSOLE_PRODUCT_SPECIFICATION.md`](frontend/CONSOLE_PRODUCT_SPECIFICATION.md) — full functional specification.
-3. [`frontend/CONSOLE_FRONTEND_ARCHITECTURE.md`](frontend/CONSOLE_FRONTEND_ARCHITECTURE.md) — frontend architecture, security and data flow.
-4. [`frontend/CONSOLE.md`](frontend/CONSOLE.md) — current implementation overview.
-5. [`user-guides/CONSOLE_OPERATIONS_SUPPORT_MANUAL.md`](user-guides/CONSOLE_OPERATIONS_SUPPORT_MANUAL.md) — operator/support manual.
-6. [`reference/MCP_TOOL_REFERENCE.md`](reference/MCP_TOOL_REFERENCE.md) — complete MCP function reference and use cases.
+1. [`frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md`](frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md) — current F1 continuation state, validation gaps and review gate.
+2. [`frontend/CONTROL_CENTER.md`](frontend/CONTROL_CENTER.md) — owner-approved U1 product intent.
+3. [`frontend/CONSOLE_PRODUCT_SPECIFICATION.md`](frontend/CONSOLE_PRODUCT_SPECIFICATION.md) — full functional specification.
+4. [`frontend/CONSOLE_FRONTEND_ARCHITECTURE.md`](frontend/CONSOLE_FRONTEND_ARCHITECTURE.md) — frontend architecture, security and data flow.
+5. [`frontend/CONSOLE.md`](frontend/CONSOLE.md) — current implementation overview.
+6. [`user-guides/CONSOLE_OPERATIONS_SUPPORT_MANUAL.md`](user-guides/CONSOLE_OPERATIONS_SUPPORT_MANUAL.md) — operator/support manual.
+7. [`reference/MCP_TOOL_REFERENCE.md`](reference/MCP_TOOL_REFERENCE.md) — complete MCP function reference and use cases.
 
 ## Backend documentation
 

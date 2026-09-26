@@ -27,10 +27,10 @@
 
 - **Project `DESIGN.md`:** `DESIGN.md`
 - **Token ownership model:** `DESIGN.md` is normative; CSS custom properties are the runtime adapter.
-- **Runtime design-system/token source:** `console/styles.css` under `:root` and semantic component classes.
+- **Runtime design-system/token sources:** existing operational Console: `console/styles.css`; additive product foundation: `frontend/src/app/globals.css`. Both consume semantic roles owned by `DESIGN.md`.
 - **Mapping/export/adapters:** one-to-one named CSS custom properties; no generated export layer in v1.
 - **Token drift gate:** UI review + premium static audit + grep for raw palette values outside token definitions.
-- **Supported themes:** light workstation theme in v1; system high-contrast/forced-colors remains operable.
+- **Supported themes:** the existing Console remains on its accepted light workstation theme in F1. The additive product foundation supports System/Light/Dark, five approved palettes, Comfortable/Compact density, and forced-colors/high-contrast operation.
 - **Design-context owner/review policy:** durable visual decisions update `DESIGN.md` and runtime tokens in the same changeset.
 
 ## Canonical UI Map
@@ -42,6 +42,11 @@
 | Scrollbar | Application-root CSS baseline | `DESIGN.md` + `console/styles.css` | stable-gutter geometry exceptions | computed style + browser |
 | Toast | `ToastCenter` | This contract + `console/app.js` | success / warning / info / error | live-region + browser |
 | Dialog | `ConfirmDialog` | This contract + `console/app.js` | warning / danger | focus trap + Escape + restoration |
+| Product Select/Listbox | Shared native `Select` field | This contract + `frontend/src/components/primitives.tsx` | native; platform popup accepted | keyboard + browser popup |
+| Product Form | Shared `Field` primitives | This contract + `frontend/src/components/primitives.tsx` | foundation/review | validation browser flow |
+| Product Scrollbar | Application-root CSS baseline | `DESIGN.md` + `frontend/src/app/globals.css` | stable-gutter geometry exceptions | computed style + browser |
+| Product Toast | Shared `OverlayProvider` live region | This contract + `frontend/src/components/overlays.tsx` | informational foundation feedback | live-region + browser |
+| Product Dialog/Drawer | Shared `OverlayProvider` modal owner | This contract + `frontend/src/components/overlays.tsx` | dialog / narrow drawer | focus trap + Escape + restoration |
 
 No CRUD domain exists in the current facade. Target control, filesystem mutation, and agent disposition are operation workflows, not record CRUD.
 

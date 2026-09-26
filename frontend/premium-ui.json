@@ -1,0 +1,21 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["frontend/src"],
+  "locale": "en",
+  "canonicalMap": "UX-CONTRACT.md",
+  "requiredCapabilities": ["Select/Listbox", "Form", "Scrollbar", "Toast"],
+  "ownership": {
+    "Select/Listbox": "native"
+  },
+  "requiredCommands": ["typecheck", "lint", "unit", "build", "e2e"],
+  "commands": {
+    "typecheck": "npm --prefix frontend run typecheck",
+    "lint": "npm --prefix frontend run lint",
+    "unit": "npm --prefix frontend test",
+    "build": "npm --prefix frontend run build",
+    "e2e": "npm --prefix frontend run test:e2e"
+  },
+  "evidence": {
+    "failurePaths": "frontend/tests/e2e/foundation.spec.ts"
+  }
+}

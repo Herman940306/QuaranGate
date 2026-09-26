@@ -21,11 +21,11 @@ colors:
   code-ink: "#E8F0F2"
 typography:
   sans:
-    fontFamily: "Aptos, Segoe UI Variable, Segoe UI, system-ui, sans-serif"
+    fontFamily: "IBM Plex Sans, system-ui, sans-serif"
   display:
-    fontFamily: "Aptos Display, Segoe UI Variable Display, Segoe UI, system-ui, sans-serif"
+    fontFamily: "IBM Plex Sans, system-ui, sans-serif"
   mono:
-    fontFamily: "Cascadia Code, SFMono-Regular, Consolas, Liberation Mono, monospace"
+    fontFamily: "IBM Plex Mono, ui-monospace, monospace"
 rounded:
   DEFAULT: "0.625rem"
   sm: "0.375rem"
@@ -65,7 +65,7 @@ The visual identity must reinforce QuaranGate's actual product rule: the model m
 - **Memorable signature:** the **Authority Strip**. Every tool/action is classified visually as Read, Write, Execution, or Destructive, and high-risk actions cross a visible confirmation gate. This is structural product information, not decoration.
 - **Restraint:** source browsing, logs, diffs, results, and forms stay quiet. Code/output uses a single dark technical surface; normal application chrome remains light.
 - **Anti-references:** neon cyberpunk dashboards, generic dark SaaS shells, glassmorphism, oversized KPI cards, and terminal-only retro styling. They either romanticize risk or make operational density harder to scan.
-- **Token ownership/runtime mapping:** this file is the normative visual intent. Runtime values map one-to-one to CSS custom properties in `console/styles.css`; no JavaScript duplicates palette values.
+- **Token ownership/runtime mapping:** this file is the normative visual intent. The product foundation maps semantic values through CSS custom properties in `frontend/src/app/globals.css`; the existing Console retains its one-to-one adapter in `console/styles.css` until a reviewed migration. JavaScript does not duplicate palette values.
 
 ## Colors
 
@@ -84,6 +84,8 @@ The code surface is the only intentionally dark content panel. This separates ma
 ## Typography
 
 `display` is used sparingly for page headings and the QuaranGate wordmark. `sans` owns controls, labels, navigation, and prose. `mono` owns commands, paths, job IDs, hashes, tool names, JSON, logs, and diff content.
+
+The additive product frontend self-hosts IBM Plex Sans and IBM Plex Mono through local package assets. The existing Console keeps its current system font stack in F1 so this foundation does not alter the accepted operational facade. This temporary adapter difference is intentional and ends only through a separately reviewed Console migration.
 
 Weights stay disciplined: 400/500 for body and controls, 600 for compact hierarchy, 700 only for product/route headings. Uppercase is limited to tiny technical labels such as authority classifications. Long output never inherits display typography.
 
@@ -104,6 +106,10 @@ Hierarchy is primarily tonal and bordered. Static cards have no decorative shado
 Controls use a 10px family (`md`) with tighter 6px (`sm`) corners for technical chips and code affordances. Large panels use 14px (`lg`) only where they contain a distinct workflow. Pills are reserved for compact state/authority chips; buttons are not pills.
 
 ## Components
+
+### Appearance
+
+The product frontend exposes three independent, semantic controls: Mode (`System`, `Light`, `Dark`), Palette (`QuaranGate Default`, `Mineral`, `Delft`, `Slate`, `Warm Workbench`), and Density (`Comfortable`, `Compact`). Themes remap semantic roles; component logic and authority meaning do not change. F1 stores these values in page memory only. Authenticated cross-device persistence belongs to the later product data phase.
 
 ### Foundational visual states
 
