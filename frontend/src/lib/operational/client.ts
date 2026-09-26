@@ -3,13 +3,14 @@ import { resources } from "./recovery";
 import { activity } from "./activity";
 import { authority, preflightArguments, type PreflightRequest } from "./authority";
 import { OperationalError } from "./state";
-import { createReader, type Transport } from "./transport";
+import { createReader, createToolsDiscovery, type Transport } from "./transport";
 function logical(value: string): string { if (!value || value.length > 256 || Array.from(value).some(char => char.charCodeAt(0) < 32)) throw new OperationalError("unknown"); return value; }
 function knownJob(value: string): string { if (!/^job_[a-f0-9]{32}$/.test(value)) throw new OperationalError("unknown"); return value; }
 export function createOperationalClient(transport?: Transport) {
   const read = createReader(transport);
   const jobRead = <T>(name: "agent_status" | "agent_result" | "agent_diff", id: string, parser: (value: Record<string, unknown>) => T & { jobId: string }, signal?: AbortSignal) => read(name, { jobId: knownJob(id), ...(name === "agent_diff" ? { maxBytes: 16_384 } : {}) }, value => { const result = parser(value); if (result.jobId !== id) throw new OperationalError("unknown"); return result; }, signal);
   return {
+    discoverTools: createToolsDiscovery(transport),
     targets: (signal?: AbortSignal) => read("targets_list", {}, decode.targets, signal),
     target: (target: string, signal?: AbortSignal) => read("target_inspect", { target: logical(target) }, value => { const result = decode.targetDetail(value); if (result.id !== target) throw new OperationalError("unknown"); return result; }, signal),
     projects: (signal?: AbortSignal) => read("agent_projects", {}, decode.projects, signal),

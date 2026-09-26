@@ -254,3 +254,18 @@ Existing shell and client own navigation/context invalidation and closed read tr
 | `tests/e2e/settings.spec.ts` | local reset/read-only/axe/storage/keyboard/responsive; no exports | FE15 tests; ephemeral browser | Playwright/synthetic MCP; no live configuration qualification | Test fixture |
 
 Existing shell owns navigation/context invalidation. Existing AppearanceControls remain memory-only. Backend policy and credential editing are unavailable; declared frontend version is distinct from deployed runtime evidence.
+
+
+## FE16 Tool Lab and navigation discovery
+
+| File | Purpose / exports | Route / owned state | API / future integration | Readiness |
+|---|---|---|---|---|
+| `src/app/(foundation)/tool-lab/page.tsx` | Page/metadata | `/tool-lab`; none | ToolLab; accepted same-origin deployment separate | Scaffold-only candidate |
+| `src/components/tool-lab.tsx` | ToolLab | Tool Lab; discovery receipt in memory | fixed tools/list; current source catalog; no generic invocation | Source candidate |
+| `src/lib/operational/tool-discovery.ts` | DiscoveredTool/discoveryPage/compareTools | Tool Lab; none | safe schema projection and exact comparison; no silent drift acceptance | Source candidate |
+| `src/lib/navigation.ts` | productRoutes | Shell/palette; none | existing accepted routes plus authorized continuation routes | Source candidate |
+| `src/components/command-discovery.tsx` | CommandDiscovery | Shell; memory-only search/modal | fixed route links; no tool invocation | Source candidate |
+| `tests/unit/tool-lab.test.ts` | current-registration/pagination/drift/security tests; no exports | FE16 tests; fixtures | Vitest/current repository source/injected transport | Test fixture |
+| `tests/e2e/tool-lab.spec.ts` | exact/drift/palette/focus/axe/storage/responsive; no exports | FE16 tests; browser state | Playwright/synthetic tools/list; actual deployment discovery remains unverified | Test fixture |
+
+Existing transport adds only fixed bounded MCP discovery (10 pages, 1,000 tools, 2 MB per page, 30-second aggregate timeout); client exposes discoverTools. Existing catalog is checked against current gateway registrations, not a hard-coded historical tool count. Extra tools have UNKNOWN authority and remain unsupported. Destructive/execution requests stay in existing governed workflows; palette navigation never dispatches. Browser credentials/configuration are unchanged.

@@ -1,3 +1,4 @@
+import { discoveryPage, type DiscoveredTool } from "./tool-discovery";
 import { OperationalError } from "./state";
 export type Transport = (target: "/mcp", init: RequestInit) => Promise<Response>;
 export interface JsonRpcRequest { jsonrpc: "2.0"; id: string; method: "tools/call"; params: { name: string; arguments: Record<string, unknown> } }
@@ -103,4 +104,36 @@ export function createReader(transport: Transport = (target, init) => fetch(targ
 export function createMutator(transport: Transport = (target, init) => fetch(target, init)) {
   const call = createCaller(transport, writeTools);
   return <T>(name: WriteTool, args: Record<string, unknown>, decode: (value: Record<string, unknown>) => T, signal?: AbortSignal) => call(name, args, decode, signal);
+}
+
+// Fixed, bounded MCP discovery only; no caller-selected method, endpoint or credential.
+export function createToolsDiscovery(transport: Transport = (target, init) => fetch(target, init)) {
+  return async (signal?: AbortSignal): Promise<ReadReceipt<DiscoveredTool[]>> => {
+    const combined = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]);
+    const tools: DiscoveredTool[] = []; const cursors = new Set<string>(); const names = new Set<string>();
+    let cursor: string | undefined; let requestCorrelation: string | undefined;
+    try {
+      for (let page = 0; page < 10; page++) {
+        combined.throwIfAborted(); const id = crypto.randomUUID();
+        const response = await transport("/mcp", { method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list", params: cursor === undefined ? {} : { cursor } }), signal: combined }).catch(() => { throw new OperationalError("unavailable"); });
+        requestCorrelation = correlation(response);
+        if (!response.ok) throw new OperationalError(response.status === 401 ? "unauthenticated" : response.status === 403 ? "forbidden" : "unavailable");
+        const payload = envelope(await boundedText(response), response.headers.get("content-type") ?? "", id);
+        combined.throwIfAborted();
+        if (Object.hasOwn(payload, "error")) throw new OperationalError("unknown");
+        const result = discoveryPage(payload.result);
+        for (const tool of result.tools) { if (names.has(tool.name)) throw new OperationalError("unknown"); names.add(tool.name); tools.push(tool); }
+        if (tools.length > 1000) throw new OperationalError("unknown");
+        if (result.nextCursor === undefined) return { data: tools, receivedAt: new Date().toISOString(), correlationId: requestCorrelation };
+        if (!result.nextCursor || cursors.has(result.nextCursor)) throw new OperationalError("unknown");
+        cursors.add(result.nextCursor); cursor = result.nextCursor;
+      }
+      throw new OperationalError("unknown");
+    } catch (error) {
+      if (signal?.aborted) throw new OperationalError("cancelled", requestCorrelation);
+      if (combined.aborted) throw new OperationalError("unavailable", requestCorrelation);
+      if (error instanceof OperationalError) throw new OperationalError(error.state, requestCorrelation);
+      throw new OperationalError("unknown", requestCorrelation);
+    }
+  };
 }

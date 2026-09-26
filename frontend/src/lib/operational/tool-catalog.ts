@@ -9,7 +9,7 @@ export const toolCatalog = [
   {"name": "target_restart", "category": "Targets", "authority": "Destructive", "purpose": "Restart a running authorized target container."},
   {"name": "fs_list", "category": "Files", "authority": "Read", "purpose": "List entries under a workspace-relative directory."},
   {"name": "fs_stat", "category": "Files", "authority": "Read", "purpose": "Read type, size, mode and modified time for a path."},
-  {"name": "fs_read", "category": "Files", "authority": "Read", "purpose": "Read UTF-8/binary file content from the workspace."},
+  {"name": "fs_read", "category": "Files", "authority": "Read", "purpose": "Read bounded file content from the workspace."},
   {"name": "fs_search", "category": "Files", "authority": "Read", "purpose": "Run bounded fixed-string recursive search."},
   {"name": "fs_write", "category": "Files", "authority": "Write", "purpose": "Create or overwrite a workspace-relative file."},
   {"name": "fs_patch", "category": "Files", "authority": "Write", "purpose": "Replace one unique exact substring in a file."},

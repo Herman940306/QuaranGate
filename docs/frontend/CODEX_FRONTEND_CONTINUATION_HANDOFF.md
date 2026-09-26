@@ -510,3 +510,22 @@ Qualification: lint PASS (157 files), typecheck PASS, focused settings unit 2/2 
 Changed paths: settings route/component/pure identity projection, shell, settings unit/browser tests, README, this handoff and FE15 screenshots. New files registered. Source metadata is implemented; live identity, provider entitlement, settings mutation and deployment remain integration-pending or unavailable.
 
 NEXT: FE16 Tool Lab — current-source expected catalog, exact tools/list discovery drift, closed metadata/navigation, no arbitrary invocation or endpoint.
+
+
+## FE16 checkpoint — Tool Lab / command discovery
+
+FE15 freeze: commit `91c998ca416a49f86493a1c672561cfaf45b2d43`, tree `c8ac3bf0a67bcac928e51c91e2b9a8309a45e606`, parent `eda4461fb589062b6f8884461fe96a06a3d760af`, subject `feat(frontend): add truthful read-only settings surface`. Clean worktree verified before FE16.
+
+STATUS: IMPLEMENTATION CANDIDATE — DISCOVERY / METADATA / NAVIGATION — NOT SELF-ACCEPTED.
+
+Added `/tool-lab` and preserved existing route names/labels through a shared typed navigation catalog. Current expected tool names are tested against present gateway registrations (direct plus targetControlTool/gitTool helpers and agent/GitHub/Control Center registrars), without asserting a historical count. Fixed same-origin `/mcp` tools/list follows bounded pagination (10 pages, 1,000 names, 2 MB/page, 30s aggregate timeout), rejects duplicate names/cursors and malformed responses, and projects only bounded names/property names/types/required flags/numeric limits. No raw schema bodies/defaults/descriptions/credentials are shown. EXACT_NAME_MATCH is a names comparison only, never operation eligibility or schema acceptance. MISSING/EXTRA drift is explicit; extra authority is UNKNOWN and extra tools are unsupported.
+
+Command discovery via Ctrl/Cmd+K or a header control searches known page/tool metadata in memory. It only navigates. Execution/destructive requests remain in dedicated existing governed workflows with their confirmation and server-authorization semantics; no generic invocation, JSON-RPC method/endpoint input, Docker/host/GitHub facility is introduced. COMPLETED != APPLIED remains visible.
+
+Qualification: lint PASS (164 files), typecheck PASS, Tool Lab unit 7/7 PASS, full unit 163/163 PASS. Chromium Tool Lab plus operational regression 12/12 PASS; final palette-selection test run 3/3 PASS, proving agent_apply selection navigates with zero MCP calls. 1280/360px, keyboard, axe zero violations, focus restoration, no page overflow/local/session/cookie persistence, MISSING/EXTRA and unavailable fail-closed states pass. Production build PASS (36 static routes); diff check PASS. Screenshots preserved in `docs/frontend/evidence/FE16/tools-{1280,360}.png`.
+
+Changed paths: Tool Lab route/component; discovery DTO/comparison; fixed transport discovery; purpose-specific client; existing catalog purpose refinement; typed navigation; navigation-only palette; shell; operational method-list regression; Tool Lab unit/browser tests; README; this handoff; FE16 screenshots. All new frontend files registered.
+
+Integration limitation: browser qualification uses explicit synthetic interception. Actual deployed tool discovery/identity/adapter integration is unverified and cannot be inferred from fixture name matches. No production or live mutation was attempted.
+
+NEXT: frontend-wide convergence gate with all 21 required product surfaces, full unit/browser/build/audit/source-secret/persistence/route/navigation checks and preservation of accepted visual evidence.
