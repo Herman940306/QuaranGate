@@ -173,10 +173,52 @@ FILES:
 NEXT:
 - FE7 IDE Session Center only if an accepted current frontend-consumable IDE session contract is available; otherwise stop at the dependency boundary rather than inventing a session API.
 
+## FE7 checkpoint
+
+CHECKPOINT: FE7 — IDE Session Center
+STATUS: FROZEN IMPLEMENTATION CANDIDATE — READINESS ONLY — NOT SELF-ACCEPTED
+
+IMPLEMENTED:
+- `/ide-sessions` exposes only bounded metadata already available through the public `control_center_query` read contract.
+- “IDE control readiness” reads `capabilityState.ideSessionControl` from the summary view.
+- “Adapter qualification” projects only VS Code/Cursor component readiness fields from the capabilities matrix.
+- The surface explicitly states that the current public contract does not expose session discovery, controller acquisition, prompts, operation cancellation or writer controls.
+- No fake live session, active agent, project/worktree attachment, controller lease or implementation authority is synthesized.
+
+CONTRACT / AUTHORITY TRUTH:
+- Current `docs/ide/IDE_SESSION_CONTROL.md` classifies Plane B as separately authorized North-Star/not-production while VS Code/Cursor source qualification remains partially open/blocked.
+- Current accepted B7 review-operation foundation explicitly exposes no public MCP/HTTP route and no writer authority.
+- FE7 therefore uses only the existing metadata-only Control Center contract; it does not reach into executor SQLite, AF_UNIX companion channels or private IDE adapter protocols.
+- Agent Control Plane permissions do not imply IDE Session Control authority.
+
+QUALIFICATION:
+- `npm run lint`: PASS, 123 files checked.
+- `npm run typecheck`: PASS.
+- Full frontend unit suite: 135/135 PASS.
+- `npm run build`: PASS, 29 static routes generated.
+- `npm audit --audit-level=high`: zero vulnerabilities.
+- `git diff --check`: PASS.
+- Governed Chromium FE7 qualification: 2/2 PASS at 1280 and 360 pixels, including metadata-only boundary, no synthetic control buttons, no browser persistence, no overflow and axe checks.
+- Owner-host job: `ohj_cd29fa74dba2a77bd58e70870db1b0ca`.
+- Host Git status SHA-256 remained `ef78e4e084147633266f2cf54c114d09c387358affb985bc2cd43b7d268110f8` before and after browser qualification.
+
+INTEGRATION GAP:
+- A real IDE-session inventory/control frontend must wait for an accepted public, frontend-consumable Plane-B route/tool contract. FE7 intentionally stops at truthful readiness metadata.
+
+FILES:
+- `frontend/src/app/(foundation)/ide-sessions/page.tsx`
+- `frontend/src/components/ide-session-center.tsx`
+- `frontend/src/components/shell.tsx`
+- `frontend/tests/e2e/ide-sessions.spec.ts`
+
+NEXT:
+- FE8 GitHub product experience: inspect the current trusted GitHub gateway/tool contracts and implement only bounded, explicitly authorized frontend seams that exist today.
+
 ## Phase commit ledger
 
 | Phase | Commit | Tree | Parent | Subject | Tests |
 | --- | --- | --- | --- | --- | --- |
 | FE4 | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `3d18dcaffec0d465015ae91435ce45ddb8ec9428` | `9ef3b0a0f8d9c4c191cc0be183c8b893f741877e` | `feat(frontend): add governed operational workstation` | See FE4 checkpoint |
 | FE5 | `e00465cc730379cef2c78d859dc433a87850ebc9` | `a317b1e9fe5c1a9df3dc41bee878ecb28cd00ca6` | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `feat(frontend): add governed Agent Arena` | Local gates PASS; external Chromium 41/41 PASS |
-| FE6 | Pending immutable commit | Pending | `e00465cc730379cef2c78d859dc433a87850ebc9` | `feat(frontend): add review and approvals` | Local gates PASS; governed Chromium 4/4 PASS |
+| FE6 | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `686fed609fee76b56cfc6fa64812d292f57c5dfd` | `e00465cc730379cef2c78d859dc433a87850ebc9` | `feat(frontend): add review and approvals` | Local gates PASS; governed Chromium 4/4 PASS |
+| FE7 | Pending immutable commit | Pending | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `feat(frontend): add IDE session readiness center` | Local gates PASS; governed Chromium 2/2 PASS |
