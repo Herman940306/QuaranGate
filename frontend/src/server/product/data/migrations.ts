@@ -49,6 +49,22 @@ async function ensureRegistry(executor: QueryExecutor): Promise<void> {
   `);
 }
 
+export async function readAllProductMigrations(): Promise<SourceMigration[]> {
+  const [foundation, principalMapping] = await Promise.all([
+    readSourceMigrations(),
+    readSourceMigrations(path.join(process.cwd(), "src/server/product/principal/migrations")),
+  ]);
+  const migrations = [...foundation, ...principalMapping].sort((a, b) => a.version - b.version);
+  const versions = new Set<number>();
+  for (const migration of migrations) {
+    if (versions.has(migration.version)) {
+      throw new ProductDataError("PRODUCT_DATA_INVALID", "migration_version_invalid");
+    }
+    versions.add(migration.version);
+  }
+  return migrations;
+}
+
 export async function runMigrations(pool: TransactionPool, migrations: SourceMigration[]): Promise<void> {
   await ensureRegistry(pool);
   for (const migration of migrations) {

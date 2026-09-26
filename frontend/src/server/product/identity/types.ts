@@ -1,8 +1,10 @@
 export type PrincipalMappingState =
   | { state: "unmapped" }
-  | { state: "mapped"; principalRef: string }
+  | { state: "mapped-reference"; principalRef: string; mappingVersion: number }
   | { state: "unavailable" }
-  | { state: "forbidden" };
+  | { state: "forbidden" }
+  // BE1-R2 compatibility only. BE3 resolvers never emit this legacy shape.
+  | { state: "mapped"; principalRef: string };
 
 export interface ProductWorkspace {
   id: string;

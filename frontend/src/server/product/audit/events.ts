@@ -6,6 +6,7 @@ export type IdentityAuditEvent =
   | "identity.login_failed"
   | "identity.session_read"
   | "identity.workspace_switched"
+  | "identity.principal_mapping_resolved"
   | "identity.logout";
 
 export interface SafeAuditRecord {
@@ -14,6 +15,7 @@ export interface SafeAuditRecord {
   correlationId: string;
   userRef?: string;
   workspaceId?: string;
+  principalRef?: string;
   reason?: string;
 }
 

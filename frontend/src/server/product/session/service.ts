@@ -6,6 +6,8 @@ import { assertCsrf } from "../authority/csrf";
 import type { ProductContextAdapter } from "../adapters/workspace";
 import { PostgresProductContextAdapter } from "../adapters/postgres-context";
 import { productDataRepository } from "../data/runtime";
+import type { PrincipalMappingAdapter } from "../principal/adapter";
+import { PostgresPrincipalMappingAdapter, UnmappedTestPrincipalMappingAdapter } from "../principal/adapter";
 import { loadProductOidcConfig } from "../auth/config";
 import type { ProductOidcPort } from "../auth/oidc";
 import { OpenIdClientPort } from "../auth/oidc";
@@ -16,12 +18,18 @@ import { MemoryProductSessionStore, opaqueId } from "./store";
 const LOGIN_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
+function defaultPrincipalMappingAdapter(audit: AuditSink): PrincipalMappingAdapter {
+  if (process.env.NODE_ENV === "test") return new UnmappedTestPrincipalMappingAdapter();
+  return new PostgresPrincipalMappingAdapter(productDataRepository(), audit);
+}
+
 export class ProductSessionService {
   constructor(
     private readonly store: ProductSessionStore = new MemoryProductSessionStore(),
     private readonly oidc: ProductOidcPort = new OpenIdClientPort(),
     private readonly context: ProductContextAdapter = new PostgresProductContextAdapter(productDataRepository()),
     private readonly audit: AuditSink = defaultAuditSink,
+    private readonly principalMappings: PrincipalMappingAdapter = defaultPrincipalMappingAdapter(audit),
   ) {}
 
   async beginLogin(now = Date.now()) {
@@ -84,6 +92,31 @@ export class ProductSessionService {
     return session;
   }
 
+  async currentResolved(sessionId: string | undefined, now = Date.now()): Promise<ProductSession> {
+    const session = this.current(sessionId, now);
+    if (!session.workspace) {
+      if (session.principalMapping.state === "unmapped") return session;
+      const cleared = { ...session, principalMapping: { state: "unmapped" } as const };
+      this.store.replaceSession(cleared);
+      return cleared;
+    }
+
+    const expectedMappingVersion =
+      session.principalMapping.state === "mapped-reference"
+        ? session.principalMapping.mappingVersion
+        : undefined;
+    const principalMapping = await this.principalMappings.resolve({
+      productUserId: session.identity.userRef,
+      organizationId: session.workspace.organizationId,
+      workspaceId: session.workspace.id,
+      correlationId: session.correlationId,
+      expectedMappingVersion,
+    });
+    const updated = { ...session, principalMapping };
+    this.store.replaceSession(updated);
+    return updated;
+  }
+
   view(session: ProductSession): ProductSessionView {
     return {
       identity: session.identity,
@@ -103,7 +136,19 @@ export class ProductSessionService {
     if (session.version !== expectedSessionVersion) throw new Error("product_session_stale_version");
     const workspace = await this.context.workspaceForUser(session.identity.userRef, workspaceId);
     if (!workspace) throw new Error("product_workspace_forbidden");
-    const updated: ProductSession = { ...session, workspace, version: session.version + 1, csrfToken: opaqueId() };
+    const principalMapping = await this.principalMappings.resolve({
+      productUserId: session.identity.userRef,
+      organizationId: workspace.organizationId,
+      workspaceId: workspace.id,
+      correlationId: session.correlationId,
+    });
+    const updated: ProductSession = {
+      ...session,
+      workspace,
+      principalMapping,
+      version: session.version + 1,
+      csrfToken: opaqueId(),
+    };
     this.store.replaceSession(updated);
     this.audit({ event: "identity.workspace_switched", outcome: "allowed", correlationId: updated.correlationId, userRef: updated.identity.userRef, workspaceId });
     return updated;
