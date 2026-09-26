@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
-import { AgentJobStore } from '../../src/executor/agents/jobStore.js';
+import { AGENT_JOB_SCHEMA_VERSION, AgentJobStore } from '../../src/executor/agents/jobStore.js';
 import { AgentSessionStore, SESSION_ID_PREFIX, SESSION_ID_PATTERN } from '../../src/executor/agents/sessionStore.js';
 import {
   resolveSessionPolicy,
@@ -220,7 +220,7 @@ describe('AgentSessionStore', () => {
   });
 
   it('schema version upgraded to 6', () => {
-    expect(store.schemaVersion).toBe(9);
+    expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
   });
 });
 
@@ -631,7 +631,7 @@ describe('AgentJobEngine — session continuity dispatch', () => {
 describe('AgentJobStore session-continuity schema compatibility', () => {
   it('A8-S11: current fresh install includes the v6 agent_sessions contract', () => {
     const store = new AgentJobStore(':memory:');
-    expect(store.schemaVersion).toBe(9);
+    expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
     // session store is accessible
     const ss = store.sessionStore;
     expect(ss).toBeDefined();
@@ -657,7 +657,7 @@ describe('AgentJobStore session-continuity schema compatibility', () => {
 
       // Re-open the same file — session must still be ACTIVE
       const store2 = new AgentJobStore(tmp);
-      expect(store2.schemaVersion).toBe(9);
+      expect(store2.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
       const row = store2.sessionStore.getSession(id);
       expect(row).toBeDefined();
       expect(row!.state).toBe('ACTIVE');

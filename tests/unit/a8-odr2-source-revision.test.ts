@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AgentJobStore } from '../../src/executor/agents/jobStore.js';
+import { AGENT_JOB_SCHEMA_VERSION, AgentJobStore } from '../../src/executor/agents/jobStore.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,7 +34,7 @@ describe('A8 ODR-2 source revision binding', () => {
 
   it('bumps the durable schema for additive session revision binding', () => {
     const store = new AgentJobStore(':memory:');
-    expect(store.schemaVersion).toBe(9);
+    expect(store.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
   });
 
 
@@ -45,11 +45,17 @@ describe('A8 ODR-2 source revision binding', () => {
     seeded.close();
 
     const legacy = new DatabaseSync(dbPath);
-    legacy.exec('ALTER TABLE agent_sessions DROP COLUMN source_revision; PRAGMA user_version=8;');
+    legacy.exec(`
+      DROP TABLE execution_resource_leases;
+      ALTER TABLE agent_jobs DROP COLUMN global_exclusive;
+      ALTER TABLE agent_jobs DROP COLUMN execution_resources;
+      ALTER TABLE agent_sessions DROP COLUMN source_revision;
+      PRAGMA user_version=8;
+    `);
     legacy.close();
 
     const migrated = new AgentJobStore(dbPath);
-    expect(migrated.schemaVersion).toBe(9);
+    expect(migrated.schemaVersion).toBe(AGENT_JOB_SCHEMA_VERSION);
     expect(migrated.sessionStore.getSession(SESSION)!.sourceRevision).toBeNull();
     migrated.close();
   });

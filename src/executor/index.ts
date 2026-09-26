@@ -181,6 +181,12 @@ app.get('/control-center/runtime', handle(async () => {
   };
 }));
 
+// BE1A: bounded execution-fabric read model. Logical resource identities only;
+// never prompts, host paths, Docker options, credentials or provider payloads.
+app.get('/control-center/execution-fabric', handle(async () => ({
+  executionFabric: agentEngine?.executionFabricSnapshot() ?? null,
+})));
+
 app.post('/reload', handle(async () => {
   loadTargetConfig();
   invalidateCache();

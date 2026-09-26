@@ -24,6 +24,15 @@ import {
   type AgentResourcePolicy,
   type AgentProfilePolicy,
 } from '../shared/agents.js';
+import {
+  DEFAULT_AGENT_MAX_CONCURRENCY,
+  DEFAULT_PROJECT_QUEUE_CAPACITY,
+  EXECUTION_RESOURCE_CATEGORIES,
+  EXECUTION_RESOURCE_ID_PATTERN,
+  MAX_AGENT_MAX_CONCURRENCY,
+  MAX_PROJECT_QUEUE_CAPACITY,
+  type ExecutionResourceRef,
+} from '../shared/executionFabric.js';
 
 const backendId = z.enum(AGENT_BACKEND_IDS);
 const profileId = z.enum(AGENT_PROFILE_IDS);
@@ -55,6 +64,13 @@ const projectSchema = z.object({
   guardedPaths: z.array(z.string().min(1).max(512)).max(256).default([]),
   /** Paths refused for read by Ollama O1: glob patterns using applyPolicy grammar. */
   sensitiveReadGlobs: z.array(z.string().min(1).max(512)).max(256).default([]),
+  /** Trusted logical resource claims used only by the executor scheduler. */
+  executionResources: z.array(z.object({
+    category: z.enum(EXECUTION_RESOURCE_CATEGORIES),
+    id: z.string().regex(EXECUTION_RESOURCE_ID_PATTERN, 'invalid execution resource id'),
+  }).strict()).max(128).optional(),
+  /** Machine-wide/security-critical project lane; caller cannot set this. */
+  globalExclusive: z.boolean().optional(),
 }).strict();
 
 const profileSchema = z.object({
@@ -86,6 +102,12 @@ const agentConfigSchema = z.object({
   projects: z.array(projectSchema),
   profiles: z.array(profileSchema),
   resourcePolicies: z.array(resourcePolicySchema),
+  execution: z.object({
+    maxConcurrency: z.number().int().min(1).max(MAX_AGENT_MAX_CONCURRENCY)
+      .default(DEFAULT_AGENT_MAX_CONCURRENCY),
+    maxQueuedPerProject: z.number().int().min(1).max(MAX_PROJECT_QUEUE_CAPACITY)
+      .default(DEFAULT_PROJECT_QUEUE_CAPACITY),
+  }).strict().optional(),
 }).strict();
 
 export interface AgentBackendConfig extends z.infer<typeof backendSchema> {}
@@ -95,6 +117,24 @@ export interface AgentControlPlaneConfig {
   projects: AgentProjectConfig[];
   profiles: AgentProfilePolicy[];
   resourcePolicies: AgentResourcePolicy[];
+  execution?: {
+    maxConcurrency: number;
+    maxQueuedPerProject: number;
+  };
+}
+
+export function executionLimits(cfg: AgentControlPlaneConfig): {
+  maxConcurrency: number;
+  maxQueuedPerProject: number;
+} {
+  return cfg.execution ?? {
+    maxConcurrency: DEFAULT_AGENT_MAX_CONCURRENCY,
+    maxQueuedPerProject: DEFAULT_PROJECT_QUEUE_CAPACITY,
+  };
+}
+
+export function projectExecutionResources(project: AgentProjectConfig): ExecutionResourceRef[] {
+  return [...(project.executionResources ?? [])];
 }
 
 function malformed(msg: string): BridgeError {

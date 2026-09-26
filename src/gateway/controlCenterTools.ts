@@ -108,14 +108,26 @@ function authorityEvaluation(p: Principal, args: any) {
 }
 
 async function snapshot(p: Principal) {
-  const [runtime, targets, backends, projects] = await Promise.all([
+  const [runtime, targets, backends, projects, rawExecutionFabric] = await Promise.all([
     executor.controlCenterRuntime().catch(() => null),
     executor.listTargets().catch(() => []),
     executor.agentsList().catch(() => []),
     executor.agentProjects().catch(() => []),
+    executor.controlCenterExecutionFabric().catch(() => null),
   ]);
+  const visibleProjectIds = new Set(projects.filter((project) => principalMayUseAgentProject(p, project.id)).map((project) => project.id));
+  const executionFabric = rawExecutionFabric ? {
+    generation: rawExecutionFabric.generation,
+    cached: rawExecutionFabric.cached,
+    capacity: rawExecutionFabric.capacity,
+    projects: rawExecutionFabric.projects.filter((row) => visibleProjectIds.has(row.projectId)),
+    heldResources: rawExecutionFabric.heldResources.filter((row) => visibleProjectIds.has(row.projectId)),
+    waitingResources: rawExecutionFabric.waitingResources.filter((row) => visibleProjectIds.has(row.projectId)),
+    globalExclusiveHeld: rawExecutionFabric.heldResources.some((row) => visibleProjectIds.has(row.projectId) && row.resourceKey === 'machine:global-exclusive'),
+  } : null;
   return {
     runtime,
+    executionFabric,
     targets: targets.filter((t) => principalCanTarget(p, t.id)).map((t) => ({
       id: t.id, name: t.name, running: t.running, source: t.source,
       image: t.image, status: t.status, health: t.health,
@@ -185,11 +197,11 @@ async function viewData(view: View, p: Principal, args: any): Promise<Record<str
   }
   if (view === 'statistics') return { activity: stats, jobs: { active: snap.runtime?.activeJobs ?? null, queued: snap.runtime?.queuedJobs ?? null }, targets: { visible: snap.targets.length, running: snap.targets.filter((t) => t.running).length }, backends: { visible: snap.backends.length, available: snap.backends.filter((b) => b.available).length } };
   if (view === 'resources') return {
-    ownershipModel: 'QUARANGATE_LABELS_ONLY',
+    ownershipModel: 'TRUSTED_LOGICAL_RESOURCE_LEASES',
     cleanupAuthority: 'NO_GENERIC_CLEANUP_API',
-    resources: [],
-    state: 'RUNTIME_RESOURCE_ENUMERATION_NOT_EXPOSED',
-    note: 'Generic Docker resource enumeration is intentionally not public. A future bounded executor read model may expose only resources whose QuaranGate ownership is proven.',
+    executionFabric: snap.executionFabric,
+    state: snap.executionFabric ? 'BOUNDED_EXECUTION_FABRIC_VISIBLE' : 'EXECUTION_FABRIC_UNAVAILABLE',
+    note: 'Only server-derived logical resource identities are exposed; generic runtime enumeration and host paths remain private.',
   };
   if (view === 'capabilities') return {
     matrix: [
@@ -213,6 +225,7 @@ async function viewData(view: View, p: Principal, args: any): Promise<Record<str
     principal: { id: p.id, name: p.name },
     buildRevision: process.env.QUARANGATE_BUILD_REVISION ?? 'unknown',
     executor: snap.runtime,
+    executionFabric: snap.executionFabric,
     targets: { visible: snap.targets.length, running: snap.targets.filter((t) => t.running).length },
     backends: snap.backends,
     projects: snap.projects,

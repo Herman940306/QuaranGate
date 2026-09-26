@@ -69,6 +69,7 @@ export const executor = {
   reload: () => call<{ ok: true }>('/reload', {}),
   readyz: () => call<{ ok: true }>('/readyz').then(() => true).catch(() => false),
   controlCenterRuntime: () => call<ControlCenterRuntimeWire>('/control-center/runtime'),
+  controlCenterExecutionFabric: () => call<{ executionFabric: ControlCenterExecutionFabricWire | null }>('/control-center/execution-fabric').then((r) => r.executionFabric),
 
   // GitHub App control plane. Remote reads/PR actions use owner/repository
   // identifiers that are re-authorized against trusted accounts by the
@@ -173,6 +174,16 @@ export interface AgentDiffWire {
   artifactBytes?: number;
 }
 
+
+export interface ControlCenterExecutionFabricWire {
+  generation: number;
+  cached: boolean;
+  capacity: { maxConcurrency: number; maxQueuedPerProject: number };
+  projects: Array<{ projectId: string; queued: number; active: number }>;
+  heldResources: Array<{ resourceKey: string; jobId: string; projectId: string; state: 'ACTIVE' | 'UNCERTAIN' }>;
+  waitingResources: Array<{ projectId: string; resourceKey: string; waitingJobs: number }>;
+  globalExclusiveHeld: boolean;
+}
 
 export interface ControlCenterRuntimeWire {
   buildRevision: string;

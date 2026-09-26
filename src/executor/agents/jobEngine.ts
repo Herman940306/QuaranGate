@@ -3,8 +3,8 @@
  *
  * Owns dispatch validation against the TRUSTED agent configuration (defense
  * in depth — gateway grant checks are never assumed), durable state
- * transitions through the SQLite job store, serial execution of the
- * deterministic fake backend, cooperative cancellation, timeout enforcement
+ * transitions through the SQLite job store, bounded project-fair execution of
+ * backend jobs, cooperative cancellation, timeout enforcement
  * (maxRuntimeMs), and startup/shutdown reconciliation.
  *
  * The gateway is not job authority; it only authenticates, authorizes,
@@ -20,7 +20,8 @@ import {
   type AgentResourcePolicy,
   type AgentRetentionClass,
 } from '../../shared/agents.js';
-import type { AgentControlPlaneConfig } from '../agentConfig.js';
+import { executionLimits, projectExecutionResources, type AgentControlPlaneConfig } from '../agentConfig.js';
+import { executionResourceKey } from '../../shared/executionFabric.js';
 import { AgentJobStore, type AgentJobRow, type NewAgentJob, type SessionSuccessorInput } from './jobStore.js';
 import { FakeAgentBackend, type FakeBackendOptions } from './fakeBackend.js';
 import { verifyCanonicalArtifact, type ReadonlyEvidenceSource } from './artifactReader.js';
@@ -240,6 +241,50 @@ export class AgentJobEngine {
   private active = new Map<string, ActiveExecution>();
   private processing = false;
   private stopped = false;
+  private executionSnapshotGeneration = 0;
+  private executionSnapshotCache: {
+    generation: number;
+    value: {
+      generation: number;
+      cached: boolean;
+      capacity: { maxConcurrency: number; maxQueuedPerProject: number };
+      projects: Array<{ projectId: string; queued: number; active: number }>;
+      heldResources: ReturnType<AgentJobStore['executionLeaseSummary']>;
+      waitingResources: ReturnType<AgentJobStore['executionWaitingResourceSummary']>;
+      globalExclusiveHeld: boolean;
+    };
+  } | null = null;
+
+  private invalidateExecutionSnapshot(): void {
+    this.executionSnapshotGeneration += 1;
+    this.executionSnapshotCache = null;
+  }
+
+  executionFabricSnapshot(): {
+    generation: number;
+    cached: boolean;
+    capacity: { maxConcurrency: number; maxQueuedPerProject: number };
+    projects: Array<{ projectId: string; queued: number; active: number }>;
+    heldResources: ReturnType<AgentJobStore['executionLeaseSummary']>;
+    waitingResources: ReturnType<AgentJobStore['executionWaitingResourceSummary']>;
+    globalExclusiveHeld: boolean;
+  } {
+    if (this.executionSnapshotCache?.generation === this.executionSnapshotGeneration) {
+      return { ...this.executionSnapshotCache.value, cached: true };
+    }
+    const heldResources = this.store.executionLeaseSummary();
+    const value = {
+      generation: this.executionSnapshotGeneration,
+      cached: false,
+      capacity: executionLimits(this.config),
+      projects: this.store.executionProjectSummary(),
+      heldResources,
+      waitingResources: this.store.executionWaitingResourceSummary(),
+      globalExclusiveHeld: heldResources.some((r) => r.resourceKey === 'machine:global-exclusive'),
+    };
+    this.executionSnapshotCache = { generation: this.executionSnapshotGeneration, value };
+    return value;
+  }
 
   constructor(
     private readonly store: AgentJobStore,
@@ -290,6 +335,7 @@ export class AgentJobEngine {
       // resource. Never copy provider/Docker exception text into durable or
       // caller-visible job state from this secondary cleanup path.
       this.stopped = true;
+      this.store.markExecutionLeasesUncertain(jobId, `security cleanup unverified: ${boundary}`);
       bestEffortLog('security cleanup unverified; engine stopped', { jobId, boundary });
       return false;
     }
@@ -300,6 +346,7 @@ export class AgentJobEngine {
     // Order is security-significant: active jobs fail first, then leaked
     // reservations are reconciled, and only then may queued work execute.
     const recovered = this.store.recoverActive('executor restarted during active agent execution');
+    if (recovered.length > 0) this.invalidateExecutionSnapshot();
     for (const id of recovered) log('agent job recovered as FAILED_INFRASTRUCTURE', { jobId: id });
     const sessionRecovery = this.store.sessionStore.recoverReservations();
     for (const id of sessionRecovery.expired) {
@@ -387,6 +434,12 @@ export class AgentJobEngine {
     // insert and ACTIVE -> RESERVED transition are one BEGIN IMMEDIATE
     // transaction in AgentJobStore. Session state never confers permission.
     const jobId = `job_${randomBytes(16).toString('hex')}`;
+    const trustedResources = projectExecutionResources(project);
+    if (profile.workspaceAccess === 'sandbox-write') {
+      trustedResources.push({ category: 'worktree', id: project.worktreeId ?? project.id });
+    }
+    const executionResources = [...new Set(trustedResources.map(executionResourceKey))].sort();
+    const limits = executionLimits(this.config);
     const newJob: NewAgentJob = {
       jobId,
       principalId: req.principal,
@@ -400,6 +453,8 @@ export class AgentJobEngine {
       writer: profile.workspaceAccess === 'sandbox-write',
       retentionClass,
       retentionDurationMs,
+      executionResources,
+      globalExclusive: project.globalExclusive ?? false,
     };
 
     const job = req.sessionPolicy === 'resume'
@@ -408,9 +463,10 @@ export class AgentJobEngine {
           project: project.id,
           backend: backend.id,
           profile: profile.id,
-        })
-      : this.store.insert(newJob);
+        }, limits.maxQueuedPerProject)
+      : this.store.insert(newJob, limits.maxQueuedPerProject);
 
+    this.invalidateExecutionSnapshot();
     if (job.sessionPolicy === 'resume') {
       bestEffortLog('agent job session reserved', {
         jobId: job.jobId,
@@ -580,6 +636,7 @@ export class AgentJobEngine {
           jobId, new Date().toISOString(), 'cancelled by owner',
         );
         if (ok) {
+          this.invalidateExecutionSnapshot();
           log('agent queued job cancelled with safe session release', { jobId, principal });
           this.kick();
           return this.store.get(jobId)!;
@@ -610,6 +667,7 @@ export class AgentJobEngine {
         }
         const exec = this.active.get(jobId);
         if (exec) { exec.cause = 'cancel'; exec.controller.abort(new Error('cancelled by owner')); }
+        this.invalidateExecutionSnapshot();
         log('agent job cancelled', { jobId, principal });
         this.kick();
         return this.store.get(jobId)!;
@@ -628,17 +686,23 @@ export class AgentJobEngine {
   private async processLoop(): Promise<void> {
     this.processing = true;
     try {
-      while (!this.stopped) {
-        const job = this.store.claimNext();
+      const { maxConcurrency } = executionLimits(this.config);
+      while (!this.stopped && this.store.countActive() < maxConcurrency) {
+        const job = this.store.claimNext(maxConcurrency);
         if (!job) break;
-        await this.execute(job);
+        this.invalidateExecutionSnapshot();
+        // Intentionally do not await: each admitted job owns a distinct project
+        // lane and any conflicting trusted resources were leased atomically by
+        // claimNext(). Completion re-enters the scheduler via finally.
+        void this.execute(job).catch((e) => {
+          log('agent execution task escaped', { jobId: job.jobId, error: e instanceof Error ? e.message.slice(0, 200) : String(e) });
+        }).finally(() => this.kick());
       }
     } catch (e) {
       log('agent engine loop error', { error: e instanceof Error ? e.message.slice(0, 200) : String(e) });
     } finally {
       this.processing = false;
     }
-    if (!this.stopped && this.store.hasQueued() && this.store.countActive() === 0) this.kick();
   }
 
   private async execute(job: AgentJobRow): Promise<void> {
@@ -797,6 +861,10 @@ export class AgentJobEngine {
         successorSessionId: completed.backendSessionId,
       });
     } catch (e) {
+      // shutdown() synchronously persists FAILED_INFRASTRUCTURE + UNCERTAIN
+      // before aborting. Once stopped, no detached task may touch SQLite again;
+      // the executor shutdown path is then free to close the store immediately.
+      if (this.stopped) return;
       if (backend?.cleanup) {
         await this.securityCleanup(job.jobId, 'job-resources', () => backend!.cleanup!());
       }
@@ -840,6 +908,8 @@ export class AgentJobEngine {
       this.failActive(job.jobId, exec, backend, e);
     } finally {
       clearTimeout(timeout);
+      if (!this.stopped) this.store.releaseExecutionLeases(job.jobId);
+      this.invalidateExecutionSnapshot();
       this.active.delete(job.jobId);
     }
   }
@@ -878,6 +948,7 @@ export class AgentJobEngine {
           failureCode: 'FAILED_INFRASTRUCTURE',
           failureReason: 'executor shutdown during active fake execution',
         });
+        this.store.markExecutionLeasesUncertain(jobId, 'executor shutdown during active agent execution');
       }
     }
     this.active.clear();
