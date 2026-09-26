@@ -1,0 +1,5 @@
+frontend/src/app/api/product/security/discovery/start/route.ts
+frontend/src/app/api/product/security/plan/route.ts
+frontend/src/server/product/http/errors.ts
+frontend/src/server/product/security/request.ts
+frontend/tests/unit/be8-security-discovery-planner.test.ts

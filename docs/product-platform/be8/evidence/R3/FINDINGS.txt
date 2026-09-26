@@ -1,0 +1,7 @@
+BE8 R3 continued-review finding
+
+F1 BE8 POST routes still used request.json(), which buffers/parses the complete body before the BE8 semantic bounds run. This left the HTTP request envelope itself unbounded for clients that omit or falsify Content-Length.
+
+R3 replaces those calls with a 16 KiB bounded streaming JSON reader, rejects oversized declared Content-Length before reading, cancels streaming reads after the byte ceiling, and normalizes malformed UTF-8/JSON.
+
+This is an implementation handoff, not an acceptance verdict.

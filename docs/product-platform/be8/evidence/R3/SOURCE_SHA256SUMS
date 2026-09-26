@@ -1,0 +1,5 @@
+bcfcd2297f50327751e65c3c04ef2d96ad7c48a6a3fd723566610b9b05651c2d  frontend/src/app/api/product/security/discovery/start/route.ts
+26be836b36eff9ca6793e78db5c8df2f02e3c8a78b89bb03664e702dc034b5c9  frontend/src/app/api/product/security/plan/route.ts
+ae28d355fd84a263685bbdb2eafdc7b0d96f7b48b7a067332c3c8a56246b8657  frontend/src/server/product/http/errors.ts
+294c9fde9b70619aac4a223716451e14989cc23a43187d7039552d6d29a9e4df  frontend/src/server/product/security/request.ts
+0c8b9be109a0fbfc0ff5948d0e90a194d02b0c319e5e3fd729fb9e66038c1153  frontend/tests/unit/be8-security-discovery-planner.test.ts

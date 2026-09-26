@@ -15,7 +15,7 @@ import {
   MAX_TOTAL_DISCOVERY_BYTES,
 } from "../../src/server/product/security/discovery";
 import { createSecurityAssessmentPlan } from "../../src/server/product/security/planner";
-import { parseDiscoveryIdRequest, parseSecurityDiscoveryRequest } from "../../src/server/product/security/request";
+import { MAX_SECURITY_REQUEST_BODY_BYTES, parseDiscoveryIdRequest, parseSecurityDiscoveryRequest, readBoundedSecurityJson } from "../../src/server/product/security/request";
 import { SecurityAssessmentService } from "../../src/server/product/security/service";
 import type { SecuritySourceAdapter } from "../../src/server/product/security/source";
 import { MemorySecurityDiscoveryStore } from "../../src/server/product/security/store";
@@ -170,6 +170,36 @@ describe("BE8 R1 trusted static discovery bounds", () => {
 });
 
 describe("BE8 R1 request authority", () => {
+  it("bounds the HTTP JSON request body before parsing", async () => {
+    const oversized = "x".repeat(MAX_SECURITY_REQUEST_BODY_BYTES + 1);
+    const request = new Request("https://app.example.invalid/api/product/security/discovery/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: oversized }),
+    });
+    await expect(readBoundedSecurityJson(request)).rejects.toThrow("security_request_body_too_large");
+  });
+
+  it("rejects an oversized declared content-length before reading the body", async () => {
+    const request = new Request("https://app.example.invalid/api/product/security/plan", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(MAX_SECURITY_REQUEST_BODY_BYTES + 1),
+      },
+      body: JSON.stringify({ discoveryId: "disc_0123456789abcdef01234567" }),
+    });
+    await expect(readBoundedSecurityJson(request)).rejects.toThrow("security_request_body_too_large");
+  });
+
+  it("rejects invalid UTF-8/JSON bodies without exposing parser details", async () => {
+    const request = new Request("https://app.example.invalid/api/product/security/plan", {
+      method: "POST",
+      body: new Uint8Array([0xff, 0xfe, 0xfd]),
+    });
+    await expect(readBoundedSecurityJson(request)).rejects.toThrow("security_request_invalid");
+  });
+
   it("requires CSRF/origin enforcement on security discovery and plan POST routes", () => {
     const startRoute = readFileSync(join(process.cwd(), "src/app/api/product/security/discovery/start/route.ts"), "utf8");
     const planRoute = readFileSync(join(process.cwd(), "src/app/api/product/security/plan/route.ts"), "utf8");

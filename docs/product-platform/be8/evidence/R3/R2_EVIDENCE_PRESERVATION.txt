@@ -1,0 +1,13 @@
+R2_EVIDENCE_PRESERVATION=PASS
+
+Base candidate:
+3c3f1d30a13bfdd385b0a4077bd577dda362f720
+
+Verification:
+git diff --quiet 3c3f1d30a13bfdd385b0a4077bd577dda362f720 -- docs/product-platform/be8/BE8_R2_HANDOFF.md docs/product-platform/be8/evidence/R2
+
+Result:
+R2_EVIDENCE_UNCHANGED=YES
+
+Note:
+R2 SHA256SUMS also intentionally binds several source/test files that R3 modifies. Therefore a whole R2 SHA256SUMS replay is expected to report those changed source/test entries as FAILED after R3 begins; that does not imply R2 evidence mutation. Immutable R2 evidence/document bytes remain unchanged.

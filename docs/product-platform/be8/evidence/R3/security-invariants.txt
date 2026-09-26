@@ -1,0 +1,11 @@
+
+> quarangate@0.1.0 security:invariants
+> node scripts/security-invariants.mjs
+
+{
+  "ok": true,
+  "rulesChecked": 16,
+  "composeFilesChecked": 12,
+  "dockerfilesChecked": 7,
+  "failures": []
+}

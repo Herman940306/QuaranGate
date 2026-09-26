@@ -4,6 +4,52 @@ import type { SecurityDiscoveryRequest } from "./types";
 const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const TARGET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DISCOVERY_ID = /^disc_[0-9a-f]{24}$/;
+export const MAX_SECURITY_REQUEST_BODY_BYTES = 16 * 1024;
+
+export async function readBoundedSecurityJson(request: Request, maxBytes = MAX_SECURITY_REQUEST_BODY_BYTES): Promise<unknown> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null) {
+    const value = Number(declared);
+    if (!Number.isSafeInteger(value) || value < 0 || value > maxBytes) throw new Error("security_request_body_too_large");
+  }
+
+  if (!request.body) throw new Error("security_request_invalid");
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel("security_request_body_too_large");
+        throw new Error("security_request_body_too_large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (total === 0) throw new Error("security_request_invalid");
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+  } catch {
+    throw new Error("security_request_invalid");
+  }
+}
 
 function objectBody(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("security_request_invalid");
