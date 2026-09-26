@@ -45,13 +45,15 @@ describe('credential manager — file validation', () => {
   });
 
   it('rejects a key file with group-readable permissions (0640)', () => {
-    writeFileSync(keyPath, 'secret-value-1234567890123456', { mode: 0o640 });
+    writeFileSync(keyPath, 'secret-value-1234567890123456', { mode: 0o600 });
+    chmodSync(keyPath, 0o640);
     const mgr = new CredentialManager({ credentialPath: keyPath, helperImage: 'alpine' });
     expect(() => mgr.verifyCredentialFile()).toThrow(/unsafe permissions/);
   });
 
   it('rejects a key file with world-readable permissions (0644)', () => {
-    writeFileSync(keyPath, 'secret-value-1234567890123456', { mode: 0o644 });
+    writeFileSync(keyPath, 'secret-value-1234567890123456', { mode: 0o600 });
+    chmodSync(keyPath, 0o644);
     const mgr = new CredentialManager({ credentialPath: keyPath, helperImage: 'alpine' });
     expect(() => mgr.verifyCredentialFile()).toThrow(/unsafe permissions/);
   });
