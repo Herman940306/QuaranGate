@@ -43,7 +43,7 @@ describe("same-origin operational boundary", () => {
   it("drops untrusted correlation and never exposes raw error data", async () => {
     await expect(createOperationalClient(async () => new Response("secret", { status: 403, headers: { "X-QuaranGate-Request-Id": "credential-looking-value" } })).targets()).rejects.toMatchObject({ state: "forbidden", correlationId: undefined });
   });
-  it("exposes only purpose-specific reads", () => { expect(Object.keys(createOperationalClient())).toEqual(["targets", "target", "projects", "backends", "job", "result", "diff", "gitStatus", "gitDiff", "gitLog", "repositories", "statistics", "authority", "control"]); });
+  it("exposes only purpose-specific reads", () => { expect(Object.keys(createOperationalClient())).toEqual(["targets", "target", "projects", "backends", "job", "result", "diff", "gitStatus", "gitDiff", "gitLog", "repositories", "statistics", "activity", "authority", "control"]); });
 });
 describe("read contracts", () => {
   it("reads projects and unavailable backends without authority promotion", async () => {

@@ -215,3 +215,16 @@ Existing `/security` now projects server grants and operation-specific advisory 
 | `tests/e2e/security.spec.ts` | Advisory denial, unavailable, keyboard, axe, storage, responsive; no exports | FE12 tests; browser state | Playwright/synthetic interception; live qualification separate | Test fixture |
 
 Changed existing route `src/app/(foundation)/security/page.tsx` owns only route metadata/composition. Existing `client.ts` adds a bounded authority-read method. No backend, policy or authorization mutation is introduced.
+
+
+## FE13 Audit & Evidence
+
+| File | Purpose / exports | Route / owned state | API / future integration | Readiness |
+|---|---|---|---|---|
+| `src/app/(foundation)/audit-evidence/page.tsx` | Page/metadata | `/audit-evidence`; none | AuditEvidence; same-origin deployment separate | Scaffold-only candidate |
+| `src/components/audit-evidence.tsx` | AuditEvidence | Audit; selected request and receipt in memory | activity query; richer lineage requires accepted relationships | Scaffold-only candidate |
+| `src/lib/operational/activity.ts` | ActivityRow/ActivitySnapshot/activity | Audit; none | bounded metadata-only activity projection; no durable history | Source candidate |
+| `tests/unit/activity.test.ts` | projection/bounds/chronology; no exports | FE13 tests; fixtures | Vitest; integration separate | Test fixture |
+| `tests/e2e/audit-evidence.spec.ts` | responsive/axe/storage/unavailable; no exports | FE13 tests; browser memory | Playwright/synthetic MCP; live qualification separate | Test fixture |
+
+Existing shell owns the added navigation and identity-epoch remount; client owns the closed activity read. Lineage stops at request → job UNKNOWN. No raw payload export or inferred relationship exists.

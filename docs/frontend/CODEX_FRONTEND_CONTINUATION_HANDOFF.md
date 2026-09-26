@@ -461,3 +461,20 @@ Qualification: typecheck PASS; lint PASS (142 files, initial control-character r
 Changed paths: frontend README; security route; SecurityExplorer; authority decoder; expected tool catalog; purpose-specific operational client; operational unit method-list regression; authority unit tests; Security browser tests; this handoff and FE12 evidence screenshots. Every new frontend file is documented in README. No backend/configuration/dependency/credential change.
 
 NEXT: FE13 Audit & Evidence. Activity metadata exposes request IDs but no job/evidence/diff/review/apply relationship. Unproven lineage must stop at UNKNOWN rather than inferring links; richer lineage requires a separately accepted safe metadata contract.
+
+
+## FE13 checkpoint — Audit & Evidence
+
+FE12 freeze identity: commit `7d6cf14db578c45c19ba137b3b1a9a65c90478b0`, tree `c2b0b746544f28e23b56ab23f340635bc35370ad`, parent `6a5caa4fbc19f33d3ada95b1545b5cfc9a382117`, subject `feat(frontend): add server-backed authority explorer`. Verified clean before FE13 mutation.
+
+STATUS: IMPLEMENTATION CANDIDATE — METADATA ONLY — NOT SELF-ACCEPTED.
+
+Added `/audit-evidence` and shell navigation/identity invalidation. Closed activity query requests 100 rows over at most 24h, only for the authenticated principal. Decoder allowlists timestamp/request/principal/tool/target/decision/code/duration; unknown payload and lineage fields are dropped. Newest-first ordering is explicit, nulls remain UNKNOWN, and request selection stays in memory. No raw payloads, export, credential persistence or immutable-ledger claim exists.
+
+CONTRACT BOUNDARY: current `src/gateway/audit.ts` AuditEntry and queryAuditActivity expose request ID but no job ID or evidence/review/apply relationship. `src/gateway/controlCenterTools.ts` activity view returns those bounded rows. Lineage stops at request → job UNKNOWN. Richer chain-of-custody remains NOT_AVAILABLE. Safest backend request: separately accept a principal-authorized metadata DTO with explicit request/job/evidence/diff/review/disposition identifiers and verified relationships, preserving payload exclusion and unknown semantics. No backend change or mock success was introduced.
+
+Qualification: lint PASS (147 files), typecheck PASS, activity-focused unit 3/3 PASS inside full unit 151/151 PASS; Chromium 3/3 PASS at 1280/360px with axe, keyboard refresh, no page overflow, no local/session persistence, unknown lineage and unavailable fail-closed states. Production build PASS (33 static routes); diff check PASS. Screenshots preserved in `docs/frontend/evidence/FE13/audit-1280.png` and `audit-360.png`; no accepted tracked visual evidence changed.
+
+Changed paths: audit route, AuditEvidence component, activity decoder, purpose-specific client, shell, operational method-list unit regression, activity unit tests, audit browser tests, frontend README, this handoff and FE13 screenshots. New files are registered in README. Integration/deployment and durable audit availability remain unqualified.
+
+NEXT: FE14 Recovery & Backups, read-only existing recovery metadata; no browser restore/backup/cleanup/quarantine release/rollback.

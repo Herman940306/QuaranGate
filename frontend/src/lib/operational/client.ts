@@ -1,4 +1,5 @@
 import * as decode from "./contracts";
+import { activity } from "./activity";
 import { authority, preflightArguments, type PreflightRequest } from "./authority";
 import { OperationalError } from "./state";
 import { createReader, type Transport } from "./transport";
@@ -23,6 +24,7 @@ export function createOperationalClient(transport?: Transport) {
       if (!Number.isSafeInteger(windowMs) || windowMs < 60_000 || windowMs > 86_400_000) throw new OperationalError("unknown");
       return read("control_center_query", { view: "statistics", sinceMs: windowMs }, decode.statistics, signal);
     },
+    activity: (signal?: AbortSignal) => read("control_center_query", { view: "activity", limit: 100, sinceMs: 86_400_000 }, activity, signal),
     authority: (request?: PreflightRequest, signal?: AbortSignal) => read("control_center_query", request ? preflightArguments(request) : { view: "authority" }, authority, signal),
     control: (view: decode.ControlView, signal?: AbortSignal) => { if (!decode.controlViews.includes(view)) throw new OperationalError("unknown"); return read("control_center_query", { view, limit: 50 }, value => decode.control(view, value), signal); },
   };
