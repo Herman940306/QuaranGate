@@ -433,3 +433,14 @@ Independent review remains required. Production identity/adapter integration and
 | Continuation | Commit | Tree | Parent | Subject | Tests |
 | --- | --- | --- | --- | --- | --- |
 | FE11 window-read repair | `a9b6e7305af083669cb137532135d28e53c5b561` | `1cd417350619411627a7c1127bb84fb107f90e35` | `57ca3679c0386612d0117ff9a4b36e1c8d1bdab9` | `fix(frontend): refresh statistics on bounded window changes` | Post-repair local gates PASS; Chromium 13/13 PASS; see continuation verification |
+
+
+### FE11 exact generated-file closure — owner authorized 2026-09-26
+
+The owner explicitly authorized inclusion only of the inherited two-line `frontend/next-env.d.ts` normalization from `.next/dev/types/{routes,root-params}.d.ts` to `.next/types/{routes,root-params}.d.ts`. The complete file matches the installed Next.js 16.3.6 `writeAppTypeDeclarations` generator byte-for-byte with production `distDir: .next`; a fresh production build preserved those exact bytes. The HEAD-to-worktree equality guard confirms no other file changes. Generated blob: `ce4e94a6b10f160ee021fe18939af160d2927dcf`.
+
+NEXT_ENV_DIFF_CLASSIFICATION=GENERATED_NORMALIZATION_ONLY. This inherited/generated declaration-only normalization is included solely to achieve an exact clean immutable FE11 closure. It changes no runtime behavior, product contracts, authority/security semantics, secrets, dependencies or configuration; it is reproducible toolchain output, not an additional human-authored feature. No FE11 repair scope was broadened.
+
+Fresh closure gates: `git diff --check` PASS; `npm --prefix frontend run typecheck` PASS; lint PASS (137 files); focused Statistics unit tests PASS (4/4); full frontend unit suite PASS (144/144); production build PASS (32 routes). The initial generator-proof script encountered sandbox subprocess EPERM; repeating with a separately read HEAD file proved exact equality without changing source. Prior unchanged-runtime repair qualification remains Chromium Statistics/operational 13/13 PASS, audit zero vulnerabilities, and bounded secret scan PASS. Independent review remains required.
+
+The prior generated-file governance blocker is resolved by the owner's narrow authorization and these proofs. Freeze this closure with only this handoff and the exact generated declaration delta; the immutable closure identity is recorded in the following phase's handoff. NEXT: FE12 Security & Authority Explorer.
