@@ -120,4 +120,12 @@ Job lookup remains discovery-free. Result summaries/progress/transcripts are int
 
 Optional FE1.10 deferred. No FE2+, auth server, DB, deployment, recovery execution, arbitrary tool/method, terminal command, Git mutation or operational write introduced. Root Vitest not run; shared `/tmp/q` not touched. Next generated `next-env.d.ts` during validation; restored exact preflight HEAD bytes before freeze, no config delta. Frontend local dependencies installed with `npm ci --ignore-scripts`, manifests unchanged. Test servers were bounded loopback harness processes and stopped.
 
-Governance: one owner-authorized atomic candidate commit; no push, merge, deploy, credential use, backend mutation or independent acceptance claim. Next: orchestrator reviews exact immutable candidate and its evidence; integration/deployment/identity owners address remaining promotion gates separately.
+Governance: owner-authorized source commit plus an evidence-only corrective commit; no push, merge, deploy, credential use, backend mutation or independent acceptance claim. Next: orchestrator reviews exact immutable candidate and its evidence; integration/deployment/identity owners address remaining promotion gates separately.
+
+## Freeze correction — command-control failure disclosed
+
+The first staging check passed for source/screenshots/JSON receipts. Adding raw ignored command logs introduced trailing whitespace/EOF blank lines in build/typecheck/unit logs. The subsequent staged diff check exited 2, but a shell sequence still executed the source commit. That premature commit is preserved as historical evidence rather than amended or rewritten.
+
+Premature source/evidence commit: `a61f40a656aadc63b5813ff6827760d950d6f16b` (not qualified as final frozen candidate). Corrective commit changes only this handoff and three presentation logs. Log normalization removes trailing whitespace/terminal carriage returns/extra EOF blank lines; test commands, messages, counts and outcomes are unchanged. Original raw bytes remain in the premature commit. Source code/tests/screenshots remain byte-identical; no source gate rerun is required for this evidence-only correction.
+
+The requested single-commit lane was not achieved: two commits are retained. The final candidate is the corrective HEAD, with the approved common base still its ancestor. Fresh base-to-candidate `git diff --check` and mechanical source-byte preservation must pass before the post-commit freeze receipt is issued. This deviation requires orchestrator acknowledgement during review; no acceptance claim is made.
