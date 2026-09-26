@@ -41,6 +41,14 @@ try {
   if (JSON.stringify(storage) !== JSON.stringify({ local: 0, session: 0, cookies: "", databases: 0, caches: 0 })) {
     throw new Error(`Unexpected production browser persistence: ${JSON.stringify(storage)}`);
   }
+  for (const [route, title] of [["overview", "Overview"], ["targets", "Targets"], ["projects", "Projects"], ["agents", "Agents"], ["jobs", "Jobs"], ["git", "Git"], ["github", "GitHub"], ["control-center", "Control Center"], ["security", "Security & Access"]]) {
+    const productResponse = await page.goto(`${origin}/${route}`);
+    if (!productResponse?.ok() || await page.title() !== `${title} — QuaranGate`) throw new Error(`Product route failed: ${route}`);
+  }
+  await page.goto(`${origin}/overview`);
+  await page.getByRole("button", { name: "Read overview", exact: true }).click();
+  await page.getByText("The operational service is unavailable. Retry when it is reachable.").waitFor();
+  if (await page.evaluate(() => localStorage.length + sessionStorage.length) !== 0) throw new Error("Product read persisted browser data");
   const designResponse = await page.goto(`${origin}/design-system`);
   if (designResponse?.status() !== 404) throw new Error(`Production design-system route returned ${designResponse?.status()}`);
   const headers = await fetch(origin);
@@ -49,7 +57,7 @@ try {
     if (headers.headers.get(name) !== value) throw new Error(`Missing header ${name}`);
   }
   await browser.close();
-  console.log("production smoke: PASS (root 200, design-system 404, storage clean, headers present)");
+  console.log("production smoke: PASS (root + nine product routes 200, missing /mcp unavailable, design-system 404, storage clean, headers present)");
 } finally {
   server.kill("SIGTERM");
 }

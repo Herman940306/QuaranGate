@@ -1,0 +1,53 @@
+{
+  "base": "5fc68fe23918dfca764a3b5e6de8eb73ede2167c",
+  "unchangedBackendSource": true,
+  "files": [
+    {
+      "path": "src/gateway/mcp.ts",
+      "sha256": "595fdc9d48421221f1455b2d4bc23edbb150a9570b39f3498b8cc33b1fe4e0ad"
+    },
+    {
+      "path": "src/gateway/agentSchemas.ts",
+      "sha256": "f44f46012b871daad582b4c83f2c14839d8f0532d59bb78c14b8fafe28bf3ff8"
+    },
+    {
+      "path": "src/gateway/agentTools.ts",
+      "sha256": "92bfab251c14d4172c1a97a0422d97a8be4d7acba289f26f7a0344a82a5b10e3"
+    },
+    {
+      "path": "src/gateway/githubTools.ts",
+      "sha256": "b6c1f5cbb23dfef126a8d2a72325a65c4f98b5fb7e08e0931f9a5d8785b8eadd"
+    },
+    {
+      "path": "src/gateway/controlCenterTools.ts",
+      "sha256": "e967eb20f23bd0d052ca318e521661c2188399c84e7c9caccab09e7d6f079a7b"
+    },
+    {
+      "path": "src/gateway/requestTelemetry.ts",
+      "sha256": "bd523ff1ecb92343419facb8be669f6423d15f3165ab4aab92235ca1357379b1"
+    },
+    {
+      "path": "src/shared/agents.ts",
+      "sha256": "d2e84a8f798ff51dbdedb31e386a4b6724ee5eb27fdd60e25ff0d083314dd637"
+    }
+  ],
+  "contracts": [
+    "targets_list",
+    "target_inspect",
+    "agent_projects",
+    "agents_list",
+    "agent_status",
+    "agent_result",
+    "agent_diff",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "github_repositories",
+    "control_center_query"
+  ],
+  "preflightPreserved": {
+    "docs/frontend/FE1_CONTRACT_REQUEST.md": "cbb5a71b275b51d17bf6f4eb9efd1fee1fd735a504bc85c8674c6f1a89588f6f",
+    "docs/frontend/FE1_PREFLIGHT_EVIDENCE.json": "684c4a875a3c17054c3b12bd2879352e5e4db20dec649759b431559d53a91128"
+  },
+  "frontendInventory": "PASS"
+}

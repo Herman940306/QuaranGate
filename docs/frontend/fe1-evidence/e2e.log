@@ -1,0 +1,37 @@
+
+> @quarangate/frontend@0.1.0 test:e2e
+> playwright test
+
+[WebServer] (node:1608856) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1608876) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1609068) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 16 tests using 2 workers
+
+(node:1609238) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1609241) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   2 [chromium] › tests/e2e/foundation.spec.ts:32:1 › foundation shell is honest, responsive, and free of persistent browser data (1.3s)
+  ✓   3 [chromium] › tests/e2e/foundation.spec.ts:60:1 › appearance exposes every approved value and resets on reload (1.5s)
+  ✓   1 [chromium] › tests/e2e/operational.spec.ts:28:3 › overview and targets are truthful and accessible at 1280 (5.3s)
+  ✓   4 [chromium] › tests/e2e/foundation.spec.ts:82:1 › design route covers validation, tabs, dialog focus, drawer, toast and accessibility (5.8s)
+[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)
+  ✓   5 [chromium] › tests/e2e/operational.spec.ts:28:3 › overview and targets are truthful and accessible at 360 (4.5s)
+  ✓   6 [chromium] › tests/e2e/foundation.spec.ts:135:1 › reduced motion keeps state and removes spatial movement (1.7s)
+  ✓   7 [chromium] › tests/e2e/operational.spec.ts:43:1 › known-job lookup preserves completion, safe evidence and no discovery (2.4s)
+  ✓   9 [chromium] › tests/e2e/operational.spec.ts:53:3 › forbidden is explicit and does not leak backend copy (1.8s)
+  ✓  10 [chromium] › tests/e2e/operational.spec.ts:53:3 › unavailable is explicit and does not leak backend copy (2.3s)
+[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)
+  ✓  11 [chromium] › tests/e2e/operational.spec.ts:55:1 › keyboard navigation, reduced motion and appearance survive product navigation (1.1s)
+  ✓   8 [chromium] › tests/e2e/foundation.spec.ts:148:1 › local fonts and representative theme combinations remain accessible (8.1s)
+  ✓  13 [chromium] › tests/e2e/foundation.spec.ts:178:1 › forced colors preserves navigation, controls and modal keyboard operation (4.0s)
+  ✓  12 [chromium] › tests/e2e/operational.spec.ts:60:1 › Git failure/truncation, backend availability and GitHub authority stay distinct (5.5s)
+  ✓  14 [chromium] › tests/e2e/foundation.spec.ts:205:1 › 200 percent layout zoom keeps desktop and narrow actions and overlays reachable (6.2s)
+  ✓  15 [chromium] › tests/e2e/operational.spec.ts:66:1 › Control Center and Security views remain metadata-only with generated time (7.1s)
+  ✓  16 [chromium] › tests/e2e/operational.spec.ts:75:1 › cancelled reads reject late output (787ms)
+
+  16 passed (34.4s)

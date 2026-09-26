@@ -1,0 +1,5 @@
+
+> @quarangate/frontend@0.1.0 test:production-smoke
+> node tests/production-smoke.mjs
+
+production smoke: PASS (root + nine product routes 200, missing /mcp unavailable, design-system 404, storage clean, headers present)

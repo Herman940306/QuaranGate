@@ -1,8 +1,8 @@
-# QuaranGate product frontend — F1 foundation
+# QuaranGate product frontend — F1 foundation and FE1 read candidate
 
 This directory owns the additive Next.js product frontend foundation. It does not replace or modify the accepted static operational Console in `../console/`, and it exposes no MCP, gateway, database, identity, provider, Docker, deployment, or production authority.
 
-The current candidate is implemented for F1 and awaits independent review; it is unaccepted. Before continuing implementation or relying on validation results, read [`../docs/frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md`](../docs/frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md).
+F1 is accepted by the current owner prompt. FE1 is an unreviewed read-only source candidate. Before continuing implementation or relying on validation results, read [`../docs/frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md`](../docs/frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md).
 
 ## Toolchain
 
@@ -50,7 +50,7 @@ The repository-wide existing Console and backend gates remain separate and must 
 
 - Appearance preferences live only in page memory and reset on reload. The adapter is ready for later authenticated persistence.
 - Account and workspace context are explicitly labeled placeholders.
-- No business routes or operational backend calls exist.
+- F1 itself is disconnected; the FE1 routes below make explicit same-origin read calls.
 - No user, health, provider, security, monitoring, or authorization value is synthesized.
 - Production deployment topology is not changed by F1.
 
@@ -97,4 +97,41 @@ All entries are F1 candidates pending independent review. “Foundation” means
 | `src/lib/motion.ts` | Central springs/reduced transition; `motionSpring`, `transitionFor` | Motion; none | Motion; no backend expectation | Foundation |
 | `tests/unit/foundation.test.tsx` | Pure contracts and safe-render assertions; no exports | Tests; isolated fixtures | Vitest/React rendering; extend with later behavior | Foundation |
 | `tests/e2e/foundation.spec.ts` | Browser, axe, keyboard, appearance, responsive, forced-colors and 200% CSS layout-zoom evidence; no exports | Tests; isolated browser contexts | Loopback Next/axe; later authorized integration | Foundation |
-| `tests/production-smoke.mjs` | Production route/storage/header checks; no exports | Tests; bounded server/browser | Production Next; later deployment qualification | Foundation |
+| `tests/production-smoke.mjs` | Production F1 + nine FE1 route, unavailable /mcp, storage/header checks; no exports | Tests; bounded server/browser | Production Next; later deployment qualification | Foundation |
+
+## FE1 operational client and routes
+
+Read [`../docs/frontend/FE1_HANDOFF.md`](../docs/frontend/FE1_HANDOFF.md) for authority, checkpoint evidence and promotion limits. `/` preserves the F1 preview. The operational pages request data only through explicit reads; they do not establish identity or route `/mcp`. The default transport targets exactly relative `/mcp`, accepts same-origin cookies if provided by a later accepted identity integration, and sets no credential headers. No development Bearer adapter is shipped.
+
+All FE1 entries below are **scaffold-only source candidates** until orchestrator review, identity/principal integration and deployment routing qualification. They own only page-memory data. No credentials, selections, prompts or output are persisted or written to URLs. The public client exposes only the listed read operations. Backend and HTTP errors are mapped to fixed safe copy, not raw messages. Control metadata is projected through an allowlist; job summaries and progress prose are omitted. Diff/Git content renders as untrusted text in bounded code panes.
+
+| File | Purpose / key exports | Owning route or feature / owned state | API or mock dependency / future backend integration | Readiness |
+|---|---|---|---|---|
+| `src/lib/operational/state.ts` | Safe states, `OperationalError`, `stateCopy`, `freshness` | All reads; no mutable state | Current MCP denials; one-minute display freshness, not an authority lease | Scaffold-only |
+| `src/lib/operational/transport.ts` | Typed envelopes/receipt, injected `Transport`, internal allowlisted `createReader`, `record` | MCP wire; per-request UUID, byte/time bound | Exact `/mcp` JSON/SSE; future session transport replaces injection seam | Scaffold-only |
+| `src/lib/operational/contracts.ts` | Bounded decoders, safe projections and surface types | Read contracts; none | Existing gateway schemas; no backend source import in browser | Scaffold-only |
+| `src/lib/operational/client.ts` | `createOperationalClient`, `OperationalClient` | Purpose-specific reads; injected transport | Targets, ACP metadata, Git, repository discovery, Control Center; future identity seam | Scaffold-only |
+| `src/lib/client/use-operational-read.ts` | `useOperationalRead` | Shared read lifecycle; receipt, cancellation, pending, safe failure | Operational client; rejects superseded/unmounted reads | Scaffold-only |
+| `src/components/operational-provider.tsx` | `OperationalProvider`, `useOperational` | Shell; page-memory client/last read connection state | Injected client; future accepted identity adapter | Scaffold-only |
+| `src/components/operational-read.tsx` | `ReadPanel`, `ReceiptTime`, `OperationalStateView`, `MetadataTable`, `OperationalHeading` | Shared reads; request state and freshness clock | Client receipts and F1 primitives; server authority remains canonical | Scaffold-only |
+| `src/components/operational-overview.tsx` | `Overview` | `/overview`; independent summary/provider/authority reads | `control_center_query`; no analytics synthesis | Scaffold-only |
+| `src/components/operational-targets.tsx` | `Targets` | `/targets`; logical selection, list/detail receipts | `targets_list`, `target_inspect`; health unknown if absent; render cap is not upstream paging | Scaffold-only |
+| `src/components/operational-agents.tsx` | `Projects`, `Agents` | `/projects`, `/agents`; metadata receipts | `agent_projects`, `agents_list`; no dispatch or qualification inference | Scaffold-only |
+| `src/components/operational-jobs.tsx` | `Jobs`, `jobDiscoveryNotice` | `/jobs`; known ID and separate read receipts | `agent_status`, safe result metadata, first 16KiB diff, provider aggregate counts; no discovery/apply | Scaffold-only |
+| `src/components/operational-git.tsx` | `Git`, `GitExecution` | `/git`; target and execution receipts | `git_status`, `git_diff` (statistics only), `git_log` (last 30); retain exit/timeout/truncation/stdout/stderr | Scaffold-only |
+| `src/components/operational-github.tsx` | `GitHub` | `/github`; discovery receipt | `github_repositories`; no write/review authority inferred, no remote operations | Scaffold-only |
+| `src/components/operational-control.tsx` | `ControlCenter` | `/control-center`, `/security`; independent metadata snapshots | Six current Control Center views; retain generatedAt and qualification/deferred/unknown values | Scaffold-only |
+| `tests/unit/operational.test.ts` | Wire/contract regressions; no exports | Tests; isolated injected responses | Vitest; no live provider or root harness | Scaffold-only |
+| `tests/unit/operational-ui.test.tsx` | Safe state/evidence/authority rendering checks; no exports | Tests; isolated static markup | Vitest/React rendering; complements browser acceptance | Scaffold-only |
+| `tests/e2e/operational.spec.ts` | Browser read/error/keyboard/axe/responsive tests; no exports | Tests; mocked `/mcp` and browser memory | Playwright/axe; later live routing/identity qualification is separate | Scaffold-only |
+| `src/app/(foundation)/overview/page.tsx` | Overview route, default `Page`, `metadata` | `/overview`; none | `Overview`; client-only reads, no server API | Scaffold-only |
+| `src/app/(foundation)/targets/page.tsx` | Targets route, default `Page`, `metadata` | `/targets`; none | `Targets`; client-only reads, no server API | Scaffold-only |
+| `src/app/(foundation)/projects/page.tsx` | Projects route, default `Page`, `metadata` | `/projects`; none | `Projects`; client-only reads, no server API | Scaffold-only |
+| `src/app/(foundation)/agents/page.tsx` | Agents route, default `Page`, `metadata` | `/agents`; none | `Agents`; client-only reads, no server API | Scaffold-only |
+| `src/app/(foundation)/jobs/page.tsx` | Jobs route, default `Page`, `metadata` | `/jobs`; none | `Jobs`; client-only reads, no server API | Scaffold-only |
+| `src/app/(foundation)/git/page.tsx` | Git route, default `Page`, `metadata` | `/git`; none | `Git`; client-only reads, no server API | Scaffold-only |
+| `src/app/(foundation)/github/page.tsx` | GitHub route, default `Page`, `metadata` | `/github`; none | `GitHub`; client-only reads, no server API | Scaffold-only |
+| `src/app/(foundation)/control-center/page.tsx` | Control Center route, default `Page`, `metadata` | `/control-center`; none | `ControlCenter`; client-only reads, no server API | Scaffold-only |
+| `src/app/(foundation)/security/page.tsx` | Security & Access route, default `Page`, `metadata` | `/security`; none | `ControlCenter`; client-only reads, no server API | Scaffold-only |
+
+FE1 retains F1 typography, tokens, native fields, keyboard output scrolling, responsive drawer and motion rules. `src/components/shell.tsx` adds route links and a last-read connection label, which is not a session or authority claim. Live deployment routing and product identity mapping remain unverified promotion gates. Optional files/processes/terminal surfaces are deferred; no terminal execution was introduced.

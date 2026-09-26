@@ -1,0 +1,91 @@
+{
+  "status": "STOPPED_BEFORE_IMPLEMENTATION",
+  "capturedAt": "2026-09-26T05:41:05.783928+00:00",
+  "worktree": "/home/herman/projects/QuaranGate-product-fe1-gpt",
+  "branch": "feature/qg-product-fe1-existing-backend-gpt",
+  "head": "5fc68fe23918dfca764a3b5e6de8eb73ede2167c",
+  "tree": "3a490302868c035460fe730f19cce30ca647243b",
+  "candidate": null,
+  "initialStatus": "clean",
+  "staging": "empty",
+  "staticAssertions": "PASS",
+  "liveBackend": "NOT_VERIFIED",
+  "implementationGates": "NOT_RUN_CONTRACT_STOP",
+  "contractRequests": [
+    "CR-001",
+    "CR-002"
+  ],
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "2fb5b54ad5694574b5ca0052e1207cae6e824d2ef02b151b0259d45d34a54642"
+    },
+    {
+      "path": "frontend/AGENTS.md",
+      "sha256": "63f2c50380ed6303237cce215ce27af1d620d094c215e28d1b1538a3c070e3bb"
+    },
+    {
+      "path": "frontend/next.config.ts",
+      "sha256": "d03b4ab2ec51bea6a8bb0b926b11da3224196ce107556fff54a4a6a59f2931e6"
+    },
+    {
+      "path": "frontend/src/proxy.ts",
+      "sha256": "f74bd2932bfc0ddf57b64a32e9a87ff00c6dbb2876b0a1995fef5d057f84bcec"
+    },
+    {
+      "path": "src/gateway/index.ts",
+      "sha256": "10c20f07b43181ce42482c539d1c85a32a8a2c1f2313a4be0588f6548ef09133"
+    },
+    {
+      "path": "src/gateway/consoleWeb.ts",
+      "sha256": "8608c505a0151c3b1df3479d02eb9fd069d85a6aef6312848243b469ae4150d2"
+    },
+    {
+      "path": "src/gateway/mcp.ts",
+      "sha256": "595fdc9d48421221f1455b2d4bc23edbb150a9570b39f3498b8cc33b1fe4e0ad"
+    },
+    {
+      "path": "src/gateway/agentTools.ts",
+      "sha256": "92bfab251c14d4172c1a97a0422d97a8be4d7acba289f26f7a0344a82a5b10e3"
+    },
+    {
+      "path": "src/gateway/agentSchemas.ts",
+      "sha256": "f44f46012b871daad582b4c83f2c14839d8f0532d59bb78c14b8fafe28bf3ff8"
+    },
+    {
+      "path": "src/gateway/githubTools.ts",
+      "sha256": "b6c1f5cbb23dfef126a8d2a72325a65c4f98b5fb7e08e0931f9a5d8785b8eadd"
+    },
+    {
+      "path": "src/gateway/controlCenterTools.ts",
+      "sha256": "e967eb20f23bd0d052ca318e521661c2188399c84e7c9caccab09e7d6f079a7b"
+    },
+    {
+      "path": "src/gateway/requestTelemetry.ts",
+      "sha256": "bd523ff1ecb92343419facb8be669f6423d15f3165ab4aab92235ca1357379b1"
+    },
+    {
+      "path": "src/shared/agents.ts",
+      "sha256": "d2e84a8f798ff51dbdedb31e386a4b6724ee5eb27fdd60e25ff0d083314dd637"
+    },
+    {
+      "path": "docs/product-platform/CURRENT_BACKEND_CAPABILITY_INVENTORY.md",
+      "sha256": "bad26337b2c70e177614e9b5dca407fe15abdf5c70a497e1f87998e5cf890d04"
+    },
+    {
+      "path": "docs/frontend/FE1_CONTRACT_REQUEST.md",
+      "sha256": "cbb5a71b275b51d17bf6f4eb9efd1fee1fd735a504bc85c8674c6f1a89588f6f"
+    }
+  ],
+  "changedPaths": [
+    "docs/frontend/FE1_CONTRACT_REQUEST.md",
+    "docs/frontend/FE1_PREFLIGHT_EVIDENCE.json"
+  ],
+  "checks": {
+    "identity": "PASS",
+    "noAppRouteHandlersOrServerFiles": "PASS",
+    "noNextRewrite": "PASS",
+    "knownJobStatusRequiresJobId": "PASS",
+    "stagingEmpty": "PASS"
+  }
+}
