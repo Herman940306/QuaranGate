@@ -41,7 +41,7 @@ for (const width of [1280, 360]) {
   });
 }
 test("known-job lookup preserves completion, safe evidence and no discovery", async ({ page }) => {
-  await mockMcp(page); await page.goto("/jobs");
+  await mockMcp(page); await page.goto("/jobs"); await page.waitForLoadState("networkidle");
   await expect(page.getByText("Job discovery/listing is not available in the current backend contract.")).toBeVisible();
   await page.getByLabel("Known job ID", { exact: true }).fill(jobId); await page.getByRole("button", { name: "Look up job" }).click(); await expect(page.getByRole("table", { name: "Job status" })).toContainText("COMPLETED");
   await expect(page.getByRole("table", { name: "Job status" })).not.toContainText("APPLIED");
@@ -58,7 +58,7 @@ test("keyboard navigation, reduced motion and appearance survive product navigat
   expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
 });
 test("Git failure/truncation, backend availability and GitHub authority stay distinct", async ({ page }) => {
-  await mockMcp(page); await page.goto("/git"); await page.getByLabel("Logical target ID").fill("demo"); await page.getByRole("button", { name: "Read Git diff statistics" }).click(); await expect(page.getByText("Command failed or outcome unknown · output truncated")).toBeVisible(); await expect(page.getByText("bounded stderr", { exact: true })).toBeVisible();
+  await mockMcp(page); await page.goto("/git"); await page.waitForLoadState("networkidle"); await page.getByLabel("Logical target ID").fill("demo"); await expect(page.getByRole("button", { name: "Read Git diff statistics" })).toBeEnabled(); await page.getByRole("button", { name: "Read Git diff statistics" }).click(); await expect(page.getByText("Command failed or outcome unknown · output truncated")).toBeVisible(); await expect(page.getByText("bounded stderr", { exact: true })).toBeVisible();
   await page.goto("/projects"); await page.getByRole("button", { name: "Read projects" }).click(); await expect(page.getByRole("table", { name: "Agent projects" })).toContainText("demo");
   await page.goto("/agents"); await page.getByRole("button", { name: "Read backends" }).click(); await expect(page.getByRole("table", { name: "Agent backends" })).toContainText("Unavailable / deferred");
   await page.goto("/github"); await page.getByRole("button", { name: "Read repositories" }).click(); await expect(page.getByRole("table", { name: "Governed repositories" })).toContainText("org/repo"); await expect(page.getByText(/Read availability grants no write or review authority/)).toBeVisible();
@@ -79,6 +79,6 @@ test("cancelled reads reject late output", async ({ page }) => {
     await new Promise<void>(resolve => { resolveRequest = resolve; });
     await route.fulfill({ json: { jsonrpc: "2.0", id: request.id, result: { structuredContent: { jobId, status: "COMPLETED", createdAt: "now" } } } }).catch(() => undefined);
   });
-  await page.goto("/jobs"); await page.getByLabel("Known job ID").fill(jobId); await page.getByRole("button", { name: "Look up job" }).click(); await expect(page.getByText("Reading server state")).toBeVisible();
+  await page.goto("/jobs"); await page.waitForLoadState("networkidle"); await page.getByLabel("Known job ID").fill(jobId); await expect(page.getByRole("button", { name: "Look up job" })).toBeEnabled(); await page.getByRole("button", { name: "Look up job" }).click(); await expect(page.getByText("Reading server state")).toBeVisible();
   await page.getByRole("button", { name: "Cancel read" }).click(); resolveRequest?.(); await expect(page.getByText("Read cancelled. No new result was accepted.")).toBeVisible(); await expect(page.getByRole("table", { name: "Job status" })).toHaveCount(0);
 });

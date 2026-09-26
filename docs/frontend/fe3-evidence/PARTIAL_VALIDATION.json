@@ -1,0 +1,61 @@
+{
+  "state": "UNFROZEN_PARTIAL",
+  "time": "2026-09-26T07:01:43.509618+00:00",
+  "gates": [
+    {
+      "command": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "cwd": "/home/herman/projects/QuaranGate-product-fe3-gpt/frontend",
+      "exitCode": 0,
+      "stdout": "\n> @quarangate/frontend@0.1.0 typecheck\n> tsc --noEmit\n\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "lint"
+      ],
+      "cwd": "/home/herman/projects/QuaranGate-product-fe3-gpt/frontend",
+      "exitCode": 0,
+      "stdout": "\n> @quarangate/frontend@0.1.0 lint\n> biome lint .\n\nChecked 93 files in 78ms. No fixes applied.\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "npm",
+        "test",
+        "--",
+        "tests/unit/product.test.ts"
+      ],
+      "cwd": "/home/herman/projects/QuaranGate-product-fe3-gpt/frontend",
+      "exitCode": 0,
+      "stdout": "\n> @quarangate/frontend@0.1.0 test\n> vitest run tests/unit/product.test.ts\n\n\n RUN  v5.0.2 /home/herman/projects/QuaranGate-product-fe3-gpt/frontend\n\n\n Test Files  1 passed (1)\n      Tests  11 passed (11)\n   Start at  09:01:43\n   Duration  208ms (transform 66%, tests 15%, import 15%, worker 3%)\n\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": "/home/herman/projects/QuaranGate-product-fe3-gpt",
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "reviewBlock": "Fresh reviewer access token refresh failed twice. No adversarial PASS or accepted candidate.",
+  "notRun": [
+    "full frontend units",
+    "build",
+    "E2E",
+    "production smoke",
+    "npm audit gate",
+    "bounded secret scan",
+    "premium UI audit"
+  ]
+}

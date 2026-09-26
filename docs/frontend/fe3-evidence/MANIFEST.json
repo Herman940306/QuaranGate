@@ -1,0 +1,57 @@
+{
+  "phase": "FE3",
+  "branch": "feature/qg-product-fe3-provider-agents-gpt",
+  "acceptedBase": "e470d8303efeb70d243785f5b934cec1fa0d277a",
+  "review": "FE3-R1-01 PASS_REVIEW by orchestrator",
+  "candidateStatus": "qualified source pending freeze",
+  "finalGates": [
+    {
+      "gate": "final-typecheck",
+      "exitCode": 0
+    },
+    {
+      "gate": "final-lint",
+      "exitCode": 0
+    },
+    {
+      "gate": "final-unit",
+      "exitCode": 0
+    },
+    {
+      "gate": "final-build",
+      "exitCode": 0
+    },
+    {
+      "gate": "final-e2e",
+      "exitCode": 0
+    },
+    {
+      "gate": "final-production-smoke",
+      "exitCode": 0
+    },
+    {
+      "gate": "final-npm-audit",
+      "exitCode": 0
+    },
+    {
+      "gate": "final-premium-ui",
+      "exitCode": 0
+    },
+    {
+      "gate": "final-git-diff-check",
+      "exitCode": 0
+    }
+  ],
+  "evidenceScreenshots": [
+    "fe3-provider-1280.png",
+    "fe3-provider-360.png",
+    "fe3-profile-1280.png",
+    "fe3-forced-zoom-360.png"
+  ],
+  "backendIntegration": "pending; no live BE4 adapter or custody",
+  "notes": [
+    "Synthetic screenshots only.",
+    "Earlier E2E hydration-race failures remain in validation.json.",
+    "SHA256SUMS and post-commit FREEZE.json bind exact bytes and Git identity."
+  ]
+}
