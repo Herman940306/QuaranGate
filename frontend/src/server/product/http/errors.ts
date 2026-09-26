@@ -19,8 +19,11 @@ function mapError(error: unknown): { status: number; code: ProductErrorCode; mes
   }
   const value = error instanceof Error ? error.message : "";
   if (value.includes("session_missing") || value.includes("session_invalid")) return { status: 401, code: "UNAUTHENTICATED", message: "Product session is not valid." };
-  if (value.includes("csrf") || value.includes("workspace_forbidden")) return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };
-  if (value.includes("stale_version")) return { status: 409, code: "STALE_VERSION", message: "Session version is stale." };
+  if (value.includes("csrf") || value.includes("workspace_forbidden") || value.includes("provider_forbidden")) return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };
+  if (value.includes("stale_version")) return { status: 409, code: "STALE_VERSION", message: "Product data version is stale." };
+  if (value.includes("provider_not_found")) return { status: 404, code: "VALIDATION_FAILED", message: "Requested product data is unavailable." };
+  if (value.includes("provider_request") || value.includes("provider_secret") || value.includes("provider_custody")) return { status: 400, code: "VALIDATION_FAILED", message: "Provider request was rejected." };
+  if (value.includes("openbao_") || value.includes("secret_custody")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Provider custody service is unavailable." };
   if (value.includes("workspace_request") || value.includes("login_transaction") || value.includes("identity_")) return { status: 400, code: "VALIDATION_FAILED", message: "Identity/session request was rejected." };
   if (value.includes("not_configured") || value.includes("adapter_") || value.includes("non_durable")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Product identity service is unavailable." };
   return { status: 500, code: "INTERNAL", message: "Request failed." };

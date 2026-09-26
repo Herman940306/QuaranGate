@@ -1,0 +1,25 @@
+BE4 qualified-partial validation summary
+base=23c2d531167a0e6bc070f3f39131fb026c2412a5
+base_tree=06ce7378b6ce6fd142ceb17ee49bec84785e6fde
+typecheck=PASS
+lint=PASS zero warnings
+focused_be1_be4_tests=PASS 84/84
+full_frontend_tests=PASS 91/91
+next_build=PASS
+npm_audit_high=PASS 0 vulnerabilities
+schema_static_validation=PASS
+accepted_be1_be3_test_delta=NONE
+product_api_route_delta=NONE
+package_manifest_delta=NONE
+authority_synthesis_grep=PASS
+ssrf_generic_proxy_grep=PASS
+bounded_secret_scan=PASS
+ownership_check=PASS
+git_diff_check=PASS
+live_openbao=UNAVAILABLE_NOT_CLAIMED
+live_postgresql=UNAVAILABLE_NOT_CLAIMED
+be4_5_http_routes=BLOCKED_INTEGRATION_ACCEPTED_BE1_FIVE_ROUTE_INVARIANT
+provider_network_validation=UNAVAILABLE_NO_ACCEPTED_ENDPOINT_POLICY
+runtime_compose_gateway_mutation=NO
+push_merge_deploy=NO
+candidate_scope=QUALIFIED_PARTIAL
