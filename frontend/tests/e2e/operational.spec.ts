@@ -17,7 +17,7 @@ async function mockMcp(page: Page, mode: "success" | "forbidden" | "unavailable"
     else if (name.startsWith("git_")) data = { exitCode: 1, timedOut: true, truncated: true, stdout: "partial stdout", stderr: "bounded stderr", durationMs: 1000 };
     else if (name === "agent_projects") data = { projects: [{ id: "demo", gitRequired: true, allowedBackends: ["kiro"], allowedProfiles: ["audit"] }] };
     else if (name === "agents_list") data = { backends: [{ id: "kiro", available: false, profiles: ["audit"] }] };
-    else if (name === "github_repositories") data = { repositories: [{ repository: "org/repo", owner: "org", private: true, archived: false }] };
+    else if (name === "github_repositories") data = { repositories: [{ repository: "org/repo", owner: "org", repo: "repo", private: true, archived: false, protectedBranches: ["main"] }] };
     else throw new Error(`Unexpected tool ${name}`);
     await route.fulfill({ json: { jsonrpc: "2.0", id: request.id, result: { structuredContent: data } }, headers: { "X-QuaranGate-Request-Id": "12345678-1234-1234-1234-123456789abc" } });
   });

@@ -1,4 +1,4 @@
 import type { Metadata } from "next";
-import { GitHub } from "../../../components/operational-github";
+import { GitHubExperience } from "../../../components/github-experience";
 export const metadata: Metadata = { title: "GitHub" };
-export default function Page() { return <GitHub />; }
+export default function Page() { return <GitHubExperience />; }

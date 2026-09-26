@@ -214,6 +214,54 @@ FILES:
 NEXT:
 - FE8 GitHub product experience: inspect the current trusted GitHub gateway/tool contracts and implement only bounded, explicitly authorized frontend seams that exist today.
 
+## FE8 checkpoint
+
+CHECKPOINT: FE8 — GitHub product experience
+STATUS: FROZEN IMPLEMENTATION CANDIDATE — NOT SELF-ACCEPTED
+
+IMPLEMENTED:
+- `/github` now exposes a bounded QuaranHUB/GitHub App product experience instead of repository discovery only.
+- Repository selection is limited to server-returned trusted repositories; no arbitrary remote URL input is accepted.
+- Read surfaces cover governed repositories, pull requests, issues, changed files, submitted reviews and commit-status compatibility output.
+- Untrusted GitHub patches render as inert text. No script execution path is introduced.
+- Remote actions are closed, purpose-specific controls only: publish exact local HEAD, create/update pull request and submit pull request review.
+- Mutation controls remain disabled unless product identity is integrated, active and mapped. Each mutation requires explicit typed confirmation and uses the closed operational transport allowlist.
+- There is no merge, force-push, ref-delete, workflow/settings/secrets/collaborator mutation, arbitrary remote selection or generic GitHub tool UI.
+
+CONTRACT / AUTHORITY TRUTH:
+- Tool names and scope classes were checked directly against current `src/gateway/githubTools.ts`, `src/gateway/controlCenterTools.ts`, `docs/backend/GITHUB_CONTROL_PLANE.md` and `docs/reference/MCP_TOOL_REFERENCE.md`.
+- `github:read` remains distinct from `github:write` and `github:review`; read availability does not grant mutation authority.
+- `github_push_branch` remains tied to a trusted local project mapping and exact expected local HEAD.
+- `github_checks` remains commit-status-compatible and does not require GitHub Checks permission.
+
+QUALIFICATION:
+- `npm run lint`: PASS, 127 files checked.
+- `npm run typecheck`: PASS.
+- FE8 focused unit tests: 5/5 PASS.
+- Full frontend unit suite: 140/140 PASS.
+- `npm run build`: PASS, 29 static routes generated.
+- `npm audit --audit-level=high`: zero vulnerabilities.
+- `git diff --check`: PASS.
+- Governed Chromium FE8 + operational regression qualification: 11/11 PASS.
+- Owner-host job: `ohj_9818ea93357bb4f74903ac5c3187ce02`.
+- Browser image: `mcr.microsoft.com/playwright:v1.63.0-noble@sha256:bc6ab0d6d44ff4826e4cb8c1e6d801e185bfc42bb0753f8e2a30efc70db054c7`.
+- Browser container ran `--network none`, 1 GB shm, host worktree bind-mounted read-only and a disposable container-only project copy. Host Git status SHA-256 remained `b01ee70117bc1342af3a9b8358310c1165b46b3b53485c282b49ca8193a1da46` before and after qualification.
+
+INTEGRATION GAP:
+- Live GitHub operations were not performed. FE8 proves frontend contract binding, closed transport arguments, UI authority separation and browser behavior only.
+
+FILES:
+- `frontend/src/app/(foundation)/github/page.tsx`
+- `frontend/src/components/github-experience.tsx`
+- `frontend/src/lib/client/github/client.ts`
+- `frontend/src/lib/operational/transport.ts`
+- `frontend/tests/unit/github-experience.test.ts`
+- `frontend/tests/e2e/github-experience.spec.ts`
+- `frontend/tests/e2e/operational.spec.ts`
+
+NEXT:
+- FE9 Local AI / Models: implement only truthful model/provider/hardware readiness seams from accepted contracts; do not infer live model entitlement, GPU availability or provider authority in the browser.
+
 ## Phase commit ledger
 
 | Phase | Commit | Tree | Parent | Subject | Tests |
@@ -221,4 +269,5 @@ NEXT:
 | FE4 | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `3d18dcaffec0d465015ae91435ce45ddb8ec9428` | `9ef3b0a0f8d9c4c191cc0be183c8b893f741877e` | `feat(frontend): add governed operational workstation` | See FE4 checkpoint |
 | FE5 | `e00465cc730379cef2c78d859dc433a87850ebc9` | `a317b1e9fe5c1a9df3dc41bee878ecb28cd00ca6` | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `feat(frontend): add governed Agent Arena` | Local gates PASS; external Chromium 41/41 PASS |
 | FE6 | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `686fed609fee76b56cfc6fa64812d292f57c5dfd` | `e00465cc730379cef2c78d859dc433a87850ebc9` | `feat(frontend): add review and approvals` | Local gates PASS; governed Chromium 4/4 PASS |
-| FE7 | Pending immutable commit | Pending | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `feat(frontend): add IDE session readiness center` | Local gates PASS; governed Chromium 2/2 PASS |
+| FE7 | `af878246675adf203670e2b36e06e54fed477962` | `e9fadd93e4c44c20108dd87ea3e8456a019e2d8b` | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `feat(frontend): add IDE session readiness center` | Local gates PASS; governed Chromium 2/2 PASS |
+| FE8 | Pending immutable commit | Pending | `af878246675adf203670e2b36e06e54fed477962` | `feat(frontend): add GitHub product experience` | Local gates PASS; governed Chromium 11/11 PASS |
