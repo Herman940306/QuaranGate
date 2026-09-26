@@ -1,0 +1,99 @@
+[
+  {
+    "gate": "typecheck",
+    "command": [
+      "npm",
+      "run",
+      "typecheck"
+    ],
+    "cwd": "/home/herman/projects/QuaranGate-product-fe2-gpt/frontend",
+    "startedAt": "2026-09-26T06:41:25.362777+00:00",
+    "finishedAt": "2026-09-26T06:41:27.319340+00:00",
+    "exitCode": 0,
+    "stdout": "\n> @quarangate/frontend@0.1.0 typecheck\n> tsc --noEmit\n\n",
+    "stderr": ""
+  },
+  {
+    "gate": "lint",
+    "command": [
+      "npm",
+      "run",
+      "lint"
+    ],
+    "cwd": "/home/herman/projects/QuaranGate-product-fe2-gpt/frontend",
+    "startedAt": "2026-09-26T06:41:27.319566+00:00",
+    "finishedAt": "2026-09-26T06:41:27.657833+00:00",
+    "exitCode": 0,
+    "stdout": "\n> @quarangate/frontend@0.1.0 lint\n> biome lint .\n\nChecked 78 files in 77ms. No fixes applied.\n",
+    "stderr": ""
+  },
+  {
+    "gate": "unit",
+    "command": [
+      "npm",
+      "test"
+    ],
+    "cwd": "/home/herman/projects/QuaranGate-product-fe2-gpt/frontend",
+    "startedAt": "2026-09-26T06:41:27.658099+00:00",
+    "finishedAt": "2026-09-26T06:41:28.833405+00:00",
+    "exitCode": 0,
+    "stdout": "\n> @quarangate/frontend@0.1.0 test\n> vitest run\n\n\n RUN  v5.0.2 /home/herman/projects/QuaranGate-product-fe2-gpt/frontend\n\n\n Test Files  6 passed (6)\n      Tests  110 passed (110)\n   Start at  08:41:28\n   Duration  692ms (transform 61%, import 25%, tests 12%, worker 2%)\n\n",
+    "stderr": ""
+  },
+  {
+    "gate": "build",
+    "command": [
+      "npm",
+      "run",
+      "build"
+    ],
+    "cwd": "/home/herman/projects/QuaranGate-product-fe2-gpt/frontend",
+    "startedAt": "2026-09-26T06:41:28.833619+00:00",
+    "finishedAt": "2026-09-26T06:41:42.105741+00:00",
+    "exitCode": 0,
+    "stdout": "\n> @quarangate/frontend@0.1.0 build\n> next build\n\n\u25b2 Next.js 16.3.6 (Turbopack)\n\u2713 Running next.config.ts took 28ms\n\n  Creating an optimized production build ...\n\u2713 Compiled successfully in 6.5s\n  Running TypeScript ...\n  Finished TypeScript in 3.6s ...\n  Collecting page data using 5 workers ...\n  Generating static pages using 5 workers (0/18) ...\n  Generating static pages using 5 workers (4/18) \n  Generating static pages using 5 workers (8/18) \n  Generating static pages using 5 workers (13/18) \n\u2713 Generating static pages using 5 workers (18/18) in 469ms\n  Finalizing page optimization ...\n\nRoute (app)\n\u250c \u25cb /\n\u251c \u25cb /_not-found\n\u251c \u25cb /account\n\u251c \u25cb /agents\n\u251c \u25cb /control-center\n\u251c \u25cb /design-system\n\u251c \u25cb /git\n\u251c \u25cb /github\n\u251c \u25cb /identity-preview\n\u251c \u25cb /jobs\n\u251c \u25cb /overview\n\u251c \u25cb /permissions\n\u251c \u25cb /projects\n\u251c \u25cb /security\n\u251c \u25cb /sign-in\n\u251c \u25cb /targets\n\u2514 \u25cb /workspaces\n\n\n\u0192 Proxy (Middleware)\n\n\u25cb  (Static)  prerendered as static content\n\n",
+    "stderr": ""
+  },
+  {
+    "gate": "e2e",
+    "command": [
+      "npm",
+      "run",
+      "test:e2e"
+    ],
+    "cwd": "/home/herman/projects/QuaranGate-product-fe2-gpt/frontend",
+    "startedAt": "2026-09-26T06:41:42.106105+00:00",
+    "finishedAt": "2026-09-26T06:42:50.570872+00:00",
+    "exitCode": 0,
+    "stdout": "\n> @quarangate/frontend@0.1.0 test:e2e\n> playwright test\n\n\nRunning 26 tests using 3 workers\n\n  \u2713   1 [chromium] \u203a tests/e2e/foundation.spec.ts:32:1 \u203a foundation shell is honest, responsive, and free of persistent browser data (2.5s)\n  \u2713   2 [chromium] \u203a tests/e2e/identity.spec.ts:22:1 \u203a production-shaped default sign-in and account remain integration pending (4.3s)\n  \u2713   4 [chromium] \u203a tests/e2e/foundation.spec.ts:60:1 \u203a appearance exposes every approved value and resets on reload (2.5s)\n  \u2713   3 [chromium] \u203a tests/e2e/operational.spec.ts:28:3 \u203a overview and targets are truthful and accessible at 1280 (10.3s)\n  \u2713   6 [chromium] \u203a tests/e2e/foundation.spec.ts:82:1 \u203a design route covers validation, tabs, dialog focus, drawer, toast and accessibility (9.2s)\n  \u2713   5 [chromium] \u203a tests/e2e/identity.spec.ts:34:3 \u203a signed-out and active synthetic account, appearance and axe at 1280 (10.9s)\n  \u2713   8 [chromium] \u203a tests/e2e/foundation.spec.ts:135:1 \u203a reduced motion keeps state and removes spatial movement (2.9s)\n  \u2713   7 [chromium] \u203a tests/e2e/operational.spec.ts:28:3 \u203a overview and targets are truthful and accessible at 360 (8.0s)\n  \u2713   9 [chromium] \u203a tests/e2e/identity.spec.ts:51:3 \u203a keyboard workspace switch and stale conflict at 1280 (5.8s)\n  \u2713  11 [chromium] \u203a tests/e2e/operational.spec.ts:43:1 \u203a known-job lookup preserves completion, safe evidence and no discovery (4.9s)\n  \u2713  13 [chromium] \u203a tests/e2e/operational.spec.ts:53:3 \u203a forbidden is explicit and does not leak backend copy (3.3s)\n  \u2713  12 [chromium] \u203a tests/e2e/identity.spec.ts:34:3 \u203a signed-out and active synthetic account, appearance and axe at 360 (7.5s)\n  \u2713  14 [chromium] \u203a tests/e2e/operational.spec.ts:53:3 \u203a unavailable is explicit and does not leak backend copy (3.3s)\n  \u2713  10 [chromium] \u203a tests/e2e/foundation.spec.ts:148:1 \u203a local fonts and representative theme combinations remain accessible (12.7s)\n  \u2713  16 [chromium] \u203a tests/e2e/operational.spec.ts:55:1 \u203a keyboard navigation, reduced motion and appearance survive product navigation (2.5s)\n  \u2713  15 [chromium] \u203a tests/e2e/identity.spec.ts:51:3 \u203a keyboard workspace switch and stale conflict at 360 (5.3s)\n  \u2713  17 [chromium] \u203a tests/e2e/foundation.spec.ts:178:1 \u203a forced colors preserves navigation, controls and modal keyboard operation (5.8s)\n  \u2713  18 [chromium] \u203a tests/e2e/operational.spec.ts:60:1 \u203a Git failure/truncation, backend availability and GitHub authority stay distinct (8.9s)\n  \u2713  20 [chromium] \u203a tests/e2e/foundation.spec.ts:205:1 \u203a 200 percent layout zoom keeps desktop and narrow actions and overlays reachable (8.1s)\n  \u2713  21 [chromium] \u203a tests/e2e/operational.spec.ts:66:1 \u203a Control Center and Security views remain metadata-only with generated time (9.0s)\n  \u2713  22 [chromium] \u203a tests/e2e/operational.spec.ts:75:1 \u203a cancelled reads reject late output (1.3s)\n  \u2713  19 [chromium] \u203a tests/e2e/identity.spec.ts:65:1 \u203a principal and session lifecycle states render safely with axe (18.4s)\n  \u2713  23 [chromium] \u203a tests/e2e/identity.spec.ts:70:1 \u203a workspace membership denial and conflict never retain account or workspace choices (4.5s)\n  \u2713  24 [chromium] \u203a tests/e2e/identity.spec.ts:75:1 \u203a workspace/account changes drop receipts and suppress late operational output (2.0s)\n  \u2713  25 [chromium] \u203a tests/e2e/identity.spec.ts:80:1 \u203a pending switch cancel clears account, late reply ignored; explicit check reconciles (3.0s)\n  \u2713  26 [chromium] \u203a tests/e2e/identity.spec.ts:85:1 \u203a reduced motion and keyboard shell navigation retain appearance (2.1s)\n\n  26 passed (1.1m)\n",
+    "stderr": "[WebServer] (node:1884975) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)\n[WebServer] (node:1885069) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)\n[WebServer] (node:1885146) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)\n(node:1885343) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:1885356) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:1885346) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\n[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)\n[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)\n[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)\n"
+  },
+  {
+    "gate": "production-smoke",
+    "command": [
+      "npm",
+      "run",
+      "test:production-smoke"
+    ],
+    "cwd": "/home/herman/projects/QuaranGate-product-fe2-gpt/frontend",
+    "startedAt": "2026-09-26T06:42:50.571790+00:00",
+    "finishedAt": "2026-09-26T06:42:55.924060+00:00",
+    "exitCode": 0,
+    "stdout": "\n> @quarangate/frontend@0.1.0 test:production-smoke\n> node tests/production-smoke.mjs\n\nproduction smoke: PASS (root + thirteen product routes 200, identity integration pending, missing /mcp unavailable, identity-preview/design-system 404, storage clean, headers present)\n",
+    "stderr": ""
+  },
+  {
+    "gate": "npm-audit",
+    "command": [
+      "npm",
+      "audit",
+      "--audit-level=high"
+    ],
+    "cwd": "/home/herman/projects/QuaranGate-product-fe2-gpt/frontend",
+    "startedAt": "2026-09-26T06:42:55.924694+00:00",
+    "finishedAt": "2026-09-26T06:43:01.837467+00:00",
+    "exitCode": 0,
+    "stdout": "found 0 vulnerabilities\n",
+    "stderr": ""
+  }
+]

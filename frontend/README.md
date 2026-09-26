@@ -1,8 +1,8 @@
-# QuaranGate product frontend — F1 foundation and FE1 read candidate
+# QuaranGate product frontend — FE2 identity candidate
 
 This directory owns the additive Next.js product frontend foundation. It does not replace or modify the accepted static operational Console in `../console/`, and it exposes no MCP, gateway, database, identity, provider, Docker, deployment, or production authority.
 
-F1 is accepted by the current owner prompt. FE1 is an unreviewed read-only source candidate. Before continuing implementation or relying on validation results, read [`../docs/frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md`](../docs/frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md).
+F1 and FE1 are accepted by the current owner prompt. FE2 is an unreviewed identity frontend source candidate. Before continuing implementation or relying on validation results, read [`../docs/frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md`](../docs/frontend/F1_FRONTEND_FOUNDATION_HANDOFF.md).
 
 ## Toolchain
 
@@ -49,7 +49,7 @@ The repository-wide existing Console and backend gates remain separate and must 
 ## F1 limitations
 
 - Appearance preferences live only in page memory and reset on reload. The adapter is ready for later authenticated persistence.
-- Account and workspace context are explicitly labeled placeholders.
+- Historical F1 account/workspace placeholders are replaced by FE2 explicit identity-integration-pending states.
 - F1 itself is disconnected; the FE1 routes below make explicit same-origin read calls.
 - No user, health, provider, security, monitoring, or authorization value is synthesized.
 - Production deployment topology is not changed by F1.
@@ -135,3 +135,54 @@ All FE1 entries below are **scaffold-only source candidates** until orchestrator
 | `src/app/(foundation)/security/page.tsx` | Security & Access route, default `Page`, `metadata` | `/security`; none | `ControlCenter`; client-only reads, no server API | Scaffold-only |
 
 FE1 retains F1 typography, tokens, native fields, keyboard output scrolling, responsive drawer and motion rules. `src/components/shell.tsx` adds route links and a last-read connection label, which is not a session or authority claim. Live deployment routing and product identity mapping remain unverified promotion gates. Optional files/processes/terminal surfaces are deferred; no terminal execution was introduced.
+
+## FE2 identity boundary (A-007)
+
+Owner prompt accepts FE1. FE2 adds identity presentation against an injected semantic client, with no accepted BE1 adapter. Default identity is unavailable/integration pending; no successful login is fabricated. `/sign-in`, `/account`, `/workspaces`, `/permissions` are public presentation routes, not route protection or operational authorization. Every operation remains server-authorized. `/identity-preview` is a development-only synthetic qualification surface, 404 in production. No email, token, claim, cookie or operational credential is included in the session view.
+
+Read [`../docs/frontend/FE2_HANDOFF.md`](../docs/frontend/FE2_HANDOFF.md) for checkpoints, safe shape and integration requirements. `IdentityStore` clears account context and increments a projection epoch before identity requests and after their outcomes. Operational hooks immediately hide prior receipts and abort pending reads on an epoch change; existing FE1 route subtrees also remount to clear resource inputs. Identity controls stay mounted; appearance remains page-memory only outside the reset boundary. No localStorage, sessionStorage, indexedDB or URL identity state is used. Cancellation of a mutation does not prove server rollback: check session to reconcile.
+
+### FE2 file register
+
+All FE2 entries are **scaffold-only source candidates** pending review and accepted BE1 integration, except explicitly feature-gated fixture tooling. No production deployment readiness is claimed.
+
+| Created file | Purpose / key exports | Owning route or feature / owned state | API or mock dependency / future integration | Readiness |
+|---|---|---|---|---|
+| `src/lib/identity/contracts.ts` | Safe session/state/adapter types; SessionView, IdentityState, IdentityClient, IdentityAdapter, identityCopy | Identity; no runtime state | Semantic accepted server projection; no credentials/email/raw claims | Scaffold-only |
+| `src/lib/identity/client.ts` | Runtime whitelist projection and semantic adapter; projectIdentity, createIdentityClient | Identity; no retained state | Injected adapter; default unavailable, accepted BE1 cookie/CSRF/redirect transport later | Scaffold-only |
+| `src/lib/identity/store.ts` | Cancellable ordered bounded identity store; IdentityStore, IdentitySnapshot | Identity; memory snapshot, generation, controller, projection epoch | IdentityClient; version-aware server switching/reconciliation later | Scaffold-only |
+| `src/lib/product/preferences.ts` | Future per-user sync seam; PreferenceSyncClient, PreferenceView, PreferenceReply, createPendingPreferenceSync | Appearance; no persisted state | Pending-only client; owner-approved versioned preference adapter later | Scaffold-only |
+| `src/components/identity-provider.tsx` | Reactive context, expiry/focus/visibility revalidation; IdentityProvider, useIdentity | Shell/identity; store instance, cleanup timer/listeners | Injected semantic client; accepted identity adapter later | Scaffold-only |
+| `src/components/identity-status.tsx` | Safe shared lifecycle/principal copy; IdentityStateView, PrincipalStateView, IdentityFeedback, principalCopy | Identity; props/context only | IdentityProvider; safe typed errors only | Scaffold-only |
+| `src/components/identity-sign-in.tsx` | Redirect-intent sign-in; SignIn | `/sign-in`; context only | IdentityClient.beginLogin; accepted navigation adapter later | Scaffold-only |
+| `src/components/identity-account.tsx` | Safe account/session and local appearance; Account, AccountSession | `/account`; context only | IdentityProvider/AppearanceProvider; safe server session later | Scaffold-only |
+| `src/components/identity-workspaces.tsx` | Version-aware membership selection; Workspaces | `/workspaces`; selected member id in memory | IdentityClient.switchWorkspace; atomic server version/membership recheck later | Scaffold-only |
+| `src/components/identity-permissions.tsx` | Read-only product workflow summary; Permissions, ProductAuthorization, permissionBoundary | `/permissions` + account; props/context only | Safe server summary; never computes operational grants | Scaffold-only |
+| `src/components/identity-preview.tsx` | Synthetic injected adapter and projection probe; IdentityPreview | `/identity-preview`; synthetic scenario/surface/session | Deterministic synthetic data and bounded delayed replies; no live integration expectation | Feature-gated |
+| `src/app/(foundation)/sign-in/page.tsx` | Sign-in route/title; default Page, metadata | `/sign-in`; none | SignIn; accepted adapter later | Scaffold-only |
+| `src/app/(foundation)/account/page.tsx` | Account route/title; default Page, metadata | `/account`; none | Account; accepted adapter later | Scaffold-only |
+| `src/app/(foundation)/workspaces/page.tsx` | Membership route/title; default Page, metadata | `/workspaces`; none | Workspaces; accepted adapter later | Scaffold-only |
+| `src/app/(foundation)/permissions/page.tsx` | Permission route/title; default Page, metadata | `/permissions`; none | Permissions; accepted safe summaries later | Scaffold-only |
+| `src/app/identity-preview/page.tsx` | Development-only fixture route, production 404; default Page, metadata | Synthetic qualification; none | Conditional dynamic IdentityPreview import; never production integration | Feature-gated |
+| `tests/unit/identity.test.ts` | Session/security/concurrency/expiry contracts; no exports | Tests; synthetic sessions/deferred replies | Vitest, injected adapter; extend after BE1 integration | Scaffold-only |
+| `tests/unit/identity-ui.test.tsx` | Safe UI/copy/escaping/authority assertions; no exports | Tests; inert synthetic props | Vitest/React server rendering; live integration tests later | Scaffold-only |
+| `tests/unit/preferences.test.ts` | Memory/pending-only sync proof; no exports | Tests; isolated memory adapter | Vitest; real sync qualification later | Scaffold-only |
+| `tests/e2e/identity.spec.ts` | Identity/browser/axe/storage/keyboard/responsive/motion coverage; no exports | Tests; isolated browser/loopback harness | Playwright + axe + synthetic preview; repeat with accepted BE1 | Scaffold-only |
+| `../docs/frontend/FE2_HANDOFF.md` | Authority, checkpoints and integration handoff; no exports | FE2 documentation; no product state | Source and fresh validation receipts; orchestrator review later | Scaffold-only |
+| `../docs/frontend/fe2-evidence/fe2-account-1280.png` | Desktop account screenshot; no exports | Qualification; no product state | Synthetic browser render; live visual recheck later | Scaffold-only |
+| `../docs/frontend/fe2-evidence/fe2-account-360.png` | Narrow account screenshot; no exports | Qualification; no product state | Synthetic browser render; live visual recheck later | Scaffold-only |
+| `../docs/frontend/fe2-evidence/fe2-stale-1280.png` | Desktop conflict screenshot; no exports | Qualification; no product state | Synthetic browser render; live visual recheck later | Scaffold-only |
+| `../docs/frontend/fe2-evidence/fe2-stale-360.png` | Narrow conflict screenshot; no exports | Qualification; no product state | Synthetic browser render; live visual recheck later | Scaffold-only |
+
+Changed existing owners: `shell.tsx` now composes identity and operational epochs; `operational-provider.tsx` tags connection state by epoch; `lib/client/use-operational-read.ts` hides/aborts prior projections; `tests/production-smoke.mjs` adds four identity routes and fixture-production exclusion. Existing file-register descriptions above remain historical F1/FE1 scope; this section records FE2 behavior.
+
+Additional FE2 evidence register (no product state or runtime exports; all source qualification scaffolds):
+
+| Created file | Purpose / key exports | Owning feature / state | Dependency / future integration | Readiness |
+|---|---|---|---|---|
+| `../docs/frontend/fe2-evidence/validation.json` | Exact mandatory frontend commands, timestamps, exits and bounded captured output; no exports | Qualification; receipts only | Local npm harness; re-run after accepted adapter | Scaffold-only |
+| `../docs/frontend/fe2-evidence/premium-ui.json` | Strict static UI audit receipt; no exports | Qualification; findings only | Premium auditor; repeat after integration | Scaffold-only |
+| `../docs/frontend/fe2-evidence/security.json` | Bounded changed-file credential-pattern scan and boundary assertions; no exports | Qualification; source evidence only | Changed files and browser/unit tests; live security qualification later | Scaffold-only |
+| `../docs/frontend/fe2-evidence/FREEZE.json` | Post-commit immutable identity, hashes, paths and gate receipt; no exports | Review; evidence only | Git/source/evidence SHA256; orchestrator review | Scaffold-only |
+
+`FREEZE.json` stays untracked after freezing to avoid altering the immutable candidate. Synthetic preview uses an injected fixed clock; production uses the browser clock only to restrict expired display. Appearance remains page-memory preview; preference sync stays integration pending.

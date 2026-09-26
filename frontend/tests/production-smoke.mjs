@@ -41,7 +41,7 @@ try {
   if (JSON.stringify(storage) !== JSON.stringify({ local: 0, session: 0, cookies: "", databases: 0, caches: 0 })) {
     throw new Error(`Unexpected production browser persistence: ${JSON.stringify(storage)}`);
   }
-  for (const [route, title] of [["overview", "Overview"], ["targets", "Targets"], ["projects", "Projects"], ["agents", "Agents"], ["jobs", "Jobs"], ["git", "Git"], ["github", "GitHub"], ["control-center", "Control Center"], ["security", "Security & Access"]]) {
+  for (const [route, title] of [["overview", "Overview"], ["targets", "Targets"], ["projects", "Projects"], ["agents", "Agents"], ["jobs", "Jobs"], ["git", "Git"], ["github", "GitHub"], ["control-center", "Control Center"], ["security", "Security & Access"], ["sign-in", "Sign in"], ["account", "Account"], ["workspaces", "Workspaces"], ["permissions", "Product permissions"]]) {
     const productResponse = await page.goto(`${origin}/${route}`);
     if (!productResponse?.ok() || await page.title() !== `${title} — QuaranGate`) throw new Error(`Product route failed: ${route}`);
   }
@@ -49,6 +49,12 @@ try {
   await page.getByRole("button", { name: "Read overview", exact: true }).click();
   await page.getByText("The operational service is unavailable. Retry when it is reachable.").waitFor();
   if (await page.evaluate(() => localStorage.length + sessionStorage.length) !== 0) throw new Error("Product read persisted browser data");
+  await page.goto(`${origin}/sign-in`);
+  if (!await page.getByRole("button", { name: "Continue to identity provider" }).isDisabled()) throw new Error("Unintegrated sign-in is enabled");
+  if (!await page.getByText("Identity service not integrated yet. Sign-in is unavailable.").isVisible()) throw new Error("Missing integration boundary");
+  const previewResponse = await page.goto(`${origin}/identity-preview`);
+  if (previewResponse?.status() !== 404) throw new Error("Synthetic identity preview exposed in production");
+  if (await page.evaluate(() => localStorage.length + sessionStorage.length) !== 0) throw new Error("Identity UI persisted browser data");
   const designResponse = await page.goto(`${origin}/design-system`);
   if (designResponse?.status() !== 404) throw new Error(`Production design-system route returned ${designResponse?.status()}`);
   const headers = await fetch(origin);
@@ -57,7 +63,7 @@ try {
     if (headers.headers.get(name) !== value) throw new Error(`Missing header ${name}`);
   }
   await browser.close();
-  console.log("production smoke: PASS (root + nine product routes 200, missing /mcp unavailable, design-system 404, storage clean, headers present)");
+  console.log("production smoke: PASS (root + thirteen product routes 200, identity integration pending, missing /mcp unavailable, identity-preview/design-system 404, storage clean, headers present)");
 } finally {
   server.kill("SIGTERM");
 }

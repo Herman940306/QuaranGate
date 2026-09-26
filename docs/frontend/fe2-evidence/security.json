@@ -1,0 +1,141 @@
+{
+  "scan": "bounded changed-file pattern scan and identity source boundary inspection",
+  "fileLimitBytes": 2097152,
+  "patterns": [
+    "private_key",
+    "github_credential",
+    "provider_credential",
+    "aws_credential",
+    "literal_bearer",
+    "literal_password"
+  ],
+  "scanned": [
+    {
+      "path": "docs/frontend/FE2_HANDOFF.md",
+      "sha256": "f156e19e07164b2c44f03b55857984a36cdcb7a653bb011700491c0cc813771a"
+    },
+    {
+      "path": "docs/frontend/fe2-evidence/premium-ui.json",
+      "sha256": "0d1fd173a6760e8941c8eb22bbd5062f46f54503e5329e6ad48177fd13704db6"
+    },
+    {
+      "path": "docs/frontend/fe2-evidence/validation.json",
+      "sha256": "7e1dc6cc627e20e14ebf6e4454c0f6312ecb4c24b4fa08281a219df8d78cff4d"
+    },
+    {
+      "path": "frontend/README.md",
+      "sha256": "475e7caf3597127472f92168e7742e54625e57fae9d6a5f51d1f6e347b3488a8"
+    },
+    {
+      "path": "frontend/src/app/(foundation)/account/page.tsx",
+      "sha256": "32c6ae853e4df6dbe361ebb2a5093b968c070c44d25b7f64ad5675a99a19fb1b"
+    },
+    {
+      "path": "frontend/src/app/(foundation)/permissions/page.tsx",
+      "sha256": "7a00de0bef2bfc598c9f8e79b330cf2a000cfab1c96f8570da5a30c62daa656c"
+    },
+    {
+      "path": "frontend/src/app/(foundation)/sign-in/page.tsx",
+      "sha256": "f1d737cfbecba29d84606c47f39af740d454b3656c01a2395a65b38c9c583fe4"
+    },
+    {
+      "path": "frontend/src/app/(foundation)/workspaces/page.tsx",
+      "sha256": "dd6d5507b82594a7a23707b2924080cb990dd809d104b2ea273dffbad4ef95c4"
+    },
+    {
+      "path": "frontend/src/app/identity-preview/page.tsx",
+      "sha256": "e7dff689cf214f3f56259b21fae8e2d6d6b3f265f26720af47459ce43e0569ff"
+    },
+    {
+      "path": "frontend/src/components/identity-account.tsx",
+      "sha256": "de9598347f9b83ee3b4fdb376963e20543ade9f12364c71f56e945071ce199a8"
+    },
+    {
+      "path": "frontend/src/components/identity-permissions.tsx",
+      "sha256": "212ec93df48ad22ec9a475b81a1cc12a0ead0ea692e456006c8b687220d350a1"
+    },
+    {
+      "path": "frontend/src/components/identity-preview.tsx",
+      "sha256": "07a6c4f782da3fea745f9d882e156a0024fd42fdc18b5c6335c3e2106b4e332a"
+    },
+    {
+      "path": "frontend/src/components/identity-provider.tsx",
+      "sha256": "ba6649496638b3012050e77999d6ce220a3f077c3bcc5fabf7dac50a34be5e85"
+    },
+    {
+      "path": "frontend/src/components/identity-sign-in.tsx",
+      "sha256": "a97b6d3e68795d8bae2241c4d5e9c0aa78d4c5be5b3935a98b51334f5f606e6a"
+    },
+    {
+      "path": "frontend/src/components/identity-status.tsx",
+      "sha256": "6785646391cbb85b68ee93ab32a48751490e9a57355ad08a3e86e87b126c7473"
+    },
+    {
+      "path": "frontend/src/components/identity-workspaces.tsx",
+      "sha256": "88859a42ba73418fd8531d054bd601201a74e2a9bfdc1bac6db53a8468a8b2a2"
+    },
+    {
+      "path": "frontend/src/components/operational-provider.tsx",
+      "sha256": "279f0201ae0a1aa8cb044fe0a34031b3a872f499c978aba71f7fa5d48263126c"
+    },
+    {
+      "path": "frontend/src/components/shell.tsx",
+      "sha256": "68ff442613191b74152fcbaef4e9cdd9856ac124ca98d5cd9a3a270b2c853eed"
+    },
+    {
+      "path": "frontend/src/lib/client/use-operational-read.ts",
+      "sha256": "39701adf0346764ab921e483325dafab1143a4f31c910e57357afa5e6dc6bf7c"
+    },
+    {
+      "path": "frontend/src/lib/identity/client.ts",
+      "sha256": "0c4a70f55a9f185db4cef4b3d01ff984544cf1e67417f27f53488687c563b08e"
+    },
+    {
+      "path": "frontend/src/lib/identity/contracts.ts",
+      "sha256": "eb91e33834b30869197e5042f4d76795abd5cfa78279bbcef26bfbf5c1f3ec13"
+    },
+    {
+      "path": "frontend/src/lib/identity/store.ts",
+      "sha256": "185723fae569a8644101a4325912eddc7b31fe3e53224304bfbc182f655d8411"
+    },
+    {
+      "path": "frontend/src/lib/product/preferences.ts",
+      "sha256": "01bc5862f3615f4b90a3ce3b31ce9136ad579f1d6548dcb88a2f3d6c03ab5910"
+    },
+    {
+      "path": "frontend/tests/e2e/identity.spec.ts",
+      "sha256": "6a1775b5fcb0964df1160991e221f1e68b43f51352a3f023fe2bfcfba60222ac"
+    },
+    {
+      "path": "frontend/tests/production-smoke.mjs",
+      "sha256": "9a06c6348588448f707def3e1446b8d6e02b2ea493cf0e4c70566d8ac80565e3"
+    },
+    {
+      "path": "frontend/tests/unit/identity-ui.test.tsx",
+      "sha256": "ace7d7a0592b66625d67dd66cedc68a04224471fc7a82a7c0a4de2ee6cc54f4f"
+    },
+    {
+      "path": "frontend/tests/unit/identity.test.ts",
+      "sha256": "6237444ed0df72dcea95b6cc59a3b7939cc4448c1f5dbc439f63bafec8e1b0f2"
+    },
+    {
+      "path": "frontend/tests/unit/preferences.test.ts",
+      "sha256": "ec51a647ddf379708dc7f901749396f60ef547b0c2c75bf1a6069a3437b336f4"
+    }
+  ],
+  "selfReceiptHashExcluded": "docs/frontend/fe2-evidence/security.json",
+  "binaryFilesExcluded": [
+    "docs/frontend/fe2-evidence/fe2-account-1280.png",
+    "docs/frontend/fe2-evidence/fe2-account-360.png",
+    "docs/frontend/fe2-evidence/fe2-stale-1280.png",
+    "docs/frontend/fe2-evidence/fe2-stale-360.png"
+  ],
+  "findings": [],
+  "result": "PASS",
+  "limitations": [
+    "Pattern scan is defense in depth, not comprehensive secret detection.",
+    "Self receipt is scanned but its final bytes are hashed by FREEZE.json.",
+    "Synthetic runtime coverage and production smoke are recorded in validation.json.",
+    "No accepted live BE1 adapter exists."
+  ]
+}
