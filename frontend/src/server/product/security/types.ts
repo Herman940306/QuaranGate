@@ -62,6 +62,7 @@ export interface DiscoveryUnsupportedFact {
     | "MALICIOUS_PATH"
     | "SYMLINK_UNSUPPORTED"
     | "OVERSIZED_MANIFEST"
+    | "OVERSIZED_SOURCE_FILE"
     | "BINARY_UNPARSEABLE"
     | "MALFORMED_MANIFEST"
     | "UNSUPPORTED_FILE_TYPE";
@@ -75,13 +76,26 @@ export interface ProjectSourceFile {
   kind?: "file" | "symlink";
 }
 
-export interface SecurityDiscoveryInput {
+export interface SecurityDiscoveryRequest {
+  projectId: string;
+  targetId?: string;
+  assessmentIntent?: "source" | "runtime" | "pipeline";
+}
+
+export interface TrustedSecuritySourceSnapshot {
   projectId: string;
   targetId?: string;
   sourceRevision: string;
-  assessmentIntent?: "source" | "runtime" | "pipeline";
   files: ProjectSourceFile[];
-  callerDeclaredStack?: string[];
+}
+
+export interface SecuritySourceResolveContext {
+  productUserId: string;
+  organizationId: string;
+  workspaceId: string;
+  principalRef: string;
+  projectId: string;
+  targetId?: string;
 }
 
 export interface SecurityDiscoveryResult {
@@ -93,14 +107,22 @@ export interface SecurityDiscoveryResult {
   readOnly: true;
   detected: DetectedTechnology[];
   unsupported: DiscoveryUnsupportedFact[];
-  callerDeclaredStackIgnored: boolean;
   unknown: boolean;
+  incomplete: false;
   safety: {
     packageScriptsExecuted: false;
     networkUsed: false;
     dependencyInstallAttempted: false;
     arbitraryHostPathsAccepted: false;
   };
+}
+
+export interface StoredSecurityDiscovery {
+  productUserId: string;
+  organizationId: string;
+  workspaceId: string;
+  principalRef: string;
+  result: SecurityDiscoveryResult;
 }
 
 export interface SecurityCapability {

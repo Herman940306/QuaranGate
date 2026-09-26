@@ -1,0 +1,17 @@
+A	docs/product-platform/be8/BE8_R1_HANDOFF.md
+A	docs/product-platform/be8/evidence/R1/AUTHORITY_MODEL.md
+A	docs/product-platform/be8/evidence/R1/CHANGED_PATHS.txt
+A	docs/product-platform/be8/evidence/R1/INDEPENDENT_FINDINGS.txt
+A	docs/product-platform/be8/evidence/R1/PRESTATE.txt
+A	docs/product-platform/be8/evidence/R1/VALIDATION.txt
+A	frontend/src/server/product/security/request.ts
+A	frontend/src/server/product/security/source.ts
+A	frontend/src/server/product/security/store.ts
+M	frontend/src/app/api/product/security/discovery/result/route.ts
+M	frontend/src/app/api/product/security/discovery/start/route.ts
+M	frontend/src/app/api/product/security/plan/route.ts
+M	frontend/src/server/product/http/errors.ts
+M	frontend/src/server/product/security/discovery.ts
+M	frontend/src/server/product/security/service.ts
+M	frontend/src/server/product/security/types.ts
+M	frontend/tests/unit/be8-security-discovery-planner.test.ts

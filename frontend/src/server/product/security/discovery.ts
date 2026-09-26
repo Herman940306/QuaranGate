@@ -1,18 +1,23 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { basename, extname, posix } from "node:path";
-import type { DetectedTechnology, DetectionProvenance, DetectorSourceType, DiscoveryUnsupportedFact, SecurityDiscoveryInput, SecurityDiscoveryResult } from "./types";
+import type { DetectedTechnology, DetectionProvenance, DetectorSourceType, DiscoveryUnsupportedFact, SecurityDiscoveryResult, TrustedSecuritySourceSnapshot } from "./types";
 
 const DETECTOR_VERSION = "BE8_STATIC_DISCOVERY_V1" as const;
-const MAX_MANIFEST_BYTES = 256 * 1024;
-const MAX_SOURCE_FILES = 1000;
+export const MAX_SOURCE_FILES = 1000;
+export const MAX_MANIFEST_BYTES = 256 * 1024;
+export const MAX_SINGLE_FILE_BYTES = 512 * 1024;
+export const MAX_TOTAL_DISCOVERY_BYTES = 8 * 1024 * 1024;
+export const MAX_PATH_LENGTH = 240;
+export const MAX_PROJECT_ID_LENGTH = 128;
+export const MAX_TARGET_ID_LENGTH = 128;
 
 function stableId(prefix: string, payload: unknown): string {
   return `${prefix}_${createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24)}`;
 }
 
 function normalizeWorkspacePath(path: string): string | undefined {
-  if (path.length === 0 || path.length > 240) return undefined;
+  if (path.length === 0 || path.length > MAX_PATH_LENGTH) return undefined;
   if (path.startsWith("/") || path.includes("\\") || path.includes("\0")) return undefined;
   const normalized = posix.normalize(path);
   if (normalized === "." || normalized.startsWith("../") || normalized === "..") return undefined;
@@ -112,15 +117,35 @@ function inspectStaticFile(path: string, content: string, map: Map<string, Detec
   }
 }
 
-export function discoverSecurityStack(input: SecurityDiscoveryInput): SecurityDiscoveryResult {
-  if (!/^[a-zA-Z0-9._:-]{1,128}$/.test(input.projectId)) throw new Error("security_discovery_project_invalid");
-  if (!/^[0-9a-f]{7,64}$/i.test(input.sourceRevision)) throw new Error("security_discovery_revision_invalid");
+function assertBoundedIdentity(snapshot: TrustedSecuritySourceSnapshot): void {
+  if (snapshot.projectId.length === 0 || snapshot.projectId.length > MAX_PROJECT_ID_LENGTH || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(snapshot.projectId)) {
+    throw new Error("security_discovery_project_invalid");
+  }
+  if (snapshot.targetId !== undefined && (snapshot.targetId.length === 0 || snapshot.targetId.length > MAX_TARGET_ID_LENGTH || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(snapshot.targetId))) {
+    throw new Error("security_discovery_target_invalid");
+  }
+  if (!/^[0-9a-f]{7,64}$/i.test(snapshot.sourceRevision)) throw new Error("security_discovery_revision_invalid");
+}
+
+export function discoverSecurityStack(snapshot: TrustedSecuritySourceSnapshot): SecurityDiscoveryResult {
+  assertBoundedIdentity(snapshot);
+  if (snapshot.files.length > MAX_SOURCE_FILES) throw new Error("security_discovery_file_count_exceeded");
+
   const map = new Map<string, DetectedTechnology>();
   const unsupported: DiscoveryUnsupportedFact[] = [];
-  for (const file of input.files.slice(0, MAX_SOURCE_FILES)) {
+  let totalBytes = 0;
+
+  for (const file of snapshot.files) {
+    const content = file.content ?? "";
+    const actualBytes = Buffer.byteLength(content, "utf8");
+    const metadataBytes = Number.isSafeInteger(file.sizeBytes) && (file.sizeBytes ?? 0) >= 0 ? file.sizeBytes ?? 0 : 0;
+    const boundedBytes = Math.max(actualBytes, metadataBytes);
+    totalBytes += boundedBytes;
+    if (totalBytes > MAX_TOTAL_DISCOVERY_BYTES) throw new Error("security_discovery_total_bytes_exceeded");
+
     const path = normalizeWorkspacePath(file.path);
     if (!path) {
-      unsupported.push({ path: file.path, reason: "MALICIOUS_PATH" });
+      unsupported.push({ path: file.path.slice(0, MAX_PATH_LENGTH + 1), reason: "MALICIOUS_PATH" });
       continue;
     }
     if (file.kind === "symlink") {
@@ -131,14 +156,18 @@ export function discoverSecurityStack(input: SecurityDiscoveryInput): SecurityDi
       unsupported.push({ path, reason: "BINARY_UNPARSEABLE" });
       continue;
     }
-    const size = file.sizeBytes ?? file.content?.length ?? 0;
+
     const name = basename(path).toLowerCase();
     const isManifest = ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "requirements.txt", "pyproject.toml", "go.mod"].includes(name) || path.endsWith(".csproj") || path.endsWith(".sln");
-    if (isManifest && size > MAX_MANIFEST_BYTES) {
+    if (isManifest && boundedBytes > MAX_MANIFEST_BYTES) {
       unsupported.push({ path, reason: "OVERSIZED_MANIFEST" });
       continue;
     }
-    const content = file.content ?? "";
+    if (boundedBytes > MAX_SINGLE_FILE_BYTES) {
+      unsupported.push({ path, reason: "OVERSIZED_SOURCE_FILE" });
+      continue;
+    }
+
     if (name === "package.json") inspectPackageJson(path, content, map, unsupported);
     if (name === "package-lock.json" || name === "pnpm-lock.yaml" || name === "yarn.lock") addTechnology(map, tech("node-lockfile", "Node lockfile", "deployment", [provenance("lockfile", path, name)]));
     if (name === "requirements.txt" || name === "pyproject.toml") addTechnology(map, tech("python", "Python", "language", [provenance("dependency_manifest", path, name)]));
@@ -146,18 +175,26 @@ export function discoverSecurityStack(input: SecurityDiscoveryInput): SecurityDi
     inspectProjectFile(path, content, map);
     inspectStaticFile(path, content, map);
   }
+
   const detected = [...map.values()].sort((a, b) => a.id.localeCompare(b.id));
   return {
-    discoveryId: stableId("disc", { projectId: input.projectId, targetId: input.targetId, sourceRevision: input.sourceRevision, detected: detected.map((item) => item.id), unsupported }),
-    projectId: input.projectId,
-    targetId: input.targetId,
-    sourceRevision: input.sourceRevision,
+    discoveryId: stableId("disc", {
+      projectId: snapshot.projectId,
+      targetId: snapshot.targetId,
+      sourceRevision: snapshot.sourceRevision,
+      files: snapshot.files.map((file) => [file.path, Math.max(Buffer.byteLength(file.content ?? "", "utf8"), file.sizeBytes ?? 0), file.binary === true, file.kind ?? "file"]),
+      detected: detected.map((item) => item.id),
+      unsupported,
+    }),
+    projectId: snapshot.projectId,
+    targetId: snapshot.targetId,
+    sourceRevision: snapshot.sourceRevision,
     detectorVersion: DETECTOR_VERSION,
     readOnly: true,
     detected,
     unsupported,
-    callerDeclaredStackIgnored: Array.isArray(input.callerDeclaredStack) && input.callerDeclaredStack.length > 0,
     unknown: detected.length === 0,
+    incomplete: false,
     safety: {
       packageScriptsExecuted: false,
       networkUsed: false,

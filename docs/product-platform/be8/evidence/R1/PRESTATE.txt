@@ -1,0 +1,9 @@
+failed_review_commit=d7d6b451065a9a4875ddfa82873dfeaf6ebec829
+failed_review_tree=306969757c89923498f62d9737e63dabccabf83a
+failed_review_parent=dae3b6bedb6f7d38481bc1de0d8bc61f0d7799e3
+failed_review_subject=feat(product): add BE8 security discovery planner
+independent_review=FAIL_REVIEW
+remediation_scope=BE8_R1_AUTHORITY_BINDING_ONLY
+self_acceptance=NO
+integration=NO
+be9=NO
