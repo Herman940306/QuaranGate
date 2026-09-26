@@ -1,0 +1,19 @@
+BE1-R2 validation summary
+base=5fc68fe23918dfca764a3b5e6de8eb73ede2167c
+base_tree=3a490302868c035460fe730f19cce30ca647243b
+typecheck=PASS
+lint=PASS
+focused_be1_tests=PASS 24/24
+full_frontend_tests=PASS 31/31
+next_build=PASS
+npm_audit_high=PASS 0 vulnerabilities
+bounded_secret_scan=PASS
+git_diff_check=PASS
+ownership_check=PASS
+canonical_server_namespace=frontend/src/server/product/**
+canonical_route_count=5
+forbidden_sibling_namespace_check=PASS
+collided_worktree_unchanged=YES
+agent_a_worktree_unchanged=YES
+runtime_mutation=NO
+push_merge_deploy=NO
