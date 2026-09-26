@@ -262,6 +262,48 @@ FILES:
 NEXT:
 - FE9 Local AI / Models: implement only truthful model/provider/hardware readiness seams from accepted contracts; do not infer live model entitlement, GPU availability or provider authority in the browser.
 
+## FE9 checkpoint
+
+CHECKPOINT: FE9 — Local AI / Models
+STATUS: FROZEN IMPLEMENTATION CANDIDATE — READINESS ONLY — NOT SELF-ACCEPTED
+
+IMPLEMENTED:
+- `/models` presents O1/local-Ollama model qualification and deployment truth without live runtime control.
+- Owner-approved model set is shown with primary, capacity reserve, alternate and deferred candidate statuses.
+- Deployment truth distinguishes source/model qualification and production deployment from incomplete post-remediation live acceptance.
+- Authority boundary states audit/plan/review only, no implement/writer/live mutation, and read-only model-facing tools only.
+- Resource evidence is labeled host-specific and not portable universal requirements.
+- The page exposes no pull, switch, enable, seed, probe or provider-control button because no accepted public frontend contract exists for those operations.
+
+CONTRACT / AUTHORITY TRUTH:
+- Source basis is current `docs/backend/O1_MODEL_QUALIFICATION.md` and `docs/security/SECURITY.md` local-model boundary language.
+- Running local Ollama can remove cloud-model prompt transmission from that model call, but does not prove surrounding IDE/build/provider processes have no external network path.
+- No live GPU, VRAM, model inventory, entitlement, model-store or Ollama API status is inferred in the browser.
+
+QUALIFICATION:
+- `npm run lint`: PASS, 130 files checked.
+- `npm run typecheck`: PASS.
+- Full frontend unit suite: 140/140 PASS.
+- `npm run build`: PASS, 30 static routes generated.
+- `npm audit --audit-level=high`: zero vulnerabilities.
+- `git diff --check`: PASS.
+- Governed Chromium FE9 qualification: 2/2 PASS at 1280 and 360 pixels, readiness-only boundary, no control buttons, no browser persistence, no overflow and axe checks.
+- Owner-host job: `ohj_b23d271e333ce5cd8a3545ccd3bb1e59`.
+- Browser image: `mcr.microsoft.com/playwright:v1.63.0-noble@sha256:bc6ab0d6d44ff4826e4cb8c1e6d801e185bfc42bb0753f8e2a30efc70db054c7`.
+- Host Git status SHA-256 remained `04448b8289298720241cc89721eaa8da8383c27abe8adc2fdc5c795d8542d52d` before and after browser qualification.
+
+INTEGRATION GAP:
+- FE9 does not implement live model management. A future live Local AI product surface needs an accepted frontend-consumable model/runtime inventory and control contract.
+
+FILES:
+- `frontend/src/app/(foundation)/models/page.tsx`
+- `frontend/src/components/local-ai-models.tsx`
+- `frontend/src/components/shell.tsx`
+- `frontend/tests/e2e/models.spec.ts`
+
+NEXT:
+- FE10 Monitoring: implement truthful monitoring surfaces only from current metadata contracts; do not fabricate hardware metrics, telemetry streams or health success.
+
 ## Phase commit ledger
 
 | Phase | Commit | Tree | Parent | Subject | Tests |
@@ -270,4 +312,5 @@ NEXT:
 | FE5 | `e00465cc730379cef2c78d859dc433a87850ebc9` | `a317b1e9fe5c1a9df3dc41bee878ecb28cd00ca6` | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `feat(frontend): add governed Agent Arena` | Local gates PASS; external Chromium 41/41 PASS |
 | FE6 | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `686fed609fee76b56cfc6fa64812d292f57c5dfd` | `e00465cc730379cef2c78d859dc433a87850ebc9` | `feat(frontend): add review and approvals` | Local gates PASS; governed Chromium 4/4 PASS |
 | FE7 | `af878246675adf203670e2b36e06e54fed477962` | `e9fadd93e4c44c20108dd87ea3e8456a019e2d8b` | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `feat(frontend): add IDE session readiness center` | Local gates PASS; governed Chromium 2/2 PASS |
-| FE8 | Pending immutable commit | Pending | `af878246675adf203670e2b36e06e54fed477962` | `feat(frontend): add GitHub product experience` | Local gates PASS; governed Chromium 11/11 PASS |
+| FE8 | `424bf907f1677f0cd4c22467bb06b41dc105c96f` | `7725a0d111744830fa1c03d1b2db364176a70111` | `af878246675adf203670e2b36e06e54fed477962` | `feat(frontend): add GitHub product experience` | Local gates PASS; governed Chromium 11/11 PASS |
+| FE9 | Pending immutable commit | Pending | `424bf907f1677f0cd4c22467bb06b41dc105c96f` | `feat(frontend): add Local AI model readiness` | Local gates PASS; governed Chromium 2/2 PASS |
