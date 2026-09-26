@@ -24,6 +24,9 @@ function mapError(error: unknown): { status: number; code: ProductErrorCode; mes
   if (value.includes("provider_not_found")) return { status: 404, code: "VALIDATION_FAILED", message: "Requested product data is unavailable." };
   if (value.includes("provider_request") || value.includes("provider_secret") || value.includes("provider_custody")) return { status: 400, code: "VALIDATION_FAILED", message: "Provider request was rejected." };
   if (value.includes("openbao_") || value.includes("secret_custody")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Provider custody service is unavailable." };
+  if (value.includes("meeting_request") || value.includes("meeting_title") || value.includes("meeting_version") || value.includes("meeting_state_transition") || value.includes("meeting_idempotency")) return { status: 400, code: "VALIDATION_FAILED", message: "Meeting request was rejected." };
+  if (value.includes("meeting_forbidden") || value.includes("meeting_workspace_required")) return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };
+  if (value.includes("meeting_stt_provider_unavailable")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Meeting transcription service is unavailable." };
   if (value.includes("observability_window") || value.includes("top_n") || value.includes("bucket_count")) return { status: 400, code: "VALIDATION_FAILED", message: "Observability request was rejected." };
   if (value.includes("observability_forbidden") || value.includes("observability_workspace_required")) return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };
   if (value.includes("zabbix_") || value.includes("tempo_")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Observability backend is unavailable." };
