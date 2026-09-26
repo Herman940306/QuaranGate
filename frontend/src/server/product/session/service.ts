@@ -4,7 +4,8 @@ import type { AuditSink } from "../audit/events";
 import { defaultAuditSink } from "../audit/events";
 import { assertCsrf } from "../authority/csrf";
 import type { ProductContextAdapter } from "../adapters/workspace";
-import { NonDurableProductContextAdapter } from "../adapters/workspace";
+import { PostgresProductContextAdapter } from "../adapters/postgres-context";
+import { productDataRepository } from "../data/runtime";
 import { loadProductOidcConfig } from "../auth/config";
 import type { ProductOidcPort } from "../auth/oidc";
 import { OpenIdClientPort } from "../auth/oidc";
@@ -19,7 +20,7 @@ export class ProductSessionService {
   constructor(
     private readonly store: ProductSessionStore = new MemoryProductSessionStore(),
     private readonly oidc: ProductOidcPort = new OpenIdClientPort(),
-    private readonly context: ProductContextAdapter = new NonDurableProductContextAdapter(),
+    private readonly context: ProductContextAdapter = new PostgresProductContextAdapter(productDataRepository()),
     private readonly audit: AuditSink = defaultAuditSink,
   ) {}
 
@@ -48,9 +49,13 @@ export class ProductSessionService {
       });
       const expiresAt = Math.min(result.tokens.expiresAt, now + SESSION_TTL_MS);
       if (expiresAt <= now) throw new Error("product_identity_token_expired");
+      const durableIdentity = await this.context.resolveIdentity(
+        result.issuer ?? loadProductOidcConfig().issuer.href.replace(/\/$/, ""),
+        result.identity,
+      );
       if (priorSessionId) this.store.revokeSession(priorSessionId);
       const session = this.store.createSession({
-        identity: result.identity,
+        identity: durableIdentity,
         version: 1,
         issuedAt: now,
         expiresAt,

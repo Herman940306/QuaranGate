@@ -12,6 +12,7 @@ export interface OidcTokens {
 }
 
 export interface OidcCallbackResult {
+  issuer?: string;
   identity: SafeProductIdentity;
   tokens: OidcTokens;
 }
@@ -64,6 +65,7 @@ export class OpenIdClientPort implements ProductOidcPort {
     const exp = typeof claims.exp === "number" ? claims.exp * 1000 : 0;
     if (!exp || exp <= Date.now()) throw new Error("product_identity_token_expired");
     return {
+      issuer: claims.iss,
       identity: {
         userRef: provisionalUserRef(claims.iss, claims.sub),
         subject: claims.sub,

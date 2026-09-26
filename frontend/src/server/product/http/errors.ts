@@ -1,4 +1,5 @@
 import "server-only";
+import { ProductDataError } from "../data/errors";
 
 export type ProductErrorCode =
   | "UNAUTHENTICATED"
@@ -9,6 +10,13 @@ export type ProductErrorCode =
   | "INTERNAL";
 
 function mapError(error: unknown): { status: number; code: ProductErrorCode; message: string } {
+  if (error instanceof ProductDataError) {
+    if (error.code === "PRODUCT_DATA_STALE_VERSION") return { status: 409, code: "STALE_VERSION", message: "Product data version is stale." };
+    if (error.code === "PRODUCT_DATA_FORBIDDEN") return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };
+    if (error.code === "PRODUCT_DATA_NOT_FOUND") return { status: 404, code: "VALIDATION_FAILED", message: "Requested product data is unavailable." };
+    if (error.code === "PRODUCT_DATA_UNAVAILABLE") return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Product data service is unavailable." };
+    return { status: 400, code: "VALIDATION_FAILED", message: "Product data request was rejected." };
+  }
   const value = error instanceof Error ? error.message : "";
   if (value.includes("session_missing") || value.includes("session_invalid")) return { status: 401, code: "UNAUTHENTICATED", message: "Product session is not valid." };
   if (value.includes("csrf") || value.includes("workspace_forbidden")) return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };

@@ -1,0 +1,19 @@
+BE2 validation summary
+base=c84d32d4dbb4636a4a9a676137b4f969854bae1f
+base_tree=7605bc9b0a002706da4f6f0b6b3c6b41fd11ec65
+typecheck=PASS
+lint=PASS zero warnings
+focused_be1_be2_tests=PASS 34/34
+full_frontend_tests=PASS 56/56
+next_build=PASS
+npm_audit_high=PASS 0 vulnerabilities
+migration_static_sql=PASS
+bounded_secret_scan=PASS
+git_diff_check=PASS
+ownership_check=PASS
+accepted_be1_tests_unchanged=YES
+canonical_unchanged=YES
+agent_a_unchanged=YES
+live_postgresql_qualification=UNAVAILABLE
+runtime_compose_gateway_mutation=NO
+push_merge_deploy=NO

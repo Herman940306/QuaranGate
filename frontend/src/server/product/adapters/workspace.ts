@@ -1,7 +1,8 @@
 import "server-only";
-import type { ProductWorkspace } from "../identity/types";
+import type { ProductWorkspace, SafeProductIdentity } from "../identity/types";
 
 export interface ProductContextAdapter {
+  resolveIdentity(issuer: string, identity: SafeProductIdentity): Promise<SafeProductIdentity>;
   workspaceForUser(userRef: string, workspaceId: string): Promise<ProductWorkspace | undefined>;
 }
 
@@ -14,6 +15,10 @@ export class NonDurableProductContextAdapter implements ProductContextAdapter {
 
   seedForTests(userRef: string, workspaces: ProductWorkspace[]): void {
     this.memberships.set(userRef, workspaces);
+  }
+
+  async resolveIdentity(_issuer: string, identity: SafeProductIdentity): Promise<SafeProductIdentity> {
+    return identity;
   }
 
   async workspaceForUser(userRef: string, workspaceId: string): Promise<ProductWorkspace | undefined> {
