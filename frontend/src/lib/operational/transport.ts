@@ -63,9 +63,9 @@ function toolData(result: unknown): Record<string, unknown> {
 }
 // Internal module seam only. Product code uses the purpose-specific client, never a generic call.
 const readTools = new Set(["targets_list", "target_inspect", "agent_projects", "agents_list", "agent_status", "agent_result", "agent_diff", "git_status", "git_diff", "git_log", "github_repositories", "control_center_query", "fs_list", "fs_stat", "fs_read", "fs_search", "process_list"]);
-const writeTools = new Set(["fs_write", "fs_patch", "fs_delete", "terminal_exec", "target_start", "target_stop", "target_restart"]);
+const writeTools = new Set(["fs_write", "fs_patch", "fs_delete", "terminal_exec", "target_start", "target_stop", "target_restart", "agent_dispatch", "agent_cancel", "agent_apply", "agent_discard"]);
 export type ReadTool = "targets_list" | "target_inspect" | "agent_projects" | "agents_list" | "agent_status" | "agent_result" | "agent_diff" | "git_status" | "git_diff" | "git_log" | "github_repositories" | "control_center_query" | "fs_list" | "fs_stat" | "fs_read" | "fs_search" | "process_list";
-export type WriteTool = "fs_write" | "fs_patch" | "fs_delete" | "terminal_exec" | "target_start" | "target_stop" | "target_restart";
+export type WriteTool = "fs_write" | "fs_patch" | "fs_delete" | "terminal_exec" | "target_start" | "target_stop" | "target_restart" | "agent_dispatch" | "agent_cancel" | "agent_apply" | "agent_discard";
 function createCaller(transport: Transport, allowed: Set<string>) {
   return async <T>(name: ReadTool | WriteTool, args: Record<string, unknown>, decode: (value: Record<string, unknown>) => T, signal?: AbortSignal): Promise<ReadReceipt<T>> => {
     const id = crypto.randomUUID();

@@ -29,5 +29,6 @@ export function useWorkstationAction<T>() {
       return false;
     } finally { running.current = false; }
   }
-  return { run, pending: view.epoch === projectionEpoch && view.pending, receipt: view.epoch === projectionEpoch ? view.receipt : undefined, failure: view.epoch === projectionEpoch ? view.failure : undefined, check: view.epoch === projectionEpoch ? view.check : undefined };
+  function reset() { if (!running.current) setView({ epoch: projectionEpoch, pending: false }); }
+  return { run, reset, pending: view.epoch === projectionEpoch && view.pending, receipt: view.epoch === projectionEpoch ? view.receipt : undefined, failure: view.epoch === projectionEpoch ? view.failure : undefined, check: view.epoch === projectionEpoch ? view.check : undefined };
 }

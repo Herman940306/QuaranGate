@@ -59,10 +59,65 @@ FILES:
 - `frontend/src/app/globals.css`
 
 NEXT:
-- FE5 Agent Arena: inspect accepted job mutation contracts and implement a semantic client/chat surface without inventing profile integration or streaming.
+- FE5 Agent Arena completed as an implementation candidate on top of FE4. Acceptance remains external to this implementation lane.
+
+## FE5 checkpoint
+
+CHECKPOINT: FE5 — Agent Arena / governed agent jobs
+STATUS: FROZEN IMPLEMENTATION CANDIDATE — NOT SELF-ACCEPTED
+
+IMPLEMENTED:
+- `/arena`: governed work-request composition against bounded returned project/backend/profile values only; no arbitrary tool name, provider URL, or browser-synthesized authority.
+- Dispatch uses the accepted Agent Control Plane semantic operations only: `agent_projects`, `agents_list`, `agent_dispatch`, `agent_status`, `agent_result`, `agent_diff`, `agent_cancel`, `agent_discard`, and `agent_apply`.
+- Active jobs poll every four seconds only while the tab is visible and polling stops on terminal lifecycle states. No token-stream or conversation-stream behavior is fabricated.
+- Result and diff content render as untrusted inert text. Diff requests are bounded; apply remains unavailable unless evidence is complete, non-truncated, applicable, and bound to the current result/diff hash when the result supplies one.
+- `COMPLETED` remains distinct from `APPLIED`. Cancel, discard, and apply use explicit typed confirmation; apply receives the strongest treatment and remains a separate server-authorized mutation.
+- Known server-issued job IDs can be reopened without inventing a discovery API. Microphone and attachment controls remain disabled because no accepted FE5 contract exists for them.
+- Identity/workspace projection changes invalidate Arena reads/actions and suppress late prior-context responses. Prompt, result, diff, job selections, and confirmations are not persisted to browser storage or the URL.
+
+SECURITY / AUTHORITY:
+- Product identity and configured Agent Profiles are presentation/configuration inputs, never authority grants.
+- The browser never computes operational authorization. Consequential actions remain same-origin, server-authorized, explicit, pessimistic, and non-retrying after an unknown outcome.
+- A completed agent job is reviewable evidence only. It never implies that the registered project was changed.
+
+LOCAL QUALIFICATION AFTER EXTERNAL BROWSER RUN:
+- `npm run lint`: PASS, 109 files checked.
+- `npm run typecheck`: PASS.
+- `npm run test`: PASS, 131/131 unit tests including FE5 4/4.
+- `git diff --check`: PASS.
+- Earlier unchanged-source qualification also passed production build and `npm audit --audit-level=high` with zero vulnerabilities.
+
+EXTERNAL ORCHESTRATOR BROWSER QUALIFICATION:
+- Playwright: `1.63.0`.
+- Container image: `mcr.microsoft.com/playwright:v1.63.0-noble` pinned at `sha256:bc6ab0d6d44ff4826e4cb8c1e6d801e185bfc42bb0753f8e2a30efc70db054c7`.
+- Owner-host job: `ohj_b6f0ff748d7b223da78eb67158619faf`.
+- Full Chromium E2E: 41/41 PASS.
+- Execution was disposable, `--network none`, 1 GB shm, host FE5 worktree mounted read-only, writable project copy and generated outputs confined to container tmpfs, and `CI=1`.
+- Host worktree status was identical before and after browser qualification. No package installation, root grant, canonical/runtime mutation, or live backend integration was performed or claimed.
+
+INTEGRATION GAPS:
+- Production product adapter convergence remains separate. Synthetic preview fixtures prove frontend behavior only.
+- No live backend execution, deployment, or authority mutation is claimed by the browser qualification.
+
+FILES:
+- `frontend/src/app/(foundation)/arena/page.tsx`
+- `frontend/src/app/arena-preview/page.tsx`
+- `frontend/src/components/agent-arena.tsx`
+- `frontend/src/components/arena-preview.tsx`
+- `frontend/src/lib/client/arena/client.ts`
+- `frontend/src/components/shell.tsx`
+- `frontend/src/lib/client/workstation/use-action.ts`
+- `frontend/src/lib/operational/transport.ts`
+- `frontend/src/app/globals.css`
+- `frontend/tests/unit/arena.test.ts`
+- `frontend/tests/e2e/arena.spec.ts`
+
+NEXT:
+- FE6 Review & Approvals against the independently accepted BE5 frontend integration contract. Preserve the invariant `APPROVED != OPERATION EXECUTED`.
 
 ## Phase commit ledger
 
 | Phase | Commit | Tree | Parent | Subject | Tests |
 | --- | --- | --- | --- | --- | --- |
-| FE4 | Pending final gate | Pending | `9ef3b0a0f8d9c4c191cc0be183c8b893f741877e` | Operational workstation | See FE4 checkpoint |
+| FE4 | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `3d18dcaffec0d465015ae91435ce45ddb8ec9428` | `9ef3b0a0f8d9c4c191cc0be183c8b893f741877e` | `feat(frontend): add governed operational workstation` | See FE4 checkpoint |
+| FE5 | Pending immutable commit | Pending | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `feat(frontend): add governed Agent Arena` | Local gates PASS; external Chromium 41/41 PASS |

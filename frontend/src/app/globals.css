@@ -241,6 +241,37 @@ th { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.04em; }
 .page-footer { display: flex; justify-content: space-between; gap: 1rem; padding: 1rem clamp(1rem, 3vw, 2.5rem); color: var(--muted); border-block-start: 1px solid var(--boundary); font: 0.68rem "IBM Plex Mono", monospace; }
 .standalone { max-inline-size: 42rem; margin: 10vh auto; }
 
+.arena-grid { display: grid; grid-template-columns: minmax(17rem, 21rem) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.arena-builder { min-inline-size: 0; }
+.arena-builder-toggle { display: none; }
+.arena-builder-panel { position: sticky; inset-block-start: 5.25rem; max-block-size: calc(100svh - 6.25rem); overflow: auto; }
+.arena-conversation { display: flex; flex-direction: column; min-inline-size: 0; min-block-size: min(47rem, calc(100svh - 7rem)); overflow: hidden; background: var(--surface); border: 1px solid var(--boundary); border-radius: 0.875rem; }
+.arena-conversation-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; border-block-end: 1px solid var(--boundary); }
+.arena-conversation-head h2 { margin: 0; }
+.arena-conversation-head .eyebrow { margin-block-end: 0.35rem; }
+.arena-conversation-head .cluster { margin: 0; }
+.arena-thread { display: flex; flex-direction: column; flex: 1; min-inline-size: 0; gap: 1rem; padding: 1.25rem; }
+.arena-empty { max-inline-size: 32rem; margin: auto; text-align: center; }
+.arena-empty p { color: var(--muted); line-height: 1.6; }
+.arena-empty-mark { display: inline-grid; place-items: center; inline-size: 2.75rem; block-size: 2.75rem; margin-block-end: 0.75rem; color: var(--primary); background: var(--surface-muted); border: 1px solid var(--boundary); border-radius: 0.75rem; font: 600 1.4rem "IBM Plex Mono", monospace; }
+.arena-message { max-inline-size: min(85%, 48rem); padding: 0.9rem 1.1rem; margin-inline-start: auto; background: var(--surface-muted); border: 1px solid var(--boundary); border-radius: 0.875rem 0.875rem 0.25rem 0.875rem; overflow-wrap: anywhere; }
+.arena-message p { margin: 0; white-space: pre-wrap; }
+.arena-message .arena-message-meta { margin-block-end: 0.45rem; color: var(--muted); font: 0.68rem "IBM Plex Mono", monospace; }
+.arena-job { display: grid; gap: 1rem; min-inline-size: 0; }
+.arena-job-track { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.4rem; margin-block: 0.5rem; }
+.arena-job-track > div { display: grid; gap: 0.4rem; justify-items: center; min-inline-size: 0; padding-block: 0.65rem; color: var(--muted); background: var(--surface-muted); border-block-start: 3px solid var(--boundary); text-align: center; font: 0.62rem "IBM Plex Mono", monospace; overflow-wrap: anywhere; }
+.arena-job-track > div[data-passed="true"] { color: var(--verified); border-block-start-color: var(--verified); }
+.arena-job-track > div[data-current="true"] { color: var(--primary); border-block-start-color: var(--primary); }
+.arena-step-number { display: grid; place-items: center; inline-size: 1.5rem; block-size: 1.5rem; border: 1px solid currentColor; border-radius: 50%; }
+.arena-evidence { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; align-items: start; }
+.arena-evidence .machine { margin-block: 0.75rem; }
+.arena-composer { position: sticky; inset-block-end: 0; padding: 1rem 1.25rem; background: var(--surface); border-block-start: 1px solid var(--boundary); }
+.arena-composer .field { margin: 0; }
+.arena-composer textarea { min-block-size: 6rem; }
+.arena-composer-bar { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding-block-start: 0.5rem; }
+.arena-composer-bar .cluster { margin: 0; }
+.arena-reopen { max-inline-size: 46rem; margin-block-start: 1rem; }
+
 @media (max-width: 879px) {
   .shell { display: block; }
   .rail { display: none; }
@@ -252,6 +283,12 @@ th { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.04em; }
   .foundation-grid, .review-grid { grid-template-columns: 1fr; }
   .appearance-grid, .form-grid { grid-template-columns: 1fr; }
   .workstation-grid { grid-template-columns: 1fr; }
+  .arena-grid { grid-template-columns: 1fr; }
+  .arena-builder-toggle { display: inline-flex; inline-size: 100%; justify-content: space-between; }
+  .arena-builder-content:not([data-open="true"]) { display: none; }
+  .arena-builder-panel { position: static; max-block-size: none; }
+  .arena-conversation { min-block-size: 38rem; }
+  .arena-evidence { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 420px) {
@@ -263,6 +300,10 @@ th { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.04em; }
   h1 { font-size: 2.25rem; }
   .page-footer { display: grid; }
   .toast-center { inset-inline: 0.6rem; max-inline-size: none; }
+  .arena-thread, .arena-conversation-head, .arena-composer { padding-inline: 0.8rem; }
+  .arena-job-track { gap: 0.15rem; }
+  .arena-job-track > div { font-size: 0.52rem; }
+  .arena-composer-bar { flex-wrap: wrap; }
 }
 
 @media (prefers-reduced-motion: reduce) {
