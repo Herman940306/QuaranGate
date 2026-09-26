@@ -170,3 +170,48 @@ NEXT:
 ---
 
 Current dependency-ready BE7 scope is intentionally partial with respect to full audio/recording functionality. It is suitable for independent review as a privacy-gated foundation, not as live recording/transcription completion.
+
+---
+
+# BE7 R1 OWNER-POLICY RECONCILIATION
+
+CHECKPOINT: BE7.R1-OWNER-POLICY
+STATUS: FROZEN_SOURCE_RECONCILIATION_PENDING_INDEPENDENT_REVIEW
+
+SOURCE BINDING:
+- prior BE7 foundation: `c69d3f25b6adfaa7df84354b8fdfb13dff496fd9`;
+- recovered owner-policy source: `4ad43ec34bda05108ca13b9c0d1f81d4ae40de3b`;
+- recovered tree: `9dcba98898d607f57396b4308296e82d29135fc1`;
+- recovered commit parent: `c69d3f25b6adfaa7df84354b8fdfb13dff496fd9`.
+
+FORENSIC RECONCILIATION:
+- the original BE7 worktree remains dirty because its linked-worktree `.git` points to a host-only path from the governed container;
+- no pointer was rewritten;
+- all 16 source/test paths changed between the BE7 foundation and recovered safety commit SHA-256 match the corresponding current dirty-worktree files;
+- the recovered safety commit therefore preserves the current owner-policy implementation exactly for those paths.
+
+OWNER POLICY IMPLEMENTED:
+- explicit per-meeting recording opt-in;
+- meeting-owner attestation tied to the current recording policy/version;
+- persistent visual participant notice policy with acknowledgement prerequisite;
+- transient raw-audio processing with bounded input and verified cleanup;
+- bounded workspace transcript retention, with no configured retention meaning no durable transcript body;
+- LOCAL_ONLY STT classification;
+- anonymous Speaker A/B-style labels only; identity-like labels rejected;
+- role-restricted, workspace-scoped transcript export with metadata-only audit;
+- generated summaries/action items are EPHEMERAL_ONLY and `executionAuthority=false`.
+
+FAIL-CLOSED / NOT CLAIMED:
+- client rendering of the persistent notice remains unverified by backend source;
+- live PostgreSQL qualification remains unavailable/not claimed;
+- live STT engine qualification remains unavailable/not claimed;
+- live microphone/audio runtime remains unavailable/not claimed;
+- production recording is not claimed.
+
+HISTORICAL EVIDENCE:
+- `evidence/VALIDATION.txt` remains the original privacy-gated foundation receipt and is not rewritten;
+- R1 owner-policy validation is additive under `evidence/R1_OWNER_POLICY_VALIDATION.txt`.
+
+ACCEPTANCE:
+- implementation/orchestration lead does not self-accept;
+- exact reconciliation candidate requires independent review before backend convergence.

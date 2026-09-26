@@ -85,7 +85,7 @@ Introduce WebSocket/outbox/replay, groups/messages/attachments, notifications, p
 Introduce Zabbix, OTel Collector, Tempo and durable rolling analytics.
 
 ## BE7 — Audio meetings
-Requires explicit privacy/consent/retention contract before implementation.
+Owner privacy/consent/retention decisions are now recorded and implemented in the recovered BE7 owner-policy source. Current policy is: per-meeting explicit recording opt-in; meeting-owner attestation plus persistent participant notice; transient raw-audio processing with verified cleanup; bounded workspace transcript retention; ephemeral summary/action content; LOCAL_ONLY STT; anonymous Speaker A/B labels; role-restricted audited transcript export. Live provider/storage qualification remains separate and must not be inferred from source qualification.
 
 ## BE8-B12 — Universal Security Assessment
 Sequence:

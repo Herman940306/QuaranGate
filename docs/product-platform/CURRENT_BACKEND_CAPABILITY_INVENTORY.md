@@ -152,7 +152,23 @@ Current source preserves:
 - quarantine on uncertain mutation outcomes;
 - no caller-controlled Docker options, remote URLs or host paths in public contracts.
 
-## 8. Reuse conclusion
+## 8. BE7 audio/meetings owner-policy source state
+
+Current recovered BE7 source extends the earlier metadata-only foundation with privacy-gated meeting operations. The source now includes recording opt-in, owner attestation, recording start/stop, transcript export, transient-audio handling, meeting-export audit metadata, bounded transcript-retention policy, LOCAL_ONLY transcription classification and anonymous speaker-label validation.
+
+The enforced policy is intentionally restrictive:
+- recording cannot start without explicit per-meeting opt-in;
+- current owner attestation and persistent-visual notice acknowledgement are required;
+- raw audio is transient and cleanup must be verified;
+- transcript persistence requires an explicit bounded workspace retention policy;
+- generated summaries/action items are ephemeral-only and carry `executionAuthority=false`;
+- STT is LOCAL_ONLY;
+- speaker labels are anonymous `Speaker A` / `Speaker B` style only;
+- transcript export requires the narrow product permission, is workspace-scoped and emits metadata-only audit records.
+
+These are source-level capabilities only. Live PostgreSQL/STT/audio/runtime qualification remains separate and is not claimed by this inventory.
+
+## 9. Reuse conclusion
 
 The mature MCP/ACP/GitHub/Control Center core is reusable. BE0 recommends an additive product-platform layer around it rather than replacement.
 

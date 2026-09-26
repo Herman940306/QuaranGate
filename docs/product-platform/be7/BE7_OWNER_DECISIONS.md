@@ -1,6 +1,21 @@
 # BE7 Owner Decisions
 
-All unresolved recording/privacy choices fail closed as `FEATURE_DISABLED / OWNER_DECISION_REQUIRED`.
+STATUS: RESOLVED BY OWNER FOR CURRENT BE7 OWNER-POLICY SOURCE
+
+The historical questions below are preserved for decision provenance. The owner has now selected the following exact policies for the current BE7 implementation:
+
+1. Recording consent: meeting-owner attestation plus participant notice.
+2. Participant notification: persistent visual notice.
+3. Raw audio: transient processing only with verified deletion/cleanup.
+4. Transcript retention: bounded workspace retention.
+5. Summary/action-item retention: ephemeral only; no reuse authority.
+6. STT provider/data egress: LOCAL_ONLY.
+7. Speaker handling: anonymous Speaker A/B labels only; no identity inference.
+8. Export/download: role-restricted and audited transcript export.
+9. Automatic recording: explicit per-meeting opt-in only.
+
+These decisions authorize only the bounded source behavior implemented by the BE7 owner-policy candidate. They do not by themselves qualify a live STT engine, live audio capture/storage runtime, PostgreSQL deployment, client-side notice rendering, or production recording.
+
 
 ## BE7-OD-01 — Recording consent model
 

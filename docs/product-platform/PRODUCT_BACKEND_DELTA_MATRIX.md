@@ -23,7 +23,7 @@ Status categories:
 | Groups/messages/attachments | NEW_PRODUCT_SERVICE | No current collaboration domain. |
 | notifications | NEW_PRODUCT_SERVICE | No durable product notification service. |
 | presence/typing | NEW_PRODUCT_SERVICE | Ephemeral collaboration channel, separate from durable event log. |
-| audio meetings | NEW_PRODUCT_SERVICE | Requires privacy/consent and media architecture decisions. |
+| audio meetings | NEW_PRODUCT_SERVICE | Owner privacy decisions are resolved in current BE7 source: explicit per-meeting opt-in, owner attestation + persistent notice, transient audio with verified cleanup, bounded transcript retention, LOCAL_ONLY STT, anonymous Speaker A/B labels, role-restricted audited export, ephemeral generated summaries/actions. Live runtime/provider qualification remains separate. |
 | Zabbix adapter | NEW_INFRASTRUCTURE | External monitoring adapter. |
 | OTel Collector + Tempo | NEW_INFRASTRUCTURE | External tracing pipeline. |
 | rolling 24h/7d/30d statistics | NEW_PRODUCT_SERVICE | Current 2,048/24h in-memory activity is insufficient. |
