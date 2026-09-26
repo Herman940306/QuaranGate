@@ -1,0 +1,727 @@
+{
+  "phase": "VD0",
+  "sourceHead": "ed8665ffd45352fc3d3a5cba61ae9ddfda117ef5",
+  "sourceTree": "1c3687fe90ae8eba99ab49dced4830db42167786",
+  "receipts": [
+    {
+      "route": "/overview",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "overview-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Overview",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/targets",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "targets-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Targets",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/arena",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "arena-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agent Arena",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/jobs",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "jobs-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Jobs",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/ide-sessions",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "ide-sessions-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "IDE Sessions",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/github",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "github-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "GitHub",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/models",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "models-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Local AI & Models",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/monitoring",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "monitoring-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Monitoring",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/statistics",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "statistics-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Statistics",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/security",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "security-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Security & Access",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/audit-evidence",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "audit-evidence-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Audit & Evidence",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/recovery-backups",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "recovery-backups-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Recovery & Backups",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/settings",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "settings-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Settings",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/tool-lab",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "tool-lab-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Tool Lab",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/projects",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "projects-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Projects",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/files",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "files-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Files",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/terminal",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "terminal-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Terminal",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/git",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "git-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Git",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/processes",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "processes-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Processes",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/agents",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "agents-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agents",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/approvals",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "approvals-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Review & Approvals",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/providers",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "providers-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Providers",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/agent-profiles",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "agent-profiles-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agent Profiles",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/control-center",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "control-center-1280.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Control Center",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/overview",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "overview-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Overview",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/targets",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "targets-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Targets",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/arena",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "arena-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agent Arena",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/jobs",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "jobs-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Jobs",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/ide-sessions",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "ide-sessions-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "IDE Sessions",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/github",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "github-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "GitHub",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/models",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "models-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Local AI & Models",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/monitoring",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "monitoring-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Monitoring",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/statistics",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "statistics-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Statistics",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/security",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "security-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Security & Access",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/audit-evidence",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "audit-evidence-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Audit & Evidence",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/recovery-backups",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "recovery-backups-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Recovery & Backups",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/settings",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "settings-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Settings",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/tool-lab",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "tool-lab-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Tool Lab",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/projects",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "projects-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Projects",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/files",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "files-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Files",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/terminal",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "terminal-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Terminal",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/git",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "git-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Git",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/processes",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "processes-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Processes",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/agents",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "agents-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agents",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/approvals",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "approvals-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Review & Approvals",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/providers",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "providers-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Providers",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/agent-profiles",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "agent-profiles-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agent Profiles",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/control-center",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "control-center-360.png",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Control Center",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "state": "Production integration-pending / synthetic MCP unavailable; no live backend"
+    }
+  ]
+}

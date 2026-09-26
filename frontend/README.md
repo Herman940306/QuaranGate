@@ -288,3 +288,19 @@ Chat/governed agent experience uses the existing accepted `/arena` route. No acc
 | `playwright.production.config.ts` | fixed loopback production harness; default config | Production convergence; temporary runner/server | existing production start script; no deployed/live backend claim | Test harness |
 
 Existing package scripts add only the production browser qualification command; no dependency changes. Development harness excludes the production-only convergence spec. Existing header CSS allows the palette control to wrap at magnified/narrow layouts.
+
+## VD0 visual baseline evidence
+
+The new evidence directory `../docs/frontend/evidence/VD0/` records the current behavioral substrate before visual changes. It is a review candidate, not owner or independent visual acceptance.
+
+| File | Purpose / exports | Feature / owned state | Dependency / integration expectation | Readiness |
+|---|---|---|---|---|
+| `../docs/frontend/evidence/VD0/capture.mjs` | Reproducible route screenshots; no exports | VD evidence; temporary browser/server | Installed Playwright and fresh production build; synthetic unavailable MCP only | Evidence harness |
+| `../docs/frontend/evidence/VD0/manifest.py` | SHA-256 inventory; no exports | VD evidence; no product state | Python/Git/files; no backend integration | Evidence harness |
+| `../docs/frontend/evidence/VD0/REVIEW.md` | Baseline findings and scope; no exports | VD0; no product state | DESIGN.md, normative SOT, inspected renders | Review candidate |
+| `../docs/frontend/evidence/VD0/capture.json` | Exact per-file route/viewport/state register; no exports | VD0; capture receipts | Production render with synthetic MCP unavailable; live integration separate | Evidence |
+| `../docs/frontend/evidence/VD0/historical-hashes.json` | Historical PNG preservation inventory; no exports | VD0; hashes only | Tracked immutable baseline bytes | Evidence |
+| `../docs/frontend/evidence/VD0/SHA256SUMS.json` | Every new evidence file and its SHA-256; no exports | VD0; hashes only | New evidence bytes | Evidence |
+| `../docs/frontend/evidence/VD0/build.txt`, `capture.txt` | Fresh build/capture logs; no exports | VD0; logs only | Local production harness; no deployment proof | Evidence |
+
+All 48 individual PNG paths, owning route, viewport and synthetic-state limitations are registered in `capture.json`; they have no exports/product state/backend integration and remain evidence-only candidates.
