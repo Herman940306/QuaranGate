@@ -1,5 +1,7 @@
 # Frontend continuation file register — FE3
 
+> **Mandatory current frontend source of truth:** before any frontend task, read [FRONTEND_VISUAL_DESIGN_SOURCE_OF_TRUTH.md](./FRONTEND_VISUAL_DESIGN_SOURCE_OF_TRUTH.md). It defines the owner-directed distinction between the accepted functional baseline and the still-required final visual-design convergence.
+
 This register supplements `frontend/README.md` without editing an existing file outside A-008's write scope. FE3-R1-01 has orchestrator PASS_REVIEW; final source qualification is complete and candidate freeze is pending. Default runtime returns integration pending; fixtures prove no live backend behavior.
 
 | Created path (relative to repo) | Purpose / key exports | Owning route or feature / owned state | API or mock dependency / future backend integration |

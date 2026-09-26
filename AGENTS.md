@@ -23,3 +23,18 @@ This repository is security-sensitive. AI agents must preserve QuaranGate's gove
 Run the checks appropriate to the exact change. At minimum consider typecheck, focused tests, full unit tests, build, `git diff --check`, and applicable security/release gates. Report exact results and limitations. Do not self-label an unreviewed candidate as accepted.
 
 If a task would require destructive testing, production mutation, credential use, paid-provider entitlement, or a decision that changes product authority, stop and request explicit owner authorization.
+
+
+## Mandatory frontend visual source of truth
+
+For any task that reads, reviews, tests, edits, or generates frontend code, styling, routes, components, screenshots, visual evidence, or frontend documentation, first read docs/frontend/FRONTEND_VISUAL_DESIGN_SOURCE_OF_TRUTH.md in full.
+
+That document is the owner-directed normative contract for frontend visual completion. Functional/source acceptance does not imply final visual acceptance. Do not mutate frontend source before reading it. Preserve accepted security/authority behavior while moving the rendered product toward the approved QuaranGate design.
+
+Every frontend handoff must include:
+
+FRONTEND_VISUAL_SOT_READ=YES
+FRONTEND_VISUAL_SOT_PATH=docs/frontend/FRONTEND_VISUAL_DESIGN_SOURCE_OF_TRUTH.md
+DESIGN_CONFORMANCE_SCOPE=<checked or changed scope>
+
+If the source-of-truth file is unavailable, stop frontend mutation and report the missing contract.
