@@ -26,7 +26,11 @@ describe("BE1-R2 canonical route contract", () => {
     expect(source).toContain('dynamic = "force-dynamic"');
   });
 
-  it("has exactly five BE1 route handlers and no aliases", () => {
-    expect(routeFiles(join(root, "src/app/api/product")).sort()).toEqual(routes.map(([, path]) => path).sort());
+  it("has exactly the accepted BE1 auth/session handlers with no aliases in those namespaces", () => {
+    const be1Namespaces = [
+      ...routeFiles(join(root, "src/app/api/product/auth")),
+      ...routeFiles(join(root, "src/app/api/product/session")),
+    ].sort();
+    expect(be1Namespaces).toEqual(routes.map(([, path]) => path).sort());
   });
 });

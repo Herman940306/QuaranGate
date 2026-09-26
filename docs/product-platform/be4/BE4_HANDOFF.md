@@ -96,3 +96,31 @@ OPEN GAPS:
 NEXT:
 - independent/orchestrator review of this qualified partial candidate;
 - orchestrator must decide/reconcile the BE1 route invariant before a bounded BE4.5 integration candidate can be created.
+
+CHECKPOINT: BE4.5-INTEGRATION
+STATUS: COMPLETE
+IMPLEMENTED:
+- superseded only the obsolete BE1 global route-count invariant;
+- preserved exact BE1 auth/session namespace routes, methods, force-dynamic semantics and alias rejection;
+- installed exactly six accepted BE4 provider operations under /api/product/providers;
+- all provider mutations reuse the existing HttpOnly product session and BE1 CSRF/origin guard;
+- browser tenant/user/Principal/custody authority fields are ignored and never forwarded;
+- secretValue is accepted only by create/replace write paths and never returned;
+- no DELETE, generic proxy, arbitrary URL/host/header or custody-path route exists.
+TESTS:
+- BE1 route contract PASS;
+- BE4 route integration tests PASS 10/10;
+- focused BE1-BE4 PASS 94/94;
+- full frontend unit suite PASS 101/101;
+- typecheck PASS;
+- lint PASS, zero warnings.
+OPEN GAPS:
+- LIVE_OPENBAO=UNAVAILABLE / NOT_CLAIMED.
+- LIVE_POSTGRESQL=UNAVAILABLE / NOT_CLAIMED.
+- provider network validation remains source-only/unavailable because no accepted live endpoint/network policy exists.
+NEXT:
+- final build/SCA/static security/ownership/evidence checks and immutable route-integration freeze.
+
+## Supersession note
+
+The BE1 global assertion that the entire product API tree could contain only five routes is superseded. BE1 route semantics are not superseded: all five accepted BE1 handlers remain canonical, force-dynamic, method-exact and alias-free inside the auth/session namespaces.

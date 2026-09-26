@@ -1,0 +1,9 @@
+9c65644b14f3149b82bfeeadda80e9a445125485fa4a37e67086462c180538f1  docs/product-platform/be4/BE4_FE3_INTEGRATION_CONTRACT.md
+806d44eb7d6d0052e33bfbd3f8117a5d7c1a57808e5263433121afabf8b188f0  docs/product-platform/be4/BE4_HANDOFF.md
+932f0da736265303a474906d226b3399f2b7a66b4d33e63423d0804201086640  frontend/src/app/api/product/providers/[id]/route.ts
+d9a1fafdba7a9c86858cdd5e69edd766de6e09861529b291ac84baafb8a89815  frontend/src/app/api/product/providers/[id]/secret/route.ts
+3318f51ca7b50dd9bc1deef17d26d50ccf680dc76eacbc57212fa9551ea206fd  frontend/src/app/api/product/providers/[id]/validate/route.ts
+a9e276b799c3711251a8fe43889cfcf54d4adc0e6b1bfb3a1fa960c0ffc2aafe  frontend/src/app/api/product/providers/route.ts
+86d4ea0e895d7004aea77c5538e17427b2992e9cccca65ce1161dda1d96a7ba8  frontend/tests/unit/be1-r2-route-contract.test.ts
+0c24459987a43b4769780998f21bbe7e6fd940a7304e2c2ddcc13d378f53e81a  frontend/tests/unit/be4-provider-custody.test.ts
+640b23145589e1ec76df1a2c410add3b724e9464530c1fe8e63eb23bb4964a3c  frontend/tests/unit/be4-route-integration.test.ts

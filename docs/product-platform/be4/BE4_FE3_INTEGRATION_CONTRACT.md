@@ -2,15 +2,13 @@
 
 ## Status
 
-Server-side provider/custody service contract is implemented and source-qualified.
+Server-side provider/custody service and bounded same-origin HTTP integration are implemented and source-qualified.
 
-HTTP route installation is **BLOCKED_INTEGRATION** in this BE4 lane because accepted BE1 test `be1-r2-route-contract.test.ts` freezes the entire `src/app/api/product/**` tree to exactly five BE1 handlers. Adding BE4 provider routes causes a mandatory accepted regression. Agent B does not own permission to rewrite that accepted test contract.
+The prior BE1 global route-count assertion was superseded by the orchestrator-approved forward-compatible invariant: BE1 auth/session namespaces remain exact and alias-free, while later product namespaces are independently bounded by their own route-contract tests. No BE1 handler or method semantic was removed or weakened.
 
-A later orchestrator/integration lane must explicitly supersede that route-count invariant before FE3 is wired.
+## Bounded same-origin route contract
 
-## Intended bounded same-origin route contract
-
-Once the BE1 route-count invariant is reconciled, the server contract is:
+The installed server contract is:
 
 - `GET /api/product/providers` — list safe providers in the current authenticated workspace.
 - `POST /api/product/providers` — create provider metadata; optional `secretValue` is write-only.
@@ -98,4 +96,4 @@ Raw provider/OpenBao errors, response bodies, auth material, secret values and i
 
 - `LIVE_OPENBAO=UNAVAILABLE / NOT_CLAIMED`
 - `LIVE_POSTGRESQL=UNAVAILABLE / NOT_CLAIMED`
-- HTTP provider route integration: `BLOCKED_INTEGRATION` pending orchestrator reconciliation of the accepted BE1 five-route invariant.
+- HTTP provider route integration: source-qualified and regression-qualified in this lane; no live OpenBao/PostgreSQL qualification is implied.
