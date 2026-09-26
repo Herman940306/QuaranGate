@@ -444,3 +444,20 @@ NEXT_ENV_DIFF_CLASSIFICATION=GENERATED_NORMALIZATION_ONLY. This inherited/genera
 Fresh closure gates: `git diff --check` PASS; `npm --prefix frontend run typecheck` PASS; lint PASS (137 files); focused Statistics unit tests PASS (4/4); full frontend unit suite PASS (144/144); production build PASS (32 routes). The initial generator-proof script encountered sandbox subprocess EPERM; repeating with a separately read HEAD file proved exact equality without changing source. Prior unchanged-runtime repair qualification remains Chromium Statistics/operational 13/13 PASS, audit zero vulnerabilities, and bounded secret scan PASS. Independent review remains required.
 
 The prior generated-file governance blocker is resolved by the owner's narrow authorization and these proofs. Freeze this closure with only this handoff and the exact generated declaration delta; the immutable closure identity is recorded in the following phase's handoff. NEXT: FE12 Security & Authority Explorer.
+
+
+## FE12 checkpoint — Security & Authority Explorer
+
+STATUS: IMPLEMENTATION CANDIDATE — NOT SELF-ACCEPTED.
+
+FE11 clean closure: commit `6a5caa4fbc19f33d3ada95b1545b5cfc9a382117`, tree `5a16bbf5e5fba07a5312e85671a77fbfefb81b07`, parent `076394aae607a1855243e5ff555d2f63017da579`, subject `chore(frontend): freeze clean FE11 generated type closure`. Worktree was verified clean before FE12 edits.
+
+`/security` now presents server-backed principal/scopes/target/project/backend/profile/GitHub grant projections. Operation impact classes are descriptive only, behind an optional reference disclosure. Preflight calls only `control_center_query` authority; selected dimensions come from exact returned grants, wildcards never invent inventory, omitted dimensions remain unevaluated, and all results are advisory. Input changes clear prior results. Capability/topology reads remain metadata-only. Missing grants/decisions stay UNKNOWN/NOT_AVAILABLE. No operation execution, permission escalation, security grade, grant mutation or browser persistence exists.
+
+Contracts: current `src/gateway/controlCenterTools.ts` visiblePrincipal, authorityEvaluation and strict input schema; current gateway tool registrations and `console/tool-catalog.js` purpose classifications. Frontend projection drops unknown fields. Session identity never grants operational authority; current production identity/adapter integration remains pending.
+
+Qualification: typecheck PASS; lint PASS (142 files, initial control-character regex lint failure repaired using the existing character-code guard); focused authority unit 4/4 PASS; full unit 148/148 PASS; final production build PASS (32 static routes); Chromium security/operational regression 12/12 PASS; final security refinement 3/3 PASS. Tested 1280/360px, keyboard Enter, axe zero violations, no page overflow, denied advisory results, result invalidation, unavailable fail-closed state and no local/session/cookie persistence. Generated development-type side effects are deterministically restored by the production build. No accepted tracked visual evidence was changed. Final screenshots are preserved in `docs/frontend/evidence/FE12/security-1280.png` and `security-360.png`.
+
+Changed paths: frontend README; security route; SecurityExplorer; authority decoder; expected tool catalog; purpose-specific operational client; operational unit method-list regression; authority unit tests; Security browser tests; this handoff and FE12 evidence screenshots. Every new frontend file is documented in README. No backend/configuration/dependency/credential change.
+
+NEXT: FE13 Audit & Evidence. Activity metadata exposes request IDs but no job/evidence/diff/review/apply relationship. Unproven lineage must stop at UNKNOWN rather than inferring links; richer lineage requires a separately accepted safe metadata contract.

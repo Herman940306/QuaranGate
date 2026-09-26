@@ -1,4 +1,4 @@
 import type { Metadata } from "next";
-import { ControlCenter } from "../../../components/operational-control";
+import { SecurityExplorer } from "../../../components/security-explorer";
 export const metadata: Metadata = { title: "Security & Access" };
-export default function Page() { return <ControlCenter security />; }
+export default function Page() { return <SecurityExplorer />; }

@@ -200,3 +200,18 @@ The Statistics surface reads only bounded principal-scoped `control_center_query
 | `tests/e2e/statistics.spec.ts` | Desktop/narrow, axe, storage and window-read regression; no exports | Statistics tests; ephemeral browser state | Playwright/axe and explicitly synthetic MCP interception; later live qualification separate | Test fixture |
 
 Existing `src/components/operational-read.tsx` adds an opt-in automatic read on mount, disabled by default. Statistics owns that opt-in. Existing `src/lib/operational/client.ts` and `contracts.ts` own the purpose-specific statistics request and typed bounded decoder; `shell.tsx` owns Statistics navigation. All state remains page-memory-only.
+
+
+## FE12 Security & Authority Explorer
+
+Existing `/security` now projects server grants and operation-specific advisory preflight; impact classifications never imply permission. Missing fields remain UNKNOWN. All selections/results are page-memory-only. Capability/topology reads remain the existing accepted metadata projections. Production identity integration remains pending.
+
+| File | Purpose / key exports | Owning route / state | API / future integration | Readiness |
+|---|---|---|---|---|
+| `src/lib/operational/tool-catalog.ts` | Current expected source tools, ToolName, knownTool | Security/Tool Lab; none | Current gateway registrations and purpose documentation; drift must be explicit | Source candidate |
+| `src/lib/operational/authority.ts` | AuthoritySnapshot, PreflightRequest, decoder and argument guard | Security; none | control_center_query authority; accepted same-origin integration | Source candidate |
+| `src/components/security-explorer.tsx` | SecurityExplorer | `/security`; memory-only tool/selectors/receipts | Purpose-specific authority and capability/topology reads; live qualification separate | Scaffold-only candidate |
+| `tests/unit/authority.test.ts` | Projection, denial and bounds regressions; no exports | FE12 tests; fixtures | Vitest/injected transport; no runtime claim | Test fixture |
+| `tests/e2e/security.spec.ts` | Advisory denial, unavailable, keyboard, axe, storage, responsive; no exports | FE12 tests; browser state | Playwright/synthetic interception; live qualification separate | Test fixture |
+
+Changed existing route `src/app/(foundation)/security/page.tsx` owns only route metadata/composition. Existing `client.ts` adds a bounded authority-read method. No backend, policy or authorization mutation is introduced.
