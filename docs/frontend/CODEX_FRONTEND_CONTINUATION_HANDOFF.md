@@ -115,9 +115,68 @@ FILES:
 NEXT:
 - FE6 Review & Approvals against the independently accepted BE5 frontend integration contract. Preserve the invariant `APPROVED != OPERATION EXECUTED`.
 
+## FE6 checkpoint
+
+CHECKPOINT: FE6 — Review & Approvals
+STATUS: FROZEN IMPLEMENTATION CANDIDATE — NOT SELF-ACCEPTED
+
+IMPLEMENTED:
+- `/approvals`: workspace/session-scoped approval inbox and decision review surface.
+- Safe BE5 approval projection includes requester product-user reference, action class, subject type/id, evidence SHA-256 reference, correlation id, rationale, status, expiry/decision timestamps and numeric version only.
+- Decision controls are available only for `PENDING` records and permit only `APPROVED` or `REJECTED` with the displayed `expectedVersion`.
+- Explicit typed confirmation is required before submitting a decision. Stale/conflict/unavailable/cancelled results fail closed and are never shown as success.
+- The acknowledged decision record is reconciled locally without implying execution. A fresh list remains an explicit server re-read.
+- `/approvals-preview` provides deterministic development-only fixtures for available, empty, stale, forbidden, unavailable and slow scenarios. Production `/approvals` remains truthfully integration-pending until an accepted adapter is connected.
+
+SECURITY / AUTHORITY:
+- Permanent invariant: `APPROVED != OPERATION EXECUTED`.
+- Approval records are decision evidence, not capability tokens. The frontend never turns approval state into MCP, ACP, GitHub, Docker, host or other operational authority.
+- Browser-supplied organization/workspace/Principal/scope/grant authority is not created by FE6; current product context is derived from the accepted identity projection.
+- Returned metadata is bounded and projected; unknown fields are discarded. Evidence is displayed as a digest/reference only.
+- Session/workspace projection changes remount the approval boundary and discard stale UI state. No approval selection, rationale or decision confirmation is persisted in browser storage or URL state.
+
+CONTRACT SOURCE:
+- Accepted BE5 source commit: `08cf081e6e47f0296ce1f567de3e3a49cbf62b25`, tree `790043979c9c5267486ffb5c20b461bccddf59cf`.
+- Read-only contract: `docs/product-platform/be5/BE5_FRONTEND_INTEGRATION_CONTRACT.md` plus the accepted SafeApproval DTO/decision route for exact field and `expectedVersion` semantics. No backend merge or backend write occurred.
+
+QUALIFICATION:
+- `npm run lint`: PASS, 120 files checked.
+- `npm run typecheck`: PASS.
+- FE6 focused unit tests: 4/4 PASS.
+- Full frontend unit suite: 135/135 PASS.
+- `npm run build`: PASS, 28 static routes generated.
+- `npm audit --audit-level=high`: zero vulnerabilities.
+- `git diff --check`: PASS.
+- Governed Chromium FE6 qualification: 4/4 PASS at 1280 and 360 pixels, explicit approval semantics, stale/unavailable fail-closed behavior and axe checks.
+- Browser job: `ohj_488329ff479b097e8182e8d45ee7ed35`.
+- Browser image: `mcr.microsoft.com/playwright:v1.63.0-noble@sha256:bc6ab0d6d44ff4826e4cb8c1e6d801e185bfc42bb0753f8e2a30efc70db054c7`.
+- Browser container ran `--network none`, 1 GB shm, host worktree bind-mounted read-only, and an executable container-only tmpfs project copy. Host Git status SHA-256 remained `88359dc385cecd56f87ec7c12fbe98f4ab477ab639919df7b69ab4e49e7cee7d` before and after qualification.
+- Earlier owner-host attempts failed only in disposable harness setup before semantic qualification (legacy U1 browser endpoint mismatch; copied CLI executable-bit/noexec tmpfs issues). They did not mutate source and are not counted as FE6 product failures.
+
+INTEGRATION GAPS:
+- The accepted BE5 product routes exist in the backend source, but this frontend lane does not yet contain a converged production approval adapter. Production UI therefore remains integration-pending by design.
+- Live PostgreSQL/realtime/attachment/presence availability is not claimed by FE6.
+- FE6 does not create approval requests or execute approved operations; it is a review/decision surface only.
+
+FILES:
+- `frontend/src/app/(foundation)/approvals/page.tsx`
+- `frontend/src/app/approvals-preview/page.tsx`
+- `frontend/src/components/approval-boundary.tsx`
+- `frontend/src/components/approvals.tsx`
+- `frontend/src/components/approvals-preview.tsx`
+- `frontend/src/lib/client/approvals/*`
+- `frontend/src/components/shell.tsx`
+- `frontend/src/app/globals.css`
+- `frontend/tests/unit/approvals.test.ts`
+- `frontend/tests/e2e/approvals.spec.ts`
+
+NEXT:
+- FE7 IDE Session Center only if an accepted current frontend-consumable IDE session contract is available; otherwise stop at the dependency boundary rather than inventing a session API.
+
 ## Phase commit ledger
 
 | Phase | Commit | Tree | Parent | Subject | Tests |
 | --- | --- | --- | --- | --- | --- |
 | FE4 | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `3d18dcaffec0d465015ae91435ce45ddb8ec9428` | `9ef3b0a0f8d9c4c191cc0be183c8b893f741877e` | `feat(frontend): add governed operational workstation` | See FE4 checkpoint |
-| FE5 | Pending immutable commit | Pending | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `feat(frontend): add governed Agent Arena` | Local gates PASS; external Chromium 41/41 PASS |
+| FE5 | `e00465cc730379cef2c78d859dc433a87850ebc9` | `a317b1e9fe5c1a9df3dc41bee878ecb28cd00ca6` | `70dcb70d4cef9ceae8539fc95004a37dd87a60c9` | `feat(frontend): add governed Agent Arena` | Local gates PASS; external Chromium 41/41 PASS |
+| FE6 | Pending immutable commit | Pending | `e00465cc730379cef2c78d859dc433a87850ebc9` | `feat(frontend): add review and approvals` | Local gates PASS; governed Chromium 4/4 PASS |

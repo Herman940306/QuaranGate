@@ -271,6 +271,14 @@ th { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.04em; }
 .arena-composer-bar { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding-block-start: 0.5rem; }
 .arena-composer-bar .cluster { margin: 0; }
 .arena-reopen { max-inline-size: 46rem; margin-block-start: 1rem; }
+.approval-list { display: grid; gap: 0.5rem; margin-block-start: 1rem; padding: 0; list-style: none; }
+.approval-row { inline-size: 100%; justify-content: space-between; text-align: start; }
+.approval-row-copy { display: grid; min-inline-size: 0; gap: 0.15rem; }
+.approval-row small { color: var(--muted); overflow-wrap: anywhere; }
+.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem 1rem; margin-block: 1rem; }
+.detail-grid > div { min-inline-size: 0; padding-block-end: 0.5rem; border-block-end: 1px solid var(--boundary); }
+.detail-grid dt { color: var(--muted); font: 0.68rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.06em; }
+.detail-grid dd { margin: 0.25rem 0 0; overflow-wrap: anywhere; }
 
 @media (max-width: 879px) {
   .shell { display: block; }
