@@ -1,0 +1,30 @@
+{
+  "candidate_commit": "c514aeffcc50def410373ae4b7d7711bf5cd61ba",
+  "candidate_tree": "2601c1b587f52b94364457ad48417220545abf37",
+  "scope": "Evidence artifacts only; excludes this manifest",
+  "sha256": {
+    "docs/frontend/evidence/CONVERGENCE/audit.txt": "6d8c5c8f3d7684adb070417bd608d01ae90aa3dc26a65af03ffda4955f38d9a3",
+    "docs/frontend/evidence/CONVERGENCE/browser-development.txt": "54b24f0921c1942fbb61b2635264465b1ac45df944c73128d37949c17e9452e5",
+    "docs/frontend/evidence/CONVERGENCE/browser-production.txt": "d624a83522154af4a191f2615c9864208ad10ef61f9f35decef5b13f0eb326d9",
+    "docs/frontend/evidence/CONVERGENCE/build.txt": "122abf1017752ccf58f296cfd1d7a72ac7c4ca2788e1ae2e4a7d021aa9b99100",
+    "docs/frontend/evidence/CONVERGENCE/convergence-1280.png": "c8c71b94844d9c6151396f2f5a3546c2844c10f07aea88fdadf83f36f89fb670",
+    "docs/frontend/evidence/CONVERGENCE/convergence-360.png": "c563c1a5e674b0475b500793ba6b3d1617127a6fbe4f448a34d69fc8dbfbf489",
+    "docs/frontend/evidence/CONVERGENCE/generated-final/docs/frontend/fe2-evidence/fe2-account-1280.png": "3763c3b5d7d91986fca356161c8bb3489682e7b5a04a5a067ecec2f8188b9aca",
+    "docs/frontend/evidence/CONVERGENCE/generated-final/docs/frontend/fe2-evidence/fe2-account-360.png": "e11127a37b805474612481190031e6d14026884fc5a98deca8815301a44c0b42",
+    "docs/frontend/evidence/CONVERGENCE/generated-final/docs/frontend/fe2-evidence/fe2-stale-1280.png": "3346a411db2e0eb4bae465da121dc0d9746a0432e167e856be3219258b6a7383",
+    "docs/frontend/evidence/CONVERGENCE/generated-final/docs/frontend/fe2-evidence/fe2-stale-360.png": "1675e498e7786f68b6bcddb331484fa3f6071ca0c0453b87a8101e1333335863",
+    "docs/frontend/evidence/CONVERGENCE/generated-final/docs/frontend/fe3-evidence/fe3-forced-zoom-360.png": "87378da46c0850395af5e0fceeebcfffa4f3182b83e1793d14be9205b38fab3c",
+    "docs/frontend/evidence/CONVERGENCE/generated-final/docs/frontend/fe3-evidence/fe3-profile-1280.png": "0d52fbb1b6edae51ec8237d30d156e313ae280454998d79761ecdee2fee08804",
+    "docs/frontend/evidence/CONVERGENCE/generated-final/docs/frontend/fe3-evidence/fe3-provider-1280.png": "d9cbb5dadb8ffb864a07a002a588e6eca6f3cadaf15052809727cccfdfc89dd7",
+    "docs/frontend/evidence/CONVERGENCE/generated-final/docs/frontend/fe3-evidence/fe3-provider-360.png": "8831a4b9892a5f6d18d7fe172bf524d44991c335d01b959f89819f5ec8abd26f",
+    "docs/frontend/evidence/CONVERGENCE/initial-convergence-failures.txt": "5c37ca59ff36c7251ebaca6d1b42934f133f6c92c7c421e108d746820373a2f2",
+    "docs/frontend/evidence/CONVERGENCE/lint.txt": "0379e11c4795c371ec2a4158d4274cbf64f848cd9c62a31338fd63defef15ccc",
+    "docs/frontend/evidence/CONVERGENCE/log-provenance.json": "626c20309e5b67a54ff159b56c9bae1ac3cd0df67adfe4777ce932dbd11d3279",
+    "docs/frontend/evidence/CONVERGENCE/production-smoke.txt": "31b80a40244857edf4d273e8a9b738c8399043d1b2f534842ed478b36535ae92",
+    "docs/frontend/evidence/CONVERGENCE/scan-source.py": "d3f225534971310740bf1d6f6dd3a6e9d9720d560e32d4c9a6b29a19756eb67f",
+    "docs/frontend/evidence/CONVERGENCE/secret-scan.json": "3a3d11e24212677bf1330e36377c7699b0b731875f7c51afcc29e6ad98b1980e",
+    "docs/frontend/evidence/CONVERGENCE/snapshot-preservation.json": "e2c308441fc850651690663df651ff9c541b3dc2f1884953cc20a3db7f8d8fd1",
+    "docs/frontend/evidence/CONVERGENCE/typecheck.txt": "aa62338622848362573a5ffa3a1c488d796b90e32c2bbcc1066e77111582abaf",
+    "docs/frontend/evidence/CONVERGENCE/unit.txt": "1d34d58bd6a26bf80a88675deb2412adabf9ccf59f2920191ce861119f2fdbc1"
+  }
+}
