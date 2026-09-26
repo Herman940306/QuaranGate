@@ -1,0 +1,23 @@
+BE7_SOURCE_HASH_PRESERVATION
+accepted_tip=f6af852af0f60d6f22960b65995266fe6712a65d
+accepted_source=4ad43ec34bda05108ca13b9c0d1f81d4ae40de3b
+comparison=current convergence worktree file bytes versus accepted BE7 tip file bytes
+
+MATCH 467da54307f005943b4e07559fde9c773ea0cee4d5cf9c652533fc5c488c311e frontend/src/app/api/product/meetings/[id]/recording/attest/route.ts
+MATCH 8f7cb46b7a234c53e9410c99afe2679a579b380617a68fa9b855f96c4c755071 frontend/src/app/api/product/meetings/[id]/recording/opt-in/route.ts
+MATCH 0b842ab535ff79d38c975a21e63f019ed6b41bf2b3bc5760753a2b8698571945 frontend/src/app/api/product/meetings/[id]/recording/start/route.ts
+MATCH 6e8bfbab76cd6bf72958539186d24a10a2d390a1036cbfdb4228b963913360c1 frontend/src/app/api/product/meetings/[id]/recording/stop/route.ts
+MATCH 47793abaace01053ab8a2d1d3f8c19f38c95bfc9c54d566b0001587731ab530b frontend/src/app/api/product/meetings/[id]/transcript/export/route.ts
+MATCH 8d17f0c8bb5c83d5cf8f4fe52d32b064bfda7b7934a7a352bb615af226e4bddc frontend/src/server/product/meetings/audio.ts
+MATCH 606d1e5a464a2641b242e54a8d29f50447b35708e9e3d72319249c99d66080f4 frontend/src/server/product/meetings/audit.ts
+MATCH 99a57781dd9fd42335dadad00d708b673c7357ec5703faadb856252e283ee4d9 frontend/src/server/product/meetings/migrations/0006_meeting_privacy_policy.sql
+MATCH 5ac92f6ec53b294591ba289623ae4fe98a027e8624055399f912508676136bd9 frontend/src/server/product/meetings/repository.ts
+MATCH 72982cf2dac545ceb3108b8401148f2f18b13e3f8838602eeef4e8ab9857cd5a frontend/src/server/product/meetings/service.ts
+MATCH ffc862ea602db52012866d7eb7b0a2c110f6751d5d7044f882e27eb12cce0da2 frontend/src/server/product/meetings/transcript.ts
+MATCH d7d513a7d236d336d2c5c487f591a8b79b3edc5827c6d15f78fe78a5a8b0106d frontend/src/server/product/meetings/transcription.ts
+MATCH 1b49cd7544b5044d093f7e32687e12d780549a41b0c24a38d23cfe5bfa870cb1 frontend/src/server/product/meetings/types.ts
+MATCH 946f95c679fabc35df70d623cf2dce53f11ec08840b789f1bae1307c43d661c4 frontend/tests/unit/be7-meetings-foundation.test.ts
+MATCH 5b9daa9e3121dd844ac94dba92246099d511218f9c716d0e0c6a22617eb1d2cd frontend/tests/unit/be7-r1-meeting-policy.test.ts
+MATCH 474e7215283b806224c4fbdb1cfe1eb39afd9c7e16e6d1f27fd74a8ec477073c frontend/tests/unit/be7-route-contract.test.ts
+
+BE7_SOURCE_HASH_PRESERVATION=PASS

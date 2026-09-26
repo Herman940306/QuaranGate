@@ -50,8 +50,9 @@ import {
   type ArtifactState,
   type AgentRetentionClass,
 } from '../../shared/agents.js';
+import { parseExecutionResourceKey } from '../../shared/executionFabric.js';
 
-export const AGENT_JOB_SCHEMA_VERSION = 9;
+export const AGENT_JOB_SCHEMA_VERSION = 10;
 
 /**
  * Concurrency admission counts EXECUTING jobs only. QUEUED jobs are "active"
@@ -63,6 +64,22 @@ const ACTIVE_SQL_LIST = EXECUTING_STATUSES.map((s) => `'${s}'`).join(',');
 
 /** apply-attempt states during which the attempt owns exclusive admission (see shared/agents.ts). */
 const ACTIVE_ATTEMPT_SQL_LIST = AGENT_APPLY_ATTEMPT_ACTIVE_STATES.map((s) => `'${s}'`).join(',');
+
+/**
+ * BE1A R1 terminal-state lease reconciliation policy.
+ *
+ * SAFE states prove backend execution has already returned/failed and no
+ * further execution mutation can occur. FAILED_INFRASTRUCTURE and CANCELLED
+ * remain fail-closed because they can arise from crash/shutdown/abort paths
+ * where mutation completion is not independently proven.
+ */
+const SAFE_TERMINAL_EXECUTION_LEASE_STATES = new Set<AgentJobStatus>([
+  'COMPLETED', 'FAILED_PRECONDITION', 'FAILED_POLICY', 'FAILED_AGENT',
+  'FAILED_TIMEOUT', 'APPLIED', 'DISCARDED',
+]);
+const UNCERTAIN_TERMINAL_EXECUTION_LEASE_STATES = new Set<AgentJobStatus>([
+  'FAILED_INFRASTRUCTURE', 'CANCELLED',
+]);
 
 /**
  * Bounded persistence-only evidence fields (Phase A6). These never hold raw
@@ -87,6 +104,7 @@ const REQUIRED_SCHEMA_TABLES = [
   'agent_sessions',
   'agent_provider_state',
   'live_writer_leases',
+  'execution_resource_leases',
 ] as const;
 
 /** Required column -> declared SQLite affinity, per table. */
@@ -105,6 +123,7 @@ const REQUIRED_SCHEMA_COLUMNS: Record<string, Record<string, string>> = {
     artifact_op_count: 'INTEGER',
     // v5 durable retention snapshot — the fields the whole A6 lifecycle rests on.
     retention_class: 'TEXT', retention_duration_ms: 'INTEGER', retain_until: 'TEXT',
+    execution_resources: 'TEXT', global_exclusive: 'INTEGER',
   },
   agent_project_apply_state: {
     project_id: 'TEXT', state: 'TEXT', quarantined_at: 'TEXT',
@@ -143,12 +162,17 @@ const REQUIRED_SCHEMA_COLUMNS: Record<string, Record<string, string>> = {
     owner_kind: 'TEXT', owner_id: 'TEXT', principal_id: 'TEXT', state: 'TEXT',
     acquired_at: 'TEXT', finished_at: 'TEXT', reason: 'TEXT',
   },
+  execution_resource_leases: {
+    lease_id: 'TEXT', resource_key: 'TEXT', job_id: 'TEXT', project_id: 'TEXT',
+    state: 'TEXT', acquired_at: 'TEXT', finished_at: 'TEXT', reason: 'TEXT',
+  },
 };
 
 /** Partial unique indexes that ARE the active-attempt exclusion authority. */
 const REQUIRED_SCHEMA_INDEXES = [
   'idx_apply_attempts_active_job',
   'idx_apply_attempts_active_project',
+  'idx_execution_resource_held',
 ] as const;
 
 const LIVE_WRITER_TABLE_SQL = `CREATE TABLE live_writer_leases (
@@ -315,6 +339,10 @@ export interface AgentJobRow {
    * until an artifact is indexed.
    */
   artifactOpCount: number | null;
+  /** Trusted executor-derived resource keys captured at dispatch. */
+  executionResources: string[];
+  /** Trusted project classification; never caller supplied. */
+  globalExclusive: boolean;
 }
 
 /**
@@ -460,6 +488,10 @@ export interface NewAgentJob {
   retentionClass: AgentRetentionClass;
   /** Duration in ms resolved from AGENT_RETENTION_DURATION_MS at dispatch time (v5+). */
   retentionDurationMs: number;
+  /** Trusted executor-derived logical resource keys. */
+  executionResources?: string[];
+  /** Trusted registry classification for machine-wide exclusive work. */
+  globalExclusive?: boolean;
 }
 
 export interface TransitionExtras {
@@ -562,10 +594,11 @@ export class AgentJobStore {
    *
    * Fail closed instead of repairing or inferring missing historical state.
    */
-  private assertSchemaShape(options: { includeProviderState?: boolean; includeLiveWriter?: boolean; includeSessionSourceRevision?: boolean; stampedVersion?: number } = {}): void {
+  private assertSchemaShape(options: { includeProviderState?: boolean; includeLiveWriter?: boolean; includeSessionSourceRevision?: boolean; includeExecutionFabric?: boolean; stampedVersion?: number } = {}): void {
     const includeProviderState = options.includeProviderState ?? true;
     const includeLiveWriter = options.includeLiveWriter ?? true;
     const includeSessionSourceRevision = options.includeSessionSourceRevision ?? true;
+    const includeExecutionFabric = options.includeExecutionFabric ?? true;
     const stampedVersion = options.stampedVersion ?? AGENT_JOB_SCHEMA_VERSION;
     const missing: string[] = [];
 
@@ -577,6 +610,7 @@ export class AgentJobStore {
     for (const t of REQUIRED_SCHEMA_TABLES) {
       if (!includeProviderState && t === 'agent_provider_state') continue;
       if (!includeLiveWriter && t === 'live_writer_leases') continue;
+      if (!includeExecutionFabric && t === 'execution_resource_leases') continue;
       if (!tableExists(t)) missing.push(`table ${t}`);
     }
 
@@ -585,11 +619,13 @@ export class AgentJobStore {
     for (const [table, columns] of Object.entries(REQUIRED_SCHEMA_COLUMNS)) {
       if (!includeProviderState && table === 'agent_provider_state') continue;
       if (!includeLiveWriter && table === 'live_writer_leases') continue;
+      if (!includeExecutionFabric && table === 'execution_resource_leases') continue;
       if (!tableExists(table)) continue;
       const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string }[];
       for (const [column, affinity] of Object.entries(columns)) {
         if (!includeSessionSourceRevision && table === 'agent_sessions' && column === 'source_revision') continue;
         if (!includeLiveWriter && table === 'agent_apply_attempts' && (column === 'worktree_id' || column === 'writer_lease_id')) continue;
+        if (!includeExecutionFabric && table === 'agent_jobs' && (column === 'execution_resources' || column === 'global_exclusive')) continue;
         const got = info.find((c) => c.name === column);
         if (!got) { missing.push(`${table}.${column}`); continue; }
         if (String(got.type).toUpperCase() !== affinity) {
@@ -603,6 +639,7 @@ export class AgentJobStore {
     // would silently permit two concurrently active apply attempts.
     if (tableExists('agent_apply_attempts')) {
       for (const idx of REQUIRED_SCHEMA_INDEXES) {
+        if (!includeExecutionFabric && idx === 'idx_execution_resource_held') continue;
         if (!indexExists(idx)) missing.push(`index ${idx}`);
       }
     }
@@ -698,6 +735,29 @@ export class AgentJobStore {
     `);
   }
 
+  /** BE1A durable execution-resource authority. */
+  private createExecutionFabricSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS execution_resource_leases (
+        lease_id      TEXT PRIMARY KEY NOT NULL,
+        resource_key  TEXT NOT NULL,
+        job_id        TEXT NOT NULL REFERENCES agent_jobs(job_id),
+        project_id    TEXT NOT NULL,
+        state         TEXT NOT NULL CHECK(state IN ('ACTIVE','UNCERTAIN','RELEASED')),
+        acquired_at   TEXT NOT NULL,
+        finished_at   TEXT,
+        reason        TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_resource_held
+        ON execution_resource_leases(resource_key)
+        WHERE state IN ('ACTIVE','UNCERTAIN');
+      CREATE INDEX IF NOT EXISTS idx_execution_resource_job
+        ON execution_resource_leases(job_id);
+      CREATE INDEX IF NOT EXISTS idx_execution_resource_project
+        ON execution_resource_leases(project_id);
+    `);
+  }
+
   /**
    * Explicit, stepwise, forward-only migration. A fresh DB is created directly
    * at the latest shape; an existing A2 (v1) DB is migrated in place with
@@ -722,13 +782,16 @@ export class AgentJobStore {
     // (apart from SQLite's normal open/journal bookkeeping); it is never
     // partially repaired or privacy-migrated before the failure is reported.
     if (version === 6) {
-      this.assertSchemaShape({ includeProviderState: false, includeLiveWriter: false, includeSessionSourceRevision: false, stampedVersion: 6 });
+      this.assertSchemaShape({ includeProviderState: false, includeLiveWriter: false, includeSessionSourceRevision: false, includeExecutionFabric: false, stampedVersion: 6 });
     }
     if (version === 7) {
-      this.assertSchemaShape({ includeLiveWriter: false, includeSessionSourceRevision: false, stampedVersion: 7 });
+      this.assertSchemaShape({ includeLiveWriter: false, includeSessionSourceRevision: false, includeExecutionFabric: false, stampedVersion: 7 });
     }
     if (version === 8) {
-      this.assertSchemaShape({ includeSessionSourceRevision: false, stampedVersion: 8 });
+      this.assertSchemaShape({ includeSessionSourceRevision: false, includeExecutionFabric: false, stampedVersion: 8 });
+    }
+    if (version === 9) {
+      this.assertSchemaShape({ includeExecutionFabric: false, stampedVersion: 9 });
     }
     // ODR-2 v9 safety boundary: no older schema may already contain the v9
     // revision-binding column. Adopting such a column could trust provenance
@@ -745,6 +808,12 @@ export class AgentJobStore {
       const partialWriter = this.db.prepare(`SELECT name FROM sqlite_master WHERE name IN ('live_writer_leases','idx_live_writer_one_held_target','idx_live_writer_owner_once') ORDER BY name`).all() as { name: string }[];
       if (partialWriter.length > 0 || this.columnExists('agent_apply_attempts','worktree_id') || this.columnExists('agent_apply_attempts','writer_lease_id')) {
         throw new BridgeError('INTERNAL', `agent job DB schema v${version} contains partial v8 live-writer state; refusing automatic repair`, 500);
+      }
+    }
+    if (version < 10) {
+      const partialExecution = this.db.prepare(`SELECT name FROM sqlite_master WHERE name IN ('execution_resource_leases','idx_execution_resource_held') ORDER BY name`).all() as { name: string }[];
+      if (partialExecution.length > 0 || this.columnExists('agent_jobs','execution_resources') || this.columnExists('agent_jobs','global_exclusive')) {
+        throw new BridgeError('INTERNAL', `agent job DB schema v${version} contains partial v10 execution-fabric state; refusing automatic repair`, 500);
       }
     }
     this.db.exec('BEGIN IMMEDIATE');
@@ -788,7 +857,9 @@ export class AgentJobStore {
             artifact_op_count  INTEGER,
             retention_class    TEXT,
             retention_duration_ms INTEGER,
-            retain_until       TEXT
+            retain_until       TEXT,
+            execution_resources TEXT NOT NULL DEFAULT '[]',
+            global_exclusive    INTEGER NOT NULL DEFAULT 0
           );
           CREATE INDEX IF NOT EXISTS idx_agent_jobs_status ON agent_jobs(status);
           CREATE INDEX IF NOT EXISTS idx_agent_jobs_principal ON agent_jobs(principal_id);
@@ -796,6 +867,7 @@ export class AgentJobStore {
         // v6/v7: fresh install also creates session and provider-admission state.
         this._sessionStore.createSchema();
         this.createProviderAdmissionSchema();
+        this.createExecutionFabricSchema();
       }
       if (version < 2) {
         // v1 (A2) → v2 (A3): record the trusted base commit of a staged sandbox
@@ -961,6 +1033,18 @@ export class AgentJobStore {
           this.db.exec('ALTER TABLE agent_sessions ADD COLUMN source_revision TEXT');
         }
       }
+      if (version < 10) {
+        // BE1A: persist only executor-derived logical resource claims. Legacy
+        // jobs receive the safe empty/default snapshot; no host/resource
+        // authority is inferred from historical rows.
+        if (!this.columnExists('agent_jobs', 'execution_resources')) {
+          this.db.exec(`ALTER TABLE agent_jobs ADD COLUMN execution_resources TEXT NOT NULL DEFAULT '[]'`);
+        }
+        if (!this.columnExists('agent_jobs', 'global_exclusive')) {
+          this.db.exec('ALTER TABLE agent_jobs ADD COLUMN global_exclusive INTEGER NOT NULL DEFAULT 0');
+        }
+        this.createExecutionFabricSchema();
+      }
       this.db.exec(`PRAGMA user_version=${AGENT_JOB_SCHEMA_VERSION}`);
       this.db.exec('COMMIT');
     } catch (e) {
@@ -993,15 +1077,31 @@ export class AgentJobStore {
     if (!Number.isSafeInteger(job.retentionDurationMs) || job.retentionDurationMs <= 0) {
       throw new BridgeError('MALFORMED_REQUEST', `retentionDurationMs must be a positive safe integer (got ${job.retentionDurationMs})`, 400);
     }
+    const resources = job.executionResources ?? [];
+    if (resources.length > 128 || new Set(resources).size !== resources.length) {
+      throw new BridgeError('MALFORMED_REQUEST', 'execution resource snapshot is duplicated or oversized', 400);
+    }
+    for (const key of resources) {
+      try { parseExecutionResourceKey(key); }
+      catch { throw new BridgeError('MALFORMED_REQUEST', 'execution resource snapshot contains an invalid logical identity', 400); }
+    }
   }
 
   /** Must be called while holding BEGIN IMMEDIATE for race-free admission. */
-  private assertQueueCapacity(): void {
+  private assertQueueCapacity(project: string, maxQueuedPerProject: number = MAX_AGENT_QUEUED_JOBS): void {
     const queued = this.countQueued();
     if (queued >= MAX_AGENT_QUEUED_JOBS) {
       throw new BridgeError(
         'CONCURRENCY_LIMIT',
         `agent queue is full (${queued}/${MAX_AGENT_QUEUED_JOBS}); retry after queued work completes`,
+        429,
+      );
+    }
+    const projectQueued = this.countQueued(project);
+    if (projectQueued >= maxQueuedPerProject) {
+      throw new BridgeError(
+        'CONCURRENCY_LIMIT',
+        `project queue is full (${projectQueued}/${maxQueuedPerProject}); retry after project work completes`,
         429,
       );
     }
@@ -1011,11 +1111,11 @@ export class AgentJobStore {
     this.db.prepare(`
       INSERT INTO agent_jobs (job_id, principal_id, backend, project, profile, resource_policy,
         status, created_at, prompt_hash, prompt, session_policy, writer, backend_session_id,
-        retention_class, retention_duration_ms)
-      VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?, ?, ?)
+        retention_class, retention_duration_ms, execution_resources, global_exclusive)
+      VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(job.jobId, job.principalId, job.backend, job.project, job.profile, job.resourcePolicy,
       createdAt, job.promptHash, job.prompt, job.sessionPolicy, job.writer ? 1 : 0, backendSessionId,
-      job.retentionClass, job.retentionDurationMs);
+      job.retentionClass, job.retentionDurationMs, JSON.stringify(job.executionResources ?? []), job.globalExclusive ? 1 : 0);
   }
 
   private queuedRow(job: NewAgentJob, createdAt: string, backendSessionId: string | null = null): AgentJobRow {
@@ -1054,15 +1154,17 @@ export class AgentJobStore {
       artifactVolume: null,
       artifactBytes: null,
       artifactOpCount: null,
+      executionResources: [...(job.executionResources ?? [])],
+      globalExclusive: job.globalExclusive ?? false,
     };
   }
 
-  insert(job: NewAgentJob): AgentJobRow {
+  insert(job: NewAgentJob, maxQueuedPerProject: number = MAX_AGENT_QUEUED_JOBS): AgentJobRow {
     this.validateNewJob(job);
     const createdAt = nowIso();
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.assertQueueCapacity();
+      this.assertQueueCapacity(job.project, maxQueuedPerProject);
       this.insertRow(job, null, createdAt);
       this.db.exec('COMMIT');
     } catch (e) {
@@ -1082,13 +1184,13 @@ export class AgentJobStore {
    * deterministic data known from the transaction/input; no diagnostic SELECT
    * may convert the committed RESERVED + QUEUED state into dispatch failure.
    */
-  insertWithSessionReservation(job: NewAgentJob, binding: SessionReservationBinding): AgentJobRow {
+  insertWithSessionReservation(job: NewAgentJob, binding: SessionReservationBinding, maxQueuedPerProject: number = MAX_AGENT_QUEUED_JOBS): AgentJobRow {
     this.validateNewJob(job);
     const createdAt = nowIso();
     let reservedSessionId: string | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.assertQueueCapacity();
+      this.assertQueueCapacity(job.project, maxQueuedPerProject);
       const session = this._sessionStore.findActiveSession(
         binding.principalId, binding.project, binding.backend, binding.profile,
       );
@@ -1241,6 +1343,14 @@ export class AgentJobStore {
       if (Number(res.changes) !== 1) {
         throw new BridgeError('INVALID_JOB_TRANSITION', `job ${input.jobId} lost VALIDATING state during atomic completion`, 409);
       }
+      // BE1A R1: close the durable terminal-lease crash window for successful
+      // execution. A committed COMPLETED job proves backend execution and
+      // validation are finished, so ACTIVE execution leases can be RELEASED
+      // in this exact transaction. UNCERTAIN leases are never auto-cleared.
+      this.db.prepare(`UPDATE execution_resource_leases
+        SET state='RELEASED', finished_at=?, reason='job completed atomically'
+        WHERE job_id=? AND state='ACTIVE'`
+      ).run(input.completedAt, input.jobId);
       completed = {
         ...existing,
         status: 'COMPLETED',
@@ -1367,8 +1477,10 @@ export class AgentJobStore {
     return Number(r.n);
   }
 
-  countQueued(): number {
-    const r = this.db.prepare(`SELECT COUNT(*) AS n FROM agent_jobs WHERE status = 'QUEUED'`).get() as { n: number };
+  countQueued(project?: string): number {
+    const sql = `SELECT COUNT(*) AS n FROM agent_jobs WHERE status = 'QUEUED'` +
+      (project !== undefined ? ' AND project = ?' : '');
+    const r = (project !== undefined ? this.db.prepare(sql).get(project) : this.db.prepare(sql).get()) as { n: number };
     return Number(r.n);
   }
 
@@ -1498,38 +1610,104 @@ export class AgentJobStore {
   }
 
   /**
-   * Claim the next eligible QUEUED job (oldest first) and atomically move it
-   * to PREPARING. Admission rules — all persisted, all inside one
-   * BEGIN IMMEDIATE transaction (restart-safe, no double admission):
-   * - A2 executes jobs serially: no claim while ANY job is active (this
-   *   subsumes the writer rules below, which are still checked explicitly so
-   *   later phases can relax global serialization without losing them);
-   * - max active writer jobs globally: 1;
-   * - max active writer jobs per project: 1.
+   * BE1A deterministic project-fair claim. One project may have at most one
+   * executing job in this phase; unrelated projects can fill the trusted
+   * global capacity. The project whose most recently started job is oldest is
+   * considered first, which provides deterministic starvation resistance.
+   * Resource leases and PREPARING admission commit atomically.
    */
-  claimNext(): AgentJobRow | undefined {
+  claimNext(maxActive: number = 1): AgentJobRow | undefined {
+    if (!Number.isSafeInteger(maxActive) || maxActive < 1) {
+      throw new BridgeError('INTERNAL', 'invalid trusted maxActive concurrency', 500);
+    }
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      if (this.countActive() > 0) { this.db.exec('COMMIT'); return undefined; }
-      const candidate = this.db.prepare(
-        `SELECT job_id, project, writer FROM agent_jobs WHERE status = 'QUEUED' ORDER BY created_at, rowid LIMIT 1`,
-      ).get() as { job_id: string; project: string; writer: number } | undefined;
-      if (!candidate) { this.db.exec('COMMIT'); return undefined; }
-      if (candidate.writer === 1 &&
-        (this.countActiveWriters() >= 1 || this.countActiveWriters(candidate.project) >= 1)) {
-        this.db.exec('COMMIT');
-        return undefined;
+      if (this.countActive() >= maxActive) { this.db.exec('COMMIT'); return undefined; }
+      const candidates = this.db.prepare(`
+        SELECT j.job_id, j.project, j.writer, j.execution_resources, j.global_exclusive,
+               COALESCE((
+                 SELECT MAX(h.started_at) FROM agent_jobs h
+                 WHERE h.project = j.project AND h.started_at IS NOT NULL
+               ), '0000-00-00T00:00:00.000Z') AS last_scheduled
+        FROM agent_jobs j
+        WHERE j.status = 'QUEUED'
+        ORDER BY last_scheduled ASC, j.created_at ASC, j.rowid ASC
+      `).all() as Array<{ job_id: string; project: string; writer: number; execution_resources: string; global_exclusive: number }>;
+
+      const activeGlobal = this.db.prepare(`
+        SELECT 1 FROM execution_resource_leases
+        WHERE resource_key = 'machine:global-exclusive' AND state IN ('ACTIVE','UNCERTAIN') LIMIT 1
+      `).get();
+
+      let candidate: (typeof candidates)[number] | undefined;
+      let resourceKeys: string[] = [];
+      for (const row of candidates) {
+        const sameProject = this.db.prepare(`SELECT 1 FROM agent_jobs WHERE project=? AND status IN (${ACTIVE_SQL_LIST}) LIMIT 1`).get(row.project);
+        if (sameProject) continue;
+        if (activeGlobal) continue;
+        if (row.global_exclusive === 1) {
+          const anyHeld = this.db.prepare(`SELECT 1 FROM execution_resource_leases WHERE state IN ('ACTIVE','UNCERTAIN') LIMIT 1`).get();
+          if (this.countActive() > 0 || anyHeld) continue;
+        }
+        let parsed: unknown;
+        try { parsed = JSON.parse(row.execution_resources); } catch { throw new BridgeError('INTERNAL', `job ${row.job_id} has malformed execution resource snapshot`, 500); }
+        if (!Array.isArray(parsed) || parsed.some((v) => typeof v !== 'string')) {
+          throw new BridgeError('INTERNAL', `job ${row.job_id} has malformed execution resource snapshot`, 500);
+        }
+        const keys = [...new Set(parsed as string[])].sort();
+        if (row.global_exclusive === 1) keys.push('machine:global-exclusive');
+        let conflict = false;
+        for (const key of keys) {
+          const held = this.db.prepare(`SELECT 1 FROM execution_resource_leases WHERE resource_key=? AND state IN ('ACTIVE','UNCERTAIN') LIMIT 1`).get(key);
+          if (held) { conflict = true; break; }
+        }
+        if (conflict) continue;
+        candidate = row;
+        resourceKeys = keys;
+        break;
       }
+      if (!candidate) { this.db.exec('COMMIT'); return undefined; }
+
+      const startedAt = nowIso();
       const res = this.db.prepare(
         `UPDATE agent_jobs SET status = 'PREPARING', started_at = ? WHERE job_id = ? AND status = 'QUEUED'`,
-      ).run(nowIso(), candidate.job_id);
+      ).run(startedAt, candidate.job_id);
+      if (Number(res.changes) !== 1) { this.db.exec('ROLLBACK'); return undefined; }
+      for (const key of resourceKeys) {
+        this.db.prepare(`INSERT INTO execution_resource_leases
+          (lease_id, resource_key, job_id, project_id, state, acquired_at)
+          VALUES (?, ?, ?, ?, 'ACTIVE', ?)`
+        ).run(`erl_${randomBytes(16).toString('hex')}`, key, candidate.job_id, candidate.project, startedAt);
+      }
       this.db.exec('COMMIT');
-      if (Number(res.changes) !== 1) return undefined;
       return this.get(candidate.job_id);
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
     }
+  }
+
+  releaseExecutionLeases(jobId: string, reason: string = 'job settled'): void {
+    const finishedAt = nowIso();
+    this.db.prepare(`UPDATE execution_resource_leases
+      SET state='RELEASED', finished_at=?, reason=?
+      WHERE job_id=? AND state='ACTIVE'`).run(finishedAt, reason.slice(0, 500), jobId);
+  }
+
+  markExecutionLeasesUncertain(jobId: string, reason: string): void {
+    const at = nowIso();
+    this.db.prepare(`UPDATE execution_resource_leases
+      SET state='UNCERTAIN', finished_at=?, reason=?
+      WHERE job_id=? AND state='ACTIVE'`).run(at, reason.slice(0, 500), jobId);
+  }
+
+  executionLeaseSummary(): Array<{ resourceKey: string; jobId: string; projectId: string; state: 'ACTIVE' | 'UNCERTAIN' }> {
+    return (this.db.prepare(`SELECT resource_key, job_id, project_id, state
+      FROM execution_resource_leases WHERE state IN ('ACTIVE','UNCERTAIN')
+      ORDER BY resource_key, acquired_at`).all() as Array<Record<string, unknown>>).map((r) => ({
+        resourceKey: String(r.resource_key), jobId: String(r.job_id), projectId: String(r.project_id),
+        state: String(r.state) as 'ACTIVE' | 'UNCERTAIN',
+      }));
   }
 
   /**
@@ -1548,9 +1726,137 @@ export class AgentJobStore {
         completedAt: nowIso(),
         failureCode: 'FAILED_INFRASTRUCTURE',
         failureReason: reason,
-      })) recovered.push(r.job_id);
+      })) {
+        this.markExecutionLeasesUncertain(r.job_id, reason);
+        recovered.push(r.job_id);
+      }
     }
     return recovered;
+  }
+
+  /**
+   * BE1A R1 startup repair for the terminal-status/ACTIVE-lease crash window.
+   *
+   * This runs only after recoverActive(), so PREPARING/RUNNING/VALIDATING jobs
+   * have already failed closed and their leases are UNCERTAIN. Existing
+   * UNCERTAIN leases are intentionally untouched. For stale ACTIVE leases on
+   * already-terminal jobs:
+   * - proof-safe terminal states are RELEASED;
+   * - CANCELLED / FAILED_INFRASTRUCTURE become UNCERTAIN because mutation
+   *   completion cannot be inferred from those statuses alone.
+   *
+   * There is no time-based expiry and every UPDATE is bound to the exact lease
+   * id + job id, preventing cross-job release.
+   */
+  reconcileTerminalExecutionLeases(reason: string): {
+    released: string[];
+    uncertain: string[];
+  } {
+    const boundedReason = reason.slice(0, 500);
+    const at = nowIso();
+    const released: string[] = [];
+    const uncertain: string[] = [];
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db.prepare(`
+        SELECT l.lease_id, l.job_id, j.status
+        FROM execution_resource_leases l
+        JOIN agent_jobs j ON j.job_id = l.job_id
+        WHERE l.state = 'ACTIVE'
+          AND j.status NOT IN ('QUEUED','PREPARING','RUNNING','VALIDATING')
+        ORDER BY l.lease_id
+      `).all() as Array<{ lease_id: string; job_id: string; status: AgentJobStatus }>;
+
+      for (const row of rows) {
+        if (SAFE_TERMINAL_EXECUTION_LEASE_STATES.has(row.status)) {
+          const res = this.db.prepare(`
+            UPDATE execution_resource_leases
+            SET state='RELEASED', finished_at=?, reason=?
+            WHERE lease_id=? AND job_id=? AND state='ACTIVE'
+          `).run(at, `startup terminal settlement: ${boundedReason}`, row.lease_id, row.job_id);
+          if (Number(res.changes) === 1) released.push(row.lease_id);
+          continue;
+        }
+        if (UNCERTAIN_TERMINAL_EXECUTION_LEASE_STATES.has(row.status)) {
+          const res = this.db.prepare(`
+            UPDATE execution_resource_leases
+            SET state='UNCERTAIN', finished_at=?, reason=?
+            WHERE lease_id=? AND job_id=? AND state='ACTIVE'
+          `).run(at, `startup terminal uncertainty: ${boundedReason}`, row.lease_id, row.job_id);
+          if (Number(res.changes) === 1) uncertain.push(row.lease_id);
+          continue;
+        }
+        throw new BridgeError(
+          'INTERNAL',
+          `execution lease ${row.lease_id} references unsupported terminal job state ${row.status}`,
+          500,
+        );
+      }
+      this.db.exec('COMMIT');
+      return { released, uncertain };
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  executionProjectSummary(): Array<{ projectId: string; queued: number; active: number }> {
+    return (this.db.prepare(`
+      SELECT project AS project_id,
+             SUM(CASE WHEN status='QUEUED' THEN 1 ELSE 0 END) AS queued,
+             SUM(CASE WHEN status IN (${ACTIVE_SQL_LIST}) THEN 1 ELSE 0 END) AS active
+      FROM agent_jobs
+      WHERE status='QUEUED' OR status IN (${ACTIVE_SQL_LIST})
+      GROUP BY project
+      ORDER BY project
+    `).all() as Array<Record<string, unknown>>).map((r) => ({
+      projectId: String(r.project_id),
+      queued: Number(r.queued),
+      active: Number(r.active),
+    }));
+  }
+
+  executionWaitingResourceSummary(): Array<{ projectId: string; resourceKey: string; waitingJobs: number }> {
+    const held = new Set(this.executionLeaseSummary().map((l) => l.resourceKey));
+    const waits = new Map<string, { projectId: string; resourceKey: string; waitingJobs: number }>();
+    const rows = this.db.prepare(`SELECT project, execution_resources, global_exclusive FROM agent_jobs WHERE status='QUEUED'`).all() as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(String(row.execution_resources ?? '[]')); }
+      catch { throw new BridgeError('INTERNAL', 'queued job has malformed execution resource snapshot', 500); }
+      if (!Array.isArray(parsed) || parsed.some((v) => typeof v !== 'string')) {
+        throw new BridgeError('INTERNAL', 'queued job has malformed execution resource snapshot', 500);
+      }
+      const keys = [...new Set(parsed as string[])];
+      if (Number(row.global_exclusive) === 1) keys.push('machine:global-exclusive');
+      for (const key of keys) {
+        if (!held.has(key)) continue;
+        const projectId = String(row.project);
+        const mapKey = `${projectId}\u0000${key}`;
+        const prior = waits.get(mapKey);
+        waits.set(mapKey, { projectId, resourceKey: key, waitingJobs: (prior?.waitingJobs ?? 0) + 1 });
+      }
+    }
+    return [...waits.values()].sort((a, b) =>
+      a.projectId.localeCompare(b.projectId) || a.resourceKey.localeCompare(b.resourceKey));
+  }
+
+  /**
+   * Recovery-only settlement seam. It is intentionally not exposed by MCP.
+   * A caller inside trusted recovery code must bind the exact job + resource
+   * and provide a bounded evidence reason before an UNCERTAIN lease is freed.
+   */
+  settleUncertainExecutionLease(jobId: string, resourceKey: string, evidenceReason: string): boolean {
+    if (!evidenceReason || evidenceReason.length > 500) {
+      throw new BridgeError('MALFORMED_REQUEST', 'uncertain lease settlement requires bounded evidence reason', 400);
+    }
+    const at = nowIso();
+    const result = this.db.prepare(`
+      UPDATE execution_resource_leases
+      SET state='RELEASED', finished_at=?, reason=?
+      WHERE job_id=? AND resource_key=? AND state='UNCERTAIN'
+    `).run(at, evidenceReason, jobId, resourceKey);
+    return Number(result.changes) === 1;
   }
 
   // -------------------------------------------------------------------------
@@ -2396,6 +2702,16 @@ function rowToJob(r: Record<string, unknown>): AgentJobRow {
     artifactVolume: (r.artifact_volume ?? null) as string | null,
     artifactBytes: r.artifact_bytes === null || r.artifact_bytes === undefined ? null : Number(r.artifact_bytes),
     artifactOpCount: r.artifact_op_count === null || r.artifact_op_count === undefined ? null : Number(r.artifact_op_count),
+    executionResources: (() => {
+      try {
+        const parsed = JSON.parse(String(r.execution_resources ?? '[]'));
+        if (!Array.isArray(parsed) || parsed.some((v) => typeof v !== 'string')) throw new Error('shape');
+        return parsed as string[];
+      } catch {
+        throw new BridgeError('INTERNAL', `job ${String(r.job_id)} has malformed execution resource snapshot`, 500);
+      }
+    })(),
+    globalExclusive: Number(r.global_exclusive ?? 0) === 1,
   };
 }
 

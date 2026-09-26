@@ -23,6 +23,7 @@ import {
   type RecoveryAdmissionInput,
 } from '../../src/operations/sh06ForwardRecovery.js';
 import { evaluateSchemaPreflight } from '../../src/operations/sh06Recovery.js';
+import { createExecutableFixtureRoot } from '../helpers/executableFixture.js';
 
 const root = resolve(import.meta.dirname, '../..');
 const recoverySh = readFileSync(join(root, 'scripts/remote-owner-forward-recover-v9.sh'), 'utf8');
@@ -459,8 +460,9 @@ describe('R1 remediation — production R2 fallback transaction', () => {
 
   it('executes actual production shell: primary failure restores v9 then admits exact R2 fallback', () => {
     const fixture = mkdtempSync(join(tmpdir(), 'qg-sh06-forward-shell-'));
+    const execRoot = createExecutableFixtureRoot('qg-sh06-forward-');
     try {
-      const bin = join(fixture, 'bin');
+      const bin = join(execRoot, 'bin');
       const runtime = join(fixture, 'runtime');
       const state = join(fixture, 'state');
       const projects = join(fixture, 'projects');
@@ -1008,6 +1010,7 @@ esac
       }
     } finally {
       rmSync(fixture, { recursive: true, force: true });
+      rmSync(execRoot, { recursive: true, force: true });
     }
   }, 15_000);
 });

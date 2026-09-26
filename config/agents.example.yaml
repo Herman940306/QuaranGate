@@ -11,6 +11,12 @@
 # SECURITY: everything in this file is TRUSTED, executor-owned configuration.
 # hostPath, backends, profiles and resource policies are never accepted from
 # MCP callers — public callers address logical project ids only.
+#
+# BE1A scheduling is also trusted configuration. Callers cannot select these
+# limits or create resource identities.
+execution:
+  maxConcurrency: 4
+  maxQueuedPerProject: 16
 
 backends:
   - id: kiro

@@ -1,0 +1,47 @@
+BE1A cross-project execution fabric validation
+base_accepted_be6_r1=e0d7458724dae6bf85d8fb0493c71963172ab865
+base_tree=ba88838704a714d3dc8c0051c8d9e42104704c54
+base_subject=fix(product): preserve unavailable BE6 provider health
+implementation_worktree=/workspace/QuaranGate-product-be1a-gpt
+branch=feature/qg-product-be1a-concurrency-gpt
+scope=BE1A_CROSS_PROJECT_CONCURRENCY_EXECUTION_FABRIC
+self_acceptance=NO
+
+PROJECT_QUEUE_MODEL=project-partitioned durable queue admission; one executing job per project; per-project queued cap from trusted server config
+FAIRNESS_MODEL=deterministic least-recently-started project first; tie-break by queued created_at then rowid
+MAX_CONCURRENCY=trusted config default 4; parser bounds 1..32; caller cannot override
+RESOURCE_LEASE_MODEL=durable SQLite execution_resource_leases; logical resource categories only; partial unique index excludes ACTIVE/UNCERTAIN conflicts
+GLOBAL_EXCLUSIVE_MODEL=trusted globalExclusive lane acquires machine:global-exclusive and admits only when no active/held work exists
+STALE_RECOVERY_MODEL=restart/crash transitions active jobs to FAILED_INFRASTRUCTURE and ACTIVE leases to UNCERTAIN; no timer release; evidence-bound settlement only
+CACHE_INVALIDATION_MODEL=bounded one-entry execution-fabric snapshot cache with generation invalidated on dispatch/claim/cancel/recover/settlement/completion
+
+FOUR_PROJECT_CONCURRENCY=PASS focused BE1A test observes countActive()==4 for proj-a/proj-b/proj-c/proj-d
+OVERLAPPING_RESOURCE_SERIALIZATION=PASS same temp-root/owner-host/database resource serializes
+NON_OVERLAPPING_RESOURCE_CONCURRENCY=PASS distinct resources admitted concurrently
+STARVATION_TEST=PASS repeated Project A load admits A/B/C/D in first wave
+CANCELLATION_ISOLATION=PASS Project A cancellation leaves Project B active/completing
+CRASH_RECOVERY=PASS recoverActive marks leases UNCERTAIN and blocks conflicting work
+STALE_LEASE_RECOVERY=PASS exact job+resource+bounded evidence settlement required
+CROSS_PROJECT_ISOLATION=PASS caller resource/concurrency fields ignored; path-shaped resources rejected; safe snapshot omits host path/prompt
+LIVE_WRITER_REGRESSION=PASS included in focused regression set
+APPLY_EVIDENCE_REGRESSION=PASS included in focused regression set
+
+TYPECHECK=PASS npm run typecheck -- --pretty false
+BUILD=PASS npm run build
+LINT=UNAVAILABLE no npm lint script in package.json
+DIFF_CHECK=PASS git diff --check
+SCA=PASS npm audit --audit-level=high --omit=dev found 0 vulnerabilities
+SECURITY_INVARIANTS=PASS npm run security:invariants ok=true rulesChecked=16 composeFilesChecked=12 dockerfilesChecked=7
+SECRET_SCAN=PASS_BOUNDED no new hardcoded secret value found in BE1A changed/new files; broad repository grep returned existing secret-handling code/tests only
+
+FOCUSED_BE1A_AGENT_TESTS=PASS 5 files / 169 tests
+EXPANDED_BE1A_RELEVANT_REGRESSION=PASS 11 files / 589 tests
+FULL_UNIT_SUITE=FAIL_NON_BE1A 173 files passed, 2 files failed, 3389 tests passed, 4 tests failed
+FULL_UNIT_FAILURES=tests/unit/sh05-release-provenance.test.ts has 3 Cosign-version/verification fixture failures; tests/unit/sh06-forward-recovery.test.ts has 1 /tmp docker shim EACCES fixture failure
+FULL_UNIT_EVIDENCE=docs/product-platform/be1a/evidence/FULL_UNIT_VITEST.txt
+
+LIVE_RUNTIME_MUTATION=NO
+DOCKER_RUNTIME_MUTATION=NO
+PRODUCTION_DEPLOYMENT=NO
+PUSH_MERGE=NO
+INDEPENDENT_REVIEW_REQUIRED=YES

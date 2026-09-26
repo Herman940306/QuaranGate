@@ -42,6 +42,7 @@ export const PRODUCTION_INSTALLER_RUNTIME_MODULES = [
   'dist/lifecycle/safeFilesystem.js',
   'dist/shared/agents.js',
   'dist/shared/errors.js',
+  'dist/shared/executionFabric.js',
 ] as const;
 
 export const PRODUCTION_INSTALLER_RUNTIME_PACKAGES = ['yaml', 'zod'] as const;

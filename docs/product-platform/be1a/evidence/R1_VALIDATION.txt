@@ -1,0 +1,47 @@
+BE1A R1 narrow remediation validation
+base_candidate=7603281a471811a8ad82804a06cc87aee180c49e
+base_tree=d64933a79b788c3f13df6fe11669c7291f36ff6a
+scope=TERMINAL_LEASE_CRASH_WINDOW_AND_GLOBAL_EXCLUSIVE_READ_TRUTH_ONLY
+self_acceptance=NO
+
+TERMINAL_ACTIVE_LEASE_CRASH_WINDOW=PASS successful VALIDATING->COMPLETED commits ACTIVE lease RELEASED in same SQLite transaction
+TERMINAL_LEASE_STARTUP_RECONCILIATION=PASS historical terminal+ACTIVE leases reconciled at executor startup
+SAFE_TERMINAL_RELEASE_STATES=COMPLETED,FAILED_PRECONDITION,FAILED_POLICY,FAILED_AGENT,FAILED_TIMEOUT,APPLIED,DISCARDED
+AMBIGUOUS_TERMINAL_UNCERTAIN_STATES=FAILED_INFRASTRUCTURE,CANCELLED
+ACTIVE_JOB_UNCERTAIN_RECOVERY=PASS PREPARING/RUNNING/VALIDATING -> FAILED_INFRASTRUCTURE + UNCERTAIN unchanged
+UNCERTAIN_LEASE_PRESERVATION=PASS existing UNCERTAIN lease never auto-released
+RECOVERY_IDEMPOTENCE=PASS second reconciliation performs no lease mutation
+NO_CROSS_JOB_RELEASE=PASS exact lease_id+job_id settlement leaves unrelated job lease held
+NO_TIMER_EXPIRY=PASS no time-based execution lease expiry introduced
+SCHEMA_INDEX_INVARIANTS=PASS agent-jobstore migration/schema regression passed
+
+GLOBAL_EXCLUSIVE_READ_TRUTH=PASS gateway retains executor-provided machine-global boolean
+HIDDEN_PROJECT_PRIVACY=PASS hidden project/job/resource rows filtered; boolean retained without identity leakage
+PROJECT_ROW_FILTERING=PASS projects/heldResources/waitingResources remain principal-filtered
+
+FOUR_PROJECT_CONCURRENCY=PASS
+OVERLAPPING_RESOURCE_SERIALIZATION=PASS
+STARVATION_TEST=PASS
+CANCELLATION_ISOLATION=PASS
+LIVE_WRITER_REGRESSION=PASS
+APPLY_EVIDENCE_REGRESSION=PASS
+
+TYPECHECK=PASS npm run typecheck -- --pretty false
+BUILD=PASS npm run build
+SECURITY_INVARIANTS=PASS rulesChecked=16 composeFilesChecked=12 dockerfilesChecked=7
+SCA=PASS npm audit --audit-level=high --omit=dev found 0 vulnerabilities
+SECRET_SCAN=PASS_BOUNDED
+DIFF_CHECK=PASS git diff --check
+FOCUSED_R1_TESTS=PASS tests/unit/be1a-execution-fabric.test.ts 19/19
+PRIOR_BE1A_FOCUSED_REGRESSION=PASS 5 files 176/176
+EXPANDED_BE1A_TESTS=PASS 9 files 421/421
+FULL_UNIT=FAIL_EXISTING_BLOCKERS 173 files passed 2 failed; 3396 tests passed 4 failed
+SH05_EXISTING_BLOCKER=tests/unit/sh05-release-provenance.test.ts 3 COSIGN_VERSION_MISMATCH fixture/verification failures
+SH06_EXISTING_BLOCKER=tests/unit/sh06-forward-recovery.test.ts 1 /tmp/q docker shim EACCES failure
+FULL_UNIT_R1_EVIDENCE=docs/product-platform/be1a/evidence/R1_FULL_UNIT_VITEST.txt
+
+LIVE_RUNTIME_MUTATION=NO
+DOCKER_RUNTIME_MUTATION=NO
+PRODUCTION_DEPLOYMENT=NO
+PUSH_MERGE=NO
+INDEPENDENT_REVIEW_REQUIRED=YES

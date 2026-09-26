@@ -10,7 +10,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { asBridgeError, BridgeError } from '../shared/errors.js';
-import { executor } from './executorClient.js';
+import { executor, type ControlCenterExecutionFabricWire } from './executorClient.js';
 import { audit, auditActivityStats, auditIntegrityState, newReqId, queryAuditActivity } from './audit.js';
 import { currentPrincipal } from './context.js';
 import { rateState } from './ratelimit.js';
@@ -107,15 +107,43 @@ function authorityEvaluation(p: Principal, args: any) {
   };
 }
 
+/**
+ * BE1A R1 privacy-preserving execution-fabric projection.
+ * Project-owned rows are grant-filtered, while the executor-provided
+ * machine-global exclusivity boolean is retained verbatim. Recomputing it
+ * from visible rows would falsely report capacity as free when a hidden
+ * project owns the global-exclusive lane.
+ */
+export function projectExecutionFabricForPrincipal(
+  raw: ControlCenterExecutionFabricWire,
+  visibleProjectIds: ReadonlySet<string>,
+): ControlCenterExecutionFabricWire {
+  return {
+    generation: raw.generation,
+    cached: raw.cached,
+    capacity: raw.capacity,
+    projects: raw.projects.filter((row) => visibleProjectIds.has(row.projectId)),
+    heldResources: raw.heldResources.filter((row) => visibleProjectIds.has(row.projectId)),
+    waitingResources: raw.waitingResources.filter((row) => visibleProjectIds.has(row.projectId)),
+    globalExclusiveHeld: raw.globalExclusiveHeld,
+  };
+}
+
 async function snapshot(p: Principal) {
-  const [runtime, targets, backends, projects] = await Promise.all([
+  const [runtime, targets, backends, projects, rawExecutionFabric] = await Promise.all([
     executor.controlCenterRuntime().catch(() => null),
     executor.listTargets().catch(() => []),
     executor.agentsList().catch(() => []),
     executor.agentProjects().catch(() => []),
+    executor.controlCenterExecutionFabric().catch(() => null),
   ]);
+  const visibleProjectIds = new Set(projects.filter((project) => principalMayUseAgentProject(p, project.id)).map((project) => project.id));
+  const executionFabric = rawExecutionFabric
+    ? projectExecutionFabricForPrincipal(rawExecutionFabric, visibleProjectIds)
+    : null;
   return {
     runtime,
+    executionFabric,
     targets: targets.filter((t) => principalCanTarget(p, t.id)).map((t) => ({
       id: t.id, name: t.name, running: t.running, source: t.source,
       image: t.image, status: t.status, health: t.health,
@@ -185,11 +213,11 @@ async function viewData(view: View, p: Principal, args: any): Promise<Record<str
   }
   if (view === 'statistics') return { activity: stats, jobs: { active: snap.runtime?.activeJobs ?? null, queued: snap.runtime?.queuedJobs ?? null }, targets: { visible: snap.targets.length, running: snap.targets.filter((t) => t.running).length }, backends: { visible: snap.backends.length, available: snap.backends.filter((b) => b.available).length } };
   if (view === 'resources') return {
-    ownershipModel: 'QUARANGATE_LABELS_ONLY',
+    ownershipModel: 'TRUSTED_LOGICAL_RESOURCE_LEASES',
     cleanupAuthority: 'NO_GENERIC_CLEANUP_API',
-    resources: [],
-    state: 'RUNTIME_RESOURCE_ENUMERATION_NOT_EXPOSED',
-    note: 'Generic Docker resource enumeration is intentionally not public. A future bounded executor read model may expose only resources whose QuaranGate ownership is proven.',
+    executionFabric: snap.executionFabric,
+    state: snap.executionFabric ? 'BOUNDED_EXECUTION_FABRIC_VISIBLE' : 'EXECUTION_FABRIC_UNAVAILABLE',
+    note: 'Only server-derived logical resource identities are exposed; generic runtime enumeration and host paths remain private.',
   };
   if (view === 'capabilities') return {
     matrix: [
@@ -213,6 +241,7 @@ async function viewData(view: View, p: Principal, args: any): Promise<Record<str
     principal: { id: p.id, name: p.name },
     buildRevision: process.env.QUARANGATE_BUILD_REVISION ?? 'unknown',
     executor: snap.runtime,
+    executionFabric: snap.executionFabric,
     targets: { visible: snap.targets.length, running: snap.targets.filter((t) => t.running).length },
     backends: snap.backends,
     projects: snap.projects,
