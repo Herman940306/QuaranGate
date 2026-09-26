@@ -56,9 +56,14 @@ export class ObservabilityService {
     const scope = await this.scope(session);
     const { window } = parseWindow(new Date(), rawWindowMs);
     const stats = await this.statistics(session, rawWindowMs, 5);
-    const providerHealth = await this.repo.providerHealth(session.identity.userRef, scope.organizationId, scope.workspaceId).catch(() => ({}));
-    const providerTotal = Object.values(providerHealth).reduce((sum, value) => sum + value, 0);
-    const providerMetric: SafeMetric<number> = metric({ id: "provider_configurations", label: "Provider configurations", scope, window, freshness: "READY", state: providerTotal > 0 ? "READY" : "UNKNOWN", unit: "count", value: providerTotal, sampleCount: providerTotal, provenance: { source: "provider_config", sourceDetail: "product_providers.validation_status", qualified: true } });
+    let providerMetric: SafeMetric<number>;
+    try {
+      const providerHealth = await this.repo.providerHealth(session.identity.userRef, scope.organizationId, scope.workspaceId);
+      const providerTotal = Object.values(providerHealth).reduce((sum, value) => sum + value, 0);
+      providerMetric = metric({ id: "provider_configurations", label: "Provider configurations", scope, window, freshness: "READY", state: providerTotal > 0 ? "READY" : "UNKNOWN", unit: "count", value: providerTotal, sampleCount: providerTotal, provenance: { source: "provider_config", sourceDetail: "product_providers.validation_status", qualified: true } });
+    } catch {
+      providerMetric = metric({ id: "provider_configurations", label: "Provider configurations", scope, window, freshness: "NOT_AVAILABLE", state: "NOT_AVAILABLE", unit: "count", sampleCount: 0, provenance: { source: "provider_config", sourceDetail: "product_providers.validation_status", qualified: false }, unavailableReason: "PROVIDER_CONFIGURATION_HEALTH_UNAVAILABLE" });
+    }
     return { scope, observedAt: new Date().toISOString(), state: "DEGRADED", tabs: { hardware: "NOT_QUALIFIED", jobs: "DEGRADED", network: "NOT_QUALIFIED", security: "NOT_QUALIFIED" }, metrics: [providerMetric, ...stats.topEventTypes.map((entry) => metric<number>({ id: `event.${entry.key}`, label: entry.key, scope, window: stats.window, freshness: stats.window.supported ? "READY" : "NOT_AVAILABLE", state: stats.window.supported ? "READY" : "NOT_AVAILABLE", unit: "count", value: entry.count, sampleCount: stats.eventCounts.sampleCount, provenance: { source: "product_events", sourceDetail: "BE5 product_events", qualified: true } }))] };
   }
 

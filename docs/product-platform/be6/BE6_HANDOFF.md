@@ -131,3 +131,34 @@ OPEN GAPS:
 - external telemetry contracts and long-horizon retention remain owner/orchestrator decisions.
 NEXT:
 - independent/orchestrator review of frozen BE6 candidate.
+
+CHECKPOINT: BE6-R1-PROVIDER-HEALTH-TRUTHFULNESS
+STATUS: COMPLETE
+IMPLEMENTED:
+- remediated the provider-health summary path so repository failure is not collapsed into a successful empty provider set;
+- successful empty provider-health reads remain a legitimate qualified zero with value=0 and sampleCount=0;
+- provider-health read failures now produce state=NOT_AVAILABLE, sampleCount=0, qualified=false, unavailableReason=PROVIDER_CONFIGURATION_HEALTH_UNAVAILABLE and no numeric value;
+- raw repository/database error text is not exposed.
+SOURCE OF TRUTH:
+- independent review finding against candidate 7c41403f3fbafd437017bbc7123fab0aadf1b565;
+- BE6 rule: missing/unavailable telemetry must not be converted to zero.
+TESTS:
+- BE6 focused tests PASS 15/15;
+- focused BE1-BE6 regression PASS 146/146;
+- full frontend/server unit suite PASS 153/153;
+- typecheck PASS;
+- lint PASS;
+- production build PASS;
+- npm audit UNAVAILABLE due registry DNS EAI_AGAIN, not claimed fresh.
+SECURITY:
+- provider-health failure reason is bounded and does not leak raw database error text;
+- no route topology, authority, proxy, package, canonical, runtime or frontend UI changes.
+LIVE QUALIFICATION:
+- LIVE_POSTGRESQL=UNAVAILABLE / NOT_CLAIMED.
+- LIVE_HARDWARE_TELEMETRY=UNAVAILABLE / NOT_CLAIMED.
+- LIVE_TRACE_BACKEND=UNAVAILABLE / NOT_CLAIMED.
+- LIVE_LONG_HORIZON_STATISTICS=UNAVAILABLE / NOT_CLAIMED.
+OPEN GAPS:
+- none for this narrow R1 defect.
+NEXT:
+- independent/orchestrator review of the new R1 remediation candidate.

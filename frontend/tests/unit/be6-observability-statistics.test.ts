@@ -84,6 +84,42 @@ describe("BE6 product event read model", () => {
     expect(JSON.stringify(stats)).not.toMatch(/secret|tokenValue|Authorization|cookie/i);
   });
 
+  it("keeps a successful empty provider-health result as a qualified legitimate zero", async () => {
+    const repo = {
+      eventCounts: vi.fn(async () => ({})),
+      providerHealth: vi.fn(async () => ({})),
+    } as unknown as ObservabilityRepository;
+    const service = new ObservabilityService(repo, context as never);
+    const summary = await service.summary(session as never, "3600000");
+    const providerMetric = summary.metrics.find((metric) => metric.id === "provider_configurations");
+    expect(providerMetric).toMatchObject({
+      state: "UNKNOWN",
+      value: 0,
+      sampleCount: 0,
+      provenance: { qualified: true },
+    });
+    expect(providerMetric).not.toHaveProperty("unavailableReason");
+  });
+
+  it("keeps provider-health read failure unavailable instead of coercing missing telemetry to zero", async () => {
+    const repo = {
+      eventCounts: vi.fn(async () => ({})),
+      providerHealth: vi.fn(async () => { throw new Error("raw database failure with secret-token"); }),
+    } as unknown as ObservabilityRepository;
+    const service = new ObservabilityService(repo, context as never);
+    const summary = await service.summary(session as never, "3600000");
+    const providerMetric = summary.metrics.find((metric) => metric.id === "provider_configurations");
+    expect(providerMetric).toMatchObject({
+      state: "NOT_AVAILABLE",
+      sampleCount: 0,
+      provenance: { qualified: false },
+      unavailableReason: "PROVIDER_CONFIGURATION_HEALTH_UNAVAILABLE",
+    });
+    expect(providerMetric).not.toHaveProperty("value");
+    expect(JSON.stringify(providerMetric)).not.toContain("raw database failure");
+    expect(JSON.stringify(providerMetric)).not.toContain("secret-token");
+  });
+
   it("cross-workspace session reads fail closed", async () => {
     const service = new ObservabilityService(new ObservabilityRepository(new ScriptedDb()), { resolveIdentity: vi.fn(), workspaceForUser: vi.fn(async () => undefined) } as never);
     await expect(service.statistics(session as never, "3600000", 5)).rejects.toMatchObject({ code: "PRODUCT_DATA_FORBIDDEN" });
