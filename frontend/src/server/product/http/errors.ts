@@ -28,6 +28,8 @@ function mapError(error: unknown): { status: number; code: ProductErrorCode; mes
   if (value.includes("meeting_forbidden") || value.includes("meeting_workspace_required")) return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };
   if (value.includes("meeting_stt_provider_unavailable")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Meeting transcription service is unavailable." };
   if (value.includes("observability_window") || value.includes("top_n") || value.includes("bucket_count")) return { status: 400, code: "VALIDATION_FAILED", message: "Observability request was rejected." };
+  if (value.includes("security_discovery") || value.includes("security_project")) return { status: 400, code: "VALIDATION_FAILED", message: "Security assessment request was rejected." };
+  if (value.includes("security_workspace_required")) return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };
   if (value.includes("observability_forbidden") || value.includes("observability_workspace_required")) return { status: 403, code: "FORBIDDEN", message: "Request is not permitted." };
   if (value.includes("zabbix_") || value.includes("tempo_")) return { status: 503, code: "BACKEND_UNAVAILABLE", message: "Observability backend is unavailable." };
   if (value.includes("collaboration_request") || value.includes("group_name") || value.includes("message_body") || value.includes("message_cursor") || value.includes("attachment_") || value.includes("approval_") || value.includes("event_cursor") || value.includes("event_payload") || value.includes("idempotency_key")) return { status: 400, code: "VALIDATION_FAILED", message: "Collaboration request was rejected." };

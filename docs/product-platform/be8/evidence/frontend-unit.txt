@@ -1,0 +1,33 @@
+
+> @quarangate/frontend@0.1.0 test
+> vitest run
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.2 [39m[90m/workspace/QuaranGate-product-be8-gpt/frontend[39m
+
+ [32m✓[39m tests/unit/be4-route-integration.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 66[2mms[22m[39m
+ [32m✓[39m tests/unit/be5-route-contract.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 64[2mms[22m[39m
+ [32m✓[39m tests/unit/be7-route-contract.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 83[2mms[22m[39m
+ [32m✓[39m tests/unit/be1-r2-auth-foundation.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 108[2mms[22m[39m
+ [32m✓[39m tests/unit/be3-principal-mapping.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 116[2mms[22m[39m
+ [32m✓[39m tests/unit/be2-product-data.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 38[2mms[22m[39m
+ [32m✓[39m tests/unit/be2-session-integration.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m tests/unit/be6-route-contract.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 110[2mms[22m[39m
+ [32m✓[39m tests/unit/be2-data-foundation.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 76[2mms[22m[39m
+ [32m✓[39m tests/unit/be8-security-discovery-planner.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m tests/unit/be7-meetings-foundation.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m tests/unit/be6-observability-statistics.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m tests/unit/be7-r1-meeting-policy.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 81[2mms[22m[39m
+ [32m✓[39m tests/unit/be5-collaboration-events.test.ts [2m([22m[2m27 tests[22m[2m)[22m[32m 68[2mms[22m[39m
+ [32m✓[39m tests/unit/be1-r2-route-contract.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/unit/be4-provider-custody.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m tests/unit/foundation.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m17 passed[39m[22m[90m (17)[39m
+[2m      Tests [22m [1m[32m204 passed[39m[22m[90m (204)[39m
+[2m   Start at [22m 19:46:49
+[2m   Duration [22m 2.84s[2m (transform 61%, import 25%, tests 12%, worker 2%)[22m
+
+[2m  Transform [22m [33mtransforming modules took 5.23s[39m[2m · 61% of tracked time, re-done on every run[22m
+[2m            [22m [2mpersist transforms across runs with [22m[33mfsModuleCache: true[39m
+[2m            [22m [2mlearn more: https://vitest.dev/guide/improving-performance#caching-between-reruns[22m
