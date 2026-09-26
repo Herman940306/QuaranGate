@@ -1,0 +1,60 @@
+▲ Next.js 16.3.6 (webpack)
+✓ Running next.config.ts took 22ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 9.7s
+  Running TypeScript ...
+  Finished TypeScript in 3.8s ...
+  Collecting page data using 5 workers ...
+  Generating static pages using 5 workers (0/4) ...
+  Generating static pages using 5 workers (1/4) 
+  Generating static pages using 5 workers (2/4) 
+  Generating static pages using 5 workers (3/4) 
+✓ Generating static pages using 5 workers (4/4) in 221ms
+  Finalizing page optimization ...
+  Collecting build traces ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/product/approvals
+├ ƒ /api/product/approvals/[id]/decision
+├ ƒ /api/product/attachments/[id]/complete
+├ ƒ /api/product/attachments/initiate
+├ ƒ /api/product/auth/callback
+├ ƒ /api/product/auth/login
+├ ƒ /api/product/events
+├ ƒ /api/product/groups
+├ ƒ /api/product/groups/[id]/messages
+├ ƒ /api/product/meetings
+├ ƒ /api/product/meetings/[id]
+├ ƒ /api/product/meetings/[id]/action-items
+├ ƒ /api/product/meetings/[id]/recording/attest
+├ ƒ /api/product/meetings/[id]/recording/opt-in
+├ ƒ /api/product/meetings/[id]/recording/start
+├ ƒ /api/product/meetings/[id]/recording/stop
+├ ƒ /api/product/meetings/[id]/summary
+├ ƒ /api/product/meetings/[id]/transcript
+├ ƒ /api/product/meetings/[id]/transcript/export
+├ ƒ /api/product/messages/[id]/reactions
+├ ƒ /api/product/observability/hardware
+├ ƒ /api/product/observability/jobs
+├ ƒ /api/product/observability/network
+├ ƒ /api/product/observability/security
+├ ƒ /api/product/observability/summary
+├ ƒ /api/product/providers
+├ ƒ /api/product/providers/[id]
+├ ƒ /api/product/providers/[id]/secret
+├ ƒ /api/product/providers/[id]/validate
+├ ƒ /api/product/session/current
+├ ƒ /api/product/session/logout
+├ ƒ /api/product/session/workspace
+├ ƒ /api/product/statistics
+└ ○ /design-system
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

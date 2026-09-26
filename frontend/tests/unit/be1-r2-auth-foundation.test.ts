@@ -4,7 +4,7 @@ vi.mock("server-only", () => ({}));
 
 import { assertCsrf } from "../../src/server/product/authority/csrf";
 import type { AuditSink, SafeAuditRecord } from "../../src/server/product/audit/events";
-import type { ProductOidcConfig } from "../../src/server/product/auth/config";
+import { loadProductOidcConfig, type ProductOidcConfig } from "../../src/server/product/auth/config";
 import type { OidcCallbackResult, OidcTokens, ProductOidcPort } from "../../src/server/product/auth/oidc";
 import { NonDurableProductContextAdapter } from "../../src/server/product/adapters/workspace";
 import type { SafeProductIdentity } from "../../src/server/product/identity/types";
@@ -68,7 +68,9 @@ function configure() {
   process.env.QG_PRODUCT_OIDC_ISSUER = "https://id.example.invalid/realms/quarangate";
   process.env.QG_PRODUCT_OIDC_CLIENT_ID = "quarangate-product";
   process.env.QG_PRODUCT_OIDC_REDIRECT_URI = "https://app.example.invalid/api/product/auth/callback";
+  process.env.QG_PRODUCT_IDENTITY_BROKER = "keycloak";
   process.env.QG_PRODUCT_FEDERATION_PROVIDER_ID = "entra-through-keycloak";
+  process.env.QG_PRODUCT_ENTRA_TENANT_ID = "11111111-2222-3333-4444-555555555555";
 }
 
 async function fixture() {
@@ -210,6 +212,35 @@ describe("BE1-R2 product identity/session foundation", () => {
     expect(cookie).toContain("Secure");
     expect(cookie).toContain("SameSite=Lax");
     expect(cookie).toContain("Path=/api/product");
+  });
+
+  it("binds the product identity broker to Keycloak and records only bounded Entra federation metadata", () => {
+    const config = loadProductOidcConfig();
+    expect(config.identityBroker).toBe("keycloak");
+    expect(config.federationProviderId).toBe("entra-through-keycloak");
+    expect(config.federationTenantId).toBe("11111111-2222-3333-4444-555555555555");
+    expect(JSON.stringify(config)).not.toMatch(/group|role|scopeGrant|targetGrant|principalRef/i);
+  });
+
+  it.each(["common", "organizations", "consumers"])("rejects ambiguous Entra tenant authority %s", (tenant) => {
+    process.env.QG_PRODUCT_ENTRA_TENANT_ID = tenant;
+    expect(() => loadProductOidcConfig()).toThrow("product_identity_entra_tenant_ambiguous");
+  });
+
+  it("rejects non-Keycloak product identity brokers", () => {
+    process.env.QG_PRODUCT_IDENTITY_BROKER = "entra-direct";
+    expect(() => loadProductOidcConfig()).toThrow("product_identity_broker_unsupported");
+  });
+
+  it("rejects unqualified federation provider profiles", () => {
+    process.env.QG_PRODUCT_FEDERATION_PROVIDER_ID = "okta";
+    expect(() => loadProductOidcConfig()).toThrow("product_identity_federation_provider_unsupported");
+  });
+
+  it("requires an explicit product identity broker in production", () => {
+    Object.assign(process.env, { NODE_ENV: "production" });
+    delete process.env.QG_PRODUCT_IDENTITY_BROKER;
+    expect(() => loadProductOidcConfig()).toThrow("product_identity_broker_not_configured");
   });
 
   it("denies the non-durable adapter in production", () => {

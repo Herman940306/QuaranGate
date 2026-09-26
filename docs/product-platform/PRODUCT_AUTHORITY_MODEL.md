@@ -57,6 +57,8 @@ Keycloak is the product identity/session broker.
 
 Microsoft Entra ID is the first enterprise federation profile.
 
+The source contract requires `keycloak` as the product broker. Production must declare that broker explicitly. The first Entra profile requires an explicit tenant identifier and rejects the ambiguous Entra authorities `common`, `organizations` and `consumers`. These values are server-owned configuration; they are not browser-selectable authority.
+
 Entra claims may establish/authenticate product identity attributes through Keycloak but must never directly grant:
 - MCP scopes;
 - target access;

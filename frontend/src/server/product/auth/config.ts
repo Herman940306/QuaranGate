@@ -6,7 +6,9 @@ export interface ProductOidcConfig {
   clientSecret?: string;
   redirectUri: URL;
   scope: string;
+  identityBroker: "keycloak";
   federationProviderId?: string;
+  federationTenantId?: string;
 }
 
 function required(name: string): string {
@@ -27,6 +29,31 @@ function trustedUrl(raw: string): URL {
   return url;
 }
 
+function identityBroker(): "keycloak" {
+  const raw = process.env.QG_PRODUCT_IDENTITY_BROKER?.trim();
+  if (!raw) {
+    if (process.env.NODE_ENV === "production") throw new Error("product_identity_broker_not_configured");
+    return "keycloak";
+  }
+  if (raw !== "keycloak") throw new Error("product_identity_broker_unsupported");
+  return "keycloak";
+}
+
+function federationMetadata(): { federationProviderId?: string; federationTenantId?: string } {
+  const provider = process.env.QG_PRODUCT_FEDERATION_PROVIDER_ID?.trim();
+  if (!provider) return {};
+
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(provider)) throw new Error("product_identity_federation_provider_invalid");
+
+  if (provider !== "entra" && provider !== "entra-through-keycloak") throw new Error("product_identity_federation_provider_unsupported");
+
+  const tenant = required("QG_PRODUCT_ENTRA_TENANT_ID");
+  const normalized = tenant.toLowerCase();
+  if (["common", "organizations", "consumers"].includes(normalized)) throw new Error("product_identity_entra_tenant_ambiguous");
+  if (!/^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$/.test(tenant)) throw new Error("product_identity_entra_tenant_invalid");
+  return { federationProviderId: provider, federationTenantId: tenant };
+}
+
 export function loadProductOidcConfig(): ProductOidcConfig {
   const issuer = trustedUrl(required("QG_PRODUCT_OIDC_ISSUER"));
   const redirectUri = trustedUrl(required("QG_PRODUCT_OIDC_REDIRECT_URI"));
@@ -38,7 +65,8 @@ export function loadProductOidcConfig(): ProductOidcConfig {
     clientSecret: process.env.QG_PRODUCT_OIDC_CLIENT_SECRET?.trim() || undefined,
     redirectUri,
     scope,
-    federationProviderId: process.env.QG_PRODUCT_FEDERATION_PROVIDER_ID?.trim() || undefined,
+    identityBroker: identityBroker(),
+    ...federationMetadata(),
   };
 }
 
