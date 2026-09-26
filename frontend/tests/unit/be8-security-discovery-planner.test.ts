@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -168,6 +170,13 @@ describe("BE8 R1 trusted static discovery bounds", () => {
 });
 
 describe("BE8 R1 request authority", () => {
+  it("requires CSRF/origin enforcement on security discovery and plan POST routes", () => {
+    const startRoute = readFileSync(join(process.cwd(), "src/app/api/product/security/discovery/start/route.ts"), "utf8");
+    const planRoute = readFileSync(join(process.cwd(), "src/app/api/product/security/plan/route.ts"), "utf8");
+    expect(startRoute).toContain("assertCsrf(request, session)");
+    expect(planRoute).toContain("assertCsrf(request, session)");
+  });
+
   it("accepts only bounded project/target/intent request fields", () => {
     expect(parseSecurityDiscoveryRequest({ projectId: "proj-a", targetId: "target-a", assessmentIntent: "source" })).toEqual({ projectId: "proj-a", targetId: "target-a", assessmentIntent: "source" });
   });
@@ -239,6 +248,39 @@ describe("BE8 R1 product/project/principal authority", () => {
     const result = await service({ source }).discover(session as never, { projectId: "proj-a" });
     expect(result.sourceRevision).toBe(REVISION);
     expect(source.calls[0]).toMatchObject({ productUserId: USER, organizationId: ORG, workspaceId: WS, principalRef: PRINCIPAL, projectId: "proj-a" });
+  });
+
+  it("scopes discovery identifiers to tenant/user authority so identical snapshots cannot overwrite across tenants", async () => {
+    const store = new MemorySecurityDiscoveryStore();
+    const source = new FakeSource();
+    const first = new SecurityAssessmentService(new FakeContext(), new FakePrincipal(), source, store);
+    const firstResult = await first.discover(session as never, { projectId: "proj-a" });
+
+    const secondSession = {
+      ...session,
+      identity: { ...session.identity, userRef: "user-b" },
+      workspace: { id: "ws-b", organizationId: "org-b", name: "Other Workspace" },
+      principalMapping: { state: "mapped-reference" as const, principalRef: "principal-b", mappingVersion: 4 },
+    };
+    const secondContext: ProductContextAdapter = {
+      async resolveIdentity(_issuer: string, identity: never) { return identity; },
+      async workspaceForUser(userRef: string, workspaceId: string) {
+        if (userRef !== "user-b" || workspaceId !== "ws-b") return undefined;
+        return { id: "ws-b", organizationId: "org-b", name: "Other Workspace" };
+      },
+    };
+    const secondPrincipal: PrincipalMappingAdapter = {
+      async resolve() { return { state: "mapped-reference" as const, principalRef: "principal-b", mappingVersion: 4 }; },
+    };
+    const secondSource: SecuritySourceAdapter = {
+      async resolve() { return snapshot([{ path: "package.json", content: JSON.stringify({ dependencies: { react: "19.3.0" } }) }]); },
+    };
+    const second = new SecurityAssessmentService(secondContext, secondPrincipal, secondSource, store);
+    const secondResult = await second.discover(secondSession as never, { projectId: "proj-a" });
+
+    expect(secondResult.discoveryId).not.toBe(firstResult.discoveryId);
+    await expect(first.result(session as never, firstResult.discoveryId)).resolves.toMatchObject({ discoveryId: firstResult.discoveryId });
+    await expect(second.result(secondSession as never, secondResult.discoveryId)).resolves.toMatchObject({ discoveryId: secondResult.discoveryId });
   });
 
   it("denies cross-workspace discovery result lookup", async () => {

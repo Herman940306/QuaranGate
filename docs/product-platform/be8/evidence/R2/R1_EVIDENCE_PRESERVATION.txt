@@ -1,0 +1,7 @@
+docs/product-platform/be8/evidence/R1/AUTHORITY_MODEL.md: OK
+docs/product-platform/be8/evidence/R1/CHANGED_PATHS.txt: OK
+docs/product-platform/be8/evidence/R1/INDEPENDENT_FINDINGS.txt: OK
+docs/product-platform/be8/evidence/R1/PRESTATE.txt: OK
+docs/product-platform/be8/evidence/R1/SOURCE_SHA256SUMS: OK
+docs/product-platform/be8/evidence/R1/VALIDATION.txt: OK
+docs/product-platform/be8/evidence/R1/SHA256SUMS: OK

@@ -1,0 +1,7 @@
+BE8 R2 follow-up findings
+
+F1 POST discovery/start lacked product CSRF/origin enforcement.
+F2 POST security/plan lacked product CSRF/origin enforcement.
+F3 deterministic discoveryId was not authority-scoped, allowing identical snapshots in different tenants to collide in the shared bounded MemorySecurityDiscoveryStore.
+
+R2 closes F1-F3. This is an implementation handoff, not an acceptance verdict.

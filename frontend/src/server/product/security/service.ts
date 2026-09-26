@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import type { ProductContextAdapter } from "../adapters/workspace";
 import { PostgresProductContextAdapter } from "../adapters/postgres-context";
 import type { PrincipalMappingAdapter } from "../principal/adapter";
@@ -22,6 +23,17 @@ interface EligibleSecurityContext {
 
 function assertDiscoveryId(discoveryId: string): void {
   if (!/^disc_[0-9a-f]{24}$/.test(discoveryId)) throw new Error("security_discovery_id_invalid");
+}
+
+function scopeDiscoveryId(context: EligibleSecurityContext, discovery: SecurityDiscoveryResult): string {
+  const digest = createHash("sha256").update(JSON.stringify({
+    productUserId: context.productUserId,
+    organizationId: context.organizationId,
+    workspaceId: context.workspaceId,
+    principalRef: context.principalRef,
+    sourceDiscoveryId: discovery.discoveryId,
+  })).digest("hex").slice(0, 24);
+  return `disc_${digest}`;
 }
 
 export class SecurityAssessmentService {
@@ -89,7 +101,8 @@ export class SecurityAssessmentService {
     if (snapshot.projectId !== request.projectId) throw new Error("security_project_forbidden");
     if ((request.targetId ?? undefined) !== (snapshot.targetId ?? undefined)) throw new Error("security_target_forbidden");
 
-    const result = discoverSecurityStack(snapshot);
+    const discovered = discoverSecurityStack(snapshot);
+    const result = { ...discovered, discoveryId: scopeDiscoveryId(eligible, discovered) };
     this.discoveries.put({ ...eligible, result });
     return result;
   }

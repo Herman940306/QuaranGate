@@ -1,0 +1,13 @@
+docs/product-platform/be8/evidence/R2/focused-be8.txt:14: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/frontend-build.txt:14: trailing whitespace.
++  Generating static pages using 5 workers (1/4) 
+docs/product-platform/be8/evidence/R2/frontend-build.txt:15: trailing whitespace.
++  Generating static pages using 5 workers (2/4) 
+docs/product-platform/be8/evidence/R2/frontend-build.txt:16: trailing whitespace.
++  Generating static pages using 5 workers (3/4) 
+docs/product-platform/be8/evidence/R2/frontend-build.txt:67: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/frontend-typecheck.txt:4: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/frontend-unit.txt:34: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/root-build.txt:4: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/root-typecheck.txt:4: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/root-unit.txt:1717: new blank line at EOF.
