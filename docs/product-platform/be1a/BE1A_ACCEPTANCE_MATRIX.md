@@ -11,8 +11,14 @@
 | Starvation resistance | repeated Project A load first-wave A/B/C/D test | IMPLEMENTED |
 | Cancellation isolation | A cancellation while B continues/completes | IMPLEMENTED |
 | Crash uncertainty | recoverActive -> UNCERTAIN test | IMPLEMENTED |
+| Terminal completion crash window | COMPLETED commit atomically releases ACTIVE execution leases | R1 IMPLEMENTED |
+| Historical terminal ACTIVE recovery | startup reconciliation releases proof-safe states / marks ambiguous states UNCERTAIN | R1 IMPLEMENTED |
+| UNCERTAIN preservation | existing UNCERTAIN leases remain held until exact trusted settlement | R1 IMPLEMENTED |
+| Recovery idempotence / no cross-job release | repeated reconciliation + unrelated held lease assertions | R1 IMPLEMENTED |
 | Stale/uncertain recovery | conflict blocks until evidence-bound settlement | IMPLEMENTED |
 | Cache invalidation | snapshot generation/cache test | IMPLEMENTED |
+| Global-exclusive read truth | hidden owner still yields executor-provided globalExclusiveHeld=true | R1 IMPLEMENTED |
+| Hidden project privacy | project/job/resource rows remain principal-filtered | R1 IMPLEMENTED |
 | Caller cannot choose resources/concurrency | spoofed request + config-negative tests | IMPLEMENTED |
 | Path traversal/selector identity rejected | store/config negative tests | IMPLEMENTED |
 | Existing ACP regressions | existing agent job engine/store/config suites | REQUIRED GATE |

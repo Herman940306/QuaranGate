@@ -22,7 +22,9 @@ No BE1A read model includes prompts, terminal output, credentials, raw Docker co
 
 ## Lease races
 
-Lease acquisition occurs in the same `BEGIN IMMEDIATE` transaction as QUEUED -> PREPARING. A partial unique index prevents two ACTIVE/UNCERTAIN owners of the same resource. Cancellation and normal completion release only that job's ACTIVE leases. Crash/shutdown ambiguity becomes UNCERTAIN, not RELEASED.
+Lease acquisition occurs in the same `BEGIN IMMEDIATE` transaction as QUEUED -> PREPARING. A partial unique index prevents two ACTIVE/UNCERTAIN owners of the same resource.
+
+BE1A R1 makes successful completion durable lease settlement atomic with VALIDATING -> COMPLETED. Startup reconciliation repairs historical terminal+ACTIVE rows using an explicit terminal-state policy: proof-safe states release only their exact lease ids/job ids; CANCELLED and FAILED_INFRASTRUCTURE become UNCERTAIN. Existing UNCERTAIN leases remain untouched. There is no timer-based expiry and no cross-job release.
 
 ## Global-exclusive safety
 
@@ -42,5 +44,7 @@ BE1A focused tests cover:
 - explicit evidence-bound UNCERTAIN settlement;
 - project-scoped cancellation isolation;
 - snapshot omits trusted host path/prompt content.
+
+BE1A R1 additionally covers atomic COMPLETED lease settlement, stale terminal ACTIVE reconciliation, FAILED terminal reconciliation, CANCELLED -> UNCERTAIN classification, active crash preservation, idempotence, no cross-job release, conflict unblocking, and principal-filtered global-exclusive truth without hidden project/job leakage.
 
 Existing ACP tests continue to cover cross-principal job ownership and cancellation authorization. Existing live-writer/apply suites remain required regression gates.

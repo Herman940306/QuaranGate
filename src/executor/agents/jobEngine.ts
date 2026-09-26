@@ -346,8 +346,19 @@ export class AgentJobEngine {
     // Order is security-significant: active jobs fail first, then leaked
     // reservations are reconciled, and only then may queued work execute.
     const recovered = this.store.recoverActive('executor restarted during active agent execution');
-    if (recovered.length > 0) this.invalidateExecutionSnapshot();
     for (const id of recovered) log('agent job recovered as FAILED_INFRASTRUCTURE', { jobId: id });
+    const terminalLeaseRecovery = this.store.reconcileTerminalExecutionLeases(
+      'executor startup found ACTIVE execution lease owned by an already-terminal job',
+    );
+    if (recovered.length > 0 || terminalLeaseRecovery.released.length > 0 || terminalLeaseRecovery.uncertain.length > 0) {
+      this.invalidateExecutionSnapshot();
+    }
+    for (const leaseId of terminalLeaseRecovery.released) {
+      log('stale terminal execution lease recovered as RELEASED', { leaseId });
+    }
+    for (const leaseId of terminalLeaseRecovery.uncertain) {
+      log('ambiguous terminal execution lease recovered as UNCERTAIN', { leaseId });
+    }
     const sessionRecovery = this.store.sessionStore.recoverReservations();
     for (const id of sessionRecovery.expired) {
       log('agent session reservation recovered as EXPIRED', { sessionId: id });

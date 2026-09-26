@@ -10,7 +10,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { asBridgeError, BridgeError } from '../shared/errors.js';
-import { executor } from './executorClient.js';
+import { executor, type ControlCenterExecutionFabricWire } from './executorClient.js';
 import { audit, auditActivityStats, auditIntegrityState, newReqId, queryAuditActivity } from './audit.js';
 import { currentPrincipal } from './context.js';
 import { rateState } from './ratelimit.js';
@@ -107,6 +107,28 @@ function authorityEvaluation(p: Principal, args: any) {
   };
 }
 
+/**
+ * BE1A R1 privacy-preserving execution-fabric projection.
+ * Project-owned rows are grant-filtered, while the executor-provided
+ * machine-global exclusivity boolean is retained verbatim. Recomputing it
+ * from visible rows would falsely report capacity as free when a hidden
+ * project owns the global-exclusive lane.
+ */
+export function projectExecutionFabricForPrincipal(
+  raw: ControlCenterExecutionFabricWire,
+  visibleProjectIds: ReadonlySet<string>,
+): ControlCenterExecutionFabricWire {
+  return {
+    generation: raw.generation,
+    cached: raw.cached,
+    capacity: raw.capacity,
+    projects: raw.projects.filter((row) => visibleProjectIds.has(row.projectId)),
+    heldResources: raw.heldResources.filter((row) => visibleProjectIds.has(row.projectId)),
+    waitingResources: raw.waitingResources.filter((row) => visibleProjectIds.has(row.projectId)),
+    globalExclusiveHeld: raw.globalExclusiveHeld,
+  };
+}
+
 async function snapshot(p: Principal) {
   const [runtime, targets, backends, projects, rawExecutionFabric] = await Promise.all([
     executor.controlCenterRuntime().catch(() => null),
@@ -116,15 +138,9 @@ async function snapshot(p: Principal) {
     executor.controlCenterExecutionFabric().catch(() => null),
   ]);
   const visibleProjectIds = new Set(projects.filter((project) => principalMayUseAgentProject(p, project.id)).map((project) => project.id));
-  const executionFabric = rawExecutionFabric ? {
-    generation: rawExecutionFabric.generation,
-    cached: rawExecutionFabric.cached,
-    capacity: rawExecutionFabric.capacity,
-    projects: rawExecutionFabric.projects.filter((row) => visibleProjectIds.has(row.projectId)),
-    heldResources: rawExecutionFabric.heldResources.filter((row) => visibleProjectIds.has(row.projectId)),
-    waitingResources: rawExecutionFabric.waitingResources.filter((row) => visibleProjectIds.has(row.projectId)),
-    globalExclusiveHeld: rawExecutionFabric.heldResources.some((row) => visibleProjectIds.has(row.projectId) && row.resourceKey === 'machine:global-exclusive'),
-  } : null;
+  const executionFabric = rawExecutionFabric
+    ? projectExecutionFabricForPrincipal(rawExecutionFabric, visibleProjectIds)
+    : null;
   return {
     runtime,
     executionFabric,

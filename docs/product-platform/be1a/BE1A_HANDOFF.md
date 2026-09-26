@@ -42,9 +42,22 @@ A self-contained clone is used instead of a linked worktree because the existing
 
 Root Vitest remains serialized because the historical root wrapper shares `/tmp/q`. BE1A models such roots as trusted `temp-root` resources but this candidate does not claim the existing test harness is governed by BE1A until independently accepted/integrated.
 
+## R1 narrow remediation
+
+Independent review of the original `7603281a471811a8ad82804a06cc87aee180c49e` candidate found two bounded defects only:
+
+- terminal job status could survive a crash with an ACTIVE execution-resource lease;
+- gateway projection could incorrectly recompute `globalExclusiveHeld=false` when the owning project was hidden.
+
+R1 remediates only those findings. Successful completion now settles ACTIVE leases atomically with the COMPLETED commit. Startup reconciliation repairs historical terminal+ACTIVE rows with explicit proof-safe versus UNCERTAIN classification. The gateway preserves the executor-provided machine-global exclusivity boolean while continuing to filter project-owned rows.
+
+The original candidate/evidence remains historical truth; R1 evidence is additive under `evidence/R1_*`.
+
 ## Validation
 
-See `evidence/VALIDATION.txt` and `BE1A_ACCEPTANCE_MATRIX.md`.
+See `evidence/VALIDATION.txt`, `evidence/R1_VALIDATION.txt`, and `BE1A_ACCEPTANCE_MATRIX.md`.
+
+Full serialized unit replay still has only the separately tracked SH05 Cosign fixture failures and SH06 /tmp docker-shim EACCES failure. Neither blocker was remediated in R1.
 
 ## Acceptance
 

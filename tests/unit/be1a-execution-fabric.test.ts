@@ -7,6 +7,7 @@ import { AgentJobStore, type NewAgentJob } from '../../src/executor/agents/jobSt
 import { AgentJobEngine, type DispatchRequest } from '../../src/executor/agents/jobEngine.js';
 import { parseAgentConfigYaml, type AgentControlPlaneConfig } from '../../src/executor/agentConfig.js';
 import { BridgeError } from '../../src/shared/errors.js';
+import { projectExecutionFabricForPrincipal } from '../../src/gateway/controlCenterTools.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const stores: AgentJobStore[] = [];
@@ -233,6 +234,153 @@ describe('BE1A cross-project execution fabric', () => {
     expect(() => dispatch(engine, 'proj-a')).toThrowError(expect.objectContaining({
       code: 'CONCURRENCY_LIMIT',
     }));
+  });
+
+  it('atomically settles ACTIVE execution leases with durable COMPLETED commit', () => {
+    const store = db();
+    const j = store.insert(job(20, 'proj-a', ['database:atomic-complete']));
+    expect(store.claimNext(4)!.jobId).toBe(j.jobId);
+    expect(store.transition(j.jobId, 'PREPARING', 'RUNNING')).toBe(true);
+    expect(store.transition(j.jobId, 'RUNNING', 'VALIDATING')).toBe(true);
+    expect(store.executionLeaseSummary()).toHaveLength(1);
+
+    const completed = store.finalizeCompletedWithSession({
+      jobId: j.jobId,
+      completedAt: new Date().toISOString(),
+      summary: 'done',
+      exitCode: 0,
+      requireArtifact: false,
+    });
+    expect(completed.status).toBe('COMPLETED');
+    expect(store.executionLeaseSummary()).toEqual([]);
+  });
+
+  it('reconciles historical COMPLETED + ACTIVE lease to RELEASED and unblocks conflicting work', () => {
+    const store = db();
+    const shared = 'database:historical-complete';
+    const a = store.insert(job(21, 'proj-a', [shared]));
+    const b = store.insert(job(22, 'proj-b', [shared]));
+    expect(store.claimNext(4)!.jobId).toBe(a.jobId);
+    expect(store.transition(a.jobId, 'PREPARING', 'RUNNING')).toBe(true);
+    expect(store.transition(a.jobId, 'RUNNING', 'VALIDATING')).toBe(true);
+    // Simulate a pre-R1 binary crashing after durable terminal status but
+    // before its finally() lease release.
+    expect(store.transition(a.jobId, 'VALIDATING', 'COMPLETED', {
+      completedAt: new Date().toISOString(), summary: 'legacy completion', exitCode: 0,
+    })).toBe(true);
+    expect(store.claimNext(4)).toBeUndefined();
+
+    const first = store.reconcileTerminalExecutionLeases('startup repair');
+    expect(first.released).toHaveLength(1);
+    expect(first.uncertain).toEqual([]);
+    expect(store.claimNext(4)!.jobId).toBe(b.jobId);
+
+    // Idempotent replay cannot re-release or disturb the now-active B lease.
+    const second = store.reconcileTerminalExecutionLeases('startup repair replay');
+    expect(second).toEqual({ released: [], uncertain: [] });
+    expect(store.executionLeaseSummary()).toEqual([
+      expect.objectContaining({ jobId: b.jobId, projectId: 'proj-b', resourceKey: shared, state: 'ACTIVE' }),
+    ]);
+  });
+
+  it('reconciles proof-safe FAILED_AGENT + ACTIVE lease without cross-job release', () => {
+    const store = db();
+    const a = store.insert(job(23, 'proj-a', ['temp-root:a']));
+    const b = store.insert(job(24, 'proj-b', ['temp-root:b']));
+    expect(store.claimNext(4)!.jobId).toBe(a.jobId);
+    expect(store.claimNext(4)!.jobId).toBe(b.jobId);
+    expect(store.transition(a.jobId, 'PREPARING', 'RUNNING')).toBe(true);
+    expect(store.transition(a.jobId, 'RUNNING', 'FAILED_AGENT', {
+      completedAt: new Date().toISOString(),
+      failureCode: 'FAILED_AGENT',
+      failureReason: 'synthetic provider failure',
+    })).toBe(true);
+
+    const result = store.reconcileTerminalExecutionLeases('startup repair');
+    expect(result.released).toHaveLength(1);
+    expect(result.uncertain).toEqual([]);
+    expect(store.executionLeaseSummary()).toEqual([
+      expect.objectContaining({ jobId: b.jobId, resourceKey: 'temp-root:b', state: 'ACTIVE' }),
+    ]);
+  });
+
+  it('preserves UNCERTAIN and classifies ambiguous CANCELLED terminal ACTIVE lease as UNCERTAIN', () => {
+    const store = db();
+    const a = store.insert(job(25, 'proj-a', ['owner-host:scope-a']));
+    expect(store.claimNext(4)!.jobId).toBe(a.jobId);
+    expect(store.transition(a.jobId, 'PREPARING', 'CANCELLED', {
+      completedAt: new Date().toISOString(),
+      failureCode: 'CANCELLED',
+      failureReason: 'synthetic cancel crash window',
+    })).toBe(true);
+    const result = store.reconcileTerminalExecutionLeases('startup repair');
+    expect(result.released).toEqual([]);
+    expect(result.uncertain).toHaveLength(1);
+    expect(store.executionLeaseSummary()).toEqual([
+      expect.objectContaining({ jobId: a.jobId, resourceKey: 'owner-host:scope-a', state: 'UNCERTAIN' }),
+    ]);
+    expect(store.reconcileTerminalExecutionLeases('startup repair replay')).toEqual({ released: [], uncertain: [] });
+    expect(store.executionLeaseSummary()[0]!.state).toBe('UNCERTAIN');
+  });
+
+  it('keeps active crash recovery FAILED_INFRASTRUCTURE + UNCERTAIN semantics unchanged', () => {
+    const store = db();
+    const a = store.insert(job(26, 'proj-a', ['database:active-crash']));
+    expect(store.claimNext(4)!.jobId).toBe(a.jobId);
+    expect(store.recoverActive('synthetic active crash')).toEqual([a.jobId]);
+    expect(store.get(a.jobId)!.status).toBe('FAILED_INFRASTRUCTURE');
+    expect(store.executionLeaseSummary()).toEqual([
+      expect.objectContaining({ jobId: a.jobId, resourceKey: 'database:active-crash', state: 'UNCERTAIN' }),
+    ]);
+    expect(store.reconcileTerminalExecutionLeases('startup repair')).toEqual({ released: [], uncertain: [] });
+  });
+
+  it('keeps project rows private while preserving machine-global exclusive truth', () => {
+    const raw = {
+      generation: 7,
+      cached: false,
+      capacity: { maxConcurrency: 4, maxQueuedPerProject: 16 },
+      projects: [
+        { projectId: 'visible', queued: 1, active: 0 },
+        { projectId: 'hidden', queued: 0, active: 1 },
+      ],
+      heldResources: [
+        { resourceKey: 'shared-cache:visible', jobId: 'job_visible', projectId: 'visible', state: 'ACTIVE' as const },
+        { resourceKey: 'machine:global-exclusive', jobId: 'job_hidden', projectId: 'hidden', state: 'ACTIVE' as const },
+      ],
+      waitingResources: [
+        { projectId: 'visible', resourceKey: 'shared-cache:visible', waitingJobs: 1 },
+        { projectId: 'hidden', resourceKey: 'machine:global-exclusive', waitingJobs: 1 },
+      ],
+      globalExclusiveHeld: true,
+    };
+    const projected = projectExecutionFabricForPrincipal(raw, new Set(['visible']));
+    expect(projected.projects).toEqual([{ projectId: 'visible', queued: 1, active: 0 }]);
+    expect(projected.heldResources).toEqual([
+      { resourceKey: 'shared-cache:visible', jobId: 'job_visible', projectId: 'visible', state: 'ACTIVE' },
+    ]);
+    expect(projected.waitingResources).toEqual([
+      { projectId: 'visible', resourceKey: 'shared-cache:visible', waitingJobs: 1 },
+    ]);
+    expect(projected.globalExclusiveHeld).toBe(true);
+    expect(JSON.stringify(projected)).not.toContain('hidden');
+    expect(JSON.stringify(projected)).not.toContain('job_hidden');
+  });
+
+  it('preserves true/false global-exclusive truth independent of project visibility', () => {
+    const base = {
+      generation: 1,
+      cached: false,
+      capacity: { maxConcurrency: 4, maxQueuedPerProject: 16 },
+      projects: [{ projectId: 'visible', queued: 0, active: 1 }],
+      heldResources: [
+        { resourceKey: 'machine:global-exclusive', jobId: 'job_visible', projectId: 'visible', state: 'ACTIVE' as const },
+      ],
+      waitingResources: [],
+      globalExclusiveHeld: true,
+    };
+    expect(projectExecutionFabricForPrincipal(base, new Set(['visible'])).globalExclusiveHeld).toBe(true);
+    expect(projectExecutionFabricForPrincipal({ ...base, heldResources: [], globalExclusiveHeld: false }, new Set(['visible'])).globalExclusiveHeld).toBe(false);
   });
 
   it('fails trusted configuration closed for caller-dangerous resource ids and invalid concurrency', () => {

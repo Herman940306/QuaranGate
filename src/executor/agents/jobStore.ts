@@ -66,6 +66,22 @@ const ACTIVE_SQL_LIST = EXECUTING_STATUSES.map((s) => `'${s}'`).join(',');
 const ACTIVE_ATTEMPT_SQL_LIST = AGENT_APPLY_ATTEMPT_ACTIVE_STATES.map((s) => `'${s}'`).join(',');
 
 /**
+ * BE1A R1 terminal-state lease reconciliation policy.
+ *
+ * SAFE states prove backend execution has already returned/failed and no
+ * further execution mutation can occur. FAILED_INFRASTRUCTURE and CANCELLED
+ * remain fail-closed because they can arise from crash/shutdown/abort paths
+ * where mutation completion is not independently proven.
+ */
+const SAFE_TERMINAL_EXECUTION_LEASE_STATES = new Set<AgentJobStatus>([
+  'COMPLETED', 'FAILED_PRECONDITION', 'FAILED_POLICY', 'FAILED_AGENT',
+  'FAILED_TIMEOUT', 'APPLIED', 'DISCARDED',
+]);
+const UNCERTAIN_TERMINAL_EXECUTION_LEASE_STATES = new Set<AgentJobStatus>([
+  'FAILED_INFRASTRUCTURE', 'CANCELLED',
+]);
+
+/**
  * Bounded persistence-only evidence fields (Phase A6). These never hold raw
  * artifact bytes — the canonical apply authority is the verified
  * manifest.json + content-addressed blobs (outside SQLite); these columns
@@ -1327,6 +1343,14 @@ export class AgentJobStore {
       if (Number(res.changes) !== 1) {
         throw new BridgeError('INVALID_JOB_TRANSITION', `job ${input.jobId} lost VALIDATING state during atomic completion`, 409);
       }
+      // BE1A R1: close the durable terminal-lease crash window for successful
+      // execution. A committed COMPLETED job proves backend execution and
+      // validation are finished, so ACTIVE execution leases can be RELEASED
+      // in this exact transaction. UNCERTAIN leases are never auto-cleared.
+      this.db.prepare(`UPDATE execution_resource_leases
+        SET state='RELEASED', finished_at=?, reason='job completed atomically'
+        WHERE job_id=? AND state='ACTIVE'`
+      ).run(input.completedAt, input.jobId);
       completed = {
         ...existing,
         status: 'COMPLETED',
@@ -1708,6 +1732,72 @@ export class AgentJobStore {
       }
     }
     return recovered;
+  }
+
+  /**
+   * BE1A R1 startup repair for the terminal-status/ACTIVE-lease crash window.
+   *
+   * This runs only after recoverActive(), so PREPARING/RUNNING/VALIDATING jobs
+   * have already failed closed and their leases are UNCERTAIN. Existing
+   * UNCERTAIN leases are intentionally untouched. For stale ACTIVE leases on
+   * already-terminal jobs:
+   * - proof-safe terminal states are RELEASED;
+   * - CANCELLED / FAILED_INFRASTRUCTURE become UNCERTAIN because mutation
+   *   completion cannot be inferred from those statuses alone.
+   *
+   * There is no time-based expiry and every UPDATE is bound to the exact lease
+   * id + job id, preventing cross-job release.
+   */
+  reconcileTerminalExecutionLeases(reason: string): {
+    released: string[];
+    uncertain: string[];
+  } {
+    const boundedReason = reason.slice(0, 500);
+    const at = nowIso();
+    const released: string[] = [];
+    const uncertain: string[] = [];
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db.prepare(`
+        SELECT l.lease_id, l.job_id, j.status
+        FROM execution_resource_leases l
+        JOIN agent_jobs j ON j.job_id = l.job_id
+        WHERE l.state = 'ACTIVE'
+          AND j.status NOT IN ('QUEUED','PREPARING','RUNNING','VALIDATING')
+        ORDER BY l.lease_id
+      `).all() as Array<{ lease_id: string; job_id: string; status: AgentJobStatus }>;
+
+      for (const row of rows) {
+        if (SAFE_TERMINAL_EXECUTION_LEASE_STATES.has(row.status)) {
+          const res = this.db.prepare(`
+            UPDATE execution_resource_leases
+            SET state='RELEASED', finished_at=?, reason=?
+            WHERE lease_id=? AND job_id=? AND state='ACTIVE'
+          `).run(at, `startup terminal settlement: ${boundedReason}`, row.lease_id, row.job_id);
+          if (Number(res.changes) === 1) released.push(row.lease_id);
+          continue;
+        }
+        if (UNCERTAIN_TERMINAL_EXECUTION_LEASE_STATES.has(row.status)) {
+          const res = this.db.prepare(`
+            UPDATE execution_resource_leases
+            SET state='UNCERTAIN', finished_at=?, reason=?
+            WHERE lease_id=? AND job_id=? AND state='ACTIVE'
+          `).run(at, `startup terminal uncertainty: ${boundedReason}`, row.lease_id, row.job_id);
+          if (Number(res.changes) === 1) uncertain.push(row.lease_id);
+          continue;
+        }
+        throw new BridgeError(
+          'INTERNAL',
+          `execution lease ${row.lease_id} references unsupported terminal job state ${row.status}`,
+          500,
+        );
+      }
+      this.db.exec('COMMIT');
+      return { released, uncertain };
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
   }
 
   executionProjectSummary(): Array<{ projectId: string; queued: number; active: number }> {

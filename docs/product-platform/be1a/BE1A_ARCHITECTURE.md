@@ -60,7 +60,11 @@ Production deployment, release signing, trust-root mutation, machine/WSL/runtime
 
 Startup reconciliation transitions orphaned PREPARING/RUNNING/VALIDATING jobs to FAILED_INFRASTRUCTURE and changes their ACTIVE execution leases to UNCERTAIN. UNCERTAIN leases still participate in the unique held-resource exclusion and therefore block conflicting work.
 
-No timer silently releases uncertainty. The only store settlement seam requires exact job id + exact resource key + bounded recovery evidence and is intentionally not exposed through MCP. A future trusted recovery workflow may call it only after independent proof that mutation authority is safe to release.
+BE1A R1 also closes the terminal-status crash window. Successful VALIDATING -> COMPLETED now releases only that job's ACTIVE execution leases inside the same SQLite transaction as the durable COMPLETED commit. Startup reconciliation additionally repairs historical terminal jobs that still own ACTIVE leases.
+
+Terminal lease settlement is status-sensitive. COMPLETED, FAILED_PRECONDITION, FAILED_POLICY, FAILED_AGENT, FAILED_TIMEOUT, APPLIED and DISCARDED are proof-safe for stale ACTIVE lease release because execution has already returned/failed or the job derives from a prior COMPLETED disposition. CANCELLED and FAILED_INFRASTRUCTURE remain fail-closed as UNCERTAIN because abort/crash/shutdown paths do not prove mutation completion from status alone.
+
+Existing UNCERTAIN leases are never auto-cleared. No timer silently releases uncertainty. The only explicit UNCERTAIN settlement seam requires exact job id + exact resource key + bounded recovery evidence and is intentionally not exposed through MCP.
 
 ## Cancellation
 
@@ -74,6 +78,8 @@ The snapshot uses a one-entry generation cache. Dispatch, claim, cancellation, r
 
 ## Control Center contract
 
-The private executor exposes `/control-center/execution-fabric`. The gateway fetches it and filters all project-specific rows against the authenticated principal's project grants before returning it through `control_center_query` summary/resources views.
+The private executor exposes `/control-center/execution-fabric`. The gateway fetches it and filters all project-specific `projects`, `heldResources`, and `waitingResources` rows against the authenticated principal's project grants before returning it through `control_center_query` summary/resources views.
+
+The executor-provided `globalExclusiveHeld` boolean is retained as machine-capacity truth even when the owning project is hidden from the principal. Hidden project id, job id, resource-owner rows and other project metadata remain filtered.
 
 Authority remains server-side; frontend/product consumers cannot calculate or assert lease ownership.
