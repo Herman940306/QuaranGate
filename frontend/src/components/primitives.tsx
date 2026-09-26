@@ -26,12 +26,12 @@ export function Badge({ tone = "neutral", children }: { tone?: Tone; children: R
 export function Panel({ title, children, ...props }: HTMLAttributes<HTMLElement> & { title: string }) {
   return <section {...props} className={`panel ${props.className ?? ""}`}><h2>{title}</h2>{children}</section>;
 }
-export function LoadingState({ label = "Loading content" }: { label?: string }) { return <div className="state" role="status" aria-busy="true"><strong>{label}</strong><div className="loading-line" aria-hidden="true" /><p className="muted">Waiting for content.</p></div>; }
-export function EmptyState({ title = "Nothing to display", children }: { title?: string; children?: ReactNode }) { return <div className="state"><h3>{title}</h3>{children ? <p className="muted">{children}</p> : null}</div>; }
-export function ErrorState({ category = "unknown", children }: { category?: ErrorCategory; children?: ReactNode }) { return <div className="state error-state" role="alert"><h3>Unable to continue</h3><p>{errorCopy[category]}</p>{children}</div>; }
+export function LoadingState({ label = "Loading content" }: { label?: string }) { return <div className="state" data-state="loading" role="status" aria-busy="true"><strong>{label}</strong><div className="loading-line" aria-hidden="true" /><p className="muted">Waiting for content.</p></div>; }
+export function EmptyState({ title = "Nothing to display", children }: { title?: string; children?: ReactNode }) { return <div className="state" data-state="empty"><h3>{title}</h3>{children ? <p className="muted">{children}</p> : null}</div>; }
+export function ErrorState({ category = "unknown", children }: { category?: ErrorCategory; children?: ReactNode }) { return <div className="state error-state" data-state={category} role="alert"><h3>Unable to continue</h3><p>{errorCopy[category]}</p>{children}</div>; }
 export function PermissionExplanation({ state, reason }: { state: "available" | "denied" | "unknown" | "not_implemented"; reason: string }) {
   const labels = { available: "Available · display only", denied: "Access denied", unknown: "Eligibility unknown", not_implemented: "Not implemented" };
-  return <div className="permission"><Badge tone={state === "denied" ? "destructive" : "neutral"}>{labels[state]}</Badge><p>{reason}</p><small className="muted">Display information never grants permission. Every operation requires server authorization.</small></div>;
+  return <div className="permission" data-state={state}><Badge tone={state === "denied" ? "destructive" : "neutral"}>{labels[state]}</Badge><p>{reason}</p><small className="muted">Display information never grants permission. Every operation requires server authorization.</small></div>;
 }
 export function MachineOutput({ label, children }: { label: string; children: string }) {
   return <figure className="machine"><figcaption>{label}</figcaption>{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded output must be keyboard-scrollable; the named region supplies context. */}<section className="machine-scroll" tabIndex={0} aria-label={label}><pre><code>{children}</code></pre></section></figure>;

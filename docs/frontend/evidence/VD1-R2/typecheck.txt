@@ -1,0 +1,6 @@
+COMMAND=["npm", "--prefix", "frontend", "run", "typecheck"]
+EXIT_CODE=0
+
+> @quarangate/frontend@0.1.0 typecheck
+> tsc --noEmit
+

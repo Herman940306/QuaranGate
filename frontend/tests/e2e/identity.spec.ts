@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
-const evidence = "../docs/frontend/fe2-evidence";
+const evidence = "test-results/visual-rechecks/fe2";
 async function preview(page: Page, scenario: string, surface: string) {
   await page.goto("/identity-preview");
   await page.getByLabel("Synthetic scenario").selectOption(scenario);

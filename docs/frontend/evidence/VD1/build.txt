@@ -1,0 +1,61 @@
+
+> @quarangate/frontend@0.1.0 build
+> next build
+
+▲ Next.js 16.3.6 (Turbopack)
+✓ Running next.config.ts took 52ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 1066ms
+  Running TypeScript ...
+  Finished TypeScript in 2.7s ...
+  Collecting page data using 5 workers ...
+  Generating static pages using 5 workers (0/36) ...
+  Generating static pages using 5 workers (9/36) 
+  Generating static pages using 5 workers (18/36) 
+  Generating static pages using 5 workers (27/36) 
+✓ Generating static pages using 5 workers (36/36) in 969ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /account
+├ ○ /agent-profiles
+├ ○ /agents
+├ ○ /approvals
+├ ○ /approvals-preview
+├ ○ /arena
+├ ○ /arena-preview
+├ ○ /audit-evidence
+├ ○ /control-center
+├ ○ /design-system
+├ ○ /files
+├ ○ /git
+├ ○ /github
+├ ○ /ide-sessions
+├ ○ /identity-preview
+├ ○ /jobs
+├ ○ /models
+├ ○ /monitoring
+├ ○ /overview
+├ ○ /permissions
+├ ○ /processes
+├ ○ /product-preview
+├ ○ /projects
+├ ○ /providers
+├ ○ /recovery-backups
+├ ○ /security
+├ ○ /settings
+├ ○ /sign-in
+├ ○ /statistics
+├ ○ /targets
+├ ○ /terminal
+├ ○ /tool-lab
+└ ○ /workspaces
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)  prerendered as static content
+

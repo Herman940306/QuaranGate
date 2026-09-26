@@ -1,0 +1,29 @@
+COMMAND=["npm", "--prefix", "frontend", "run", "lint"]
+EXIT_CODE=0
+
+> @quarangate/frontend@0.1.0 lint
+> biome lint .
+
+Checked 169 files in 184ms. No fixes applied.
+Found 1 info.
+tests/visual-recapture.mjs:108:56 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    106 │     receipt.stop = stop;
+    107 │     receipt.portReleased = true;
+  > 108 │     await writeFile(path.join(output, 'capture.json'), JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
+        │                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    109 │   }
+    110 │ }
+  
+  i Unsafe fix: Use a template literal.
+  
+    106 106 │       receipt.stop = stop;
+    107 107 │       receipt.portReleased = true;
+    108     │ - ····await·writeFile(path.join(output,·'capture.json'),·JSON.stringify(receipt,·null,·2)·+·'\n',·{·flag:·'wx'·});
+        108 │ + ····await·writeFile(path.join(output,·'capture.json'),·`${JSON.stringify(receipt,·null,·2)}\n`,·{·flag:·'wx'·});
+    109 109 │     }
+    110 110 │   }
+  
+

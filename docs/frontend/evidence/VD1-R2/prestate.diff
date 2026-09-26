@@ -1,0 +1,290 @@
+diff --git a/frontend/README.md b/frontend/README.md
+index 1725d2c..6b58bc5 100644
+--- a/frontend/README.md
++++ b/frontend/README.md
+@@ -304,3 +304,64 @@ The new evidence directory `../docs/frontend/evidence/VD0/` records the current
+ | `../docs/frontend/evidence/VD0/build.txt`, `capture.txt` | Fresh build/capture logs; no exports | VD0; logs only | Local production harness; no deployment proof | Evidence |
+ 
+ All 48 individual PNG paths, owning route, viewport and synthetic-state limitations are registered in `capture.json`; they have no exports/product state/backend integration and remain evidence-only candidates.
++
++## VD1 draft and evidence correction
++
++`../docs/frontend/evidence/VD1/INVALIDATION.md` supersedes VD0's production-render provenance claim. A pre-existing Next development server owns port 3100; the initial capture helper failed to verify server ownership. VD0 bytes remain historical, but the phase must be recaptured before VD1 can qualify/freeze. VD1 source changes are an uncommitted draft.
++
++| File | Purpose / exports | Feature / owned state | Dependency / integration expectation | Readiness |
++|---|---|---|---|---|
++| `../docs/frontend/evidence/VD1/INVALIDATION.md` | Provenance correction, failure and exact continuation; no exports | VD0/VD1; no product state | Observed processes and runner logs; ownership resolution required | Blocked review receipt |
++| `../docs/frontend/evidence/VD1/capture.json` | Individual PNG path/route/viewport register; no exports | VD1; capture receipts only | Unowned development server, synthetic unavailable MCP; production provenance unverified | Invalid for qualification |
++| `../docs/frontend/evidence/VD1/capture.txt` | Capture progress; no exports | VD1; logs only | Unverified render provenance | Evidence only |
++| `../docs/frontend/evidence/VD1/typecheck.txt`, `lint.txt`, `test.txt` | Earlier draft source checks; no exports | VD1; logs only | Local tools; final two adjustments not covered | Partial evidence |
++| `../docs/frontend/evidence/VD1/build.txt`, `audit.txt`, `secret-scan.json` | Build exit, vulnerability report and bounded source scan; no exports | VD1; receipts only | Local build shares generated output with existing dev process; scan not exhaustive | Partial evidence |
++| `../docs/frontend/evidence/VD1/browser-production.txt` | Port-conflict failure; no exports | VD1; log only | No browser tests executed | Blocked evidence |
++| `../docs/frontend/evidence/VD1/SHA256SUMS.json` | Every draft evidence file and hash; no exports | VD1; hashes only | Current new evidence bytes; no acceptance implication | Evidence |
++
++The 48 VD1 PNGs are individually registered in capture.json: each owns its named route/viewport, has no exports/product state, depends on an unowned development render with synthetic MCP unavailable, has no backend integration expectation and is invalid for phase qualification. Do not reuse the VD0 capture helper without resolving its readiness/ownership flaw.
++
++## Ownership release and VD0 recapture continuation
++
++The owner authorized SIGTERM to exactly PIDs 480503 and 327402. Both identities were verified using cwd, command line, start ticks and pidfds; 480503 owned loopback port 3100. Both exited and their observed children 480633/480657 disappeared. No other PID was signalled. The preserved seven-file VD1 draft matches INVALIDATION.md and remains unstaged. Historical VD0/VD1 files are preserved.
++
++| File | Purpose / key exports | Owning feature / state | API/mock dependency / future integration | Readiness |
++|---|---|---|---|---|
++| `tests/visual-recapture.mjs` | CLI capture harness; no exports; exclusive port probe, exact child listener ownership, readiness timeout, served-asset hashes, stable bundle hashes and awaited SIGTERM cleanup | VD0/VD1 visual evidence; owns only spawned production server/browser | Next production snapshot, Playwright, Linux `/proc` and `ss`; synthetic unavailable MCP, no live integration | Qualification harness candidate |
++| `../docs/frontend/evidence/VD0-RECAPTURE-20260926/source.json` | Immutable HEAD/tree and per-file source register; no exports | VD0 baseline; evidence state only | Git blob bytes, isolated snapshot; no backend integration | Evidence candidate, uncommitted |
++| `../docs/frontend/evidence/VD0-RECAPTURE-20260926/build.txt`, `capture.txt`, `server.txt` | Build/capture/server logs; no exports | VD0 baseline; logs only | Isolated webpack production build/server; no deployment proof | Evidence |
++| `../docs/frontend/evidence/VD0-RECAPTURE-20260926/capture.json` | Individual PNG paths, route/viewport/image hashes, bundle manifest and owned-server provenance; no exports | VD0; capture receipts only | Synthetic unavailable MCP; no backend integration expectation | Rendered baseline candidate; not owner acceptance |
++
++Every PNG created by recapture is individually registered in capture.json with path, owning route, viewport, hashes and measurements. Each has no exports/product state and is evidence-only. The ignored `test-results/vd0-source-20260926/` is a generated copy of the tracked frontend at HEAD; its complete file inventory is source.json. It owns no product state, uses the existing installed dependencies via a symlink, and is never the implementation lane. Baseline screenshots never include the dirty VD1 source. No old capture evidence is overwritten.
++
++Additional continuation evidence in `../docs/frontend/evidence/VD0-RECAPTURE-20260926/`:
++
++| File | Purpose / key exports | Owner / state | Dependency / future integration | Readiness |
++|---|---|---|---|---|
++| `conflict-regression.json` | Existing-listener refusal and preservation check; no exports | Capture harness; receipt only | Live owned capture listener, second invocation; no backend expectation | Regression evidence |
++| `vd1-browser-recheck.txt` | Full VD1 development E2E log; no exports | VD1; logs only | Playwright fixtures; no production-render or deployment proof | Validation evidence |
++| `premium-audit.json` | Strict static audit output; no exports | VD1; 51 findings, exit 2 | Premium audit scans frontend including generated output; no backend expectation | Failed check; findings require review |
++| `qualification.json` | Fresh check commands/results and remaining gaps; no exports | VD0/VD1; receipt only | Local source/capture/validation tools; no integration claim | Partial qualification, implementation stopped on audit failure |
++| `vd1-source-hashes.json` | Hash register for six preserved VD1 implementation/test files; no exports | VD1; evidence only | Working source; no backend expectation | Provenance receipt |
++| `LANE_RELEASE.md` | Authorized release identities, signals, poststate, capture correction and stopped handoff; no exports | VD0/VD1; handoff only | Process/kernel observations, Git and validation receipts; no backend expectation | Unaccepted candidate handoff |
++| `SHA256SUMS.json` | Hash register of all new evidence files except itself; no exports | VD0 recapture/VD1 recheck; evidence only | Local immutable file bytes; no backend expectation | Evidence manifest, no acceptance implication |
++
++Strict Premium audit exited 2. Implementation stopped under the owner's validation rule. The scan also treats generated HTML and ignored source snapshots as input and does not discover the repository-root DESIGN.md when invoked on frontend; its findings are not automatically runtime regressions. It also reports findings in existing components. No contracts or components were changed to bypass this failure. VD1 remains an uncommitted, partially rechecked draft. New baseline evidence is uncommitted and not an independent or owner visual acceptance.
++
++| Additional generated file | Purpose / key exports | Owner / state | Dependency / future integration | Readiness |
++|---|---|---|---|---|
++| `premium-audit.json` | Audit tool's default duplicate JSON report; no exports | VD1 static audit; findings only | Same strict audit command; no backend expectation | Failed audit evidence; untracked |
++
++The development browser recheck finished with 71 passing tests and one contrast failure (attention badge in light/Warm Workbench/comfortable, 4.45:1 vs required 4.5:1). Next also regenerated the existing `next-env.d.ts` to development route-type imports; that new generated drift is separate from the interrupted VD1 source and is preserved. No further source implementation occurred after validation failed. See LANE_RELEASE.md for the exact stopped handoff.
++
++## VD1 R1 inspection stop
++
++R1 stopped before source mutation under the owner's separate-issue stop condition. Strict Premium findings differ from the attention contrast failure: generated trace HTML, incorrect audit project-root resolution, and historical source findings. The concrete Agent Arena form noValidate omission predates VD1. Historical evidence and generated next-env drift remain preserved; no R1 gates or freeze are asserted.
++
++| File | Purpose / key exports | Owner / state | API/mock dependency / future integration | Readiness |
++|---|---|---|---|---|
++| `../docs/frontend/evidence/VD1-R1/prestate.json` | HEAD/tree/status and source/historical evidence hash registers; no exports | VD1 R1; receipt only | Git and local file bytes; no backend integration | Evidence only |
++| `../docs/frontend/evidence/VD1-R1/findings-classification.json` | All 51 unchanged audit findings classified; exact badge failure and token trace; no exports | VD1 R1; diagnostic state only | Preserved failure logs, current source and HEAD blob comparisons; no live backend | Inspection evidence; no acceptance |
++| `../docs/frontend/evidence/VD1-R1/REPORT.md` | Required report fields and owner-directed scope stop; no exports | VD1 R1; handoff only | Local provenance/classification; no backend integration | Stopped before remediation |
++| `../docs/frontend/evidence/VD1-R1/diff-check.txt` | Fresh whitespace/diff validation result; no exports | VD1 R1; log only | git diff --check; no backend integration | Documentation validation |
++| `../docs/frontend/evidence/VD1-R1/SHA256SUMS.json` | Every new R1 evidence file hash except itself; no exports | VD1 R1; hashes only | New local evidence bytes; no backend integration | Evidence manifest |
+diff --git a/frontend/next-env.d.ts b/frontend/next-env.d.ts
+index ce4e94a..a419cbe 100644
+--- a/frontend/next-env.d.ts
++++ b/frontend/next-env.d.ts
+@@ -1,7 +1,7 @@
+ /// <reference types="next" />
+ /// <reference types="next/image-types/global" />
+-import "./.next/types/routes.d.ts";
+-import "./.next/types/root-params.d.ts";
++import "./.next/dev/types/routes.d.ts";
++import "./.next/dev/types/root-params.d.ts";
+ 
+ // NOTE: This file should not be edited
+ // see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
+diff --git a/frontend/src/app/globals.css b/frontend/src/app/globals.css
+index 1d1f85b..bb5a098 100644
+--- a/frontend/src/app/globals.css
++++ b/frontend/src/app/globals.css
+@@ -33,18 +33,24 @@
+   --ink: #182128;
+   --muted: #5a6872;
+   --primary: var(--palette-primary);
++  --primary-strong: #24495f;
++  --radius-small: 0.375rem;
++  --radius-control: 0.625rem;
++  --radius-panel: 0.875rem;
++  --space-section: 1.5rem;
+   --primary-ink: #ffffff;
+   --focus: var(--palette-focus);
+   --verified: #2c6e64;
+-  --attention: #94542b;
+-  --destructive: #963a40;
++  --attention: #a65e2e;
++  --attention-text: color-mix(in srgb, var(--attention) 90%, var(--ink));
++  --destructive: #9a3e42;
+   --machine: #11181d;
+   --machine-ink: #e8f0f2;
+   --boundary: #c9d2d6;
+   --scroll-track: #e5eaec;
+   --scroll-thumb: #77868e;
+   --space-control: 0.75rem;
+-  --space-panel: 1.25rem;
++  --space-panel: 1rem;
+   --row-height: 2.75rem;
+   --shadow-overlay: 0 24px 70px rgb(15 24 29 / 28%);
+   background: var(--canvas);
+@@ -107,7 +113,7 @@
+ 
+ * { box-sizing: border-box; }
+ html { min-block-size: 100%; background: var(--canvas); }
+-body { min-block-size: 100%; margin: 0; background: var(--canvas); color: var(--ink); }
++body { min-block-size: 100%; margin: 0; background: var(--canvas); color: var(--ink); font-size: 0.875rem; line-height: 1.5; }
+ button, input, textarea, select { font: inherit; }
+ button, select { cursor: pointer; }
+ button:disabled { cursor: not-allowed; }
+@@ -147,15 +153,15 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
+ main { inline-size: min(100%, 94rem); margin-inline: auto; padding: clamp(1.25rem, 3vw, 2.75rem); }
+ .page-heading { display: flex; justify-content: space-between; gap: 2rem; align-items: flex-start; padding-block-end: 2rem; }
+ .eyebrow { margin: 0 0 0.65rem; color: var(--primary-text, var(--palette-primary-text)); font: 500 0.7rem "IBM Plex Mono", monospace; letter-spacing: 0.12em; }
+-h1 { margin: 0; max-inline-size: 15ch; font-size: clamp(2.2rem, 5vw, 4.6rem); line-height: 0.98; letter-spacing: -0.045em; font-weight: 500; }
++h1 { margin: 0; font-size: clamp(1.5rem, 2.5vw, 2rem); line-height: 1.2; letter-spacing: -0.025em; font-weight: 700; }
+ h2 { margin: 0 0 1rem; font-size: 1rem; line-height: 1.25; letter-spacing: -0.01em; font-weight: 600; }
+ h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+-.page-intro { max-inline-size: 42rem; margin-block: 1.1rem 0; color: var(--muted); font-size: clamp(1rem, 1.6vw, 1.15rem); line-height: 1.6; }
++.page-intro { max-inline-size: 42rem; margin-block: 0.75rem 0; color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
+ .authority-strip { display: grid; grid-template-columns: auto 1.2fr 1fr 1fr; gap: 1rem; align-items: center; margin-block-end: 1rem; padding: 0.85rem 1rem; background: var(--machine); color: var(--machine-ink); border: 1px solid color-mix(in srgb, var(--boundary) 65%, transparent); border-radius: 0.375rem; font-size: 0.75rem; }
+ .authority-strip > span:not(.authority-label) { padding-inline-start: 1rem; border-inline-start: 1px solid #52616a; color: #bcc8cd; }
+ .authority-label { color: #91acb8; font: 500 0.65rem "IBM Plex Mono", monospace; letter-spacing: 0.1em; }
+ .foundation-grid, .review-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-block-end: 1rem; }
+-.panel { min-inline-size: 0; padding: var(--space-panel); background: var(--surface); border: 1px solid var(--boundary); border-radius: 0.875rem; }
++.panel { min-inline-size: 0; padding: var(--space-panel); background: var(--surface); border: 1px solid var(--boundary); border-radius: var(--radius-panel); }
+ .review-grid > .panel { min-block-size: 12rem; }
+ .muted { color: var(--muted); }
+ .mono, code, pre { font-family: "IBM Plex Mono", monospace; }
+@@ -185,9 +191,21 @@ h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+ .button:hover:not(:disabled) { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 9%, var(--surface)); }
+ .button:active:not(:disabled) { translate: 0 1px; }
+ .button[data-emphasis="solid"] { color: var(--primary-ink); background: var(--primary); border-color: var(--primary); }
+-.button[data-emphasis="solid"]:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 86%, #000); }
++.button[data-emphasis="solid"]:hover:not(:disabled) { background: var(--primary-strong); }
+ .button[data-emphasis="ghost"] { border-color: transparent; }
+-.button:disabled { opacity: 0.52; }
++/* Intent is independent of emphasis: dangerous outline actions stay visibly gated. */
++.button[data-intent="attention"] { --action-color: var(--attention); }
++.button[data-intent="destructive"] { --action-color: var(--destructive); }
++.button[data-intent="verified"] { --action-color: var(--verified); }
++.button[data-intent="attention"], .button[data-intent="destructive"], .button[data-intent="verified"] { color: var(--action-color); border-color: var(--action-color); }
++.button[data-intent="attention"][data-emphasis="solid"], .button[data-intent="destructive"][data-emphasis="solid"], .button[data-intent="verified"][data-emphasis="solid"] { color: var(--primary-ink); background: var(--action-color); }
++.button[data-intent="destructive"] { border-inline-start-width: 3px; }
++.button[data-intent="attention"]:hover:not(:disabled), .button[data-intent="destructive"]:hover:not(:disabled), .button[data-intent="verified"]:hover:not(:disabled) { background: color-mix(in srgb, var(--action-color) 9%, var(--surface)); }
++.button[data-intent="attention"][data-emphasis="solid"]:hover:not(:disabled), .button[data-intent="destructive"][data-emphasis="solid"]:hover:not(:disabled), .button[data-intent="verified"][data-emphasis="solid"]:hover:not(:disabled) { background: color-mix(in srgb, var(--action-color) 85%, var(--ink)); }
++.button:disabled { opacity: 0.6; }
++.field input:disabled, .field select:disabled, .field textarea:disabled { background: var(--surface-muted); color: var(--muted); cursor: not-allowed; }
++.field input[readonly], .field textarea[readonly] { background: var(--surface-muted); }
++input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
+ .button-label-busy { opacity: 0; }
+ .button-busy { position: absolute; font-family: "IBM Plex Mono", monospace; letter-spacing: 0.2em; }
+ .account-context .button { max-inline-size: 100%; }
+@@ -196,13 +214,18 @@ h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+ .badge { display: inline-flex; gap: 0.35rem; align-items: center; min-block-size: 1.65rem; padding: 0.25rem 0.5rem; color: var(--muted); background: var(--surface-muted); border: 1px solid var(--boundary); border-radius: 999px; font: 500 0.65rem "IBM Plex Mono", monospace; letter-spacing: 0.03em; }
+ .badge::before { content: ""; inline-size: 0.42rem; block-size: 0.42rem; background: currentColor; border-radius: 50%; }
+ .badge[data-tone="verified"] { color: var(--verified); }
+-.badge[data-tone="attention"] { color: var(--attention); }
++.badge[data-tone="attention"] { color: var(--attention-text); }
+ .badge[data-tone="destructive"] { color: var(--destructive); }
+-.badge[data-tone="primary"] { color: var(--primary); }
++.badge[data-tone="primary"] { color: var(--primary-text, var(--palette-primary-text)); }
+ .state { min-block-size: 8rem; padding: 1rem; background: var(--surface-muted); border: 1px dashed var(--boundary); border-radius: 0.625rem; }
+ .workstation-grid .state { min-block-size: 5.5rem; }
+ .state p { max-inline-size: 38rem; line-height: 1.5; }
+-.error-state { border-style: solid; border-inline-start: 4px solid var(--destructive); }
++.error-state, .state[data-state="forbidden"], .state[data-state="error"] { border-style: solid; border-inline-start: 4px solid var(--destructive); }
++.state[data-state="available"] { min-block-size: auto; background: var(--surface); border-style: solid; border-inline-start: 3px solid var(--verified); }
++.state[data-state="unavailable"], .state[data-state="not_implemented"], .state[data-state="integration_pending"] { border-style: solid; border-inline-start: 3px solid var(--boundary); }
++.state[data-state="loading"] { border-style: solid; border-inline-start: 3px solid var(--primary); }
++.permission[data-state="denied"] { border-inline-start-color: var(--destructive); }
++.form-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-block-end: 0.75rem; }
+ .loading-line { inline-size: min(100%, 18rem); block-size: 0.2rem; margin-block: 1.25rem; background: var(--boundary); overflow: hidden; }
+ .loading-line::after { content: ""; display: block; inline-size: 35%; block-size: 100%; background: var(--primary); animation: loading 1.2s ease-in-out infinite alternate; }
+ @keyframes loading { to { translate: 185% 0; } }
+@@ -211,7 +234,7 @@ h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+ .machine { margin: 0; color: var(--machine-ink); background: var(--machine); border: 1px solid #3d4b53; border-radius: 0.625rem; overflow: hidden; }
+ .machine figcaption { padding: 0.6rem 0.8rem; color: #b7c6cc; border-block-end: 1px solid #3d4b53; font: 500 0.65rem "IBM Plex Mono", monospace; letter-spacing: 0.06em; }
+ .machine-scroll { max-block-size: 20rem; overflow: auto; }
+-.machine pre { margin: 0; padding: 1rem; color: inherit; font-size: 0.75rem; line-height: 1.65; white-space: pre-wrap; }
++.machine pre { margin: 0; padding: 1rem; color: inherit; font-size: 0.75rem; line-height: 1.65; white-space: pre; }
+ .tabs { display: flex; gap: 0.25rem; overflow-x: auto; border-block-end: 1px solid var(--boundary); }
+ .tabs button { flex: none; padding: 0.6rem 0.75rem; color: var(--muted); background: transparent; border: 0; border-block-end: 3px solid transparent; }
+ .tabs button:hover { color: var(--ink); background: var(--surface-muted); }
+@@ -227,8 +250,8 @@ h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+ .table-scroll { margin-block-start: 1rem; overflow-x: auto; scrollbar-gutter: stable; }
+ table { inline-size: 100%; min-inline-size: 36rem; border-collapse: collapse; font-size: 0.78rem; }
+ caption { padding-block: 0.6rem; text-align: start; color: var(--muted); font: 0.7rem "IBM Plex Mono", monospace; }
+-th, td { min-block-size: var(--row-height); padding: 0.7rem; border-block-end: 1px solid var(--boundary); text-align: start; }
+-th { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.04em; }
++th, td { min-block-size: var(--row-height); padding: 0.5rem 0.75rem; vertical-align: top; border-block-end: 1px solid var(--boundary); text-align: start; }
++th { background: var(--surface-muted); color: var(--muted); font-size: 0.7rem; letter-spacing: 0.04em; }
+ .modal { margin: auto; inline-size: min(38rem, calc(100% - 2rem)); max-block-size: calc(100% - 2rem); padding: 0; color: var(--ink); background: var(--surface); border: 1px solid var(--boundary); border-radius: 0.875rem; box-shadow: var(--shadow-overlay); overflow: auto; }
+ .modal::backdrop { background: rgb(8 15 19 / 66%); }
+ .modal > div { padding: var(--space-panel); }
+@@ -307,7 +330,7 @@ th { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.04em; }
+   .header-context { flex-wrap: wrap; }
+   .motion-samples > div { grid-template-columns: minmax(0, 1fr); }
+   .page-heading { display: grid; gap: 1rem; }
+-  h1 { font-size: 2.25rem; }
++  h1 { font-size: 1.5rem; }
+   .page-footer { display: grid; }
+   .toast-center { inset-inline: 0.6rem; max-inline-size: none; }
+   .arena-thread, .arena-conversation-head, .arena-composer { padding-inline: 0.8rem; }
+diff --git a/frontend/src/app/layout.tsx b/frontend/src/app/layout.tsx
+index 6d8519d..2e2a811 100644
+--- a/frontend/src/app/layout.tsx
++++ b/frontend/src/app/layout.tsx
+@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
+ import "@fontsource/ibm-plex-sans/latin-400.css";
+ import "@fontsource/ibm-plex-sans/latin-500.css";
+ import "@fontsource/ibm-plex-sans/latin-600.css";
++import "@fontsource/ibm-plex-sans/latin-700.css";
+ import "@fontsource/ibm-plex-mono/latin-400.css";
+ import "./globals.css";
+ import { AppearanceProvider } from "../components/appearance-provider";
+diff --git a/frontend/src/components/operational-read.tsx b/frontend/src/components/operational-read.tsx
+index ef0cf5f..2f439bb 100644
+--- a/frontend/src/components/operational-read.tsx
++++ b/frontend/src/components/operational-read.tsx
+@@ -5,7 +5,7 @@ import { freshness, stateCopy, type OperationalState } from "../lib/operational/
+ import type { ReadReceipt } from "../lib/operational/transport";
+ import { Badge, Button, EmptyState, LoadingState, Panel, Table } from "./primitives";
+ export function OperationalStateView({ state, correlationId }: { state: OperationalState; correlationId?: string }) {
+-  return <div className="state" role="status"><Badge tone={state === "forbidden" ? "destructive" : state === "available" ? "verified" : "neutral"}>{state.replaceAll("_", " ")}</Badge><p>{stateCopy[state]}</p>{correlationId ? <small>Request correlation: {correlationId}</small> : null}</div>;
++  return <div className="state" data-state={state} role="status"><Badge tone={state === "forbidden" ? "destructive" : state === "available" ? "verified" : "neutral"}>{state.replaceAll("_", " ")}</Badge><p>{stateCopy[state]}</p>{correlationId ? <small>Request correlation: {correlationId}</small> : null}</div>;
+ }
+ export function ReceiptTime({ receivedAt, generatedAt }: { receivedAt: string; generatedAt?: string }) {
+   const [now, setNow] = useState(() => Date.now());
+diff --git a/frontend/src/components/primitives.tsx b/frontend/src/components/primitives.tsx
+index 7e56e7a..a447f99 100644
+--- a/frontend/src/components/primitives.tsx
++++ b/frontend/src/components/primitives.tsx
+@@ -26,12 +26,12 @@ export function Badge({ tone = "neutral", children }: { tone?: Tone; children: R
+ export function Panel({ title, children, ...props }: HTMLAttributes<HTMLElement> & { title: string }) {
+   return <section {...props} className={`panel ${props.className ?? ""}`}><h2>{title}</h2>{children}</section>;
+ }
+-export function LoadingState({ label = "Loading content" }: { label?: string }) { return <div className="state" role="status" aria-busy="true"><strong>{label}</strong><div className="loading-line" aria-hidden="true" /><p className="muted">Waiting for content.</p></div>; }
+-export function EmptyState({ title = "Nothing to display", children }: { title?: string; children?: ReactNode }) { return <div className="state"><h3>{title}</h3>{children ? <p className="muted">{children}</p> : null}</div>; }
+-export function ErrorState({ category = "unknown", children }: { category?: ErrorCategory; children?: ReactNode }) { return <div className="state error-state" role="alert"><h3>Unable to continue</h3><p>{errorCopy[category]}</p>{children}</div>; }
++export function LoadingState({ label = "Loading content" }: { label?: string }) { return <div className="state" data-state="loading" role="status" aria-busy="true"><strong>{label}</strong><div className="loading-line" aria-hidden="true" /><p className="muted">Waiting for content.</p></div>; }
++export function EmptyState({ title = "Nothing to display", children }: { title?: string; children?: ReactNode }) { return <div className="state" data-state="empty"><h3>{title}</h3>{children ? <p className="muted">{children}</p> : null}</div>; }
++export function ErrorState({ category = "unknown", children }: { category?: ErrorCategory; children?: ReactNode }) { return <div className="state error-state" data-state={category} role="alert"><h3>Unable to continue</h3><p>{errorCopy[category]}</p>{children}</div>; }
+ export function PermissionExplanation({ state, reason }: { state: "available" | "denied" | "unknown" | "not_implemented"; reason: string }) {
+   const labels = { available: "Available · display only", denied: "Access denied", unknown: "Eligibility unknown", not_implemented: "Not implemented" };
+-  return <div className="permission"><Badge tone={state === "denied" ? "destructive" : "neutral"}>{labels[state]}</Badge><p>{reason}</p><small className="muted">Display information never grants permission. Every operation requires server authorization.</small></div>;
++  return <div className="permission" data-state={state}><Badge tone={state === "denied" ? "destructive" : "neutral"}>{labels[state]}</Badge><p>{reason}</p><small className="muted">Display information never grants permission. Every operation requires server authorization.</small></div>;
+ }
+ export function MachineOutput({ label, children }: { label: string; children: string }) {
+   return <figure className="machine"><figcaption>{label}</figcaption>{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded output must be keyboard-scrollable; the named region supplies context. */}<section className="machine-scroll" tabIndex={0} aria-label={label}><pre><code>{children}</code></pre></section></figure>;
+diff --git a/frontend/tests/e2e/identity.spec.ts b/frontend/tests/e2e/identity.spec.ts
+index 788848a..b12d9c2 100644
+--- a/frontend/tests/e2e/identity.spec.ts
++++ b/frontend/tests/e2e/identity.spec.ts
+@@ -1,7 +1,7 @@
+ import AxeBuilder from "@axe-core/playwright";
+ import { expect, test, type Page } from "@playwright/test";
+ import { mkdir } from "node:fs/promises";
+-const evidence = "../docs/frontend/fe2-evidence";
++const evidence = "test-results/visual-rechecks/fe2";
+ async function preview(page: Page, scenario: string, surface: string) {
+   await page.goto("/identity-preview");
+   await page.getByLabel("Synthetic scenario").selectOption(scenario);
+diff --git a/frontend/tests/e2e/product.spec.ts b/frontend/tests/e2e/product.spec.ts
+index 209f616..b21de88 100644
+--- a/frontend/tests/e2e/product.spec.ts
++++ b/frontend/tests/e2e/product.spec.ts
+@@ -1,7 +1,7 @@
+ import AxeBuilder from "@axe-core/playwright";
+ import { expect, test, type Page } from "@playwright/test";
+ 
+-const evidence = "../docs/frontend/fe3-evidence";
++const evidence = "test-results/visual-rechecks/fe3";
+ async function preview(page: Page, width = 1280) {
+   await page.setViewportSize({ width, height: 900 });
+   await page.goto("/product-preview");

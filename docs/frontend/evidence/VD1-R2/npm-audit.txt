@@ -1,0 +1,3 @@
+COMMAND=["npm", "--prefix", "frontend", "audit", "--audit-level=high"]
+EXIT_CODE=0
+found 0 vulnerabilities

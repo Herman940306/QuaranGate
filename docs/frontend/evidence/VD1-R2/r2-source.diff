@@ -1,0 +1,25 @@
+--- a/frontend/src/app/globals.css
++++ b/frontend/src/app/globals.css
+@@ -65,6 +65,11 @@
+ :root[data-palette="delft"] { --palette-primary: #2e5984; --palette-primary-text: #2e5984; --palette-focus: #286fa3; --canvas: #f1f4f7; --surface-muted: #e4eaf0; }
+ :root[data-palette="slate"] { --palette-primary: #4b6372; --palette-primary-text: #4b6372; --palette-focus: #326f91; --canvas: #f1f3f4; --surface-muted: #e5e9eb; }
+ :root[data-palette="warm_workbench"] { --palette-primary: #805234; --palette-primary-text: #805234; --palette-focus: #93602f; --canvas: #f5f2ed; --surface-muted: #ebe5dc; --boundary: #d5ccc0; }
++/* The warmer light surface needs a little more ink in small attention text. */
++:root[data-palette="warm_workbench"][data-mode="light"] { --attention-text: color-mix(in srgb, var(--attention) 85%, var(--ink)); }
++@media (prefers-color-scheme: light) {
++  :root[data-palette="warm_workbench"][data-mode="system"] { --attention-text: color-mix(in srgb, var(--attention) 85%, var(--ink)); }
++}
+ :root[data-density="compact"] { --space-control: 0.5rem; --space-panel: 0.875rem; --row-height: 2.25rem; }
+ 
+ :root[data-mode="dark"] {
+--- a/frontend/src/components/agent-arena.tsx
++++ b/frontend/src/components/agent-arena.tsx
+@@ -100,7 +100,7 @@
+             {disposition.failure ? <p role="alert">Outcome unverified. Check job status before retrying.</p> : null}
+           </Panel>
+         </div> : null}</div>
+-      <form className="arena-composer" onSubmit={event => void submit(event)}><Textarea id="arena-prompt" label="Work request" value={prompt} maxLength={32768} onChange={event => setPrompt(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Ask QuaranGate to review, plan, investigate, or implement…" help="Enter submits; Shift+Enter adds a line. The request is local until the server acknowledges dispatch." />
++      <form noValidate className="arena-composer" onSubmit={event => void submit(event)}><Textarea id="arena-prompt" label="Work request" value={prompt} maxLength={32768} onChange={event => setPrompt(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Ask QuaranGate to review, plan, investigate, or implement…" help="Enter submits; Shift+Enter adds a line. The request is local until the server acknowledges dispatch." />
+         <div className="arena-composer-bar"><div className="cluster"><Button disabled title="No accepted microphone or speech-to-text contract" aria-label="Voice input unavailable">Mic</Button><Button disabled title="Attachments are not in the current agent_dispatch contract">Attach</Button><Badge>{selectedProject?.id ?? "No project"}</Badge></div><Button type="submit" emphasis="solid" disabled={!dispatchReady || dispatch.pending} busy={dispatch.pending}>Dispatch request</Button></div>
+         {dispatch.failure ? <p role="alert">Dispatch outcome unverified. Check for a server job receipt before trying again; no automatic retry occurs.</p> : null}
+         {dispatch.receipt ? <p role="status">Server acknowledged job <code>{dispatch.receipt.data.jobId}</code> at <time dateTime={dispatch.receipt.data.createdAt}>{dispatch.receipt.data.createdAt}</time>.</p> : null}

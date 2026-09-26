@@ -1,0 +1,39 @@
+{
+  "typecheck": {
+    "command": "npm run typecheck",
+    "exitCode": 0
+  },
+  "lint": {
+    "command": "npm run lint",
+    "exitCode": 0,
+    "informationalFindings": 1
+  },
+  "unit": {
+    "command": "npm test",
+    "exitCode": 0,
+    "passed": 164,
+    "filesPassed": 18
+  },
+  "captureHarnessSyntax": {
+    "command": "node --check frontend/tests/visual-recapture.mjs",
+    "exitCode": 0
+  },
+  "premiumAudit": {
+    "command": "python3 <frontend-design-premium>/scripts/audit_project.py frontend --mode strict",
+    "exitCode": 2,
+    "errors": 51,
+    "status": "STOP_FURTHER_IMPLEMENTATION"
+  },
+  "vd1ProductionBuild": "NOT_RUN_THIS_TURN",
+  "vd1ProductionCapture": "NOT_RUN_THIS_TURN",
+  "figma": "APPROVED_REFERENCE_NOT_IDENTIFIED",
+  "visualConformance": "NOT_YET_FINAL",
+  "browserE2E": {
+    "command": "npm run test:e2e",
+    "observedCommandExitCode": 143,
+    "passed": 71,
+    "failed": 1,
+    "failure": "light/warm_workbench/comfortable attention badge: contrast 4.45:1, required 4.5:1",
+    "status": "FAIL_STOP"
+  }
+}

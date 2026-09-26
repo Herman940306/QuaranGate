@@ -1,0 +1,23 @@
+COMMAND=["npm", "--prefix", "frontend", "run", "test:e2e", "--", "foundation.spec.ts", "--grep", "local fonts and representative theme combinations", "--reporter=list", "--output=test-results/vd1-r2-contrast"]
+
+> @quarangate/frontend@0.1.0 test:e2e
+> playwright test foundation.spec.ts --grep local fonts and representative theme combinations --reporter=list --output=test-results/vd1-r2-contrast
+
+[WebServer] (node:975538) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:975559) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:975585) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:975596) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 1 test using 1 worker
+
+(node:975637) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [chromium] › tests/e2e/foundation.spec.ts:148:1 › local fonts and representative theme combinations remain accessible (25.8s)
+
+  1 passed (28.7s)
+
+EXIT_CODE=0

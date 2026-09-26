@@ -1,0 +1,8 @@
+{
+  "frontend/src/app/globals.css": "2965f20a8c9fdaa8efc625b494fb2f72f4a0647e4bcb02d4c83302ce0f0d80d6",
+  "frontend/src/app/layout.tsx": "1ad5318e71e4bda4035650784cbc16762efd855f7de0804e8b1ef5d44abf2f76",
+  "frontend/src/components/operational-read.tsx": "bd382d97d898bfe0b90a740fff70522f6316177dde894457d45f528d2221f0b8",
+  "frontend/src/components/primitives.tsx": "ebff6100f2a34a321dccad10776109fec118c9ce8051105cb9621cbcd2f535d9",
+  "frontend/tests/e2e/identity.spec.ts": "13842c86fa609d3576eaab9d5322e1dca1242cc44d0a51d8f0134520295a5b10",
+  "frontend/tests/e2e/product.spec.ts": "66c9fd82a276e1a7f6f5a0ea41eb5c07e420c25c7e9facc85a32f59ff773a292"
+}

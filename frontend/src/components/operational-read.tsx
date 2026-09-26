@@ -5,7 +5,7 @@ import { freshness, stateCopy, type OperationalState } from "../lib/operational/
 import type { ReadReceipt } from "../lib/operational/transport";
 import { Badge, Button, EmptyState, LoadingState, Panel, Table } from "./primitives";
 export function OperationalStateView({ state, correlationId }: { state: OperationalState; correlationId?: string }) {
-  return <div className="state" role="status"><Badge tone={state === "forbidden" ? "destructive" : state === "available" ? "verified" : "neutral"}>{state.replaceAll("_", " ")}</Badge><p>{stateCopy[state]}</p>{correlationId ? <small>Request correlation: {correlationId}</small> : null}</div>;
+  return <div className="state" data-state={state} role="status"><Badge tone={state === "forbidden" ? "destructive" : state === "available" ? "verified" : "neutral"}>{state.replaceAll("_", " ")}</Badge><p>{stateCopy[state]}</p>{correlationId ? <small>Request correlation: {correlationId}</small> : null}</div>;
 }
 export function ReceiptTime({ receivedAt, generatedAt }: { receivedAt: string; generatedAt?: string }) {
   const [now, setNow] = useState(() => Date.now());

@@ -1,0 +1,70 @@
+
+> @quarangate/frontend@0.1.0 build
+> next build --webpack
+
+▲ Next.js 16.3.6 (webpack)
+✓ Running next.config.ts took 28ms
+
+  Creating an optimized production build ...
+⚠ Compiled with warnings in 8.5s
+
+./src/app/(foundation)/settings/page.tsx
+Should not import the named export 'version' (imported as 'version') from default-exporting module (only default export is available soon)
+
+Import trace for requested module:
+./src/app/(foundation)/settings/page.tsx
+
+✓ Compiled successfully in 15.9s
+  Running TypeScript ...
+  Finished TypeScript in 4.8s ...
+  Collecting page data using 5 workers ...
+  Generating static pages using 5 workers (0/36) ...
+  Generating static pages using 5 workers (9/36) 
+  Generating static pages using 5 workers (18/36) 
+  Generating static pages using 5 workers (27/36) 
+✓ Generating static pages using 5 workers (36/36) in 578ms
+  Finalizing page optimization ...
+  Collecting build traces ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /account
+├ ○ /agent-profiles
+├ ○ /agents
+├ ○ /approvals
+├ ○ /approvals-preview
+├ ○ /arena
+├ ○ /arena-preview
+├ ○ /audit-evidence
+├ ○ /control-center
+├ ○ /design-system
+├ ○ /files
+├ ○ /git
+├ ○ /github
+├ ○ /ide-sessions
+├ ○ /identity-preview
+├ ○ /jobs
+├ ○ /models
+├ ○ /monitoring
+├ ○ /overview
+├ ○ /permissions
+├ ○ /processes
+├ ○ /product-preview
+├ ○ /projects
+├ ○ /providers
+├ ○ /recovery-backups
+├ ○ /security
+├ ○ /settings
+├ ○ /sign-in
+├ ○ /statistics
+├ ○ /targets
+├ ○ /terminal
+├ ○ /tool-lab
+└ ○ /workspaces
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)  prerendered as static content
+

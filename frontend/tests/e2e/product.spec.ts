@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-const evidence = "../docs/frontend/fe3-evidence";
+const evidence = "test-results/visual-rechecks/fe3";
 async function preview(page: Page, width = 1280) {
   await page.setViewportSize({ width, height: 900 });
   await page.goto("/product-preview");

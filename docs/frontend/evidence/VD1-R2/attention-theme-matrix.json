@@ -1,0 +1,332 @@
+[
+  {
+    "width": 1280,
+    "mode": "light",
+    "palette": "default",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#98582d",
+        "background": "#e9eeef",
+        "computedForeground": "color(srgb 0.595294 0.344706 0.178039)",
+        "ratio": 4.760307517566962
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "dark",
+    "palette": "delft",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "light",
+    "palette": "mineral",
+    "density": "compact",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#98582d",
+        "background": "#e3ece9",
+        "computedForeground": "color(srgb 0.595294 0.344706 0.178039)",
+        "ratio": 4.627656667226235
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "dark",
+    "palette": "slate",
+    "density": "compact",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "light",
+    "palette": "warm_workbench",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#91552d",
+        "background": "#ebe5dc",
+        "computedForeground": "color(srgb 0.567451 0.332745 0.176863)",
+        "ratio": 4.736650617513647
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "light",
+    "palette": "delft",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#98582d",
+        "background": "#e4eaf0",
+        "computedForeground": "color(srgb 0.595294 0.344706 0.178039)",
+        "ratio": 4.597191084585031
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "light",
+    "palette": "slate",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#98582d",
+        "background": "#e5e9eb",
+        "computedForeground": "color(srgb 0.595294 0.344706 0.178039)",
+        "ratio": 4.560209663659895
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "dark",
+    "palette": "default",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "dark",
+    "palette": "mineral",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "dark",
+    "palette": "warm_workbench",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "mode": "system",
+    "palette": "warm_workbench",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#91552d",
+        "background": "#ebe5dc",
+        "computedForeground": "color(srgb 0.567451 0.332745 0.176863)",
+        "ratio": 4.736650617513647
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "light",
+    "palette": "default",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#98582d",
+        "background": "#e9eeef",
+        "computedForeground": "color(srgb 0.595294 0.344706 0.178039)",
+        "ratio": 4.760307517566962
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "dark",
+    "palette": "delft",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "light",
+    "palette": "mineral",
+    "density": "compact",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#98582d",
+        "background": "#e3ece9",
+        "computedForeground": "color(srgb 0.595294 0.344706 0.178039)",
+        "ratio": 4.627656667226235
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "dark",
+    "palette": "slate",
+    "density": "compact",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "light",
+    "palette": "warm_workbench",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#91552d",
+        "background": "#ebe5dc",
+        "computedForeground": "color(srgb 0.567451 0.332745 0.176863)",
+        "ratio": 4.736650617513647
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "light",
+    "palette": "delft",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#98582d",
+        "background": "#e4eaf0",
+        "computedForeground": "color(srgb 0.595294 0.344706 0.178039)",
+        "ratio": 4.597191084585031
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "light",
+    "palette": "slate",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#98582d",
+        "background": "#e5e9eb",
+        "computedForeground": "color(srgb 0.595294 0.344706 0.178039)",
+        "ratio": 4.560209663659895
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "dark",
+    "palette": "default",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "dark",
+    "palette": "mineral",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "dark",
+    "palette": "warm_workbench",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#da9f71",
+        "background": "#202d34",
+        "computedForeground": "color(srgb 0.855294 0.624314 0.444706)",
+        "ratio": 6.175363670326796
+      }
+    ]
+  },
+  {
+    "width": 360,
+    "mode": "system",
+    "palette": "warm_workbench",
+    "density": "comfortable",
+    "badges": [
+      {
+        "text": "DESIGN \u00b7 Attention",
+        "foreground": "#91552d",
+        "background": "#ebe5dc",
+        "computedForeground": "color(srgb 0.567451 0.332745 0.176863)",
+        "ratio": 4.736650617513647
+      }
+    ]
+  }
+]

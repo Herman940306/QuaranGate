@@ -39,9 +39,10 @@ for (const width of [1280, 360]) {
 }
 
 test("synthetic Arena dispatch, review and explicit apply remain separate", async ({ page }) => {
-  let applied = false; const sent: string[] = [];
+  let applied = false; const sent: string[] = []; const prompts: string[] = [];
   await page.route("**/mcp", async route => {
     const request = route.request().postDataJSON(); const name = request.params.name as string; sent.push(name);
+    if (name === "agent_dispatch") prompts.push(request.params.arguments.prompt);
     const data = name === "agent_projects" ? { projects: [{ id: "demo", gitRequired: true, allowedBackends: ["kiro"], allowedProfiles: ["review"] }] }
       : name === "agents_list" ? { backends: [{ id: "kiro", available: true, profiles: ["review"] }] }
       : name === "agent_dispatch" ? { jobId, status: "QUEUED", project: "demo", backend: "kiro", profile: "review", resourcePolicy: "standard", createdAt: "2026-09-26T00:00:00Z" }
@@ -57,10 +58,34 @@ test("synthetic Arena dispatch, review and explicit apply remain separate", asyn
   await page.getByRole("button", { name: "Load current options" }).click();
   await page.getByLabel("Project", { exact: true }).selectOption("demo"); await page.getByLabel("Backend", { exact: true }).selectOption("kiro");
   await page.getByLabel("Agent Profile", { exact: true }).selectOption("synthetic-reviewer");
+  const prompt = page.getByLabel("Work request");
+  await expect(page.locator("form.arena-composer")).toHaveAttribute("novalidate", "");
+  await expect(prompt).toHaveCSS("resize", "none");
+  await prompt.fill("Keyboard request");
+  await prompt.press("Shift+Enter");
+  await expect(prompt).toHaveValue("Keyboard request\n");
+  expect(prompts).toEqual([]);
+  // A native constraint must not preempt the application's submit handler.
+  await prompt.evaluate((element: HTMLTextAreaElement) => element.setCustomValidity("Synthetic browser constraint"));
+  expect(await prompt.evaluate((element: HTMLTextAreaElement) => element.validity.valid)).toBe(false);
+  await prompt.press("Enter");
+  await expect(page.getByText(`Server acknowledged job ${jobId}`)).toBeVisible();
+  expect(prompts).toEqual(["Keyboard request\n"]);
+  expect(sent).not.toContain("agent_apply");
+  await prompt.evaluate((element: HTMLTextAreaElement) => element.setCustomValidity(""));
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  // Reload the synthetic fixture to exercise the existing button submit path independently.
+  await page.reload(); await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: "Load current options" }).click();
+  await page.getByLabel("Project", { exact: true }).selectOption("demo"); await page.getByLabel("Backend", { exact: true }).selectOption("kiro");
+  await page.getByLabel("Agent Profile", { exact: true }).selectOption("synthetic-reviewer");
   await page.getByLabel("Work request").fill("Review the bounded change");
+  await prompt.evaluate((element: HTMLTextAreaElement) => element.setCustomValidity("Synthetic browser constraint"));
   await expect(page.getByRole("button", { name: "Dispatch request" })).toBeEnabled();
   await page.getByRole("button", { name: "Dispatch request" }).click();
   await expect(page.getByText(`Server acknowledged job ${jobId}`)).toBeVisible();
+  expect(prompts).toEqual(["Keyboard request\n", "Review the bounded change"]);
+  await prompt.evaluate((element: HTMLTextAreaElement) => element.setCustomValidity(""));
   await expect(page.getByText("Review the bounded change", { exact: true })).toBeVisible();
   await expect(page.getByText("Lifecycle:")).toContainText("COMPLETED");
   expect(sent).not.toContain("agent_apply");

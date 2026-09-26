@@ -304,3 +304,78 @@ The new evidence directory `../docs/frontend/evidence/VD0/` records the current 
 | `../docs/frontend/evidence/VD0/build.txt`, `capture.txt` | Fresh build/capture logs; no exports | VD0; logs only | Local production harness; no deployment proof | Evidence |
 
 All 48 individual PNG paths, owning route, viewport and synthetic-state limitations are registered in `capture.json`; they have no exports/product state/backend integration and remain evidence-only candidates.
+
+## VD1 draft and evidence correction
+
+`../docs/frontend/evidence/VD1/INVALIDATION.md` supersedes VD0's production-render provenance claim. A pre-existing Next development server owns port 3100; the initial capture helper failed to verify server ownership. VD0 bytes remain historical, but the phase must be recaptured before VD1 can qualify/freeze. VD1 source changes are an uncommitted draft.
+
+| File | Purpose / exports | Feature / owned state | Dependency / integration expectation | Readiness |
+|---|---|---|---|---|
+| `../docs/frontend/evidence/VD1/INVALIDATION.md` | Provenance correction, failure and exact continuation; no exports | VD0/VD1; no product state | Observed processes and runner logs; ownership resolution required | Blocked review receipt |
+| `../docs/frontend/evidence/VD1/capture.json` | Individual PNG path/route/viewport register; no exports | VD1; capture receipts only | Unowned development server, synthetic unavailable MCP; production provenance unverified | Invalid for qualification |
+| `../docs/frontend/evidence/VD1/capture.txt` | Capture progress; no exports | VD1; logs only | Unverified render provenance | Evidence only |
+| `../docs/frontend/evidence/VD1/typecheck.txt`, `lint.txt`, `test.txt` | Earlier draft source checks; no exports | VD1; logs only | Local tools; final two adjustments not covered | Partial evidence |
+| `../docs/frontend/evidence/VD1/build.txt`, `audit.txt`, `secret-scan.json` | Build exit, vulnerability report and bounded source scan; no exports | VD1; receipts only | Local build shares generated output with existing dev process; scan not exhaustive | Partial evidence |
+| `../docs/frontend/evidence/VD1/browser-production.txt` | Port-conflict failure; no exports | VD1; log only | No browser tests executed | Blocked evidence |
+| `../docs/frontend/evidence/VD1/SHA256SUMS.json` | Every draft evidence file and hash; no exports | VD1; hashes only | Current new evidence bytes; no acceptance implication | Evidence |
+
+The 48 VD1 PNGs are individually registered in capture.json: each owns its named route/viewport, has no exports/product state, depends on an unowned development render with synthetic MCP unavailable, has no backend integration expectation and is invalid for phase qualification. Do not reuse the VD0 capture helper without resolving its readiness/ownership flaw.
+
+## Ownership release and VD0 recapture continuation
+
+The owner authorized SIGTERM to exactly PIDs 480503 and 327402. Both identities were verified using cwd, command line, start ticks and pidfds; 480503 owned loopback port 3100. Both exited and their observed children 480633/480657 disappeared. No other PID was signalled. The preserved seven-file VD1 draft matches INVALIDATION.md and remains unstaged. Historical VD0/VD1 files are preserved.
+
+| File | Purpose / key exports | Owning feature / state | API/mock dependency / future integration | Readiness |
+|---|---|---|---|---|
+| `tests/visual-recapture.mjs` | CLI capture harness; no exports; exclusive port probe, exact child listener ownership, readiness timeout, served-asset hashes, stable bundle hashes and awaited SIGTERM cleanup | VD0/VD1 visual evidence; owns only spawned production server/browser | Next production snapshot, Playwright, Linux `/proc` and `ss`; synthetic unavailable MCP, no live integration | Qualification harness candidate |
+| `../docs/frontend/evidence/VD0-RECAPTURE-20260926/source.json` | Immutable HEAD/tree and per-file source register; no exports | VD0 baseline; evidence state only | Git blob bytes, isolated snapshot; no backend integration | Evidence candidate, uncommitted |
+| `../docs/frontend/evidence/VD0-RECAPTURE-20260926/build.txt`, `capture.txt`, `server.txt` | Build/capture/server logs; no exports | VD0 baseline; logs only | Isolated webpack production build/server; no deployment proof | Evidence |
+| `../docs/frontend/evidence/VD0-RECAPTURE-20260926/capture.json` | Individual PNG paths, route/viewport/image hashes, bundle manifest and owned-server provenance; no exports | VD0; capture receipts only | Synthetic unavailable MCP; no backend integration expectation | Rendered baseline candidate; not owner acceptance |
+
+Every PNG created by recapture is individually registered in capture.json with path, owning route, viewport, hashes and measurements. Each has no exports/product state and is evidence-only. The ignored `test-results/vd0-source-20260926/` is a generated copy of the tracked frontend at HEAD; its complete file inventory is source.json. It owns no product state, uses the existing installed dependencies via a symlink, and is never the implementation lane. Baseline screenshots never include the dirty VD1 source. No old capture evidence is overwritten.
+
+Additional continuation evidence in `../docs/frontend/evidence/VD0-RECAPTURE-20260926/`:
+
+| File | Purpose / key exports | Owner / state | Dependency / future integration | Readiness |
+|---|---|---|---|---|
+| `conflict-regression.json` | Existing-listener refusal and preservation check; no exports | Capture harness; receipt only | Live owned capture listener, second invocation; no backend expectation | Regression evidence |
+| `vd1-browser-recheck.txt` | Full VD1 development E2E log; no exports | VD1; logs only | Playwright fixtures; no production-render or deployment proof | Validation evidence |
+| `premium-audit.json` | Strict static audit output; no exports | VD1; 51 findings, exit 2 | Premium audit scans frontend including generated output; no backend expectation | Failed check; findings require review |
+| `qualification.json` | Fresh check commands/results and remaining gaps; no exports | VD0/VD1; receipt only | Local source/capture/validation tools; no integration claim | Partial qualification, implementation stopped on audit failure |
+| `vd1-source-hashes.json` | Hash register for six preserved VD1 implementation/test files; no exports | VD1; evidence only | Working source; no backend expectation | Provenance receipt |
+| `LANE_RELEASE.md` | Authorized release identities, signals, poststate, capture correction and stopped handoff; no exports | VD0/VD1; handoff only | Process/kernel observations, Git and validation receipts; no backend expectation | Unaccepted candidate handoff |
+| `SHA256SUMS.json` | Hash register of all new evidence files except itself; no exports | VD0 recapture/VD1 recheck; evidence only | Local immutable file bytes; no backend expectation | Evidence manifest, no acceptance implication |
+
+Strict Premium audit exited 2. Implementation stopped under the owner's validation rule. The scan also treats generated HTML and ignored source snapshots as input and does not discover the repository-root DESIGN.md when invoked on frontend; its findings are not automatically runtime regressions. It also reports findings in existing components. No contracts or components were changed to bypass this failure. VD1 remains an uncommitted, partially rechecked draft. New baseline evidence is uncommitted and not an independent or owner visual acceptance.
+
+| Additional generated file | Purpose / key exports | Owner / state | Dependency / future integration | Readiness |
+|---|---|---|---|---|
+| `premium-audit.json` | Audit tool's default duplicate JSON report; no exports | VD1 static audit; findings only | Same strict audit command; no backend expectation | Failed audit evidence; untracked |
+
+The development browser recheck finished with 71 passing tests and one contrast failure (attention badge in light/Warm Workbench/comfortable, 4.45:1 vs required 4.5:1). Next also regenerated the existing `next-env.d.ts` to development route-type imports; that new generated drift is separate from the interrupted VD1 source and is preserved. No further source implementation occurred after validation failed. See LANE_RELEASE.md for the exact stopped handoff.
+
+## VD1 R1 inspection stop
+
+R1 stopped before source mutation under the owner's separate-issue stop condition. Strict Premium findings differ from the attention contrast failure: generated trace HTML, incorrect audit project-root resolution, and historical source findings. The concrete Agent Arena form noValidate omission predates VD1. Historical evidence and generated next-env drift remain preserved; no R1 gates or freeze are asserted.
+
+| File | Purpose / key exports | Owner / state | API/mock dependency / future integration | Readiness |
+|---|---|---|---|---|
+| `../docs/frontend/evidence/VD1-R1/prestate.json` | HEAD/tree/status and source/historical evidence hash registers; no exports | VD1 R1; receipt only | Git and local file bytes; no backend integration | Evidence only |
+| `../docs/frontend/evidence/VD1-R1/findings-classification.json` | All 51 unchanged audit findings classified; exact badge failure and token trace; no exports | VD1 R1; diagnostic state only | Preserved failure logs, current source and HEAD blob comparisons; no live backend | Inspection evidence; no acceptance |
+| `../docs/frontend/evidence/VD1-R1/REPORT.md` | Required report fields and owner-directed scope stop; no exports | VD1 R1; handoff only | Local provenance/classification; no backend integration | Stopped before remediation |
+| `../docs/frontend/evidence/VD1-R1/diff-check.txt` | Fresh whitespace/diff validation result; no exports | VD1 R1; log only | git diff --check; no backend integration | Documentation validation |
+| `../docs/frontend/evidence/VD1-R1/SHA256SUMS.json` | Every new R1 evidence file hash except itself; no exports | VD1 R1; hashes only | New local evidence bytes; no backend integration | Evidence manifest |
+
+## VD1 R2 bounded continuation
+
+R2 adds `noValidate` only to the Agent Arena composer, preserves its submit/requestSubmit semantics, and derives light Warm Workbench attention text from 85% normative attention plus 15% ink. The override applies to explicit Light and System with a light preference; other palettes and dark presentation retain their existing derivation. Existing Arena and foundation browser cases cover submission, themes, narrow layout, forced colors and 200% layout magnification.
+
+Run Strict Premium from the repository root and explicitly select the tracked frontend manifest:
+
+```sh
+python3 <frontend-design-premium-skill>/scripts/audit_project.py . --config frontend/premium-ui.json --mode strict --output docs/frontend/evidence/VD1-R2/premium-after.json
+```
+
+For later runs, use a NEW evidence output path. The manifest's `frontend/src`, `UX-CONTRACT.md`, and failure-test paths are repository-root-relative. Do not invoke the scanner with `frontend` as project root or add duplicate contracts there. Correct root/config selection scans only `frontend/src`; generated test reports and Next output are excluded. No scanner rule was changed.
+
+Correct invocation reduces 51 findings to nine before product edits and eight after the form repair. The remaining eight are the scanner treating imported JSX `Textarea` calls as literal textarea elements. The shared primitive supplies `resize-none`; global CSS supplies `resize: none`; runtime browser assertions verify the owner. The scanner has no supported Textarea ownership-resolution option. Status remains `BLOCKED_SCANNER_STATIC_RESOLUTION`, requiring owner/reviewer adjudication, not scanner PASS.

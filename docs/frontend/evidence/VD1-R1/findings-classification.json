@@ -1,0 +1,756 @@
+{
+  "auditSource": "docs/frontend/evidence/VD0-RECAPTURE-20260926/premium-audit.json",
+  "auditSha256": "4198f65f25af5056e56011eb0b665a9c285fbe33b2bb0e7f2772c0ad00981a81",
+  "summary": {
+    "errors": 51,
+    "total": 51,
+    "unresolved": 2,
+    "violations": 49,
+    "warnings": 0
+  },
+  "sameCauseAsBadge": false,
+  "findings": [
+    {
+      "index": 1,
+      "finding": {
+        "category": "unresolved",
+        "file": "UX-CONTRACT.md",
+        "line": null,
+        "message": "Canonical UI ownership cannot be resolved because its map is missing.",
+        "remediation": "Add the exact five-column Canonical UI Map to the configured UX contract.",
+        "ruleId": "canonical.map-missing",
+        "severity": "error"
+      },
+      "classification": "AUDIT_PROJECT_ROOT_MISMATCH",
+      "introducedByVD1": false
+    },
+    {
+      "index": 2,
+      "finding": {
+        "category": "unresolved",
+        "file": "UX-CONTRACT.md",
+        "line": null,
+        "message": "A product/admin project has no maintained UX contract.",
+        "remediation": "Create UX-CONTRACT.md with a Canonical UI Map.",
+        "ruleId": "contract.ux-missing",
+        "severity": "error"
+      },
+      "classification": "AUDIT_PROJECT_ROOT_MISMATCH",
+      "introducedByVD1": false
+    },
+    {
+      "index": 3,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-0/traces/resources/0928fca16f624361baae7bf40adb34344954ca18.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 4,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-0/traces/resources/0928fca16f624361baae7bf40adb34344954ca18.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 5,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-0/traces/resources/38ed5984146d6e087da3d881e3e928d0a0e12736.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 6,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-0/traces/resources/38ed5984146d6e087da3d881e3e928d0a0e12736.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 7,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-0/traces/resources/8307ef0c718ac339db953dc151e3b3e823bbe8f6.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 8,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-0/traces/resources/8307ef0c718ac339db953dc151e3b3e823bbe8f6.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 9,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-0/traces/resources/8bcfb8027a6790dcbd705354492419b7ebb6c2d6.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 10,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-0/traces/resources/8bcfb8027a6790dcbd705354492419b7ebb6c2d6.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 11,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/84e263be25afbcfcd07d0182a3107f662122c1a3.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 12,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/84e263be25afbcfcd07d0182a3107f662122c1a3.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 13,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/84e263be25afbcfcd07d0182a3107f662122c1a3.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 14,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/84e263be25afbcfcd07d0182a3107f662122c1a3.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 15,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/9c9230e9cb1f8ceeac9a71a55f57949acc625371.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 16,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/9c9230e9cb1f8ceeac9a71a55f57949acc625371.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 17,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/9c9230e9cb1f8ceeac9a71a55f57949acc625371.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 18,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/9c9230e9cb1f8ceeac9a71a55f57949acc625371.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 19,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/de5733b2a6d5f2ce96dce2cc04ec5c6e53dfa735.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 20,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/de5733b2a6d5f2ce96dce2cc04ec5c6e53dfa735.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 21,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/de5733b2a6d5f2ce96dce2cc04ec5c6e53dfa735.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 22,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/de5733b2a6d5f2ce96dce2cc04ec5c6e53dfa735.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 23,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/0cf9062a71ef42a4477b253df01ded74b7aa7745.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 24,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/0cf9062a71ef42a4477b253df01ded74b7aa7745.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 25,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/682fa12272a38f9621ca1b19958d1ab8daa4d24b.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 26,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/682fa12272a38f9621ca1b19958d1ab8daa4d24b.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 27,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/682fa12272a38f9621ca1b19958d1ab8daa4d24b.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 28,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/aabcf968d621e5d8b9a285c5f1f307bc1adf7f61.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 29,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/aabcf968d621e5d8b9a285c5f1f307bc1adf7f61.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 30,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/aabcf968d621e5d8b9a285c5f1f307bc1adf7f61.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 31,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/b5ac5a06467ce6c6d72cbe778f8827befb320429.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 32,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/b5ac5a06467ce6c6d72cbe778f8827befb320429.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 33,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/d688a281b77b367bcf11af4c847c2bb8037aaabf.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 34,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/d688a281b77b367bcf11af4c847c2bb8037aaabf.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 35,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/f46be3402f2ce932c9bdb8f9d4ed7c62e9630911.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 36,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/f46be3402f2ce932c9bdb8f9d4ed7c62e9630911.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 37,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-2/traces/resources/f46be3402f2ce932c9bdb8f9d4ed7c62e9630911.html",
+        "line": 1,
+        "message": "Enabled literal button has no detectable action or submit behavior.",
+        "remediation": "Connect the button to a real action, make it a submit button, or disable/remove it.",
+        "ruleId": "affordance.actionless-button",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 38,
+      "finding": {
+        "category": "violation",
+        "file": "DESIGN.md",
+        "line": null,
+        "message": "A product/admin project has no maintained DESIGN.md.",
+        "remediation": "Create DESIGN.md or document the maintained equivalent in project policy.",
+        "ruleId": "contract.design-missing",
+        "severity": "error"
+      },
+      "classification": "AUDIT_PROJECT_ROOT_MISMATCH",
+      "introducedByVD1": false
+    },
+    {
+      "index": 39,
+      "finding": {
+        "category": "violation",
+        "file": "premium-ui.json",
+        "line": null,
+        "message": "Declared failure-path evidence is missing.",
+        "remediation": "Point evidence.failurePaths to an existing project-owned test or report and run its command separately.",
+        "ruleId": "evidence.failure-path-missing",
+        "severity": "error"
+      },
+      "classification": "AUDIT_PROJECT_ROOT_MISMATCH",
+      "introducedByVD1": false
+    },
+    {
+      "index": 40,
+      "finding": {
+        "category": "violation",
+        "file": "src/components/agent-arena.tsx",
+        "line": 103,
+        "message": "Application-owned form does not declare its validation owner.",
+        "remediation": "Add noValidate/novalidate and implement the canonical validation contract.",
+        "ruleId": "form.novalidate-missing",
+        "severity": "error"
+      },
+      "classification": "HISTORICAL_CONCRETE_FORM_NOVALIDATE_OMISSION",
+      "introducedByVD1": false
+    },
+    {
+      "index": 41,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/84e263be25afbcfcd07d0182a3107f662122c1a3.html",
+        "line": 1,
+        "message": "Application-owned form does not declare its validation owner.",
+        "remediation": "Add noValidate/novalidate and implement the canonical validation contract.",
+        "ruleId": "form.novalidate-missing",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 42,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/9c9230e9cb1f8ceeac9a71a55f57949acc625371.html",
+        "line": 1,
+        "message": "Application-owned form does not declare its validation owner.",
+        "remediation": "Add noValidate/novalidate and implement the canonical validation contract.",
+        "ruleId": "form.novalidate-missing",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 43,
+      "finding": {
+        "category": "violation",
+        "file": "test-results/.playwright-artifacts-1/traces/resources/de5733b2a6d5f2ce96dce2cc04ec5c6e53dfa735.html",
+        "line": 1,
+        "message": "Application-owned form does not declare its validation owner.",
+        "remediation": "Add noValidate/novalidate and implement the canonical validation contract.",
+        "ruleId": "form.novalidate-missing",
+        "severity": "error"
+      },
+      "classification": "GENERATED_TRACE_HTML_OUTSIDE_SOURCE",
+      "introducedByVD1": "NOT_A_SOURCE_CHANGE"
+    },
+    {
+      "index": 44,
+      "finding": {
+        "category": "violation",
+        "file": "src/components/agent-arena.tsx",
+        "line": 103,
+        "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
+        "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
+        "ruleId": "form.textarea-resize-missing",
+        "severity": "error"
+      },
+      "classification": "SHARED_TEXTAREA_CALL_STATIC_RESOLUTION_FINDING",
+      "introducedByVD1": false
+    },
+    {
+      "index": 45,
+      "finding": {
+        "category": "violation",
+        "file": "src/components/approvals.tsx",
+        "line": 83,
+        "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
+        "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
+        "ruleId": "form.textarea-resize-missing",
+        "severity": "error"
+      },
+      "classification": "SHARED_TEXTAREA_CALL_STATIC_RESOLUTION_FINDING",
+      "introducedByVD1": false
+    },
+    {
+      "index": 46,
+      "finding": {
+        "category": "violation",
+        "file": "src/components/github-experience.tsx",
+        "line": 92,
+        "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
+        "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
+        "ruleId": "form.textarea-resize-missing",
+        "severity": "error"
+      },
+      "classification": "SHARED_TEXTAREA_CALL_STATIC_RESOLUTION_FINDING",
+      "introducedByVD1": false
+    },
+    {
+      "index": 47,
+      "finding": {
+        "category": "violation",
+        "file": "src/components/github-experience.tsx",
+        "line": 104,
+        "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
+        "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
+        "ruleId": "form.textarea-resize-missing",
+        "severity": "error"
+      },
+      "classification": "SHARED_TEXTAREA_CALL_STATIC_RESOLUTION_FINDING",
+      "introducedByVD1": false
+    },
+    {
+      "index": 48,
+      "finding": {
+        "category": "violation",
+        "file": "src/components/operational-workstation.tsx",
+        "line": 73,
+        "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
+        "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
+        "ruleId": "form.textarea-resize-missing",
+        "severity": "error"
+      },
+      "classification": "SHARED_TEXTAREA_CALL_STATIC_RESOLUTION_FINDING",
+      "introducedByVD1": false
+    },
+    {
+      "index": 49,
+      "finding": {
+        "category": "violation",
+        "file": "src/components/operational-workstation.tsx",
+        "line": 74,
+        "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
+        "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
+        "ruleId": "form.textarea-resize-missing",
+        "severity": "error"
+      },
+      "classification": "SHARED_TEXTAREA_CALL_STATIC_RESOLUTION_FINDING",
+      "introducedByVD1": false
+    },
+    {
+      "index": 50,
+      "finding": {
+        "category": "violation",
+        "file": "src/components/operational-workstation.tsx",
+        "line": 74,
+        "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
+        "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
+        "ruleId": "form.textarea-resize-missing",
+        "severity": "error"
+      },
+      "classification": "SHARED_TEXTAREA_CALL_STATIC_RESOLUTION_FINDING",
+      "introducedByVD1": false
+    },
+    {
+      "index": 51,
+      "finding": {
+        "category": "violation",
+        "file": "src/components/operational-workstation.tsx",
+        "line": 89,
+        "message": "Literal product textarea does not show evidence of the canonical resize-none rule.",
+        "remediation": "Use the shared Textarea owner or apply resize-none/resize: none with adequate height or auto-grow behavior.",
+        "ruleId": "form.textarea-resize-missing",
+        "severity": "error"
+      },
+      "classification": "SHARED_TEXTAREA_CALL_STATIC_RESOLUTION_FINDING",
+      "introducedByVD1": false
+    }
+  ],
+  "rootResolution": {
+    "invokedProjectRoot": "frontend",
+    "manifest": "frontend/premium-ui.json",
+    "manifestSourceRoots": [
+      "frontend/src"
+    ],
+    "actualDesign": "DESIGN.md",
+    "actualCanonicalMap": "UX-CONTRACT.md",
+    "actualFailureEvidence": "frontend/tests/e2e/foundation.spec.ts"
+  },
+  "badge": {
+    "assertion": "frontend/tests/e2e/foundation.spec.ts:169",
+    "scenario": "light/warm_workbench/comfortable",
+    "foreground": "#98582d",
+    "background": "#ebe5dc",
+    "ratio": "4.45:1",
+    "source": "frontend/src/app/globals.css",
+    "sharedTextToken": "--attention-text: color-mix(in srgb, var(--attention) 90%, var(--ink))",
+    "semanticAttention": "#a65e2e",
+    "ink": "#182128",
+    "themeBackground": "--surface-muted: #ebe5dc",
+    "badgeSelector": ".badge[data-tone=\"attention\"]",
+    "evidenceSource": "docs/frontend/evidence/VD0-RECAPTURE-20260926/vd1-browser-recheck.txt",
+    "evidenceSha256": "0c95b2b52df230a9bcb56da1e2e096e07183aaf27a4fcdfa27121604c975976d",
+    "freshBrowserMeasurement": false
+  },
+  "stop": "OWNER_PROMPT_SECTION_11_SEPARATE_ISSUE_OUTSIDE_VD1",
+  "sourceChange": "NONE"
+}

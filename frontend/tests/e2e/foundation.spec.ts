@@ -145,8 +145,10 @@ test("reduced motion keeps state and removes spatial movement", async ({ browser
   await context.close();
 });
 
-test("local fonts and representative theme combinations remain accessible", async ({ page }) => {
+test("local fonts and representative theme combinations remain accessible", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
   const requests: string[] = [];
+  const measurements: object[] = [];
   page.on("request", request => requests.push(request.url()));
   await page.goto("/design-system");
   const combinations = [
@@ -155,8 +157,15 @@ test("local fonts and representative theme combinations remain accessible", asyn
     ["light", "mineral", "compact"],
     ["dark", "slate", "compact"],
     ["light", "warm_workbench", "comfortable"],
+    ["light", "delft", "comfortable"],
+    ["light", "slate", "comfortable"],
+    ["dark", "default", "comfortable"],
+    ["dark", "mineral", "comfortable"],
+    ["dark", "warm_workbench", "comfortable"],
+    ["system", "warm_workbench", "comfortable"],
   ] as const;
-  for (const [mode, palette, density] of combinations) {
+  for (const width of [1280, 360]) for (const [mode, palette, density] of combinations) {
+    await page.setViewportSize({ width, height: 900 });
     await page.getByLabel("Mode").selectOption(mode);
     await page.getByLabel("Palette").selectOption(palette);
     await page.getByLabel("Density").selectOption(density);
@@ -167,8 +176,31 @@ test("local fonts and representative theme combinations remain accessible", asyn
     await expect(page.getByLabel("Density")).toHaveValue(density);
     const results = await new AxeBuilder({ page }).analyze();
     expect(results.violations, `${mode}/${palette}/${density}`).toEqual([]);
-    if (mode === "dark" && palette === "delft") await capture(page, "design-system-dark.png");
+    const badges = await page.locator('.badge[data-tone="attention"]').evaluateAll(elements => elements.map(element => {
+      const style = getComputedStyle(element);
+      const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d"); if (!context) throw new Error("Color measurement unavailable");
+      function color(value: string) {
+        if (!context) throw new Error("Color measurement unavailable");
+        context.clearRect(0, 0, 1, 1); context.fillStyle = value; context.fillRect(0, 0, 1, 1);
+        const rgb = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+        const channels = rgb.map(channel => { const value = channel / 255; return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4; });
+        return { hex: `#${rgb.map(channel => channel.toString(16).padStart(2, "0")).join("")}`, luminance: channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722 };
+      }
+      const foreground = color(style.color); const background = color(style.backgroundColor);
+      return { text: element.textContent, foreground: foreground.hex, background: background.hex, computedForeground: style.color, ratio: (Math.max(foreground.luminance, background.luminance) + 0.05) / (Math.min(foreground.luminance, background.luminance) + 0.05) };
+    }));
+    expect(badges.length).toBeGreaterThan(0);
+    for (const badge of badges) expect(badge.ratio).toBeGreaterThanOrEqual(4.5);
+    measurements.push({ width, mode, palette, density, badges });
+    await assertNoPageOverflow(page);
+    if (mode === "light" && palette === "warm_workbench") await capture(page, `warm-workbench-${width}.png`);
+    if (mode === "dark" && palette === "delft" && width === 1280) await capture(page, "design-system-dark.png");
   }
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.getByLabel("Mode").selectOption("system");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await testInfo.attach("attention-theme-matrix", { body: JSON.stringify(measurements, null, 2), contentType: "application/json" });
   await capture(page, "alternate-palette.png");
   expect(requests.filter(url => /fonts\.(googleapis|gstatic)\.com/.test(url))).toEqual([]);
   expect(requests.some(url => url.includes("/_next/static/media/"))).toBe(true);
@@ -180,7 +212,7 @@ test("forced colors preserves navigation, controls and modal keyboard operation"
   await page.goto("/design-system");
   expect(await page.evaluate(() => matchMedia("(forced-colors: active)").matches)).toBe(true);
   await page.getByLabel("Mode").selectOption("dark");
-  await page.getByLabel("Palette").selectOption("mineral");
+  await page.getByLabel("Palette").selectOption("warm_workbench");
   const trigger = page.getByRole("button", { name: "Open dialog" });
   await trigger.click();
   await expect(page.getByRole("button", { name: "Close" })).toBeFocused();
@@ -206,7 +238,8 @@ test("200 percent layout zoom keeps desktop and narrow actions and overlays reac
   for (const width of [1280, 360]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto("/design-system");
-    await page.getByLabel("Palette").selectOption("delft");
+    await page.getByLabel("Mode").selectOption("light");
+    await page.getByLabel("Palette").selectOption("warm_workbench");
     // CSS zoom exercises 200% layout magnification, not CDP pinch zoom.
     await page.evaluate(() => { document.documentElement.style.zoom = "2"; });
     expect(await page.locator("html").evaluate(element => getComputedStyle(element).zoom)).toBe("2");

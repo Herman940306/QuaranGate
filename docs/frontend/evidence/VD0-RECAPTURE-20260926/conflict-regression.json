@@ -1,0 +1,6 @@
+{
+  "exitCode": 1,
+  "reason": "EADDRINUSE",
+  "existingListenerPreserved": true,
+  "newCaptureOrSignal": false
+}

@@ -1,0 +1,17 @@
+
+> @quarangate/frontend@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.2 /home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend
+
+
+ Test Files  18 passed (18)
+      Tests  164 passed (164)
+   Start at  20:06:17
+   Duration  2.44s (transform 41%, tests 34%, import 23%, worker 2%)
+
+  Transform  transforming modules took 2.56s · 41% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns
+

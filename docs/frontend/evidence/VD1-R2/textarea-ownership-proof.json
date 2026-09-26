@@ -1,0 +1,77 @@
+{
+  "classification": "SCANNER_LIMITATION_WITH_RUNTIME_CONTRACT_PROOF",
+  "scannerStatus": "BLOCKED_SCANNER_STATIC_RESOLUTION",
+  "sharedOwner": "frontend/src/components/primitives.tsx:20",
+  "sharedRuntimeClass": "resize-none",
+  "cssOwner": "frontend/src/app/globals.css",
+  "cssRule": ".resize-none { resize: none; }",
+  "uxContract": "UX-CONTRACT.md:62",
+  "affectedCallSites": [
+    {
+      "file": "frontend/src/components/agent-arena.tsx",
+      "line": 103,
+      "rule": "form.textarea-resize-missing",
+      "jsxTag": "Textarea",
+      "importOwner": "./primitives",
+      "sourceSha256": "79847a790f1d892dee75fbeca58b453609b60a263515ac90eff1acd0628a3ddb"
+    },
+    {
+      "file": "frontend/src/components/approvals.tsx",
+      "line": 83,
+      "rule": "form.textarea-resize-missing",
+      "jsxTag": "Textarea",
+      "importOwner": "./primitives",
+      "sourceSha256": "fd98c5c0e14e12b850437ff8fc43becf279d33a211992951e6867a433db642a5"
+    },
+    {
+      "file": "frontend/src/components/github-experience.tsx",
+      "line": 92,
+      "rule": "form.textarea-resize-missing",
+      "jsxTag": "Textarea",
+      "importOwner": "./primitives",
+      "sourceSha256": "7e5eb0efe00faf554542b197f6e8dc23dc95b3448bfe3c76891613d39d83a9d6"
+    },
+    {
+      "file": "frontend/src/components/github-experience.tsx",
+      "line": 104,
+      "rule": "form.textarea-resize-missing",
+      "jsxTag": "Textarea",
+      "importOwner": "./primitives",
+      "sourceSha256": "7e5eb0efe00faf554542b197f6e8dc23dc95b3448bfe3c76891613d39d83a9d6"
+    },
+    {
+      "file": "frontend/src/components/operational-workstation.tsx",
+      "line": 73,
+      "rule": "form.textarea-resize-missing",
+      "jsxTag": "Textarea",
+      "importOwner": "./primitives",
+      "sourceSha256": "f2b0ca9871438d99211b82444cb947e7ba6ff72b015bc207e90371d0488a920a"
+    },
+    {
+      "file": "frontend/src/components/operational-workstation.tsx",
+      "line": 74,
+      "rule": "form.textarea-resize-missing",
+      "jsxTag": "Textarea",
+      "importOwner": "./primitives",
+      "sourceSha256": "f2b0ca9871438d99211b82444cb947e7ba6ff72b015bc207e90371d0488a920a"
+    },
+    {
+      "file": "frontend/src/components/operational-workstation.tsx",
+      "line": 74,
+      "rule": "form.textarea-resize-missing",
+      "jsxTag": "Textarea",
+      "importOwner": "./primitives",
+      "sourceSha256": "f2b0ca9871438d99211b82444cb947e7ba6ff72b015bc207e90371d0488a920a"
+    },
+    {
+      "file": "frontend/src/components/operational-workstation.tsx",
+      "line": 89,
+      "rule": "form.textarea-resize-missing",
+      "jsxTag": "Textarea",
+      "importOwner": "./primitives",
+      "sourceSha256": "f2b0ca9871438d99211b82444cb947e7ba6ff72b015bc207e90371d0488a920a"
+    }
+  ],
+  "runtimeProof": "focused-form.txt: Arena shared Textarea toHaveCSS resize none passed; Enter/Shift+Enter/button and axe passed",
+  "limitations": "This proof addresses the reported resize-none rule only; it is not an assertion of every possible textarea behavior."
+}

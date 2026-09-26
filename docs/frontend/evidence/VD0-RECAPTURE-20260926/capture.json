@@ -1,0 +1,1317 @@
+{
+  "source": "/home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/test-results/vd0-source-20260926",
+  "buildId": "o47m101Ww-q6UfkHFYcyf",
+  "serverPid": 857970,
+  "serverCommand": [
+    "/home/herman/.nvm/versions/node/v24.15.0/bin/node",
+    "/home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/node_modules/next/dist/bin/next",
+    "start",
+    "/home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/test-results/vd0-source-20260926",
+    "--hostname",
+    "127.0.0.1",
+    "--port",
+    "3100"
+  ],
+  "listener": "State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess\nLISTEN 0      511        127.0.0.1:3100      0.0.0.0:*    users:((\"next-server (v1\",pid=857970,fd=21))",
+  "bundle": {
+    "static/chunks/1453-e664b615575ce9eb.js": "f999f1f4266d02d595e8382de0324aa3d80b60ec4f8d3abe6bd6dbdb59d15ebd",
+    "static/chunks/1968-a765a58f957bce9b.js": "689bbefcd0f8b9b56e64cd24e7ccc68db00220fdf2cf6f4fa3337af8d05afc46",
+    "static/chunks/3820-0858a5a4b475424e.js": "ac3c84cd44c6d87c33f857db3f7537793b81eb454567dd743bc4e61a68ee3bea",
+    "static/chunks/4314-7074500cb7fb73ef.js": "bba15c436e08eb530831c7de625f1c42a903fcfe6d1eb1713e4691cdcbfeb99e",
+    "static/chunks/5103-fe999098431a33fe.js": "99e35a77b8573328283e202a04c132f3760d37951e467b8d341c764d67ad2508",
+    "static/chunks/520-7c73866fb417b984.js": "f6388fda5a2c755a33f8b448aec1cf2eeae1488f1e5a02cc7bf2b8d86c80d4ce",
+    "static/chunks/5485-ec08d0e3ba71b5da.js": "e4a44f084ad72e2f598370486381ff2d677ad3a77a1bd8dd7b0944e1e99af5ec",
+    "static/chunks/5587-4d713d181b163368.js": "a27b6bba49e5f00d1d33f0f703f4522a0401bc335c2b056ea7cec41a3e0ee4c7",
+    "static/chunks/5687-39e68509fa323f44.js": "00242fbb35c4d56b13c76977ac03eb9540aeebd5441045d1af378b485c741291",
+    "static/chunks/7957-cb75b7b40ff4b4b9.js": "2307ab746776d2fe01908af923dd8c5e1b85e4b646908bf797871d53fccd742a",
+    "static/chunks/8385-4a98311892f2ee32.js": "8bdcc07d8bd2019a9b96fa9196374ee5a9b468019fd87d7cdcae66765c92e674",
+    "static/chunks/87c73c54-fd33669cffb637e8.js": "fb67ea0737e6ab4899bfaf2270b781f7dd2184d9f19fb415ad8d7caff95848c7",
+    "static/chunks/app/(foundation)/account/page-50931d4d66f874c5.js": "c8042f1b8a9fb5f77bc75de2298b0fbb6a81161cfebce4afc758e1bf220d061d",
+    "static/chunks/app/(foundation)/agent-profiles/page-920b0beab8fd5994.js": "ae74af1f231986e87897f01c3476b6381525bc15691009d579e00131b1156b32",
+    "static/chunks/app/(foundation)/agents/page-dbf1c0786660bf8d.js": "eb50551f1fb8105885fe2ef8fd934ba50a88dc0934e656c1c4f12e7e94237d11",
+    "static/chunks/app/(foundation)/approvals/page-f7045b1eaf618cce.js": "a486184d4b343e45a395874b2bd74a03d076e8e9ed6ea7ea2c82f2818b67ed8e",
+    "static/chunks/app/(foundation)/arena/page-af21b7f4458696f3.js": "a25f7346a5c8c1175f7beb854861eb1d8973d9a852e20c05c047586e812f36cd",
+    "static/chunks/app/(foundation)/audit-evidence/page-2792c8b0a0228896.js": "501eba951f260701c6a20a2a8b1aacc8d0d6aced835c0d76d245f6f64afc9fdb",
+    "static/chunks/app/(foundation)/control-center/page-7af0363b4e9f1d20.js": "fd6dc1a21a2f2fac1aef4d841a803c7d3e0cd8e8bc1a365a3b9e63efaaea60fe",
+    "static/chunks/app/(foundation)/design-system/page-ac67e54b4c1bf9d1.js": "af84eb0fa201a08fd11ce1c1f6f58b9f9f49f1425274505b2e49928739316e8e",
+    "static/chunks/app/(foundation)/error-570dd24f445cb707.js": "6280ad942d0879aa7642426cff334d1a1ed225430853f2fe3c5aa7de48b1f94d",
+    "static/chunks/app/(foundation)/files/page-f1b9f33b7bc3ea7b.js": "a5fde39c3086af4398b89c6f53a8aef76faad8d6a57150537052916ed7ced1d9",
+    "static/chunks/app/(foundation)/git/page-22d2c57d76a80726.js": "7bae6270d15118156681f55e1a63e735f015c7520a9ca3c565a4e1cfafa74a35",
+    "static/chunks/app/(foundation)/github/page-e196283094524056.js": "de06cc83462c0dfcf19994ca3e1acaba8f4299557a1bd3fccce63232a7cc3f3d",
+    "static/chunks/app/(foundation)/ide-sessions/page-c0c22ca2ceb04ebe.js": "1d69755e0cf8f6b3235e2d4358eca9a6b5991d7b3f76e31cf5fbc5748d5e5fc1",
+    "static/chunks/app/(foundation)/jobs/page-3e1a90249962dc41.js": "1bcd031ae8b20457f7ba606f2e1e31f1e4b45105009233e5b4ae974cbfd03fbd",
+    "static/chunks/app/(foundation)/layout-928b29458e859685.js": "26680c5d587264ca494ac3518e0b38828fcf9191d2fea7e50a8d7b6907abd949",
+    "static/chunks/app/(foundation)/loading-01d794acffc45bca.js": "583a35cf419d9de9c4a929373415b1230696eabf0ae663e2d9fe706c6fb6b12e",
+    "static/chunks/app/(foundation)/models/page-01d794acffc45bca.js": "583a35cf419d9de9c4a929373415b1230696eabf0ae663e2d9fe706c6fb6b12e",
+    "static/chunks/app/(foundation)/monitoring/page-74fe8fc566d620bc.js": "bf57878a3ccca856235177447a6ba1538ca8c0200b594bc4257308404ecd1c75",
+    "static/chunks/app/(foundation)/overview/page-dd32b4bd7d0377f8.js": "73842c33b53dd333da08b98ead620177273a89c41897ab2440eca9f2f9ae5b28",
+    "static/chunks/app/(foundation)/page-eb50e3435f994f7c.js": "0291c58e6fa28f4f900588e6ec2e170fd7b523b80b95d6bdbdb4a3f8e527b1a2",
+    "static/chunks/app/(foundation)/permissions/page-fe8273785450b196.js": "31e5e53b3c48bef2a5bac4b064398e49545dbb579c4a364d422d46852c74274d",
+    "static/chunks/app/(foundation)/processes/page-fe026f594a240543.js": "aa20e1d29189a259faad24d1b738275356d4ad0caf266b619e24c1a4a5b0e022",
+    "static/chunks/app/(foundation)/projects/page-7d3d5aed0cf19283.js": "5fb8de9b7ec3c9fa717a6c96aab030839631017b37ff314125667f3ea2d1680e",
+    "static/chunks/app/(foundation)/providers/page-d79447e00aaaba75.js": "cc13fa522a73f64ae13d82d0b50ed9dc7d85eb8e1ebf81e1d1968a50c398e425",
+    "static/chunks/app/(foundation)/recovery-backups/page-9360a934cd2a0067.js": "86e200c355f8f5c74aabac807090bacbce25568ff79d5ed61814acf470f3aeee",
+    "static/chunks/app/(foundation)/security/page-86f8b5901ba15a4c.js": "ad06a750bd4883c509777c25420d96536750f3d71ac3de199ac6fc99dc7bdd28",
+    "static/chunks/app/(foundation)/settings/page-816f2f667014ec47.js": "c463f5f2ba40b16bf9ffc6d093c010fc941a84f3f9786ce146d69a34e4222c82",
+    "static/chunks/app/(foundation)/sign-in/page-72504118d46b0e40.js": "b4e4ddb6875f4dd042fc4d5efbb026ef3868ced96c87d9edd36efad19930f768",
+    "static/chunks/app/(foundation)/statistics/page-9f493a26bf4cd91c.js": "6968a5f51a8ba5edf33af212c363a0ed948c10d4d357fa4cb86290f821942b81",
+    "static/chunks/app/(foundation)/targets/page-c1646c11812bd34d.js": "bf62a635131a67ac75bff9139c2bd615f8f841b55e6da035eccc28b6762ebcad",
+    "static/chunks/app/(foundation)/terminal/page-194900408a051db1.js": "1dac3833a1e19294f7b8e53300f48519a2fd8a8c860eb2939db0649b90015a80",
+    "static/chunks/app/(foundation)/tool-lab/page-c7683cb3b2961729.js": "cfb71255825728a545a6107ce8e4f07863effc5bd3849eeaede62d258a60c34e",
+    "static/chunks/app/(foundation)/workspaces/page-f16b3b96a2617cbd.js": "123599c032ce34508f7e31c7873619fa92be9bebc7cc032478f86c99e063a1eb",
+    "static/chunks/app/_global-error/page-01d794acffc45bca.js": "583a35cf419d9de9c4a929373415b1230696eabf0ae663e2d9fe706c6fb6b12e",
+    "static/chunks/app/_not-found/page-01d794acffc45bca.js": "583a35cf419d9de9c4a929373415b1230696eabf0ae663e2d9fe706c6fb6b12e",
+    "static/chunks/app/approvals-preview/page-5a8136a52099dd2c.js": "17ea95925f0d0de18c469d05d9f7c6662d85ab412907f63b650249413b5419a8",
+    "static/chunks/app/arena-preview/page-065d90f79b4b8a73.js": "dc147440c5baadfdc8c4cd70da587f3de24400b8633dbc695c85b76b4f05f83e",
+    "static/chunks/app/identity-preview/page-6037565fe907d2c5.js": "ae39b77c29dd5aa570a7a1e3ba6783e520485962952448bff616a9dbea699d0c",
+    "static/chunks/app/layout-0d1a323cfc934eb2.js": "4c6adb58f9276d3007909e182ad4ddb935de368adcefc3ec6b5007e5e49313c9",
+    "static/chunks/app/not-found-59f2648857e9d6bb.js": "e3c0b4ce2054a635cb5b293465d01050555a9500d40d714a9f557b61bf51d0df",
+    "static/chunks/app/product-preview/page-2cd4fb4cfd1a5830.js": "6b10f141c470341c51b2aa90ed7e7a49ebddf87996cb6ebedc3a86d63b20af49",
+    "static/chunks/framework-238f24ebdc415a4c.js": "6a3ce50b05179e55d931afa1abc3027b2e53adfd2d6f80e8c805d29a6814d52f",
+    "static/chunks/main-5cae19133e6fd066.js": "ce431427c6a987e787a01bf8efacd4553bea77a234ff3d064dce5e1e943b9da2",
+    "static/chunks/main-app-51578311802e0814.js": "9156999aeb47e26af1cb9ce2bb527e896d1d4801f31787c82fb480d47ebf7a4e",
+    "static/chunks/next/dist/client/components/builtin/app-error-01d794acffc45bca.js": "583a35cf419d9de9c4a929373415b1230696eabf0ae663e2d9fe706c6fb6b12e",
+    "static/chunks/next/dist/client/components/builtin/forbidden-01d794acffc45bca.js": "583a35cf419d9de9c4a929373415b1230696eabf0ae663e2d9fe706c6fb6b12e",
+    "static/chunks/next/dist/client/components/builtin/global-error-e4713d8c5c7ed651.js": "0e8f8c66ebef8a8d18a93f3edefbeac4ab220ac3131eec7d45007ea29dc4486f",
+    "static/chunks/next/dist/client/components/builtin/unauthorized-01d794acffc45bca.js": "583a35cf419d9de9c4a929373415b1230696eabf0ae663e2d9fe706c6fb6b12e",
+    "static/chunks/polyfills-42372ed130431b0a.js": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683",
+    "static/chunks/webpack-46bb35445b2e56d7.js": "89d7bbe7a345ce20383b392b9d4534ad2acf47e139cbf44b6e4f96f32f470c7b",
+    "static/css/419f3400af553b9a.css": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+    "static/media/ibm-plex-mono-latin-400-normal.06ac09dc.woff2": "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7",
+    "static/media/ibm-plex-mono-latin-400-normal.e32cf7a4.woff": "328d50b6ece9ca25c46eea3e885ba497f6237f2fb84ef7b92f88e14a1a25e381",
+    "static/media/ibm-plex-sans-latin-400-normal.13a15bcd.woff2": "3b646991d30055a93a4ecc499713d4347953a74a947ecab435ab72070cbdab0e",
+    "static/media/ibm-plex-sans-latin-400-normal.48b78688.woff": "828907bfd14855c880789878bd2b38ffd284a6c27c8b80f6069900f70dae3901",
+    "static/media/ibm-plex-sans-latin-500-normal.4cdcd386.woff2": "0717336fb31fcdcde4b8deb3675bb4a0f7f6d484864afcd6751ac29975962203",
+    "static/media/ibm-plex-sans-latin-500-normal.f8dd458c.woff": "8d2c7b2eca91869d447851a9c8bd07edf629b26025eacb882291e03b384b4e35",
+    "static/media/ibm-plex-sans-latin-600-normal.0eddcd6d.woff": "7861a349af1e925a80d56547c2c9e0b1e9f6a9002a9a6867351da2f05122ad21",
+    "static/media/ibm-plex-sans-latin-600-normal.1cdb9a2c.woff2": "8960851d691c054ed38e259bdcf1a6190d157b4203ed5bb32c632a863fb8ec2f",
+    "static/o47m101Ww-q6UfkHFYcyf/_buildManifest.js": "4061c87f358d159bcaf8b3a0dfd8c1a70541e6e5e96eca43430c16c24f07ddcc",
+    "static/o47m101Ww-q6UfkHFYcyf/_ssgManifest.js": "678f6ce2cb80b1fe72fc67e7412be6e2ab6ada083111b64f7c40d35e3cba5e00",
+    "server/app/(foundation)/account/page.js": "f82c90720be4b2258993e9418d1150698506ce4a339fca865eb4b49d9511fac8",
+    "server/app/(foundation)/account/page.js.nft.json": "40cc568141eda9b3c28b8e3d35f5cfbf5486143f1974dd206521a3d4896435b0",
+    "server/app/(foundation)/account/page_client-reference-manifest.js": "fe8397229f2b5fed1db9a8a0459cb59d31635d8e6ae330964f1c6bc05cd30f9b",
+    "server/app/(foundation)/agent-profiles/page.js": "ab810e49f595a1f21849472504aba77db1f60d1b4488faebdbe657c2fbd67835",
+    "server/app/(foundation)/agent-profiles/page.js.nft.json": "60fcb2227d43798dd9239fd67231d812bf3f0160cb3a30f50973128bfd1f8444",
+    "server/app/(foundation)/agent-profiles/page_client-reference-manifest.js": "59490b7610c238a52921ce825111da58d76da955b89fbb6b3e779fb28af97258",
+    "server/app/(foundation)/agents/page.js": "7c3d283b72cdcb7ba5b7243e39fe7c6fa0db18cd32fe2b8f8bfddffca4c0ce30",
+    "server/app/(foundation)/agents/page.js.nft.json": "e84df8e3fa11ea6c4798da8ec528ebe2f493faf82c253cbb449862a3fac1bd2f",
+    "server/app/(foundation)/agents/page_client-reference-manifest.js": "61b114c930d361245e156344bcaec74209190fe199b0e7a598d8c5ac3545f45a",
+    "server/app/(foundation)/approvals/page.js": "3388217331ec0eb202e877336a9de4b1c157d5739f861ec05071b5e0a33869f2",
+    "server/app/(foundation)/approvals/page.js.nft.json": "879b2b7647ee2e0f1755b0470db47089a694a577993ffe942ea656b768c84b8e",
+    "server/app/(foundation)/approvals/page_client-reference-manifest.js": "a5cfc346a9f39b8608efd8c03b4d6ac5490da07dfbde9c9631958ff620d10835",
+    "server/app/(foundation)/arena/page.js": "d62a2c87583a61ccf76bc7b1ed4c40d4d18c193b763e168890a66308e2fb0bb5",
+    "server/app/(foundation)/arena/page.js.nft.json": "32b02ec41065a6e4b510d7c54a52348f8bf1c066387d48b75f1212208a406584",
+    "server/app/(foundation)/arena/page_client-reference-manifest.js": "374c362c7f8f2ca4c0f0c3b285a26546b36837e5fe9b6ec710eaa4976015fa7c",
+    "server/app/(foundation)/audit-evidence/page.js": "40ea1cf94aeb990f116932a4692fd09509a93a8f1eb4921dd5a15722018d9aca",
+    "server/app/(foundation)/audit-evidence/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/audit-evidence/page_client-reference-manifest.js": "b299a783df0f26e2c3068fb3d84a413452b72c82cbb6b8f01af55bc6935cd95a",
+    "server/app/(foundation)/control-center/page.js": "527edc01069d71180f98d09054bdc2ea87a4e701d54100cdecd0a17eeda14b2d",
+    "server/app/(foundation)/control-center/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/control-center/page_client-reference-manifest.js": "303796e7167d619c4794cb08cf190e7fa8b8d9afc5118dbdb8bad21816592aa5",
+    "server/app/(foundation)/design-system/page.js": "d3884cf840c7f44c97d610cae7aa5daab1941e4bdad6c6432ec147fd3b73fc34",
+    "server/app/(foundation)/design-system/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/design-system/page_client-reference-manifest.js": "717eb5d098c3e9ec2c0ed7d0fd37bcef1f499da1a1f1a7a31c32737f19300650",
+    "server/app/(foundation)/files/page.js": "d1f579465bb167691995f6c8fd3a35e9ec0be770aa8f0fab8871f7360523bcb7",
+    "server/app/(foundation)/files/page.js.nft.json": "f27fa94fb22b6c4a5fba7c925d469eacee92a8429083ecb61ea3e00fe0b6493f",
+    "server/app/(foundation)/files/page_client-reference-manifest.js": "656f9ff38da7bd005d112fa105788b53ebada49cbd69fedbbb9c6a600e0db2fa",
+    "server/app/(foundation)/git/page.js": "d3582087f3f178fdc99e9639f3dd55b665940add3d8db778c5f7ff0ed77d049d",
+    "server/app/(foundation)/git/page.js.nft.json": "f33c0fceed2ca15ce3fe572875c99a380ebf29eafa4addf0323d0093b7954a6f",
+    "server/app/(foundation)/git/page_client-reference-manifest.js": "ccad01f39d2d648bc06c1efed95999d6ead5e9bd74f305d0dae4913a2264d449",
+    "server/app/(foundation)/github/page.js": "44460faddc79d872737ac0f3dd09db2c0acbb6ff7f84e6e283492988d5792697",
+    "server/app/(foundation)/github/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/github/page_client-reference-manifest.js": "716d07523fcf0722743545703b06d19f8e7c059c259dac2eaca917c7883ff720",
+    "server/app/(foundation)/ide-sessions/page.js": "03bfe801594b72e737c05b11c047a97837ef95221e5adcb20d7d16d79a3866f3",
+    "server/app/(foundation)/ide-sessions/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/ide-sessions/page_client-reference-manifest.js": "7ab9ee24070d3af32f2c590cb67caa39f5defd14ec3f5ddf9cad02d59d7251bc",
+    "server/app/(foundation)/jobs/page.js": "001fde77769e5a21caa5e693e4de191944dcd22e56b3e74ad7252a7860be3f1f",
+    "server/app/(foundation)/jobs/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/jobs/page_client-reference-manifest.js": "967bb8f629494ca6ffa6918416ce9622194a5572bd9e4acb24b285ebefa83d34",
+    "server/app/(foundation)/models/page.js": "488d98d8c1ce77b25606445950e2b76c1a2766fadbbdf0f5b3a7dc8aa98f8745",
+    "server/app/(foundation)/models/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/models/page_client-reference-manifest.js": "f73de9f85bcd9e267322b23e966001d7f774b2cc592adfbe2deb7ea3c21fb673",
+    "server/app/(foundation)/monitoring/page.js": "164ffe9550fb273204d6a32ad72b76d5949a8afb1c06e7b52e84121b373f4b08",
+    "server/app/(foundation)/monitoring/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/monitoring/page_client-reference-manifest.js": "e1fe28f2e829626f5a922b20239254e5e435f8d64e786be5fa4ad8dca52746e6",
+    "server/app/(foundation)/overview/page.js": "37272ad8f35193c1acc6a5290ab5f6af3021874afbff49b0219cdc71b1afe556",
+    "server/app/(foundation)/overview/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/overview/page_client-reference-manifest.js": "f5c7962334e09a0bd3293609ae7d78316fbcdf3bc2b3edc9999e8c820ca86f58",
+    "server/app/(foundation)/page.js": "8cac91b477948aaa78fc733d80231c6adb925ebd91a1d753c9c6fd64018505bf",
+    "server/app/(foundation)/page.js.nft.json": "410eb42c48ec03b378c9e983d056cb92eb095ed156db301e81c0d489a3fceee9",
+    "server/app/(foundation)/page_client-reference-manifest.js": "7cb3badf02d8df1a4df84957e3555daf0a38d390236507f29e5e7047402f29ec",
+    "server/app/(foundation)/permissions/page.js": "5079e87c7de414aad2f4307b7aeadbc54746172b3f731778f8af1e6d05d35d95",
+    "server/app/(foundation)/permissions/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/permissions/page_client-reference-manifest.js": "cedb2c9dcde11b5afc3ef54e881ca86387b2f8254a891dd40c3a74202cd02d85",
+    "server/app/(foundation)/processes/page.js": "f5b2af799216a396725496aa53063d9bacaa7bc6940ca55ffad7ae092839d374",
+    "server/app/(foundation)/processes/page.js.nft.json": "f27fa94fb22b6c4a5fba7c925d469eacee92a8429083ecb61ea3e00fe0b6493f",
+    "server/app/(foundation)/processes/page_client-reference-manifest.js": "6a105911b738e3bca65bf5b4bf229ff49b1beb7dc53df180addcdd6955a23829",
+    "server/app/(foundation)/projects/page.js": "912265f63ec511006789ca3e2e5702429ba7a5ee26d9d0cf7eb4710402f9ee55",
+    "server/app/(foundation)/projects/page.js.nft.json": "e84df8e3fa11ea6c4798da8ec528ebe2f493faf82c253cbb449862a3fac1bd2f",
+    "server/app/(foundation)/projects/page_client-reference-manifest.js": "90f7e47860c2a77dbc8faa3e08ea411c2c8593e9fa150c4567bf1ff4428c81cc",
+    "server/app/(foundation)/providers/page.js": "cc63b12d36162dd11d1b67874e888a35213a728777b31f368a79cd0e8fb36f43",
+    "server/app/(foundation)/providers/page.js.nft.json": "60fcb2227d43798dd9239fd67231d812bf3f0160cb3a30f50973128bfd1f8444",
+    "server/app/(foundation)/providers/page_client-reference-manifest.js": "01bfce7739c147ac9701f0d400b8a49fe29909301ce5c56bb1d89b1b8d3e0644",
+    "server/app/(foundation)/recovery-backups/page.js": "3091a0e2adf676afcdf0cded863ad28e4ae6206c62d3a9a1a7aeb9ff815bda89",
+    "server/app/(foundation)/recovery-backups/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/recovery-backups/page_client-reference-manifest.js": "55c3b4daa659f148b777caa010769a53712e68647a040d84fef326e0f2d88c0a",
+    "server/app/(foundation)/security/page.js": "f01567c9827e4e640efb94d924f2b51c75a809aee2212f5f42768bc9d4880a7c",
+    "server/app/(foundation)/security/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/security/page_client-reference-manifest.js": "a576d0d630ba193ca97d20271a35965aef30cfe1738f1e1fe6ad69ef0fb4c5b3",
+    "server/app/(foundation)/settings/page.js": "ba596ae2ee8befb4ad0540ef3c36e503a6ad1491242172671806f1843044abf8",
+    "server/app/(foundation)/settings/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/settings/page_client-reference-manifest.js": "917c0bf1c999c95a40d2be302a6287237d4336c380396e8d91f08044a131d3ab",
+    "server/app/(foundation)/sign-in/page.js": "3add520cacf546e26af9c65634b4012b808d8baadcc7af7c2b5cebefe0868653",
+    "server/app/(foundation)/sign-in/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/sign-in/page_client-reference-manifest.js": "b3a934ff693fe3aba1d8baa89907d6eaabdcbc76b576f006dcaeb051b64509e9",
+    "server/app/(foundation)/statistics/page.js": "7dead0f061ae3a466f6891c358663b7897d64ea6284a40aa41b2c9fb0dac8839",
+    "server/app/(foundation)/statistics/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/statistics/page_client-reference-manifest.js": "02f854a82a723c00f8c9298b3d27c49696d8872a0b47425f540a0ac436f8a3bb",
+    "server/app/(foundation)/targets/page.js": "354737538cd80c764da749debfd4da3a8bd9db58a0748dbc2d6db93a41e6a72b",
+    "server/app/(foundation)/targets/page.js.nft.json": "f27fa94fb22b6c4a5fba7c925d469eacee92a8429083ecb61ea3e00fe0b6493f",
+    "server/app/(foundation)/targets/page_client-reference-manifest.js": "36d4e580b1ffc463dc033eb9e2d627eb21b562ecdb2535a45e556e42956149aa",
+    "server/app/(foundation)/terminal/page.js": "edb48f4642afa2889f91efb9445197c99e1cbea9e4894d70fa41c65e6b8288d8",
+    "server/app/(foundation)/terminal/page.js.nft.json": "f27fa94fb22b6c4a5fba7c925d469eacee92a8429083ecb61ea3e00fe0b6493f",
+    "server/app/(foundation)/terminal/page_client-reference-manifest.js": "680c63572dbf3bd9f604710f688c446a117d0a82240ea35ec8079dbaecced9f4",
+    "server/app/(foundation)/tool-lab/page.js": "c50f03b5198aeef2249649afc71507bd67fc6ec98bf876795fbc2dcb13d57632",
+    "server/app/(foundation)/tool-lab/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/tool-lab/page_client-reference-manifest.js": "2245bab8515ccb79718d0ffa806527075c71aaa8e15e149f94e8042bf6774d2a",
+    "server/app/(foundation)/workspaces/page.js": "2e5fa9daa43fc015b9c07f1323348be653f23caf85c995dbad4f7ed527827e13",
+    "server/app/(foundation)/workspaces/page.js.nft.json": "bddbd6765b5d4e2d50e5eeb538f84cea652595f92c4da6e2bfff6d7158bbffe0",
+    "server/app/(foundation)/workspaces/page_client-reference-manifest.js": "c68ea5d64f08ee1156faab3b676981d4919b707603eb4e408370d75953276163",
+    "server/app/_global-error/page.js": "69ee18fc1c2b056359f03a9cb6ce889afeb01ac31cf9ac04076404d2bf3d767e",
+    "server/app/_global-error/page.js.nft.json": "a84ed451933db4d28e313a3509dfb0a7864d64b33a20a8f4d0abf620e4133ba2",
+    "server/app/_global-error/page_client-reference-manifest.js": "bdf2baa120f7713c153e7226b291c5c5d1e7b8a4cb9af7c2df8eb3500f44570f",
+    "server/app/_global-error.html": "d60f9281e40793371dfdcf7b951048a7fb5828a068e3a17d984f6b65d857a06d",
+    "server/app/_global-error.meta": "6f293dabe823b6e1bb1ac41ca23042493454cd4a67075fc4fe98ad501d9ea6c9",
+    "server/app/_global-error.rsc": "405de6797ea1bcad2e405e28cd1e3037bb35561d1942225026d3ba403502e5a4",
+    "server/app/_global-error.segments/_full.segment.rsc": "405de6797ea1bcad2e405e28cd1e3037bb35561d1942225026d3ba403502e5a4",
+    "server/app/_global-error.segments/_global-error/__PAGE__.segment.rsc": "68a9c9c1c8f01f2547545995b1acc698cc048620f4117d2dfb83abd019320a22",
+    "server/app/_global-error.segments/_tree.segment.rsc": "760c7f2983d11f563a19abea1e3b2ebec5339299763861954f39394db4cd0094",
+    "server/app/_not-found/page.js": "e2d5514e814efd6400825d17f1d6ab0e1e27e27d666ad63f53968835a5d29d6d",
+    "server/app/_not-found/page.js.nft.json": "1223837e8d345295a6e093444b22ebde92f04d62950d7c66895290b9be20e9fe",
+    "server/app/_not-found/page_client-reference-manifest.js": "4ffbffa72011868c1555664581392f337d273234e9821961ff390a79ed62baa8",
+    "server/app/_not-found.html": "85ded10067115c7d4e772336d02060be653ba492abd12da99101efd1f9c6a0d4",
+    "server/app/_not-found.meta": "946026aa7bf14dbf3fe552a4e8ac164cec004f4fa9bebabd2551bbe35290ec60",
+    "server/app/_not-found.rsc": "2a8ae6b137865af7eed4113e6d40832a64e54802669070430ef8320d244f8ba4",
+    "server/app/_not-found.segments/_full.segment.rsc": "2a8ae6b137865af7eed4113e6d40832a64e54802669070430ef8320d244f8ba4",
+    "server/app/_not-found.segments/_not-found/__PAGE__.segment.rsc": "fa3ec7a8dfc0fa20d6e9e2986d1e98e6bc8ce5d77ebdddf1941e4fe098288eb8",
+    "server/app/_not-found.segments/_tree.segment.rsc": "f84099e86c9594696fdd86119dd47ccf875931adfcb4e89f062b9ceb357df1f7",
+    "server/app/account.html": "ca9d702fc4e081dc3a5d74e0e321ded6ad485d19878ccb1680180ec87e504c48",
+    "server/app/account.meta": "252ece9455862d00018cc638956751a70ad7ed133917681ba39a7169226d46b2",
+    "server/app/account.rsc": "3d8794516f9481d96268212f6d9395202ef248866bbe2f006d4199f4c0591cc0",
+    "server/app/account.segments/!KGZvdW5kYXRpb24p/account/__PAGE__.segment.rsc": "fa805ebe66c744f670f76a7854aa05ad1d808cc57e763e9337a62e7409fbf243",
+    "server/app/account.segments/_full.segment.rsc": "3d8794516f9481d96268212f6d9395202ef248866bbe2f006d4199f4c0591cc0",
+    "server/app/account.segments/_tree.segment.rsc": "0bdee69d34b08329a80e58537f761beb94341a2d2f9f089a87a45f3e251a2e95",
+    "server/app/agent-profiles.html": "54faab92a4d695b7870e3f108a376d57ace5dc14b7a4ffcb660b0b7156809855",
+    "server/app/agent-profiles.meta": "78090790608845d3aa2ffa1c6a1afed26b94e925397a4a7d7c4657daffd64429",
+    "server/app/agent-profiles.rsc": "8b4589bd8f739115d74cbaee86aee935b8347278194f9d2218809dc49ff9d900",
+    "server/app/agent-profiles.segments/!KGZvdW5kYXRpb24p/agent-profiles/__PAGE__.segment.rsc": "8a6e7fe39fb4a04c4569f0f2b4403af2ffcc40e8138cd3a66d18c95fc54f62bb",
+    "server/app/agent-profiles.segments/_full.segment.rsc": "8b4589bd8f739115d74cbaee86aee935b8347278194f9d2218809dc49ff9d900",
+    "server/app/agent-profiles.segments/_tree.segment.rsc": "0c1b9f41d21f287d9a037fc1e6544486bf07a3eb779954086636fc752e481e34",
+    "server/app/agents.html": "48b0e42999410b1fd3d6f254055c25ef0433ff02107ee7a10395166c9dd838e6",
+    "server/app/agents.meta": "4b9cc06003ecc0dde8a41b5fedb9927606d235b756fe044572be1a21642632c7",
+    "server/app/agents.rsc": "d185150edbeebdf53306177f06ef1992127315cc7217e7cf8e7c5cd15f8cd54f",
+    "server/app/agents.segments/!KGZvdW5kYXRpb24p/agents/__PAGE__.segment.rsc": "79d949000c363ddc229f91ca3d6be08a2d240b0662a90290143be9ffb64d6546",
+    "server/app/agents.segments/_full.segment.rsc": "d185150edbeebdf53306177f06ef1992127315cc7217e7cf8e7c5cd15f8cd54f",
+    "server/app/agents.segments/_tree.segment.rsc": "8a442dfe8488a0f0440d1ef3db81d272071020aaaaab595e39bfd3bf5deab4a8",
+    "server/app/approvals-preview/page.js": "5f3779d18fd4cb9e811754eb44ba3f659a9017cef4554453804637db99c0be7e",
+    "server/app/approvals-preview/page.js.nft.json": "e0d6a55328d0f912404c65e474f193e8f3030a93dd8b1d45a07af0f5df2ff294",
+    "server/app/approvals-preview/page_client-reference-manifest.js": "7f1b7431991a63cd3f97398e0b1088734f7d28bf29687828451238798a2cf4ff",
+    "server/app/approvals-preview.html": "16806a847d0c5d9b08997a53a86203910eed3d3522cb0806d881853b7b2dded8",
+    "server/app/approvals-preview.meta": "1f8722c4915d51a8bce747bd1692c10dc52c3ac200f16e15ff02afb21a842919",
+    "server/app/approvals-preview.rsc": "b1410d913bc2790d62c8530a73784e48f3ba4820e4641a88f10c8ee8566d6575",
+    "server/app/approvals-preview.segments/_full.segment.rsc": "b1410d913bc2790d62c8530a73784e48f3ba4820e4641a88f10c8ee8566d6575",
+    "server/app/approvals-preview.segments/_tree.segment.rsc": "6069cbff1072edcfff796c643530fd712bcb8d35cf15ea8df28d8e108a42d10a",
+    "server/app/approvals-preview.segments/approvals-preview/__PAGE__.segment.rsc": "ec1270b2520f6a320c30d9591c85090fdb00d1c9d4dcfb4623998708e52a821e",
+    "server/app/approvals.html": "310c3a79e670631ee60fee80123386e982dc585bb2703a16a73d0761ff53e343",
+    "server/app/approvals.meta": "6980cf0f39fb4b4d389823f961404bde2129157b99d386a9380dfb6a2566545a",
+    "server/app/approvals.rsc": "0c5f4f83eedc5313a0fd2891a8381ff0d6f4a537a80da92c00518ff78651eba2",
+    "server/app/approvals.segments/!KGZvdW5kYXRpb24p/approvals/__PAGE__.segment.rsc": "4a6358a5c7b77d345806bd136b2bf907b21681bd3156b590055782a7ac682f4c",
+    "server/app/approvals.segments/_full.segment.rsc": "0c5f4f83eedc5313a0fd2891a8381ff0d6f4a537a80da92c00518ff78651eba2",
+    "server/app/approvals.segments/_tree.segment.rsc": "d3e940c202b68cb4eab480f5a6c4b461613b96007e08f5bfa0b9ef1810571572",
+    "server/app/arena-preview/page.js": "70dcf841c43c5137df8c6d71477ba6d8d1e3abac26b0a2c0406e55d59f552557",
+    "server/app/arena-preview/page.js.nft.json": "6977a1d0b2d510402cf9986731f3362002f99ca2941dc2b5fc7ceefae6f30a89",
+    "server/app/arena-preview/page_client-reference-manifest.js": "88851c092954319c2530fab9783f5086691f9f75cceaec8676ac6e5dd3baa38b",
+    "server/app/arena-preview.html": "8ba8861f6dfeab0bfa1d9cd393cbe24f43d70a719edebd3ff5d9c95382b25214",
+    "server/app/arena-preview.meta": "2ce94f166ad5bcf4adc65a5168287aab094c4179721021ae0db78d2ad6690988",
+    "server/app/arena-preview.rsc": "55d041fe305de9e4ea23c2ac1d60ae23076193afcb3a50c192829a7c3efe9124",
+    "server/app/arena-preview.segments/_full.segment.rsc": "55d041fe305de9e4ea23c2ac1d60ae23076193afcb3a50c192829a7c3efe9124",
+    "server/app/arena-preview.segments/_tree.segment.rsc": "e2a1f5f226293fd5e60cc2ffee2b2bb930aad062f7f8fa98d5d2972d60271d78",
+    "server/app/arena-preview.segments/arena-preview/__PAGE__.segment.rsc": "b2e7126f910d39b80e50713a3c2b76335a1574dbbfdcf0e236e2c4fe77b18f8f",
+    "server/app/arena.html": "9ffc78aefab97d55782890f546b371185423450059d19add8f3998815f50a63a",
+    "server/app/arena.meta": "c06f58902150cbaf12a885f0708cee7358c9472e7df728beb29391bef3485494",
+    "server/app/arena.rsc": "8e409d2e32593f5f29e92727f8d6bc96394409e04eb55d376decb99ad2410239",
+    "server/app/arena.segments/!KGZvdW5kYXRpb24p/arena/__PAGE__.segment.rsc": "995dd696ffc7e4811e5c9cffd5f8f97ca1e685553da9e28f49f0357e4f50296a",
+    "server/app/arena.segments/_full.segment.rsc": "8e409d2e32593f5f29e92727f8d6bc96394409e04eb55d376decb99ad2410239",
+    "server/app/arena.segments/_tree.segment.rsc": "9fe458d9c0778b44211ea5b744bd37bbac70a8c97a34161c9bc41762d67168a2",
+    "server/app/audit-evidence.html": "e2e93f441efa8bed24628c1098e8b8ee22aae3f78289fd29c0ba69e34db19684",
+    "server/app/audit-evidence.meta": "6e3ad052ed94eccbbf085472dcaabbe4f36dcb9138e22b5791ec151548784ebb",
+    "server/app/audit-evidence.rsc": "2b0fd54c9fc57294a87fe0010b3d7341dbd07eb340a7a139f6c7315fc8d30484",
+    "server/app/audit-evidence.segments/!KGZvdW5kYXRpb24p/audit-evidence/__PAGE__.segment.rsc": "bcf0849fefda5c2c5b96b9d680b90f70078d23488acdc07755e4f9c6ae3c9db9",
+    "server/app/audit-evidence.segments/_full.segment.rsc": "2b0fd54c9fc57294a87fe0010b3d7341dbd07eb340a7a139f6c7315fc8d30484",
+    "server/app/audit-evidence.segments/_tree.segment.rsc": "51961fb9065d3a2c81b1d635358b08b3586bb23fe7fc738e6fd1a0f28280339e",
+    "server/app/control-center.html": "a07980a0211cbe4274273bc15c29f0ec868fbedf99b544af92b248fc669d8be9",
+    "server/app/control-center.meta": "c4a58fd41c73da2d035a6fc732dd22e5b975a1ee4dd860782598dae7b8da5a0f",
+    "server/app/control-center.rsc": "8128c7ed32766b7239252be9c804c3a990f656cfb40e2be825ef8847ccac49f8",
+    "server/app/control-center.segments/!KGZvdW5kYXRpb24p/control-center/__PAGE__.segment.rsc": "85900e78896e110e60115c0c28ee7a78e48b93e28cac17252a67f7cf1bee3536",
+    "server/app/control-center.segments/_full.segment.rsc": "8128c7ed32766b7239252be9c804c3a990f656cfb40e2be825ef8847ccac49f8",
+    "server/app/control-center.segments/_tree.segment.rsc": "6567765da4f692acd3ef8fdfbbb9c4819d7d50079d233f27a9b9520e83ea0b2c",
+    "server/app/design-system.html": "1e40973da18da53cb02ad54d9e874ee7f13c6594a367a86267930cc59d1ef42c",
+    "server/app/design-system.meta": "e208eb8abee91b837a53146d67f7e9db138ee7863bdf98c50447350c227bc52f",
+    "server/app/design-system.rsc": "de385cddab7ae9792f676be67043ee2b58dc478c879dba50d4bcb2dddd3ddead",
+    "server/app/design-system.segments/!KGZvdW5kYXRpb24p/design-system/__PAGE__.segment.rsc": "0914677b103f32d32209692b94d2d3777b10c8587cdcfeb048c43c853033fbf9",
+    "server/app/design-system.segments/_full.segment.rsc": "de385cddab7ae9792f676be67043ee2b58dc478c879dba50d4bcb2dddd3ddead",
+    "server/app/design-system.segments/_tree.segment.rsc": "b23e33072b51b3e2eaf88bda509daf6f9b48733e45016d2f0037eedcdde18f64",
+    "server/app/files.html": "0b36956222703e237018359669e21015acae4db250f4f68f18682303321275c4",
+    "server/app/files.meta": "523656b98f911b760506965c0a7d5066520078eb38d0f38d8253a06808da74f1",
+    "server/app/files.rsc": "0cb6594f39ed46392e2da88d015be14b65b2ee76187fa66aa41517f02ecf1532",
+    "server/app/files.segments/!KGZvdW5kYXRpb24p/files/__PAGE__.segment.rsc": "1e8a302d245af6a309b42bf015163b7654d6e1c513bff00169573684f576d8b4",
+    "server/app/files.segments/_full.segment.rsc": "0cb6594f39ed46392e2da88d015be14b65b2ee76187fa66aa41517f02ecf1532",
+    "server/app/files.segments/_tree.segment.rsc": "862f7e032f23fc906c63bebb0b2d08ba70f65917698c582a4fbf0b9a234f6786",
+    "server/app/git.html": "55c261905362ab078a54649366528dfa8dfa6fe46f3d20b17fe80a0e4a76b3e7",
+    "server/app/git.meta": "b2e67791a9e03a2d50172ff0caaaeb242c1e597f3084597acb5988000822d4a0",
+    "server/app/git.rsc": "4f6b7d91fd5d9e38f272f67806c4894a4bb03ff61fee0f266d4e41a03e039e2b",
+    "server/app/git.segments/!KGZvdW5kYXRpb24p/git/__PAGE__.segment.rsc": "48b89768c3ecb939bd080dc77ee709a0c3f8fe8346fe844ef6951c4b3b1b44e9",
+    "server/app/git.segments/_full.segment.rsc": "4f6b7d91fd5d9e38f272f67806c4894a4bb03ff61fee0f266d4e41a03e039e2b",
+    "server/app/git.segments/_tree.segment.rsc": "47a92f809665bbcdc3e62b7fbc0a3d9ce6ce9b527cea9dbdc6c06823d3e4a889",
+    "server/app/github.html": "6f126732d8721828bd1653db8d9d7e4ae1dcc8bc1a579af47cb261676bba1fdb",
+    "server/app/github.meta": "080760f563c65c5b98f44f198743057ef5d9bbbd74d76e375f1fbe0a3f539091",
+    "server/app/github.rsc": "1ce8727c47b6fe9c98469917d5df0ab08d73581d1435bdd32d02c598788113c0",
+    "server/app/github.segments/!KGZvdW5kYXRpb24p/github/__PAGE__.segment.rsc": "017ae1c830ffd4e9429d518bb7ae29cd3faf3eca57050e0bb6cb4c32e4586fc2",
+    "server/app/github.segments/_full.segment.rsc": "1ce8727c47b6fe9c98469917d5df0ab08d73581d1435bdd32d02c598788113c0",
+    "server/app/github.segments/_tree.segment.rsc": "e5b71178a44021a48193499ea27f6c7a42834300b8bd33d705975528ee1a173e",
+    "server/app/ide-sessions.html": "3c9e3f7bc3b8e839cb9807dcf57d8d20df328b060d089712560e0667ebdd5939",
+    "server/app/ide-sessions.meta": "cba3b62d1fcd33330724505a94357f0fe8632b4b7d5330084756fcf7754670e6",
+    "server/app/ide-sessions.rsc": "7562cbfe6419c1034f6812eedc6ad2bbedfbb736781761108ece3f50dd4a6a0b",
+    "server/app/ide-sessions.segments/!KGZvdW5kYXRpb24p/ide-sessions/__PAGE__.segment.rsc": "ae4d0a3c0e88448f19d255bc8716eebc4a3c2ed0448c5abb8b3c4bda2a122a7f",
+    "server/app/ide-sessions.segments/_full.segment.rsc": "7562cbfe6419c1034f6812eedc6ad2bbedfbb736781761108ece3f50dd4a6a0b",
+    "server/app/ide-sessions.segments/_tree.segment.rsc": "b919dc7bc051e282b79f5f813c5ad0aea4c0704719ac9e2d68bbc902247e9eff",
+    "server/app/identity-preview/page.js": "39d300c273ab1a825295abffa1eec8d41b20390a02db763080629b7cbdbfc8c9",
+    "server/app/identity-preview/page.js.nft.json": "1a2a115bc171287e93c5c270f96b088279d91060ab993ceb0ce53c03646e49e4",
+    "server/app/identity-preview/page_client-reference-manifest.js": "2f952aeb4ba434c4132332159ba499155173380ef7c7878849c7ea9e52902e64",
+    "server/app/identity-preview.html": "ed0b7bd5073564f6997b73d4134d50ec88d5d61de686d74e308e12fcb7cbd035",
+    "server/app/identity-preview.meta": "696d6ca17edd6db5a8ea15fb483c544c83360ffd69580899433cf35f730d3bae",
+    "server/app/identity-preview.rsc": "11df73972d243e1a3e4e84cb24dec87afbcab7f2cd61e5026c3e1f3d63b9940a",
+    "server/app/identity-preview.segments/_full.segment.rsc": "11df73972d243e1a3e4e84cb24dec87afbcab7f2cd61e5026c3e1f3d63b9940a",
+    "server/app/identity-preview.segments/_tree.segment.rsc": "3a7ad43a1b520b379bbb9f1f4c40153b1e1d0450a5aa159a7dbd74c5765611c0",
+    "server/app/identity-preview.segments/identity-preview/__PAGE__.segment.rsc": "80420c94d5090d75e92599775b24156e2c91baa8f5225643ccb372aabd6c9086",
+    "server/app/index.html": "869f352e6faa6630e45f144fcf688fc3be6bdcebe49180d5101909d7f678a237",
+    "server/app/index.meta": "692efe007e675b3372b43e5920b78ac835267da8c17313d7ee6d848476d31586",
+    "server/app/index.rsc": "cce2288cd68765020c8fd75e14580c55ca2b66553da1b7fa700744c2c76ab1b4",
+    "server/app/index.segments/!KGZvdW5kYXRpb24p/__PAGE__.segment.rsc": "758154d4f28b0ba61c2bbb8351ab648b74da11f51a111e08da7bc63a855f19fd",
+    "server/app/index.segments/_full.segment.rsc": "cce2288cd68765020c8fd75e14580c55ca2b66553da1b7fa700744c2c76ab1b4",
+    "server/app/index.segments/_tree.segment.rsc": "44a00ad634d983dcb00e875a7eb81019147a19e201b77a2a0f503e7ebeeab054",
+    "server/app/jobs.html": "ae7ecc66ddcf0978999339069a77b6eac4b70202348b79517bc743a6eac51a88",
+    "server/app/jobs.meta": "657572f7624c872df9f2d50e0e711a849abbeb8d78571501803c595079db8989",
+    "server/app/jobs.rsc": "f26908770755d2e482a1e11e167fe44bf67a57c48d8ab5930f93f2cd3692c672",
+    "server/app/jobs.segments/!KGZvdW5kYXRpb24p/jobs/__PAGE__.segment.rsc": "6b13a6153232d654d82455f316c7c150b13d15d1b900cb38d0fcced6acc8da9d",
+    "server/app/jobs.segments/_full.segment.rsc": "f26908770755d2e482a1e11e167fe44bf67a57c48d8ab5930f93f2cd3692c672",
+    "server/app/jobs.segments/_tree.segment.rsc": "229b720dda3e011c07a481b208a54e7565c53f9b9fdacc02b1d6c9a192c4fe42",
+    "server/app/models.html": "dd60aa7c714127eea91c941cb18de421fb4495d0b8f6efc1a179cd41074af4a9",
+    "server/app/models.meta": "bc0fecc1b180a3fa60f3d694e46312bd692b88f73aaadf88c53fc4bd0ad41746",
+    "server/app/models.rsc": "215b5ff0bfda390c7725066202e48c242bc71eb69e3345f45d866f3e2d214cae",
+    "server/app/models.segments/!KGZvdW5kYXRpb24p/models/__PAGE__.segment.rsc": "198c9d37b778ae053b9326e9720985aa08332f89ec68eab1ef0bf7fd92b795fa",
+    "server/app/models.segments/_full.segment.rsc": "215b5ff0bfda390c7725066202e48c242bc71eb69e3345f45d866f3e2d214cae",
+    "server/app/models.segments/_tree.segment.rsc": "752f213c6d32593c1acb729f2be51d9d5f07f249c91d4f4e8038d07c79e0ce37",
+    "server/app/monitoring.html": "939ab42be4ce41b95d2158e079af1c50a9a0b5e44288c6d255742540a2f3ce55",
+    "server/app/monitoring.meta": "e43a8d265b88174278a9f95c156d39666c74ddf86fd7d8b456465e68faed198d",
+    "server/app/monitoring.rsc": "8411a2825d4750726e3ed4b24ed1d49644440dac9e25ce59fb6c48fd56c0d269",
+    "server/app/monitoring.segments/!KGZvdW5kYXRpb24p/monitoring/__PAGE__.segment.rsc": "c9ec12f93fe10080ac9a63ef698e97cd87d554698e6b3d36b4b3ed670154b4e7",
+    "server/app/monitoring.segments/_full.segment.rsc": "8411a2825d4750726e3ed4b24ed1d49644440dac9e25ce59fb6c48fd56c0d269",
+    "server/app/monitoring.segments/_tree.segment.rsc": "25f5f2868f2258d8997a3d9c2a479c78e80b79b07b8ba6fd87fcc13b686d75e9",
+    "server/app/overview.html": "03d7aa35149d76b153e3b83a25fcf1fcf28f0a93d1ae66a594708bb1fa6a9db9",
+    "server/app/overview.meta": "f87ba2fe0a2cfa2c6375198717fe7a3afe2402ccf0c0e4f00e7367a0db82f859",
+    "server/app/overview.rsc": "79b8efe44daef5eb68bb1e651a3ed1c177232e04c2a8a4e3be44110f4be52239",
+    "server/app/overview.segments/!KGZvdW5kYXRpb24p/overview/__PAGE__.segment.rsc": "b451b3393ec46b66a6569d36dd5f2a3bd3b0d77a3a1cdef657b87d59092265f5",
+    "server/app/overview.segments/_full.segment.rsc": "79b8efe44daef5eb68bb1e651a3ed1c177232e04c2a8a4e3be44110f4be52239",
+    "server/app/overview.segments/_tree.segment.rsc": "7cf02558efe710e36c0ada232be0c26ffe5f028047215e502a06b2e89f350364",
+    "server/app/permissions.html": "a462a9b628cdc44fa94da478e33e2948612dc6dd73a4a4a8397a17b9f1e99f69",
+    "server/app/permissions.meta": "ef65f62b861c58ddae2deb57ae1bd51f634cfdd5b66d982269000bece53b5be3",
+    "server/app/permissions.rsc": "696c64e971fb377a12ff00b6bd7d810fa350a0062991bfe1f3e9c93386b7b7f6",
+    "server/app/permissions.segments/!KGZvdW5kYXRpb24p/permissions/__PAGE__.segment.rsc": "03684b59ea6209856dc5d9ce86c774e82db407fe89f40670fa47a4cb2f1571aa",
+    "server/app/permissions.segments/_full.segment.rsc": "696c64e971fb377a12ff00b6bd7d810fa350a0062991bfe1f3e9c93386b7b7f6",
+    "server/app/permissions.segments/_tree.segment.rsc": "61915bc874c551d54c5766b7ea107d77436553865d3b98a8df6ecbc92890c8cf",
+    "server/app/processes.html": "faeb60aee899cc9895adb67533b375bdb260d9b28b0114547e6599a46f41251c",
+    "server/app/processes.meta": "f3ac407b1456acd8a2803b63efd63c89c3f8d937672f9d6a57db63ef4a55519f",
+    "server/app/processes.rsc": "ceff1909143a117bc611dd286462bcde41d1c0001bc03236e0c8962df302fb06",
+    "server/app/processes.segments/!KGZvdW5kYXRpb24p/processes/__PAGE__.segment.rsc": "d3ba0881ea19078b5222a44f32d139eeb7f98cc712a976c30dc86c8af7a2eb54",
+    "server/app/processes.segments/_full.segment.rsc": "ceff1909143a117bc611dd286462bcde41d1c0001bc03236e0c8962df302fb06",
+    "server/app/processes.segments/_tree.segment.rsc": "a989efa1daea996ab99a56ab1008fe95c98ebf4178d855a301812439246cf4c6",
+    "server/app/product-preview/page.js": "fdef4b5006f815f9960bb3087b6625bd3634328da99bd32e25e53d48404759fd",
+    "server/app/product-preview/page.js.nft.json": "81291b41c51b3a002b6d6b58ccb703c33a844bfb8c15660ff5b45cf56ee4ca32",
+    "server/app/product-preview/page_client-reference-manifest.js": "79c19dd0b2cf9249c89a88cc0f5afd9d1824abf05339c28e7cb089e6c9554da3",
+    "server/app/product-preview.html": "9888039a534cd1838d6762e575d238d9df03bacf2049c58ace7e5e96e3dea3b6",
+    "server/app/product-preview.meta": "83f2c20aa743c3b17e64104594c8ddc507cb8b20d1a913bac0b3ae7bb0ac8310",
+    "server/app/product-preview.rsc": "68b5ff0fda0ddab09256b87138aaed44114a392eccf0c597cc12b8b7f3d71b43",
+    "server/app/product-preview.segments/_full.segment.rsc": "68b5ff0fda0ddab09256b87138aaed44114a392eccf0c597cc12b8b7f3d71b43",
+    "server/app/product-preview.segments/_tree.segment.rsc": "bfd2b401e8126f14cd8bb6a52c4ecd3594f7e9e0432ee00d03173048e8a2d5b0",
+    "server/app/product-preview.segments/product-preview/__PAGE__.segment.rsc": "301250a2f2ed8ed2b02da5017dfd51a8f69cb5563e8145da62c2cad1c8f61cc7",
+    "server/app/projects.html": "1b1e764ba554f9b4d4a67bc540001768e6dcc89ececfc37c80fa31d983738613",
+    "server/app/projects.meta": "307fd18d2959c63e502ade0295ee9ab236b0434e0bd3a3d37b50fbb7075f79fc",
+    "server/app/projects.rsc": "bbc84e60bb1ec5f7606bc81fd0bf79ebf105ba16601205c9371d6e8761f9781a",
+    "server/app/projects.segments/!KGZvdW5kYXRpb24p/projects/__PAGE__.segment.rsc": "c1cc675f3c1c972e381b3debd42a16dd6468f9c1acd0f9e35226892b6a5c4b20",
+    "server/app/projects.segments/_full.segment.rsc": "bbc84e60bb1ec5f7606bc81fd0bf79ebf105ba16601205c9371d6e8761f9781a",
+    "server/app/projects.segments/_tree.segment.rsc": "fc1da48d760e9aeb6d006468a641e5e32b9da1620f87cfa14caff3f5145662b3",
+    "server/app/providers.html": "52ab194616a572c4420f2ef66ff7de4ce9c28165b105fec4bab5ffd194b9497a",
+    "server/app/providers.meta": "2dda0a031d2c742e0972a0b9b2b0d108908ebe9013ae194928394ab8d2082cd7",
+    "server/app/providers.rsc": "a32d2a2f404fd29715a5fad1aef3a5d33cd5142f17252f81c7c8886dd5f68b68",
+    "server/app/providers.segments/!KGZvdW5kYXRpb24p/providers/__PAGE__.segment.rsc": "04a99421927ad1266483660cdc2256670cef60a6c0bd92ded7edf01a2af421d7",
+    "server/app/providers.segments/_full.segment.rsc": "a32d2a2f404fd29715a5fad1aef3a5d33cd5142f17252f81c7c8886dd5f68b68",
+    "server/app/providers.segments/_tree.segment.rsc": "9682d401b8e69b106bd84c197e5fd19331126182d6ffa17fc854417449569ab7",
+    "server/app/recovery-backups.html": "a37f8d1b38411bc7f5c7fc1d1216de32de1418f354a2c91c442551faf2cd3686",
+    "server/app/recovery-backups.meta": "740e285ff00404ca16039a11b980a338651c613d3f5d8f4e0a1c1281d679b097",
+    "server/app/recovery-backups.rsc": "d4ca488336af6ff51dfed1bc1a748b46a4332b4a3c3bcc882a6ecd8499bbb20d",
+    "server/app/recovery-backups.segments/!KGZvdW5kYXRpb24p/recovery-backups/__PAGE__.segment.rsc": "870ba739e7a099c66b38fe2d0b5891c70f3f8f11323326ad7515e29549bfd9b3",
+    "server/app/recovery-backups.segments/_full.segment.rsc": "d4ca488336af6ff51dfed1bc1a748b46a4332b4a3c3bcc882a6ecd8499bbb20d",
+    "server/app/recovery-backups.segments/_tree.segment.rsc": "b22e612ac89fbe13e6cd4fa39c6d72bdfe54b817540792d1411087f82ac3302e",
+    "server/app/security.html": "9b303d98a8cb815dc14a5343b99c424d76b9ddc178ee93d9d16c98ca3562fcf4",
+    "server/app/security.meta": "2f7fcef0b74e9f23897b92ce936f07f597bed21d5e5871033a44820970b639cf",
+    "server/app/security.rsc": "2af80694d0867fd13076adffe5f8cb0f4259c82dbda0d6cc9501854f95ae3750",
+    "server/app/security.segments/!KGZvdW5kYXRpb24p/security/__PAGE__.segment.rsc": "a56e85d0d8c61c19db9afe19b9c7b999977d610ced5ab825c31b758139f623e4",
+    "server/app/security.segments/_full.segment.rsc": "2af80694d0867fd13076adffe5f8cb0f4259c82dbda0d6cc9501854f95ae3750",
+    "server/app/security.segments/_tree.segment.rsc": "7f2a4f1e0c6765837078be23f11301029c5c5f101b4e53c4cb32dba0eaa0fd35",
+    "server/app/settings.html": "c0fa6b7a3033c6e49c1a73cb96ef9f8af0c62dcaf1b7f2b798c32cfdd20d106a",
+    "server/app/settings.meta": "831b322dc520228fc753e6b62043783c000a8ff913c7c20125989c9511e791ce",
+    "server/app/settings.rsc": "5417a1ff38677c4a687f7c2b08b0afc72d3f9beec7e1ea19032a7cf99f83bdce",
+    "server/app/settings.segments/!KGZvdW5kYXRpb24p/settings/__PAGE__.segment.rsc": "0d9b619533c9555e8539f464486245b0603f0e7c4c33477d495a3915792c2cbf",
+    "server/app/settings.segments/_full.segment.rsc": "5417a1ff38677c4a687f7c2b08b0afc72d3f9beec7e1ea19032a7cf99f83bdce",
+    "server/app/settings.segments/_tree.segment.rsc": "4b7f83233bd9643edd76370da15605dc35714e27016b6cc5179be2810539df12",
+    "server/app/sign-in.html": "66d7b0199014c4eacf329d58a195e42c705ea70f39a806ebbc6d700d197e4b22",
+    "server/app/sign-in.meta": "161854dd37bca0f2deec781fcac6da5bb8427b3de217ec6c80bd4f007841e818",
+    "server/app/sign-in.rsc": "dbe1c3d2c2ea4fc91d719f825b36418ab4ef2f493b68ce379c6715c6dbcfe77e",
+    "server/app/sign-in.segments/!KGZvdW5kYXRpb24p/sign-in/__PAGE__.segment.rsc": "af6ca6ca08484eac809cb626cdf9a689e8f33dede9f92c7d9405c4ab2d07a403",
+    "server/app/sign-in.segments/_full.segment.rsc": "dbe1c3d2c2ea4fc91d719f825b36418ab4ef2f493b68ce379c6715c6dbcfe77e",
+    "server/app/sign-in.segments/_tree.segment.rsc": "f5eebae5afb6703bd95680bc530b3b2fbdd1b7beb6c1a6f80b4b43e6806b95f8",
+    "server/app/statistics.html": "2cb9e9dd052d887b3eac998940347c7b3bc06a94be8e80ae917e4230381b2887",
+    "server/app/statistics.meta": "d0e174cdf2c8bb8c7a96228b5bced8c044752d14a2312f9613ffb29664effc36",
+    "server/app/statistics.rsc": "849fa710701c567cead35ef4614f4319f9a914a683c206a6a902ec52816c0f0b",
+    "server/app/statistics.segments/!KGZvdW5kYXRpb24p/statistics/__PAGE__.segment.rsc": "949edf6325e47dd98589b8316cf5df424d67a84dff10460249ad725a5384c8b0",
+    "server/app/statistics.segments/_full.segment.rsc": "849fa710701c567cead35ef4614f4319f9a914a683c206a6a902ec52816c0f0b",
+    "server/app/statistics.segments/_tree.segment.rsc": "70139b4158cb7aeeeb832a065eb6eb42cca9083f88caf7f286a3cd2b07ee22dd",
+    "server/app/targets.html": "7ebffc017933487f269526bcaa9d52e786e587284c5a241ba99ab44a19ee02ab",
+    "server/app/targets.meta": "a83443b28409dc02a3856d5bd7c56ba9f40ef8d58bb878c386f744159bad3ab5",
+    "server/app/targets.rsc": "60039468eabe8a9dfd10cc3be5d998079dfeaf76a31636d57eee843ad00dd1cd",
+    "server/app/targets.segments/!KGZvdW5kYXRpb24p/targets/__PAGE__.segment.rsc": "331bb9da4151ef4909d4406f6a9d123175c409e9079ea4723320e6ac170d1215",
+    "server/app/targets.segments/_full.segment.rsc": "60039468eabe8a9dfd10cc3be5d998079dfeaf76a31636d57eee843ad00dd1cd",
+    "server/app/targets.segments/_tree.segment.rsc": "8ddd59316ff2ce7b520aab2966db11887b2676441f8f4427468a93e23bdb7928",
+    "server/app/terminal.html": "2d3577541dc83d952117c03c48e25e43367e5530a940573ec714e6ceccd42aa5",
+    "server/app/terminal.meta": "c7be28cac221ac338c1c8e3c8067157d1282b28eebec668165bf52f2b35e183e",
+    "server/app/terminal.rsc": "08f59b60a9e7f70614e51d74e62235b1b25eaa87169f64a3032e7e7852d4245c",
+    "server/app/terminal.segments/!KGZvdW5kYXRpb24p/terminal/__PAGE__.segment.rsc": "429022b8d7318ab3905091c1e7896976ad2256f661d5dce767008bd67c4c4c1f",
+    "server/app/terminal.segments/_full.segment.rsc": "08f59b60a9e7f70614e51d74e62235b1b25eaa87169f64a3032e7e7852d4245c",
+    "server/app/terminal.segments/_tree.segment.rsc": "6f95ff0c2b2871a448f4b276514c9d32c12deff195619c8050729d014cff3cdc",
+    "server/app/tool-lab.html": "fdbf3ee4d36c1d1650952f1d451536bf76b284104e3bca1dbbbfd18fd0e862f2",
+    "server/app/tool-lab.meta": "302501c453f97dbf744ce2ea222616db201244b53c3a6f3002dd64b7a1ed2a65",
+    "server/app/tool-lab.rsc": "86b31d04f0c56155af10651f70e8a3daa5534792d9f5986dd575cc4ff74c5a5f",
+    "server/app/tool-lab.segments/!KGZvdW5kYXRpb24p/tool-lab/__PAGE__.segment.rsc": "5b17b31fae89e9521c702d09da1730c6d2aed073f6b347bd9eb6bfd8b663997a",
+    "server/app/tool-lab.segments/_full.segment.rsc": "86b31d04f0c56155af10651f70e8a3daa5534792d9f5986dd575cc4ff74c5a5f",
+    "server/app/tool-lab.segments/_tree.segment.rsc": "5c751f4a56076a8555d5ad2f69f3475331c6967f7a9e5e1db63355f1101f12cf",
+    "server/app/workspaces.html": "ee0330460f085cb610a30b12263a2765d5849a87dacbfee065a8c7f73145bf07",
+    "server/app/workspaces.meta": "dee5465b44110cfa0cd41fc8726c5be8ec7c7fb6befef2350899e65e1622fe72",
+    "server/app/workspaces.rsc": "69e80264676b80bfd846ae0d53b57f8d412cab988291bc17adc4b1ae96315165",
+    "server/app/workspaces.segments/!KGZvdW5kYXRpb24p/workspaces/__PAGE__.segment.rsc": "c7f72541e8352241ebbcda74b06109e9667aa7f13c4add26532199e4b4c42d3d",
+    "server/app/workspaces.segments/_full.segment.rsc": "69e80264676b80bfd846ae0d53b57f8d412cab988291bc17adc4b1ae96315165",
+    "server/app/workspaces.segments/_tree.segment.rsc": "1d4059eda6a6b7950924fab81e3495890b995e147b5545c2bc79bef32087099d",
+    "server/app-paths-manifest.json": "dcfb959a54ed7a4dc9d911f56219e57c14051b20235043126f9fd8adc1b933bc",
+    "server/chunks/1310.js": "dc2d0e543fff6978929894ec441352f1610ff3a463ef1c6a775fd6b7d1485c75",
+    "server/chunks/2391.js": "2523a666d8456447770e6e5dcb69ce8566ee2b5b6aba4e676b24f7bc57f51a58",
+    "server/chunks/249.js": "ea29cb745d32d8a7e411964e7afc21e0f160e36220a5a66e5c2b29f62ccf5e7c",
+    "server/chunks/4.js": "0a79c6f96fd6ec39e17fe27f4e60f3f216341fb4e12d2197efc88623c64958aa",
+    "server/chunks/4477.js": "4c4750550a2a0c2ce9ce0583a1d7ded76381462898c01e115aca85580cc180b2",
+    "server/chunks/492.js": "20b7a00f8c4c2b6ded5f32b4e3087fee4d8e49002cb282336a5909a7f0a1e7ef",
+    "server/chunks/6282.js": "d68ed9e1aa1dc44b1da5d2405338624603af7cccb9ca84fb1c62899a4ea1ae58",
+    "server/chunks/6611.js": "c6ba61756fb7cdee5678f7816463e4053008a675de2007ca985e3ac35aaf14a3",
+    "server/chunks/6932.js": "fe342bc5a953e05a170edacf25c3cd1462f1ff19bf29fb843be6998b2b5cc9e5",
+    "server/chunks/9054.js": "334c31f6c1f97568502bf95f90f6bb49b6d3166d8fc5ef5f28e50651c734a799",
+    "server/chunks/9167.js": "d0af7d5f9d13697f45e14de4a73e3ede2b5623aca3e94e5f63485bc7c9b01df0",
+    "server/chunks/9203.js": "ee81a65c911c540310e2d3fbb698a7095c8bb437e17d129123be40ddda3301b1",
+    "server/chunks/9528.js": "57a9b991aca59ba96628c1ab0c601c7b1d3e75eb36941139f482923348b39771",
+    "server/functions-config-manifest.json": "acc60e2699e792f38f9ac9d2c3ccdf1d2f40a6b41d27fac715591d52ec98f96e",
+    "server/interception-route-rewrite-manifest.js": "fc5133e40acf09e6517b073ddd7b5c0c218d09938848902210f2cc13f08e1c81",
+    "server/middleware-build-manifest.js": "b92fa7b4ca1245fa3940ab221dfcc2e77909efba8633e55163c621d3d5a67a83",
+    "server/middleware-manifest.json": "0a8520bc7e076f7ae717c2d62713990c83e8a3d74626f327a3844bc0504e210c",
+    "server/middleware-react-loadable-manifest.js": "ad2e79ec91e2a5440840da3d8bd222c279b3b4c47e89a968327a66f6cb12eb82",
+    "server/middleware.js": "b371327dbcc80a831d422c2408fb88b67f632c26562df05730c72368e7f5fd26",
+    "server/middleware.js.nft.json": "a923fa3965d35b563eb598399dce8237550563d723fd71bc09d8eaca205321cc",
+    "server/next-font-manifest.js": "2c0f5bbb79d07dfea405146a62d7e15a7a9e890d29e38b7db2631fcf6e480da8",
+    "server/next-font-manifest.json": "926e772d34a53f2a4d9b16071dd6ea77b051b2b7acc49d9165723debe3fbbe0f",
+    "server/pages/404.html": "85ded10067115c7d4e772336d02060be653ba492abd12da99101efd1f9c6a0d4",
+    "server/pages/500.html": "d60f9281e40793371dfdcf7b951048a7fb5828a068e3a17d984f6b65d857a06d",
+    "server/pages-manifest.json": "c354059caa217e72bdeb145e351b2038990972872c52df215cb1e4105c35097b",
+    "server/prefetch-hints.json": "472205c1802306bf4177800e3a78f75de05f4d2af612c625f338ec1494b3512b",
+    "server/server-reference-manifest.js": "ce01006c00e1f63bcbfe41b3f7edd260d969b41d0a323b705c44e1ef9df13d8c",
+    "server/server-reference-manifest.json": "9174af09d68db564d53264e488c47ee33aca8eb1678e524acc70ad2883eb4bdf",
+    "server/webpack-runtime.js": "c96548052528d721221c91afa9dea95a8697dd2b788bf491ef438a2cbf8fb0bc",
+    "BUILD_ID": "aca8d09bbf0bbbbb9edad9a610a0f899a6b4892763a9e93c1009910a51b35d94"
+  },
+  "receipts": [
+    {
+      "route": "/overview",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "overview-1280.png",
+      "sha256": "5170a24e27a854888692db111ee331c7f59e50da55e13d84d5cb2dc79a87e64f",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Overview",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/targets",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "targets-1280.png",
+      "sha256": "8d5fa8ca078912ea1553a7a4a6d5a890c7706d1f5db5be9eb38b51d3017383c8",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Targets",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/arena",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "arena-1280.png",
+      "sha256": "a24f1d5a3df3ecdac8b2728447a708b5cac1cd16b6cd63df401847c04582daab",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agent Arena",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/jobs",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "jobs-1280.png",
+      "sha256": "77c739d50d4d91b6520e5f130b7a954495aa97ef1f4fb32ad2dc751661f10216",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Jobs",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/ide-sessions",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "ide-sessions-1280.png",
+      "sha256": "8b89a8a6015789ff56e6d024934d75ce4850c015e9d997113a6410ba5b2036f3",
+      "measurement": {
+        "overflow": 0,
+        "h1": "IDE Sessions",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/github",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "github-1280.png",
+      "sha256": "20b4e06a0af19a20e80eac1f501187f852412bb66f37daccf9d245e90d572414",
+      "measurement": {
+        "overflow": 0,
+        "h1": "GitHub",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/models",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "models-1280.png",
+      "sha256": "f62e236b2bd87e4f0a0a124542083059816385a58e602f3cd9a36c6bba785a14",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Local AI & Models",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/monitoring",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "monitoring-1280.png",
+      "sha256": "9868f448e8262252442f2eb5112306bab06ba6aff6a321baa3c19f74d5d6ce0f",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Monitoring",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/statistics",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "statistics-1280.png",
+      "sha256": "eed937a602298e876a80fe268bcba407c54154797e6bdfba0414ee9c16635c25",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Statistics",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/security",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "security-1280.png",
+      "sha256": "699bef27122e0f9a105e2908f20a4f1a552d95fa88e23bf1910967db15d7dd7c",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Security & Access",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/audit-evidence",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "audit-evidence-1280.png",
+      "sha256": "8d8dc660728e3b47b7f204a5232964ccc0daa44ea1c3cba065e812549613802b",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Audit & Evidence",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/recovery-backups",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "recovery-backups-1280.png",
+      "sha256": "b6b3f02b440e96ba0dd87eedde9bfe4fa40614930248b5c0e245cad914db28c9",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Recovery & Backups",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/settings",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "settings-1280.png",
+      "sha256": "acf870f272152b01203e6e5c2ba5f404cee3901cc9bc12945d749d57b8e1ed3e",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Settings",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/tool-lab",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "tool-lab-1280.png",
+      "sha256": "c8c71b94844d9c6151396f2f5a3546c2844c10f07aea88fdadf83f36f89fb670",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Tool Lab",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/projects",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "projects-1280.png",
+      "sha256": "3e0d4c5443c4dbb46ff4a2f59e0dc0a526c44a7e0cd1f96a6db99a4bd37cb981",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Projects",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/files",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "files-1280.png",
+      "sha256": "53f6e96b678588cdba5bdb46bb89d0b6e5a7fd005a10bee70b33da1e7e290b81",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Files",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/terminal",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "terminal-1280.png",
+      "sha256": "06a22522ee13dd3d1e592d36e09ff6c7cfa00f3445038ae78912e3b1946ae39d",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Terminal",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/git",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "git-1280.png",
+      "sha256": "e8126095aebd5265fabebc32a93505d118e62eaee9e96487ea7a2fa2caf894bc",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Git",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/processes",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "processes-1280.png",
+      "sha256": "dce7488fd9864dc30b3548cef15de34d5993f52ff4f1fd5e5a710e3d7028aa8e",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Processes",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/agents",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "agents-1280.png",
+      "sha256": "b8d8398ebe9dbd131e3bf437fc6a35da23e9c2e671ba8cd5a78e8ba5430298a0",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agents",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/approvals",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "approvals-1280.png",
+      "sha256": "25e62b533ffc025fe69cef50eed3b8502d9f50f8bfe6104011ff714d987106ee",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Review & Approvals",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/providers",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "providers-1280.png",
+      "sha256": "509084dc770895d305599bb2d256d9d27428159d973eddc17c19f5d0b2e86924",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Providers",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/agent-profiles",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "agent-profiles-1280.png",
+      "sha256": "ebe6e8dcf77bea17917a43bd20d2b100692be1a07c8eaf974ce279fbca633581",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agent Profiles",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/control-center",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "file": "control-center-1280.png",
+      "sha256": "ea771f265f5b6f8b695ae771d533e319ae041bea6489f6eeb17c0499fb14c5d9",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Control Center",
+        "font": "64px",
+        "rail": "248px"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/overview",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "overview-360.png",
+      "sha256": "c53e8208e68d1459a3cea6c8407b3b31fb3d2d0e71b523982a98662fe49c346c",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Overview",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/targets",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "targets-360.png",
+      "sha256": "8c8ee74f32fe7e14e21b38c55ded6c1ba50bd4e3a8c3da104cf371b933dd7351",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Targets",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/arena",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "arena-360.png",
+      "sha256": "16b5d399b52d4a7254effe551f9661beaae637a9a1c1a151aa7f845cf2d7bd36",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agent Arena",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/jobs",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "jobs-360.png",
+      "sha256": "aa3324717cc67ccf72b48ad50487c5e4735d2203761803dc721c5759f1dd2a63",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Jobs",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/ide-sessions",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "ide-sessions-360.png",
+      "sha256": "050577647d56c2102019864dd454b64e8256d16215195b7bcde7656d346ec574",
+      "measurement": {
+        "overflow": 0,
+        "h1": "IDE Sessions",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/github",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "github-360.png",
+      "sha256": "4fff68580313881efb373dc0778a5b3d10db35c6137ea2943a46f5d3c1e8e4c3",
+      "measurement": {
+        "overflow": 0,
+        "h1": "GitHub",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/models",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "models-360.png",
+      "sha256": "a6f5ba8136581c43edf95145198795e2af0658f6e88f1e75ec045e5e17ee6383",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Local AI & Models",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/monitoring",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "monitoring-360.png",
+      "sha256": "ae3e61cb333b5d5e0f879988ef2852803c1eed6f5216fbfc1fd0bb7cbcef0839",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Monitoring",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/statistics",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "statistics-360.png",
+      "sha256": "42430312338bace542247c2503a4890232bdfd785ba2f7dc15f76667460e6382",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Statistics",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/security",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "security-360.png",
+      "sha256": "5f13c6358297e0dae0c1a573cee17eebd59f22c07852a5f1089447f881e6b52b",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Security & Access",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/audit-evidence",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "audit-evidence-360.png",
+      "sha256": "bbd8243579f0df21dfc8aeb65cfe219b2121186ae722b5d77ce8417ea904e40f",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Audit & Evidence",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/recovery-backups",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "recovery-backups-360.png",
+      "sha256": "472a20cfc9e6be1607495dc45fc0d6420d7e568108326bf04ea0ed7dda0303eb",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Recovery & Backups",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/settings",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "settings-360.png",
+      "sha256": "34fe2e30ebe8fb41b32a7df838b875e9e43cecb515ae1718491f02816e82351b",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Settings",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/tool-lab",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "tool-lab-360.png",
+      "sha256": "c563c1a5e674b0475b500793ba6b3d1617127a6fbe4f448a34d69fc8dbfbf489",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Tool Lab",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/projects",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "projects-360.png",
+      "sha256": "f6c72e3174300726fff6fd397624d87ef149efedfe1301049770964dbedb05d7",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Projects",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/files",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "files-360.png",
+      "sha256": "961cf62ad4a484878e60e837b3d244f8af86393d83598162c3987220f421dea9",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Files",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/terminal",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "terminal-360.png",
+      "sha256": "f6358ec94eb69a962c49ba91af9849ffe3788e164b0e11c3fc01a9c8f896deb8",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Terminal",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/git",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "git-360.png",
+      "sha256": "b6f5701f690cab5d40567ce878c140a81967e9a387cc92da10d1fe5aee1f3c1f",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Git",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/processes",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "processes-360.png",
+      "sha256": "91c901541079a7bbe3a3ac223947f0abccb18b0d39f54d5acba45a2b75e8142d",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Processes",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/agents",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "agents-360.png",
+      "sha256": "ef6dd2a39f7672d4199802bf3b39a5891a2239aebace3477f66bde40bb3e250b",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agents",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/approvals",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "approvals-360.png",
+      "sha256": "aa2d12e0f70bfbd829e4f79aa7205283c563ac0848ec1239bfa6424815642905",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Review & Approvals",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/providers",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "providers-360.png",
+      "sha256": "5990164ac29eb8675af64dc528a000d6cebfb2ebd3821640e22c237d5e313f5f",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Providers",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/agent-profiles",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "agent-profiles-360.png",
+      "sha256": "5bb6b6d3d0e4c24201adf54020f026ceffcb40ba68e525717830a55398cc86c3",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Agent Profiles",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    },
+    {
+      "route": "/control-center",
+      "viewport": {
+        "width": 360,
+        "height": 900
+      },
+      "file": "control-center-360.png",
+      "sha256": "ec068f412c393d4cab2668e35b418331deccbe40cdcd440a4706872865cecf6d",
+      "measurement": {
+        "overflow": 0,
+        "h1": "Control Center",
+        "font": "36px",
+        "rail": "auto"
+      },
+      "assetPath": "/_next/static/css/419f3400af553b9a.css",
+      "resourceHash": "438ebab467a883ebe6ec5fc067f972bc2430157c24e91dd29e140f349bca48b7",
+      "state": "Production integration-pending; synthetic MCP unavailable; no live backend"
+    }
+  ],
+  "stop": {
+    "code": 143,
+    "signal": null
+  },
+  "portReleased": true
+}

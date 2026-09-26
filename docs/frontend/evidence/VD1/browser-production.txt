@@ -1,0 +1,6 @@
+
+> @quarangate/frontend@0.1.0 test:e2e:production
+> playwright test --config playwright.production.config.ts
+
+Error: http://127.0.0.1:3100 is already used, make sure that nothing is running on the port/url or set reuseExistingServer:true in config.webServer.
+
