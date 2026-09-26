@@ -418,3 +418,18 @@ Source review found that changing the window remounted an explicit read panel wi
 GOVERNANCE BLOCKER: the lane began with an unstaged two-line generated change in `frontend/next-env.d.ts`, selecting `.next/types` instead of `.next/dev/types`. It is preserved. Owner disposition is required before including it in an atomic closure commit; it must not be discarded or silently staged. No other writer process was observed (process-name inventory showed only this Codex process); that inventory is not an external lease guarantee. FE12 remains gated until FE11 repair qualification, freeze, and clean-worktree closure.
 
 Independent review remains required. Production identity/adapter integration and deployment are not claimed.
+
+
+### Immutable FE11 repair candidate
+
+- Commit: `a9b6e7305af083669cb137532135d28e53c5b561`
+- Tree: `1cd417350619411627a7c1127bb84fb107f90e35`
+- Parent: `57ca3679c0386612d0117ff9a4b36e1c8d1bdab9`
+- Subject: `fix(frontend): refresh statistics on bounded window changes`
+- Changed paths: `docs/frontend/CODEX_FRONTEND_CONTINUATION_HANDOFF.md`, `frontend/README.md`, `frontend/src/components/operational-read.tsx`, `frontend/src/components/statistics-center.tsx`, `frontend/tests/e2e/statistics.spec.ts`.
+- Status: FROZEN IMPLEMENTATION CANDIDATE — NOT SELF-ACCEPTED. FE11 clean-worktree closure remains BLOCKED_GOVERNANCE by the inherited generated-file change. That change is excluded from this commit and remains unstaged with its original two-line diff.
+- Next exact action: owner disposition of the inherited `frontend/next-env.d.ts` normalization; complete clean-worktree closure, then FE12 Security & Authority Explorer. FE12–FE16 and frontend convergence have not been implemented or qualified in this continuation.
+
+| Continuation | Commit | Tree | Parent | Subject | Tests |
+| --- | --- | --- | --- | --- | --- |
+| FE11 window-read repair | `a9b6e7305af083669cb137532135d28e53c5b561` | `1cd417350619411627a7c1127bb84fb107f90e35` | `57ca3679c0386612d0117ff9a4b36e1c8d1bdab9` | `fix(frontend): refresh statistics on bounded window changes` | Post-repair local gates PASS; Chromium 13/13 PASS; see continuation verification |
