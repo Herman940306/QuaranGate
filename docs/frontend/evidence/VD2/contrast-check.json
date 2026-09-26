@@ -1,0 +1,40 @@
+{
+  "method": "WCAG relative luminance on explicit VD2 colors and sRGB 80% muted / 20% ink shell support mix; browser axe checks are separate",
+  "pairs": {
+    "rail_group_label": {
+      "foreground": "#aebbc1",
+      "background": "#202a31",
+      "ratio": 7.431
+    },
+    "rail_link": {
+      "foreground": "#dbe3e6",
+      "background": "#202a31",
+      "ratio": 11.2337
+    },
+    "rail_active": {
+      "foreground": "#ffffff",
+      "background": "#2c3942",
+      "ratio": 11.8576
+    },
+    "authority_copy_light": {
+      "foreground": "#4d5a63",
+      "background": "#e9eeef",
+      "ratio": 6.0648
+    },
+    "authority_copy_warm": {
+      "foreground": "#4d5a63",
+      "background": "#ebe5dc",
+      "ratio": 5.6702
+    },
+    "trust_stage_light": {
+      "foreground": "#315e78",
+      "background": "#ffffff",
+      "ratio": 6.9933
+    },
+    "authority_copy_dark": {
+      "foreground": "#bbc6cb",
+      "background": "#202d34",
+      "ratio": 8.1091
+    }
+  }
+}

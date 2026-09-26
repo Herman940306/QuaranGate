@@ -1,0 +1,4 @@
+COMMAND=["npm", "--prefix", "frontend", "audit", "--audit-level=high"]
+EXIT_CODE=0
+RAW_OUTPUT_SHA256=6d8c5c8f3d7684adb070417bd608d01ae90aa3dc26a65af03ffda4955f38d9a3
+found 0 vulnerabilities

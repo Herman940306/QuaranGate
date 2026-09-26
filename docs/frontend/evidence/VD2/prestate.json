@@ -1,0 +1,31 @@
+{
+  "head": "a51ff833cce756f758bc27a849a5a37ab6f87250",
+  "tree": "5f49230ef2d91bcf6d5a2305688c0801d4d16721",
+  "historicalEvidence": {
+    "VD0": {
+      "files": 55,
+      "manifestSha256": "3d2a7d719171483f44e51b46aae7e82d51534323db21af527ed5c62185f44ece",
+      "verified": true
+    },
+    "VD0-RECAPTURE-20260926": {
+      "files": 59,
+      "manifestSha256": "099c444dda928bbe7b2a1eaaa3c7a2bfef5b36a4d14eb1a8e9b7a71860752c47",
+      "verified": true
+    },
+    "VD1": {
+      "files": 58,
+      "manifestSha256": "054db0644fb65f28841048b706a80dbce40b2d1f4dd581804a621407a34065ce",
+      "verified": true
+    },
+    "VD1-R1": {
+      "files": 4,
+      "manifestSha256": "379c70626381602db27b209b87ccaf1070346cda1f0a8e37634da89ed97e08a5",
+      "verified": true
+    },
+    "VD1-R2": {
+      "files": 45,
+      "manifestSha256": "947b7383b39166d61d3aa24b48d50797930cd529bc822ac51a4e70b7e838e659",
+      "verified": true
+    }
+  }
+}

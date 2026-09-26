@@ -136,25 +136,47 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .swatches span { display: block; block-size: 4rem; margin-block-end: 0.45rem; border: 1px solid color-mix(in srgb, var(--boundary) 70%, transparent); border-radius: 0.3rem; }
 .shell { display: grid; grid-template-columns: 15.5rem minmax(0, 1fr); min-block-size: 100svh; }
 .rail { position: sticky; inset-block-start: 0; display: flex; flex-direction: column; block-size: 100svh; padding: 1.25rem 1rem; overflow-y: auto; background: var(--rail); color: #eaf0f2; border-inline-end: 1px solid #3b4850; }
-.brand { display: flex; gap: 0.75rem; align-items: center; margin-block-end: 2.25rem; text-decoration: none; font-weight: 600; letter-spacing: -0.015em; }
+.brand { display: flex; gap: 0.75rem; align-items: center; margin-block-end: 1.2rem; text-decoration: none; font-weight: 600; letter-spacing: -0.015em; }
 .brand small, .context-label small { display: block; margin-block-start: 0.12rem; color: #aebac0; font: 400 0.625rem/1.2 "IBM Plex Mono", monospace; letter-spacing: 0.08em; }
 .brand-mark { display: grid; place-items: center; inline-size: 2.15rem; block-size: 2.15rem; border: 1px solid #62717a; color: #fff; font: 500 1.1rem "IBM Plex Mono", monospace; }
 .rail-label { color: #9eabb1; font: 500 0.625rem/1.4 "IBM Plex Mono", monospace; letter-spacing: 0.1em; }
-.rail nav { display: grid; gap: 0.3rem; }
-.rail nav a, .modal nav a { display: flex; justify-content: space-between; align-items: center; min-block-size: 2.6rem; padding: 0.65rem 0.75rem; border-inline-start: 3px solid transparent; color: #dbe3e6; text-decoration: none; }
-.rail nav a span, .modal nav a span { font: 500 0.6rem "IBM Plex Mono", monospace; letter-spacing: 0.08em; }
+.rail nav, .modal nav { display: grid; gap: 1rem; }
+.nav-group { display: grid; gap: 0.12rem; }
+.nav-group-label { margin: 0 0 0.25rem; padding-inline: 0.75rem; color: #aebbc1; font: 600 0.625rem/1.4 "IBM Plex Mono", monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+.rail nav a, .modal nav a { display: flex; justify-content: space-between; align-items: center; min-block-size: 2.15rem; padding: 0.42rem 0.75rem; border-inline-start: 3px solid transparent; color: #dbe3e6; text-decoration: none; font-size: 0.79rem; }
 .rail nav a:hover { background: var(--rail-muted); }
-.rail nav a[aria-current="page"] { border-inline-start-color: #7db1c9; background: var(--rail-muted); color: #fff; }
+.rail nav a[aria-current="page"] { border-inline-start-color: #91c4dc; background: var(--rail-muted); color: #fff; font-weight: 600; }
 .rail-foot { margin-block-start: auto; padding-block-start: 1.25rem; border-block-start: 1px solid #46535a; }
 .rail-foot p { color: #c5d0d4; font-size: 0.75rem; line-height: 1.5; }
 .rail-version { color: #86979f; font: 0.65rem "IBM Plex Mono", monospace; }
-.workspace { min-inline-size: 0; }
-.command-bar { position: sticky; z-index: 20; inset-block-start: 0; display: flex; justify-content: space-between; align-items: center; min-block-size: 4.35rem; padding: 0.65rem clamp(1rem, 3vw, 2.5rem); background: color-mix(in srgb, var(--surface) 94%, transparent); border-block-end: 1px solid var(--boundary); }
+.workspace { min-inline-size: 0; container-type: inline-size; }
+.command-bar { position: sticky; z-index: 20; inset-block-start: 0; display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-block-size: 4.25rem; padding: 0.55rem clamp(1rem, 3vw, 2.5rem); background: var(--surface); border-block-end: 1px solid var(--boundary); }
 .header-context, .account-context { display: flex; align-items: center; gap: 0.85rem; }
-.account-context { flex-wrap: wrap; min-inline-size: 0; }
+.account-context { flex-wrap: wrap; justify-content: flex-end; min-inline-size: 0; }
 .context-label { color: var(--ink); font-size: 0.8rem; font-weight: 500; }
 .context-label small { color: var(--muted); }
+.read-context { display: grid; gap: 0.12rem; justify-items: start; }
+.read-context > span { color: var(--muted); font: 500 0.625rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.07em; }
 .narrow-menu { display: none; }
+.narrow-menu svg { display: block; inline-size: 1.1rem; block-size: 1.1rem; }
+.shell-authority { --shell-support-ink: color-mix(in srgb, var(--muted) 80%, var(--ink)); display: grid; grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr); gap: 1rem; align-items: center; padding: 0.65rem clamp(1rem, 3vw, 2.5rem); background: var(--surface-muted); border-block-end: 1px solid var(--boundary); }
+.authority-context { display: grid; gap: 0.15rem; min-inline-size: 0; }
+.authority-context strong { font: 600 0.7rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.07em; }
+.authority-context span, .authority-context small { color: var(--shell-support-ink); font-size: 0.65rem; line-height: 1.3; }
+.authority-classes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; padding: 0; list-style: none; }
+.authority-classes li { display: grid; align-content: center; gap: 0.1rem; min-inline-size: 0; padding: 0.3rem 0.65rem; border-inline-start: 2px solid var(--boundary); }
+.authority-classes li:last-child { border-inline-start-color: var(--destructive); }
+.authority-classes strong { color: var(--ink); font: 600 0.68rem "IBM Plex Mono", monospace; text-transform: uppercase; }
+.authority-classes span { color: var(--shell-support-ink); font-size: 0.65rem; }
+.shell-status-banner { display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; padding: 0.45rem clamp(1rem, 3vw, 2.5rem); background: var(--surface); border-block-end: 1px solid var(--boundary); border-inline-start: 3px solid var(--attention); font-size: 0.72rem; }
+.shell-status-banner strong { font-weight: 600; text-transform: capitalize; }
+.trust-ribbon { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-block-end: 1.5rem; border: 1px solid var(--boundary); background: var(--surface); }
+.trust-ribbon > div { display: grid; gap: 0.2rem; min-inline-size: 0; padding: 0.7rem 0.85rem; border-inline-start: 2px solid var(--boundary); }
+.trust-ribbon > div:first-child { border-inline-start: 0; }
+.trust-ribbon span { color: var(--primary-text, var(--palette-primary-text)); font: 600 0.63rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: 0.05em; }
+.trust-ribbon strong { font-size: 0.78rem; }
+.trust-ribbon small { color: var(--muted); font-size: 0.68rem; }
+.rail nav a span, .modal nav a span { font: 500 0.6rem "IBM Plex Mono", monospace; letter-spacing: 0.08em; }
 main { inline-size: min(100%, 94rem); margin-inline: auto; padding: clamp(1.25rem, 3vw, 2.75rem); }
 .page-heading { display: flex; justify-content: space-between; gap: 2rem; align-items: flex-start; padding-block-end: 2rem; }
 .eyebrow { margin: 0 0 0.65rem; color: var(--primary-text, var(--palette-primary-text)); font: 500 0.7rem "IBM Plex Mono", monospace; letter-spacing: 0.12em; }
@@ -263,13 +285,20 @@ th { background: var(--surface-muted); color: var(--muted); font-size: 0.7rem; l
 .modal[data-kind="drawer"] { inline-size: min(26rem, calc(100% - 1rem)); block-size: calc(100% - 1rem); max-block-size: none; margin: 0.5rem 0.5rem 0.5rem auto; border-radius: 0.75rem; }
 .modal-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 1rem; }
 .modal-content { display: grid; gap: 1rem; margin-block-start: 1rem; }
-.modal nav { display: grid; gap: 0.4rem; }
+.modal nav { gap: 0.8rem; }
+.modal .nav-group-label { color: var(--muted); }
 .modal nav a { color: var(--ink); border-color: transparent; }
 .modal nav a:hover, .modal nav a[aria-current="page"] { background: var(--surface-muted); border-inline-start-color: var(--primary); }
 .toast-center { position: fixed; z-index: 60; inset: auto 1rem 1rem auto; display: flex; align-items: center; gap: 0.5rem; max-inline-size: min(30rem, calc(100% - 2rem)); }
 .toast { margin: 0; padding: 0.75rem 1rem; color: var(--machine-ink); background: var(--machine); border: 1px solid #53616a; border-radius: 0.625rem; box-shadow: var(--shadow-overlay); font-size: 0.78rem; }
 .page-footer { display: flex; justify-content: space-between; gap: 1rem; padding: 1rem clamp(1rem, 3vw, 2.5rem); color: var(--muted); border-block-start: 1px solid var(--boundary); font: 0.68rem "IBM Plex Mono", monospace; }
 .standalone { max-inline-size: 42rem; margin: 10vh auto; }
+
+@container (max-width: 44rem) {
+  .command-bar { flex-wrap: wrap; }
+  .shell-authority { grid-template-columns: minmax(0, 1fr); }
+  .authority-classes { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem 0; }
+}
 
 .arena-grid { display: grid; grid-template-columns: minmax(17rem, 21rem) minmax(0, 1fr); gap: 1rem; align-items: start; }
 .arena-builder { min-inline-size: 0; }
@@ -315,7 +344,10 @@ th { background: var(--surface-muted); color: var(--muted); font-size: 0.7rem; l
   .rail { display: none; }
   .narrow-menu { display: inline-flex; }
   .command-bar { min-block-size: 3.9rem; }
-  .account-context .context-label { display: none; }
+  .shell-authority { grid-template-columns: 1fr; gap: 0.55rem; }
+  .authority-context { grid-template-columns: auto 1fr; gap: 0.1rem 0.6rem; }
+  .authority-context small { grid-column: 1 / -1; }
+  .authority-classes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .authority-strip { grid-template-columns: 1fr; }
   .authority-strip > span:not(.authority-label) { padding: 0; border: 0; }
   .foundation-grid, .review-grid { grid-template-columns: 1fr; }
@@ -331,8 +363,19 @@ th { background: var(--surface-muted); color: var(--muted); font-size: 0.7rem; l
 
 @media (max-width: 420px) {
   main { padding: 1rem; }
-  .command-bar { flex-wrap: wrap; gap: 0.65rem; }
-  .header-context { flex-wrap: wrap; }
+  .command-bar { display: grid; gap: 0.45rem; }
+  .header-context { min-inline-size: 0; }
+  .account-context { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0.5rem; justify-content: stretch; align-items: center; }
+  .account-context .button { padding-inline: 0.6rem; font-size: 0.65rem; }
+  .account-context .context-label { min-inline-size: 0; font-size: 0.68rem; }
+  .read-context .badge { font-size: 0.58rem; }
+  .read-context > span { font-size: 0.55rem; }
+  .authority-classes { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem 0; }
+  .trust-ribbon { grid-template-columns: 1fr; }
+  .trust-ribbon > div { grid-template-columns: auto minmax(0, 1fr); gap: 0.1rem 0.5rem; padding: 0.45rem 0.65rem; border-inline-start: 0; border-block-start: 1px solid var(--boundary); }
+  .trust-ribbon > div:first-child { border-block-start: 0; }
+  .trust-ribbon small { grid-column: 2; }
+  .account-context .context-label small { font-size: 0.56rem; overflow-wrap: anywhere; }
   .motion-samples > div { grid-template-columns: minmax(0, 1fr); }
   .page-heading { display: grid; gap: 1rem; }
   h1 { font-size: 1.5rem; }
@@ -342,6 +385,27 @@ th { background: var(--surface-muted); color: var(--muted); font-size: 0.7rem; l
   .arena-job-track { gap: 0.15rem; }
   .arena-job-track > div { font-size: 0.52rem; }
   .arena-composer-bar { flex-wrap: wrap; }
+}
+
+@media (max-width: 300px) {
+  .account-context { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+  .account-context .context-label { grid-column: 1; }
+  .authority-context { grid-template-columns: 1fr; }
+  .authority-context small { grid-column: 1; }
+  .authority-classes { grid-template-columns: 1fr; }
+  .trust-ribbon > div { grid-template-columns: 1fr; }
+  .trust-ribbon small { grid-column: 1; }
+}
+
+@container (max-width: 22rem) {
+  .command-bar { display: grid; }
+  .account-context { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+  .account-context .context-label { grid-column: 1; }
+  .authority-context { grid-template-columns: 1fr; }
+  .authority-context small { grid-column: 1; }
+  .authority-classes { grid-template-columns: 1fr; }
+  .trust-ribbon > div { grid-template-columns: 1fr; }
+  .trust-ribbon small { grid-column: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -354,4 +418,6 @@ th { background: var(--surface-muted); color: var(--muted); font-size: 0.7rem; l
   .rail, .machine, .toast { forced-color-adjust: none; color: Canvas; background: CanvasText; }
   .badge::before { border: 1px solid currentColor; }
   .swatches span { border: 2px solid CanvasText; }
+  .rail nav a[aria-current="page"], .modal nav a[aria-current="page"] { border-inline-start-color: Highlight; outline: 1px solid Highlight; }
+  .authority-classes li, .authority-classes li:last-child, .trust-ribbon > div { border-color: CanvasText; }
 }

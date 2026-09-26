@@ -379,3 +379,17 @@ python3 <frontend-design-premium-skill>/scripts/audit_project.py . --config fron
 For later runs, use a NEW evidence output path. The manifest's `frontend/src`, `UX-CONTRACT.md`, and failure-test paths are repository-root-relative. Do not invoke the scanner with `frontend` as project root or add duplicate contracts there. Correct root/config selection scans only `frontend/src`; generated test reports and Next output are excluded. No scanner rule was changed.
 
 Correct invocation reduces 51 findings to nine before product edits and eight after the form repair. The remaining eight are the scanner treating imported JSX `Textarea` calls as literal textarea elements. The shared primitive supplies `resize-none`; global CSS supplies `resize: none`; runtime browser assertions verify the owner. The scanner has no supported Textarea ownership-resolution option. Status remains `BLOCKED_SCANNER_STATIC_RESOLUTION`, requiring owner/reviewer adjudication, not scanner PASS.
+
+## VD2 shell, navigation, and authority presentation
+
+VD2 groups the existing product routes in the desktop rail and app-owned narrow drawer, retains exact route links and active state, and adds a shell-wide classification strip for Read, Write, Execution, and Destructive operations. The overview trust ribbon names Client, Gateway, and Executor while keeping unverified runtime state explicit. The command bar shows workspace, account, and the last attempted read without treating a completed read as a general authorization grant. The shell footer retains the server authority statement and distinguishes completed from applied.
+
+| File | Purpose / exports | Owned state | Dependency / limitation |
+| --- | --- | --- | --- |
+| `src/lib/navigation.ts` | `navigationGroups`, `productRoutes` | Shared route hierarchy | Existing product routes; no route removed |
+| `src/components/shell.tsx` | Shared shell and navigation | Identity projection and last-read display only | Server remains authority; trust path does not claim live qualification |
+| `src/app/globals.css` | Shell, rail, strip, ribbon, responsive and forced-colors styling | Presentation only | Existing drawer owner and design tokens |
+| `tests/e2e/vd2-shell.spec.ts` | Desktop/narrow/authority/zoom browser regression | Synthetic unavailable read state | Playwright; no live backend proof |
+| `../docs/frontend/evidence/VD2/` | Additive report, validation receipts and screenshots | Evidence only | Independent visual review still required |
+
+VD2 evidence uses synthetic or unavailable backend state. The eight adjudicated shared-Textarea static findings remain visible in the correctly rooted Strict Premium report; no consumer resize classes or scanner rules were changed.

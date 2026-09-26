@@ -1,0 +1,18 @@
+COMMAND=["npm", "--prefix", "frontend", "test"]
+EXIT_CODE=0
+RAW_OUTPUT_SHA256=f0d7ab52133ac341f03cfc63f7e4bef069a4ba868365cf852b490075878c7fdd
+
+> @quarangate/frontend@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.2 /home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend
+
+
+ Test Files  18 passed (18)
+      Tests  164 passed (164)
+   Start at  21:55:02
+   Duration  1.33s (transform 48%, tests 26%, import 23%, worker 3%)
+
+    Isolate  18 workers spawned · ~144ms startup each (spawn + environment, per file)
+             at least ~374ms faster with isolate: false — reuses workers across files instead of one per file

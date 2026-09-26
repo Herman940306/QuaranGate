@@ -1,0 +1,6 @@
+COMMAND=["npm", "--prefix", "frontend", "run", "typecheck"]
+EXIT_CODE=0
+RAW_OUTPUT_SHA256=3646b7d7131bd48956fde3b5e0cb50ec307ddcb2a7830b2acf94972fd291c9d8
+
+> @quarangate/frontend@0.1.0 typecheck
+> tsc --noEmit

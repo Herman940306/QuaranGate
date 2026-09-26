@@ -1,0 +1,21 @@
+{
+  "projectRoot": "/home/herman/projects/QuaranGate-product-frontend-continuation-codex",
+  "manifest": "frontend/premium-ui.json",
+  "sourceRoots": [
+    "frontend/src"
+  ],
+  "generatedFilesScanned": 0,
+  "rootContractFindings": 0,
+  "scannerSha256": "67fd35597c85a2f37dd3c566f0bd79768cbe059114edcf28074fc5afa3e0ce68",
+  "thirdPartyToolModified": false,
+  "findingCount": 8,
+  "findingRuleIds": [
+    "form.textarea-resize-missing"
+  ],
+  "findingsExactMatchVD1": true,
+  "generatedOutputExcludedByConfiguredSourceRoots": [
+    "frontend/.next",
+    "frontend/test-results",
+    "frontend/playwright-report"
+  ]
+}

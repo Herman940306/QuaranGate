@@ -1,0 +1,315 @@
+COMMAND=["npm", "--prefix", "frontend", "run", "test:e2e", "--", "--grep", "200 percent layout zoom|desktop 200 percent layout zoom|unavailable is explicit|forbidden is explicit|discovery failure|degraded, palette", "--reporter=list"]
+EXIT_CODE=1
+RAW_OUTPUT_SHA256=bc3be270d1126960254294ed183bbe083b841309e99ac6c04dfc464cfd5a729f
+
+> @quarangate/frontend@0.1.0 test:e2e
+> playwright test --grep 200 percent layout zoom|desktop 200 percent layout zoom|unavailable is explicit|forbidden is explicit|discovery failure|degraded, palette --reporter=list
+
+
+Running 7 tests using 3 workers
+
+  ✘  3 [chromium] › tests/e2e/operational.spec.ts:53:3 › forbidden is explicit and does not leak backend copy (3.8s)
+  ✓  2 [chromium] › tests/e2e/product.spec.ts:156:1 › reduced motion, forced colors and 200 percent layout zoom preserve product controls (5.2s)
+  ✘  1 [chromium] › tests/e2e/foundation.spec.ts:237:1 › 200 percent layout zoom keeps desktop and narrow actions and overlays reachable (5.3s)
+  ✓  6 [chromium] › tests/e2e/tool-lab.spec.ts:11:1 › FE16 discovery failure never claims match (1.7s)
+  ✓  5 [chromium] › tests/e2e/product.spec.ts:170:1 › desktop 200 percent layout zoom and keyboard-only provider editor remain reachable (3.8s)
+  ✘  4 [chromium] › tests/e2e/operational.spec.ts:53:3 › unavailable is explicit and does not leak backend copy (3.7s)
+  ✘  7 [chromium] › tests/e2e/vd2-shell.spec.ts:69:1 › degraded, palette, forced colors and 200 percent reflow keep shell truth visible (2.4s)
+
+
+  1) [chromium] › tests/e2e/foundation.spec.ts:237:1 › 200 percent layout zoom keeps desktop and narrow actions and overlays reachable
+
+    Error: expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 1
+    Received:    51
+
+      27 | async function assertNoPageOverflow(page: Page) {
+      28 |   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    > 29 |   expect(overflow).toBeLessThanOrEqual(1);
+         |                    ^
+      30 | }
+      31 |
+      32 | test("foundation shell is honest, responsive, and free of persistent browser data", async ({ page }) => {
+        at assertNoPageOverflow (/home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/foundation.spec.ts:29:20)
+        at /home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/foundation.spec.ts:246:5
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/foundation-200-percent-lay-a938d-ions-and-overlays-reachable-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [chromium] › tests/e2e/operational.spec.ts:53:3 › forbidden is explicit and does not leak backend copy
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 39
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure all page content is contained by landmarks",
+    +     "help": "All page content should be contained by landmarks",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=playwright",
+    +     "id": "region",
+    +     "impact": "moderate",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "isIframe": false,
+    +             },
+    +             "id": "region",
+    +             "impact": "moderate",
+    +             "message": "Some page content is not contained by landmarks",
+    +             "relatedNodes": Array [],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Some page content is not contained by landmarks",
+    +         "html": "<div class=\"shell-status-banner\" aria-label=\"Last read context\"><strong>Last read: forbidden</strong><span>Check the affected panel for details. This does not establish general service or grant status.</span></div>",
+    +         "impact": "moderate",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".shell-status-banner",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.keyboard",
+    +       "best-practice",
+    +       "RGAAv4",
+    +       "RGAA-9.2.1",
+    +     ],
+    +   },
+    + ]
+
+      24 | }
+      25 | async function noOverflow(page: Page) { expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1); }
+    > 26 | async function axe(page: Page) { expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]); }
+         |                                                                                                ^
+      27 | for (const width of [1280, 360]) {
+      28 |   test(`overview and targets are truthful and accessible at ${width}`, async ({ page }) => {
+      29 |     await page.setViewportSize({ width, height: 900 }); await mockMcp(page); await page.goto("/overview");
+        at axe (/home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/operational.spec.ts:26:96)
+        at /home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/operational.spec.ts:53:498
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/operational-forbidden-is-e-e17d4--does-not-leak-backend-copy-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/operational-forbidden-is-e-e17d4--does-not-leak-backend-copy-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/operational-forbidden-is-e-e17d4--does-not-leak-backend-copy-chromium/video-1.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/operational-forbidden-is-e-e17d4--does-not-leak-backend-copy-chromium/error-context.md
+
+    attachment #5: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/operational-forbidden-is-e-e17d4--does-not-leak-backend-copy-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/operational-forbidden-is-e-e17d4--does-not-leak-backend-copy-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) [chromium] › tests/e2e/operational.spec.ts:53:3 › unavailable is explicit and does not leak backend copy
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 39
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure all page content is contained by landmarks",
+    +     "help": "All page content should be contained by landmarks",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=playwright",
+    +     "id": "region",
+    +     "impact": "moderate",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "isIframe": false,
+    +             },
+    +             "id": "region",
+    +             "impact": "moderate",
+    +             "message": "Some page content is not contained by landmarks",
+    +             "relatedNodes": Array [],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Some page content is not contained by landmarks",
+    +         "html": "<div class=\"shell-status-banner\" aria-label=\"Last read context\"><strong>Last read: unavailable</strong><span>Check the affected panel for details. This does not establish general service or grant status.</span></div>",
+    +         "impact": "moderate",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".shell-status-banner",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.keyboard",
+    +       "best-practice",
+    +       "RGAAv4",
+    +       "RGAA-9.2.1",
+    +     ],
+    +   },
+    + ]
+
+      24 | }
+      25 | async function noOverflow(page: Page) { expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1); }
+    > 26 | async function axe(page: Page) { expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]); }
+         |                                                                                                ^
+      27 | for (const width of [1280, 360]) {
+      28 |   test(`overview and targets are truthful and accessible at ${width}`, async ({ page }) => {
+      29 |     await page.setViewportSize({ width, height: 900 }); await mockMcp(page); await page.goto("/overview");
+        at axe (/home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/operational.spec.ts:26:96)
+        at /home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/operational.spec.ts:53:498
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/operational-unavailable-is-31cf0--does-not-leak-backend-copy-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/operational-unavailable-is-31cf0--does-not-leak-backend-copy-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/operational-unavailable-is-31cf0--does-not-leak-backend-copy-chromium/video-1.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/operational-unavailable-is-31cf0--does-not-leak-backend-copy-chromium/error-context.md
+
+    attachment #5: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/operational-unavailable-is-31cf0--does-not-leak-backend-copy-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/operational-unavailable-is-31cf0--does-not-leak-backend-copy-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  4) [chromium] › tests/e2e/vd2-shell.spec.ts:69:1 › degraded, palette, forced colors and 200 percent reflow keep shell truth visible
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 39
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure all page content is contained by landmarks",
+    +     "help": "All page content should be contained by landmarks",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/region?application=playwright",
+    +     "id": "region",
+    +     "impact": "moderate",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "isIframe": false,
+    +             },
+    +             "id": "region",
+    +             "impact": "moderate",
+    +             "message": "Some page content is not contained by landmarks",
+    +             "relatedNodes": Array [],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Some page content is not contained by landmarks",
+    +         "html": "<div class=\"shell-status-banner\" aria-label=\"Last read context\"><strong>Last read: unavailable</strong><span>Check the affected panel for details. This does not establish general service or grant status.</span></div>",
+    +         "impact": "moderate",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".shell-status-banner",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.keyboard",
+    +       "best-practice",
+    +       "RGAAv4",
+    +       "RGAA-9.2.1",
+    +     ],
+    +   },
+    + ]
+
+      87 |   await noOverflow(page);
+      88 |   await capture(page, "zoom-200-narrow.png");
+    > 89 |   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+         |                                                                 ^
+      90 | });
+      91 |
+        at /home/herman/projects/QuaranGate-product-frontend-continuation-codex/frontend/tests/e2e/vd2-shell.spec.ts:89:65
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/vd2-shell-degraded-palette-74e53-ow-keep-shell-truth-visible-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/vd2-shell-degraded-palette-74e53-ow-keep-shell-truth-visible-chromium/video-1.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/vd2-shell-degraded-palette-74e53-ow-keep-shell-truth-visible-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/vd2-shell-degraded-palette-74e53-ow-keep-shell-truth-visible-chromium/error-context.md
+
+    attachment #5: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/vd2-shell-degraded-palette-74e53-ow-keep-shell-truth-visible-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/vd2-shell-degraded-palette-74e53-ow-keep-shell-truth-visible-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  4 failed
+    [chromium] › tests/e2e/foundation.spec.ts:237:1 › 200 percent layout zoom keeps desktop and narrow actions and overlays reachable
+    [chromium] › tests/e2e/operational.spec.ts:53:3 › forbidden is explicit and does not leak backend copy
+    [chromium] › tests/e2e/operational.spec.ts:53:3 › unavailable is explicit and does not leak backend copy
+    [chromium] › tests/e2e/vd2-shell.spec.ts:69:1 › degraded, palette, forced colors and 200 percent reflow keep shell truth visible
+  3 passed (16.8s)
+[WebServer] (node:1162384) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1162481) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1162687) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+(node:1162727) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1162733) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1162735) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] [browser] You have Reduced Motion enabled on your device. Animations may not appear as expected.. For more information and steps for solving, visit https://motion.dev/troubleshooting/reduced-motion-disabled (src/components/overlays.tsx:20:35)
+(node:1163443) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:1163705) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
