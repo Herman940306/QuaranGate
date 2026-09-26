@@ -304,6 +304,45 @@ FILES:
 NEXT:
 - FE10 Monitoring: implement truthful monitoring surfaces only from current metadata contracts; do not fabricate hardware metrics, telemetry streams or health success.
 
+## FE10 checkpoint
+
+CHECKPOINT: FE10 — Monitoring
+STATUS: FROZEN IMPLEMENTATION CANDIDATE — METADATA ONLY — NOT SELF-ACCEPTED
+
+IMPLEMENTED:
+- `/monitoring` presents bounded Control Center metadata snapshots for runtime summary, provider aggregates, topology and capabilities.
+- Monitoring explicitly states that snapshots are not live telemetry streams, hardware probes, uptime guarantees or production-health certifications.
+- The UI does not expose telemetry start, probe enablement, log streaming, GPU/VRAM/temperature/network-flow or alerting controls because no accepted frontend contract exists for those operations.
+
+CONTRACT / AUTHORITY TRUTH:
+- FE10 uses only the existing `control_center_query` read contract.
+- Provider aggregate counts remain aggregate counters, not a job list or principal-specific eligibility proof.
+- Unknown telemetry values remain unknown; the browser does not infer health success or hardware state.
+
+QUALIFICATION:
+- `npm run lint`: PASS, 133 files checked.
+- `npm run typecheck`: PASS.
+- Full frontend unit suite: 140/140 PASS.
+- `npm run build`: PASS, 31 static routes generated.
+- `npm audit --audit-level=high`: zero vulnerabilities.
+- `git diff --check`: PASS.
+- Governed Chromium FE10 qualification: 2/2 PASS at 1280 and 360 pixels, metadata-only boundary, no control buttons, no browser persistence, no overflow and axe checks.
+- Owner-host job: `ohj_d889d253f4858c451b748774749f057a`.
+- Browser image: `mcr.microsoft.com/playwright:v1.63.0-noble@sha256:bc6ab0d6d44ff4826e4cb8c1e6d801e185bfc42bb0753f8e2a30efc70db054c7`.
+- Host Git status SHA-256 remained `294b5405dabb2e62ba3cd23e3fe10cd0aaed07e780b075f7501a346d1ee89370` before and after browser qualification.
+
+INTEGRATION GAP:
+- FE10 does not implement hardware telemetry, realtime monitoring, alerts, log streaming or health scoring. Those require a future accepted backend contract defining source, freshness, authorization, retention and failure semantics.
+
+FILES:
+- `frontend/src/app/(foundation)/monitoring/page.tsx`
+- `frontend/src/components/monitoring-center.tsx`
+- `frontend/src/components/shell.tsx`
+- `frontend/tests/e2e/monitoring.spec.ts`
+
+NEXT:
+- FE11 Statistics: use only current aggregate/read contracts; do not fabricate analytics, historical retention or business/product metrics without an accepted data source.
+
 ## Phase commit ledger
 
 | Phase | Commit | Tree | Parent | Subject | Tests |
@@ -313,4 +352,5 @@ NEXT:
 | FE6 | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `686fed609fee76b56cfc6fa64812d292f57c5dfd` | `e00465cc730379cef2c78d859dc433a87850ebc9` | `feat(frontend): add review and approvals` | Local gates PASS; governed Chromium 4/4 PASS |
 | FE7 | `af878246675adf203670e2b36e06e54fed477962` | `e9fadd93e4c44c20108dd87ea3e8456a019e2d8b` | `5b18bc366d6bb6d51c5a37353c9e849b0c38d753` | `feat(frontend): add IDE session readiness center` | Local gates PASS; governed Chromium 2/2 PASS |
 | FE8 | `424bf907f1677f0cd4c22467bb06b41dc105c96f` | `7725a0d111744830fa1c03d1b2db364176a70111` | `af878246675adf203670e2b36e06e54fed477962` | `feat(frontend): add GitHub product experience` | Local gates PASS; governed Chromium 11/11 PASS |
-| FE9 | Pending immutable commit | Pending | `424bf907f1677f0cd4c22467bb06b41dc105c96f` | `feat(frontend): add Local AI model readiness` | Local gates PASS; governed Chromium 2/2 PASS |
+| FE9 | `438ab446093d43a3251bd5beaf5ef76d344b4671` | `3dc669788e459d47ac830af2168de3eac281bd40` | `424bf907f1677f0cd4c22467bb06b41dc105c96f` | `feat(frontend): add Local AI model readiness` | Local gates PASS; governed Chromium 2/2 PASS |
+| FE10 | Pending immutable commit | Pending | `438ab446093d43a3251bd5beaf5ef76d344b4671` | `feat(frontend): add monitoring metadata center` | Local gates PASS; governed Chromium 2/2 PASS |
