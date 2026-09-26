@@ -62,15 +62,18 @@ function toolData(result: unknown): Record<string, unknown> {
   return data;
 }
 // Internal module seam only. Product code uses the purpose-specific client, never a generic call.
-const readTools = new Set(["targets_list", "target_inspect", "agent_projects", "agents_list", "agent_status", "agent_result", "agent_diff", "git_status", "git_diff", "git_log", "github_repositories", "control_center_query"]);
-export function createReader(transport: Transport = (target, init) => fetch(target, init)) {
-  return async <T>(name: "targets_list" | "target_inspect" | "agent_projects" | "agents_list" | "agent_status" | "agent_result" | "agent_diff" | "git_status" | "git_diff" | "git_log" | "github_repositories" | "control_center_query", args: Record<string, unknown>, decode: (value: Record<string, unknown>) => T, signal?: AbortSignal): Promise<ReadReceipt<T>> => {
+const readTools = new Set(["targets_list", "target_inspect", "agent_projects", "agents_list", "agent_status", "agent_result", "agent_diff", "git_status", "git_diff", "git_log", "github_repositories", "control_center_query", "fs_list", "fs_stat", "fs_read", "fs_search", "process_list"]);
+const writeTools = new Set(["fs_write", "fs_patch", "fs_delete", "terminal_exec", "target_start", "target_stop", "target_restart"]);
+export type ReadTool = "targets_list" | "target_inspect" | "agent_projects" | "agents_list" | "agent_status" | "agent_result" | "agent_diff" | "git_status" | "git_diff" | "git_log" | "github_repositories" | "control_center_query" | "fs_list" | "fs_stat" | "fs_read" | "fs_search" | "process_list";
+export type WriteTool = "fs_write" | "fs_patch" | "fs_delete" | "terminal_exec" | "target_start" | "target_stop" | "target_restart";
+function createCaller(transport: Transport, allowed: Set<string>) {
+  return async <T>(name: ReadTool | WriteTool, args: Record<string, unknown>, decode: (value: Record<string, unknown>) => T, signal?: AbortSignal): Promise<ReadReceipt<T>> => {
     const id = crypto.randomUUID();
     const combined = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]);
     let requestCorrelation: string | undefined;
     try {
       combined.throwIfAborted();
-      if (!readTools.has(name)) throw new OperationalError("unknown");
+      if (!allowed.has(name)) throw new OperationalError("unknown");
       const request: JsonRpcRequest = { jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } };
       const response = await transport("/mcp", { method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify(request), signal: combined }).catch(() => { throw new OperationalError("unavailable"); });
       requestCorrelation = correlation(response);
@@ -90,4 +93,14 @@ export function createReader(transport: Transport = (target, init) => fetch(targ
       throw new OperationalError("unknown", requestCorrelation);
     }
   };
+}
+export function createReader(transport: Transport = (target, init) => fetch(target, init)) {
+  const call = createCaller(transport, readTools);
+  return <T>(name: ReadTool, args: Record<string, unknown>, decode: (value: Record<string, unknown>) => T, signal?: AbortSignal) => call(name, args, decode, signal);
+}
+// Separate, closed mutation seam. The product UI must also have an integrated
+// identity context before it exposes these calls; the gateway remains authoritative.
+export function createMutator(transport: Transport = (target, init) => fetch(target, init)) {
+  const call = createCaller(transport, writeTools);
+  return <T>(name: WriteTool, args: Record<string, unknown>, decode: (value: Record<string, unknown>) => T, signal?: AbortSignal) => call(name, args, decode, signal);
 }

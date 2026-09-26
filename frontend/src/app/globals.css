@@ -160,6 +160,15 @@ h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
 .mono, code, pre { font-family: "IBM Plex Mono", monospace; }
 .type-display { font-size: clamp(1.6rem, 4vw, 3.1rem); line-height: 1.02; letter-spacing: -0.035em; font-weight: 500; }
 .appearance-grid, .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.85rem; align-items: start; }
+.workstation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; margin-block-end: 1rem; }
+.workstation-grid .panel .panel { border-radius: 0.5rem; box-shadow: none; }
+.cluster:where(fieldset) { min-inline-size: 0; padding: 0; border: 0; }
+.cluster:where(fieldset) legend { inline-size: 100%; margin-block-end: 0.5rem; font-size: 0.78rem; font-weight: 600; }
+.action-result { margin-block-start: 1rem; }
+.action-result:empty { display: none; }
+.file-entry-list { display: grid; gap: 0; max-block-size: 20rem; margin: 1rem 0 0; padding: 0; overflow: auto; list-style: none; }
+.file-entry-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; min-inline-size: 0; padding: 0.45rem 0; border-block-end: 1px solid var(--boundary); font-size: 0.78rem; }
+.file-entry-list li span:first-child { overflow-wrap: anywhere; }
 .appearance-note { grid-column: 1 / -1; margin: 0; font-size: 0.75rem; }
 .field { min-inline-size: 0; margin-block-end: 0.85rem; }
 .field label { display: block; margin-block-end: 0.4rem; font-size: 0.78rem; font-weight: 600; }
@@ -189,6 +198,7 @@ h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
 .badge[data-tone="destructive"] { color: var(--destructive); }
 .badge[data-tone="primary"] { color: var(--primary); }
 .state { min-block-size: 8rem; padding: 1rem; background: var(--surface-muted); border: 1px dashed var(--boundary); border-radius: 0.625rem; }
+.workstation-grid .state { min-block-size: 5.5rem; }
 .state p { max-inline-size: 38rem; line-height: 1.5; }
 .error-state { border-style: solid; border-inline-start: 4px solid var(--destructive); }
 .loading-line { inline-size: min(100%, 18rem); block-size: 0.2rem; margin-block: 1.25rem; background: var(--boundary); overflow: hidden; }
@@ -241,6 +251,7 @@ th { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.04em; }
   .authority-strip > span:not(.authority-label) { padding: 0; border: 0; }
   .foundation-grid, .review-grid { grid-template-columns: 1fr; }
   .appearance-grid, .form-grid { grid-template-columns: 1fr; }
+  .workstation-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 420px) {
