@@ -31,4 +31,3 @@
 [2m  Transform [22m [33mtransforming modules took 2.02s[39m[2m · 57% of tracked time, re-done on every run[22m
 [2m            [22m [2mpersist transforms across runs with [22m[33mfsModuleCache: true[39m
 [2m            [22m [2mlearn more: https://vitest.dev/guide/improving-performance#caching-between-reruns[22m
-

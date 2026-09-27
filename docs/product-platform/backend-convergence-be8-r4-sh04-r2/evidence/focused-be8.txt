@@ -11,4 +11,3 @@
 [2m      Tests [22m [1m[32m39 passed[39m[22m[90m (39)[39m
 [2m   Start at [22m 03:23:32
 [2m   Duration [22m 366ms[2m (transform 59%, tests 22%, import 17%, worker 1%)[22m
-

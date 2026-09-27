@@ -8,4 +8,3 @@
 [2m      Tests [22m [1m[32m1 passed[39m[22m[2m | [22m[33m58 skipped[39m[90m (59)[39m
 [2m   Start at [22m 03:24:49
 [2m   Duration [22m 5.43s[2m (transform 89ms, setup 0ms, import 115ms, tests 5.19s, environment 0ms)[22m
-
