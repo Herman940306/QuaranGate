@@ -1,0 +1,7 @@
+docs/product-platform/be9/BE9_2_R2_HANDOFF.md
+docs/product-platform/be9/evidence/BE9_2_R2/CHANGED_PATHS.txt
+docs/product-platform/be9/evidence/BE9_2_R2/PRESTATE.txt
+docs/product-platform/be9/evidence/BE9_2_R2/SHA256SUMS
+docs/product-platform/be9/evidence/BE9_2_R2/SOURCE_SHA256SUMS
+docs/product-platform/be9/evidence/BE9_2_R2/VALIDATION.txt
+tests/unit/be9-product-assessment-client.test.ts
