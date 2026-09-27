@@ -24,6 +24,12 @@ import { AgentJobStore } from './agents/jobStore.js';
 import { AgentJobEngine, type AgentBackendAdapter, type EvidenceReaderFactory, type ResolvedSessionContext } from './agents/jobEngine.js';
 import { createDockerEvidenceReader } from './agents/artifactReader.js';
 import { registerAgentRoutes } from './agents/routes.js';
+import { registerSecurityAssessmentRoutes } from './securityAssessment/routes.js';
+import {
+  SecurityAssessmentOperationalService,
+  UnavailableSecurityAssessmentCapabilityRegistry,
+} from './securityAssessment/service.js';
+import { AssessmentSourceStager } from './securityAssessment/sourceStaging.js';
 import { RunnerSandbox } from './agents/sandboxRunner.js';
 import { CredentialManager } from './agents/credentialManager.js';
 import { createKiroBackendFactory } from './agents/kiroFactory.js';
@@ -79,6 +85,7 @@ const KIRO_DRY_RUN = /^(1|true|yes)$/i.test(process.env.AGENT_KIRO_DRY_RUN ?? ''
 // fail closed.
 const EXPLICIT_HELPER_IMAGE = process.env.AGENT_HELPER_IMAGE ?? '';
 const EXPLICIT_STAGER_IMAGE = process.env.AGENT_STAGER_IMAGE ?? '';
+const ASSESSMENT_STAGER_IMAGE = process.env.ASSESSMENT_STAGER_IMAGE ?? '';
 const OLLAMA_HOST = process.env.OLLAMA_HOST ?? '';
 const OLLAMA_MODEL_QUALIFIER = process.env.OLLAMA_MODEL_QUALIFIER ?? '';
 
@@ -108,6 +115,7 @@ const IDE_RUNTIME_ROOT = process.env.IDE_RUNTIME_ROOT ?? '';
 let agentEngine: AgentJobEngine | null = null;
 let agentStore: AgentJobStore | null = null;
 let githubControl: GitHubControl | null = null;
+let securityAssessmentService: SecurityAssessmentOperationalService | null = null;
 let ideCompanionRuntime: IdeCompanionProductionRuntime | null = null;
 let ideSessionControlState: IdeSessionControlRuntimeState = 'NOT_CONFIGURED';
 
@@ -284,6 +292,7 @@ app.post('/exec/shell', handle(async (req) => {
 }));
 
 registerAgentRoutes(app, handle, () => agentEngine);
+registerSecurityAssessmentRoutes(app, handle, () => securityAssessmentService);
 registerGitHubRoutes(app, handle, () => githubControl);
 
 app.post('/exec/argv', handle(async (req) => {
@@ -361,6 +370,7 @@ let server: ReturnType<typeof app.listen>;
     let kiroHelperImage = startupPolicy.kiroHelperImage;
     let ollamaHelperImage = '';
     let ollamaStagerImage = '';
+    let assessmentStagerImage = '';
 
     const copilotPolicy = resolveCopilotStartupPolicy(
       copilotBackend?.enabled === true,
@@ -388,6 +398,33 @@ let server: ReturnType<typeof app.listen>;
         resolveRuntimeImageId(startupPolicy.ollama.stagerImage, 'AGENT_STAGER_IMAGE'),
       ]);
     }
+    if (ASSESSMENT_STAGER_IMAGE) {
+      assessmentStagerImage = await resolveRuntimeImageId(
+        ASSESSMENT_STAGER_IMAGE,
+        'ASSESSMENT_STAGER_IMAGE',
+      );
+    }
+
+    const assessmentService = new SecurityAssessmentOperationalService(
+      agentConfig,
+      agentStore,
+      new AssessmentSourceStager(),
+      assessmentStagerImage,
+      async (targetId) => {
+        const targets = await listTargets();
+        const target = targets.find((candidate) => candidate.id === targetId);
+        if (!target) {
+          throw new BridgeError('PRECONDITION_FAILED', 'security assessment target is not registered', 412);
+        }
+        if (target.status?.startsWith('ambiguous')) {
+          throw new BridgeError('PRECONDITION_FAILED', 'security assessment target is ambiguous', 412);
+        }
+        return { id: target.id, running: target.running };
+      },
+      new UnavailableSecurityAssessmentCapabilityRegistry(),
+    );
+    await assessmentService.recoverPrepared();
+    securityAssessmentService = assessmentService;
 
     const sandbox = new RunnerSandbox({ image: kiroRunnerImage });
 

@@ -16,6 +16,8 @@ export type Scope =
   | 'agents:dispatch'
   | 'agents:cancel'
   | 'agents:apply'
+  | 'security:assessment:read'
+  | 'security:assessment:write'
   | 'github:read'
   | 'github:write'
   | 'github:review';
@@ -34,6 +36,8 @@ export const ALL_SCOPES: Scope[] = [
   'agents:dispatch',
   'agents:cancel',
   'agents:apply',
+  'security:assessment:read',
+  'security:assessment:write',
   'github:read',
   'github:write',
   'github:review',

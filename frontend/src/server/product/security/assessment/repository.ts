@@ -1,5 +1,6 @@
 import "server-only";
 import { ProductDataError } from "../../data/errors";
+import { withTransaction, type QueryExecutor, type TransactionPool } from "../../data/db";
 import { canonicalSnapshot, verifySnapshot } from "./snapshot";
 import { isTerminalAssessmentState, resolveAssessmentEvent } from "./state";
 import {
@@ -376,6 +377,17 @@ function assertDiscoveryBinding(
   }
 }
 
+export function validateSecurityDiscoveryResult(discoveryValue: SecurityDiscoveryResult): void {
+  assertDiscoveryBinding(discoveryValue, {
+    discoveryId: discoveryValue.discoveryId,
+    binding: {
+      projectId: discoveryValue.projectId,
+      ...(discoveryValue.targetId ? { targetId: discoveryValue.targetId } : {}),
+      sourceRevision: discoveryValue.sourceRevision,
+    },
+  });
+}
+
 function assertPlanBinding(
   planValue: SecurityAssessmentPlan,
   expected: {
@@ -746,6 +758,16 @@ export class MemorySecurityAssessmentRepository implements SecurityAssessmentRep
     return clone(record);
   }
 
+  async readForPrincipal(
+    principalRef: string,
+    assessmentId: string,
+  ): Promise<SecurityAssessmentRecord | undefined> {
+    const record = this.records.get(assessmentId);
+    if (!record || record.owner.principalRef !== principalRef) return undefined;
+    validateRecord(record);
+    return clone(record);
+  }
+
   async transition(input: SecurityAssessmentTransitionInput): Promise<SecurityAssessmentRecord> {
     const record = this.records.get(input.assessmentId);
     if (!record) {
@@ -804,5 +826,405 @@ export class MemorySecurityAssessmentRepository implements SecurityAssessmentRep
     return Array.from(this.records.values())
       .filter((record) => !isTerminalAssessmentState(record.state))
       .map(clone);
+  }
+}
+
+interface AssessmentDbRow {
+  assessment_id: string;
+  product_user_id: string;
+  organization_id: string;
+  workspace_id: string;
+  principal_ref: string;
+  principal_mapping_version: string | number;
+  discovery_id: string;
+  plan_id: string;
+  project_id: string;
+  target_id: string | null;
+  source_revision: string;
+  assessment_intent: string;
+  discovery_snapshot_schema_version: string;
+  discovery_snapshot_json: unknown;
+  discovery_snapshot_digest_sha256: string;
+  discovery_snapshot_byte_length: number;
+  plan_snapshot_schema_version: string;
+  plan_snapshot_json: unknown;
+  plan_snapshot_digest_sha256: string;
+  plan_snapshot_byte_length: number;
+  state: string;
+  pending_outcome: string | null;
+  version: string | number;
+  correlation_id: string;
+  requested_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface AssessmentTransitionDbRow {
+  assessment_id: string;
+  version: string | number;
+  prior_state: string;
+  event: string;
+  next_state: string;
+  pending_outcome: string | null;
+  reason: string;
+  actor: string;
+  correlation_id: string;
+  transitioned_at: Date | string;
+}
+
+function dbTimestamp(value: Date | string, code: string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new ProductDataError("PRODUCT_DATA_INVALID", code);
+  }
+  return date.toISOString();
+}
+
+function safeDbInteger(value: string | number, code: string): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new ProductDataError("PRODUCT_DATA_INVALID", code);
+  }
+  return parsed;
+}
+
+function recordFromRows(
+  row: AssessmentDbRow,
+  transitions: AssessmentTransitionDbRow[],
+): SecurityAssessmentRecord {
+  if (
+    row.discovery_snapshot_schema_version !== "BE9_SNAPSHOT_V1"
+    || row.plan_snapshot_schema_version !== "BE9_SNAPSHOT_V1"
+  ) {
+    throw new ProductDataError("PRODUCT_DATA_INVALID", "assessment_snapshot_schema_invalid");
+  }
+  const transitionLog = transitions.map((entry) => ({
+    assessmentId: entry.assessment_id,
+    priorState: entry.prior_state as SecurityAssessmentRecord["state"],
+    event: entry.event as SecurityAssessmentTransitionInput["event"],
+    nextState: entry.next_state as SecurityAssessmentRecord["state"],
+    version: safeDbInteger(entry.version, "assessment_transition_version_invalid"),
+    reason: entry.reason,
+    actor: entry.actor as SecurityAssessmentTransitionInput["actor"],
+    correlationId: entry.correlation_id,
+    at: dbTimestamp(entry.transitioned_at, "assessment_transition_at_invalid"),
+    ...(entry.pending_outcome
+      ? { pendingOutcome: entry.pending_outcome as NonNullable<SecurityAssessmentRecord["pendingOutcome"]> }
+      : {}),
+  }));
+
+  const record: SecurityAssessmentRecord = {
+    id: row.assessment_id,
+    owner: {
+      productUserId: row.product_user_id,
+      organizationId: row.organization_id,
+      workspaceId: row.workspace_id,
+      principalRef: row.principal_ref,
+      principalMappingVersion: safeDbInteger(
+        row.principal_mapping_version,
+        "assessment_principal_version_invalid",
+      ),
+    },
+    binding: {
+      projectId: row.project_id,
+      ...(row.target_id ? { targetId: row.target_id } : {}),
+      sourceRevision: row.source_revision,
+      assessmentIntent: row.assessment_intent as SecurityAssessmentBinding["assessmentIntent"],
+    },
+    discoveryId: row.discovery_id,
+    planId: row.plan_id,
+    discoverySnapshot: {
+      schemaVersion: "BE9_SNAPSHOT_V1",
+      algorithm: "sha256",
+      digest: row.discovery_snapshot_digest_sha256,
+      value: row.discovery_snapshot_json as SecurityDiscoveryResult,
+      byteLength: row.discovery_snapshot_byte_length,
+    },
+    planSnapshot: {
+      schemaVersion: "BE9_SNAPSHOT_V1",
+      algorithm: "sha256",
+      digest: row.plan_snapshot_digest_sha256,
+      value: row.plan_snapshot_json as SecurityAssessmentPlan,
+      byteLength: row.plan_snapshot_byte_length,
+    },
+    state: row.state as SecurityAssessmentRecord["state"],
+    version: safeDbInteger(row.version, "assessment_version_invalid"),
+    ...(row.pending_outcome
+      ? { pendingOutcome: row.pending_outcome as NonNullable<SecurityAssessmentRecord["pendingOutcome"]> }
+      : {}),
+    requestedAt: dbTimestamp(row.requested_at, "assessment_requested_at_invalid"),
+    updatedAt: dbTimestamp(row.updated_at, "assessment_updated_at_invalid"),
+    correlationId: row.correlation_id,
+    transitionLog,
+  };
+  validateRecord(record);
+  return record;
+}
+
+async function loadTransitions(
+  db: QueryExecutor,
+  assessmentId: string,
+): Promise<AssessmentTransitionDbRow[]> {
+  const result = await db.query<AssessmentTransitionDbRow & Record<string, unknown>>(
+    `SELECT assessment_id, version, prior_state, event, next_state, pending_outcome,
+            reason, actor, correlation_id, transitioned_at
+       FROM security_assessment_transitions
+      WHERE assessment_id = $1
+      ORDER BY version ASC`,
+    [assessmentId],
+  );
+  return result.rows;
+}
+
+export class PostgresSecurityAssessmentRepository implements SecurityAssessmentRepository {
+  constructor(private readonly db: TransactionPool) {}
+
+  async create(input: SecurityAssessmentCreateInput): Promise<SecurityAssessmentRecord> {
+    const discoverySnapshot = canonicalSnapshot(input.discoverySnapshot);
+    const planSnapshot = canonicalSnapshot(input.planSnapshot);
+    const candidate: SecurityAssessmentRecord = {
+      id: input.assessmentId,
+      owner: clone(input.owner),
+      binding: clone(input.binding),
+      discoveryId: input.discoveryId,
+      planId: input.planId,
+      discoverySnapshot,
+      planSnapshot,
+      state: "PLANNED",
+      version: 0,
+      requestedAt: input.requestedAt,
+      updatedAt: input.requestedAt,
+      correlationId: input.correlationId,
+      transitionLog: [],
+    };
+    validateRecord(candidate);
+
+    try {
+      await this.db.query(
+        `INSERT INTO security_assessments(
+           assessment_id, product_user_id, organization_id, workspace_id,
+           principal_ref, principal_mapping_version, discovery_id, plan_id,
+           project_id, target_id, source_revision, assessment_intent,
+           discovery_snapshot_schema_version, discovery_snapshot_json,
+           discovery_snapshot_digest_sha256, discovery_snapshot_byte_length,
+           plan_snapshot_schema_version, plan_snapshot_json,
+           plan_snapshot_digest_sha256, plan_snapshot_byte_length,
+           state, pending_outcome, version, correlation_id, requested_at, updated_at
+         ) VALUES (
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+           $13,$14::jsonb,$15,$16,$17,$18::jsonb,$19,$20,
+           $21,$22,$23,$24,$25,$26
+         )`,
+        [
+          candidate.id,
+          candidate.owner.productUserId,
+          candidate.owner.organizationId,
+          candidate.owner.workspaceId,
+          candidate.owner.principalRef,
+          candidate.owner.principalMappingVersion,
+          candidate.discoveryId,
+          candidate.planId,
+          candidate.binding.projectId,
+          candidate.binding.targetId ?? null,
+          candidate.binding.sourceRevision,
+          candidate.binding.assessmentIntent ?? "source",
+          candidate.discoverySnapshot.schemaVersion,
+          JSON.stringify(candidate.discoverySnapshot.value),
+          candidate.discoverySnapshot.digest,
+          candidate.discoverySnapshot.byteLength,
+          candidate.planSnapshot.schemaVersion,
+          JSON.stringify(candidate.planSnapshot.value),
+          candidate.planSnapshot.digest,
+          candidate.planSnapshot.byteLength,
+          candidate.state,
+          null,
+          candidate.version,
+          candidate.correlationId,
+          candidate.requestedAt,
+          candidate.updatedAt,
+        ],
+      );
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === "23505") {
+        throw new ProductDataError("PRODUCT_DATA_STALE_VERSION", "assessment_id_reused");
+      }
+      throw error;
+    }
+    return clone(candidate);
+  }
+
+  async read(
+    scope: SecurityAssessmentReadScope,
+    assessmentId: string,
+  ): Promise<SecurityAssessmentRecord | undefined> {
+    const result = await this.db.query<AssessmentDbRow & Record<string, unknown>>(
+      `SELECT *
+         FROM security_assessments
+        WHERE assessment_id = $1
+          AND product_user_id = $2
+          AND organization_id = $3
+          AND workspace_id = $4
+          AND principal_ref = $5
+        LIMIT 1`,
+      [
+        assessmentId,
+        scope.productUserId,
+        scope.organizationId,
+        scope.workspaceId,
+        scope.principalRef,
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) return undefined;
+    const transitions = await loadTransitions(this.db, assessmentId);
+    return clone(recordFromRows(row, transitions));
+  }
+
+  async readForPrincipal(
+    principalRef: string,
+    assessmentId: string,
+  ): Promise<SecurityAssessmentRecord | undefined> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(principalRef)) {
+      throw new ProductDataError("PRODUCT_DATA_INVALID", "assessment_principal_ref_invalid");
+    }
+    const result = await this.db.query<AssessmentDbRow & Record<string, unknown>>(
+      `SELECT *
+         FROM security_assessments
+        WHERE assessment_id = $1
+          AND principal_ref = $2
+        LIMIT 1`,
+      [assessmentId, principalRef],
+    );
+    const row = result.rows[0];
+    if (!row) return undefined;
+    const transitions = await loadTransitions(this.db, assessmentId);
+    return clone(recordFromRows(row, transitions));
+  }
+
+  async transition(input: SecurityAssessmentTransitionInput): Promise<SecurityAssessmentRecord> {
+    return withTransaction(this.db, async (client) => {
+      const result = await client.query<AssessmentDbRow & Record<string, unknown>>(
+        `SELECT *
+           FROM security_assessments
+          WHERE assessment_id = $1
+          FOR UPDATE`,
+        [input.assessmentId],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new ProductDataError("PRODUCT_DATA_NOT_FOUND", "assessment_not_found");
+      }
+      const transitions = await loadTransitions(client, input.assessmentId);
+      const record = recordFromRows(row, transitions);
+      if (record.version !== input.expectedVersion) {
+        throw new ProductDataError("PRODUCT_DATA_STALE_VERSION", "assessment_version_stale");
+      }
+
+      assertReason(input.reason);
+      assertActor(input.actor);
+      assertCorrelationId(input.correlationId);
+      assertTimestamp(input.at, "assessment_transition_at_invalid");
+      assertTimestampOrder(
+        record.updatedAt,
+        input.at,
+        "assessment_transition_time_regression",
+      );
+
+      const resolution = resolveAssessmentEvent(
+        record.state,
+        input.event,
+        record.pendingOutcome,
+      );
+      const nextVersion = record.version + 1;
+      await client.query(
+        `INSERT INTO security_assessment_transitions(
+           assessment_id, organization_id, workspace_id, version, prior_state,
+           event, next_state, pending_outcome, reason, actor, correlation_id,
+           transitioned_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          record.id,
+          record.owner.organizationId,
+          record.owner.workspaceId,
+          nextVersion,
+          record.state,
+          input.event,
+          resolution.nextState,
+          resolution.pendingOutcome ?? null,
+          input.reason,
+          input.actor,
+          input.correlationId,
+          input.at,
+        ],
+      );
+      const updated = await client.query(
+        `UPDATE security_assessments
+            SET state = $1,
+                pending_outcome = $2,
+                version = $3,
+                updated_at = $4
+          WHERE assessment_id = $5
+            AND version = $6`,
+        [
+          resolution.nextState,
+          resolution.pendingOutcome ?? null,
+          nextVersion,
+          input.at,
+          record.id,
+          record.version,
+        ],
+      );
+      if (updated.rowCount !== 1) {
+        throw new ProductDataError("PRODUCT_DATA_STALE_VERSION", "assessment_version_stale");
+      }
+
+      const next: SecurityAssessmentRecord = {
+        ...clone(record),
+        state: resolution.nextState,
+        version: nextVersion,
+        ...(resolution.pendingOutcome
+          ? { pendingOutcome: resolution.pendingOutcome }
+          : { pendingOutcome: undefined }),
+        updatedAt: input.at,
+        transitionLog: [
+          ...record.transitionLog,
+          {
+            assessmentId: record.id,
+            priorState: record.state,
+            event: input.event,
+            nextState: resolution.nextState,
+            version: nextVersion,
+            reason: input.reason,
+            actor: input.actor,
+            correlationId: input.correlationId,
+            at: input.at,
+            ...(resolution.pendingOutcome
+              ? { pendingOutcome: resolution.pendingOutcome }
+              : {}),
+          },
+        ],
+      };
+      validateRecord(next);
+      return clone(next);
+    });
+  }
+
+  async listActiveForRecovery(): Promise<SecurityAssessmentRecord[]> {
+    const result = await this.db.query<AssessmentDbRow & Record<string, unknown>>(
+      `SELECT *
+         FROM security_assessments
+        WHERE state IN ('PLANNED','ADMITTED','PREPARING','RUNNING','CANCELLING','CLEANUP')
+        ORDER BY updated_at ASC, assessment_id ASC
+        LIMIT 1001`,
+    );
+    if (result.rows.length > 1000) {
+      throw new ProductDataError("PRODUCT_DATA_UNAVAILABLE", "assessment_recovery_set_too_large");
+    }
+    const out: SecurityAssessmentRecord[] = [];
+    for (const row of result.rows) {
+      const transitions = await loadTransitions(this.db, row.assessment_id);
+      out.push(recordFromRows(row, transitions));
+    }
+    return out.map(clone);
   }
 }

@@ -122,6 +122,7 @@ export interface StoredSecurityDiscovery {
   organizationId: string;
   workspaceId: string;
   principalRef: string;
+  principalMappingVersion: number;
   result: SecurityDiscoveryResult;
 }
 

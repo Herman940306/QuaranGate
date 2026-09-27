@@ -108,6 +108,8 @@ vi.mock('../../src/executor/agents/jobStore.js', async (importOriginal) => {
       h.stage('recoverApplyAttempts');
       return { abortedNoMutation: [], uncertain: [] };
     }
+    listSecurityAssessmentPrepared() { return []; }
+    markExecutionLeasesUncertainForOwner(): void {}
     close(): void {}
   }
   return { ...actual, AgentJobStore: FakeStore };

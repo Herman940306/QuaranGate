@@ -156,6 +156,7 @@ export interface SecurityAssessmentReadScope {
 export interface SecurityAssessmentRepository {
   create(input: SecurityAssessmentCreateInput): Promise<SecurityAssessmentRecord>;
   read(scope: SecurityAssessmentReadScope, assessmentId: string): Promise<SecurityAssessmentRecord | undefined>;
+  readForPrincipal(principalRef: string, assessmentId: string): Promise<SecurityAssessmentRecord | undefined>;
   transition(input: SecurityAssessmentTransitionInput): Promise<SecurityAssessmentRecord>;
   /** Trusted recovery worker only. Never expose as a product/MCP listing primitive. */
   listActiveForRecovery(): Promise<SecurityAssessmentRecord[]>;

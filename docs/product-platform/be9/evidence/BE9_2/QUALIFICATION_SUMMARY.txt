@@ -1,0 +1,48 @@
+BE9_2_QUALIFICATION_SUMMARY
+RECORDED_AT=2026-09-27T23:27:00+02:00
+WORKTREE=/workspace/QuaranGate-product-be9-assessment-gpt
+BRANCH=feature/qg-product-be9-assessment-gpt
+BASE_HEAD=5be680eae9f492d36092abbe3f461a4fa6d70ff0
+BASE_TREE=08129d02c9a40cac2ba45ba8e81f34296b27e935
+
+SCOPE=BE9.2 security assessment platform continuation
+BE10_SCANNER_IMPLEMENTED=NO
+BE10_SCANNER_STATUS=INTENTIONALLY_UNAVAILABLE
+SELF_ACCEPTANCE=NO
+REVIEW_REQUIRED=YES
+
+PASSED_GATES:
+- npm run typecheck
+- npm run build
+- npm test
+  RESULT=182 files, 3451 tests passed
+- npm run security:invariants
+  RESULT=ok true, rulesChecked 16, composeFilesChecked 12, dockerfilesChecked 7
+- cd frontend && npm run typecheck
+- cd frontend && npm run lint
+  RESULT=checked 170 files, no warnings after cleanup
+- cd frontend && npm run test
+  RESULT=21 files, 323 tests passed
+- cd frontend && npm run build
+- cd frontend && npm run test -- tests/unit/be9-internal-mcp-route.test.ts
+  RESULT=1 file, 4 tests passed
+
+FOCUSED_BE9_GATES:
+- npx vitest run tests/unit/be9-*.test.ts tests/unit/be1a-execution-fabric.test.ts tests/unit/agent-jobstore-migration.test.ts tests/unit/agent-jobstore.test.ts
+  RESULT=9 files, 164 tests passed
+- npx vitest run tests/unit/a6-startup-order.test.ts tests/unit/a8-odr2-source-revision.test.ts tests/unit/sh08-mcp-schema-properties.test.ts
+  RESULT=3 files, 26 tests passed
+
+BLOCKED_OR_UNAVAILABLE_GATES:
+- npm run security:toolchain
+  RESULT=BLOCKED_ENVIRONMENT
+  REASON=owner-provided offline tools absent under NO_AUTO_DOWNLOAD_OWNER_PROVIDED_VERIFIED_ARTIFACTS_ONLY policy
+  ABSENT_TOOLS=semgrep@1.177.0,gitleaks@8.30.0,osv-scanner@2.6.0,trivy@0.74.0,cosign@3.1.3
+
+KEY_IMPLEMENTATION_CLAIMS_FOR_REVIEW:
+- exact source staging now proves live Git source and staged volume bytes using a manifest digest before RUNNING
+- admission replay identity is durable in Executor SQLite and survives Gateway/Executor restart
+- prepared assessment source metadata is durable and recovered only after exact Docker volume ownership and staged-byte revalidation
+- product API and MCP are adapters over shared durable product assessment records plus the same Gateway/Executor admission path
+- MCP start is anchored by opaque durable discoveryId and current authenticated Principal, not caller-supplied tenant/workspace authority
+- BE10 scanner execution remains unavailable; evidence endpoint exposes admission/evidence metadata only

@@ -42,6 +42,11 @@ services:
       BRIDGE_PUBLIC_URL: "${BRIDGE_PUBLIC_URL:-http://127.0.0.1:8787}"
       EXECUTOR_URL: "http://executor:8990"
       INTERNAL_TOKEN: "${INTERNAL_TOKEN:?set INTERNAL_TOKEN in .env}"
+      # BE9 product assessment bridge/MCP service identities are optional until
+      # product assessment surfaces are configured, but must be distinct when set.
+      PRODUCT_ASSESSMENT_BRIDGE_TOKEN: "${PRODUCT_ASSESSMENT_BRIDGE_TOKEN:-}"
+      PRODUCT_ASSESSMENT_MCP_TOKEN: "${PRODUCT_ASSESSMENT_MCP_TOKEN:-}"
+      QG_PRODUCT_INTERNAL_URL: "${QG_PRODUCT_INTERNAL_URL:-}"
       DATA_DIR: "/data"
       CLIENTS_CONFIG: "/config/clients.yaml"
     ports:

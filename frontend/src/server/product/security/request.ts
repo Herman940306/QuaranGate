@@ -4,6 +4,7 @@ import type { SecurityDiscoveryRequest } from "./types";
 const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const TARGET_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DISCOVERY_ID = /^disc_[0-9a-f]{24}$/;
+const ASSESSMENT_ID = /^assessment_[0-9a-f]{24}$/;
 export const MAX_SECURITY_REQUEST_BODY_BYTES = 16 * 1024;
 
 export async function readBoundedSecurityJson(request: Request, maxBytes = MAX_SECURITY_REQUEST_BODY_BYTES): Promise<unknown> {
@@ -85,5 +86,10 @@ export function parseDiscoveryIdRequest(value: unknown): string {
 
 export function parseDiscoveryId(value: string | null): string {
   if (!value || !DISCOVERY_ID.test(value)) throw new Error("security_discovery_id_invalid");
+  return value;
+}
+
+export function parseAssessmentId(value: string): string {
+  if (!ASSESSMENT_ID.test(value)) throw new Error("security_request_invalid");
   return value;
 }

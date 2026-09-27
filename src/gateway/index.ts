@@ -18,11 +18,31 @@ import { audit, newReqId } from './audit.js';
 import { mountRequestTelemetry, requestTelemetryId } from './requestTelemetry.js';
 import { buildGatewayRequestPolicy, gatewayRequestAdmission } from './requestAdmission.js';
 import { mountConsoleWeb } from './consoleWeb.js';
+import { SecurityAssessmentAdmissionService } from './securityAssessmentAdmission.js';
 
 const PORT = Number(process.env.BRIDGE_PORT ?? 8787);
 const PUBLIC_URL = (process.env.BRIDGE_PUBLIC_URL ?? `http://127.0.0.1:${PORT}`).replace(/\/+$/, '');
 const MCP_RESOURCE = oauthResourceForPublicUrl(PUBLIC_URL);
 const REQUEST_POLICY = buildGatewayRequestPolicy(PUBLIC_URL, PORT);
+const PRODUCT_ASSESSMENT_BRIDGE_TOKEN = process.env.PRODUCT_ASSESSMENT_BRIDGE_TOKEN ?? '';
+const PRODUCT_ASSESSMENT_MCP_TOKEN = process.env.PRODUCT_ASSESSMENT_MCP_TOKEN ?? '';
+if (
+  PRODUCT_ASSESSMENT_BRIDGE_TOKEN
+  && PRODUCT_ASSESSMENT_BRIDGE_TOKEN === process.env.INTERNAL_TOKEN
+) {
+  console.error('FATAL: PRODUCT_ASSESSMENT_BRIDGE_TOKEN must be distinct from INTERNAL_TOKEN');
+  process.exit(1);
+}
+if (
+  PRODUCT_ASSESSMENT_MCP_TOKEN
+  && (
+    PRODUCT_ASSESSMENT_MCP_TOKEN === process.env.INTERNAL_TOKEN
+    || PRODUCT_ASSESSMENT_MCP_TOKEN === PRODUCT_ASSESSMENT_BRIDGE_TOKEN
+  )
+) {
+  console.error('FATAL: PRODUCT_ASSESSMENT_MCP_TOKEN must be distinct from internal assessment credentials');
+  process.exit(1);
+}
 
 if (!process.env.INTERNAL_TOKEN || process.env.INTERNAL_TOKEN === '<SET_SECURELY>') {
   console.error('FATAL: INTERNAL_TOKEN is not set');
@@ -70,6 +90,39 @@ app.get('/readyz', (_req, res) => {
 
 // OAuth façade (metadata, register, authorize, token). Uses its own body parsers.
 mountOAuth(app, PUBLIC_URL);
+
+const securityAssessmentAdmission = new SecurityAssessmentAdmissionService({
+  principalById,
+  claimReplay: (request) => executor.securityAssessmentReplayClaim(request),
+  preflight: (request) => executor.securityAssessmentPreflight(request),
+});
+
+// Purpose-built product-service bridge. It is not MCP, accepts no browser
+// credential, and cannot invoke generic Executor/filesystem/terminal/agent tools.
+app.post(
+  '/internal/security/assessment/admit',
+  express.json({ limit: '64kb' }),
+  async (req, res) => {
+    try {
+      if (!PRODUCT_ASSESSMENT_BRIDGE_TOKEN) {
+        throw new BridgeError(
+          'PRECONDITION_FAILED',
+          'product assessment bridge is not configured',
+          503,
+        );
+      }
+      const token = req.header('x-product-assessment-token');
+      if (!token || token !== PRODUCT_ASSESSMENT_BRIDGE_TOKEN) {
+        throw new BridgeError('UNAUTHENTICATED', 'product assessment bridge authentication failed', 401);
+      }
+      const receipt = await securityAssessmentAdmission.admitProduct(req.body);
+      res.json(receipt);
+    } catch (error) {
+      const be = asBridgeError(error);
+      res.status(be.httpStatus).json(be.toJSON());
+    }
+  },
+);
 
 /** Extract credential and resolve to an enabled principal. */
 function authenticate(req: express.Request): Principal {

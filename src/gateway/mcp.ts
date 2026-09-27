@@ -18,6 +18,7 @@ import { currentPrincipal } from './context.js';
 import { registerAgentTools } from './agentTools.js';
 import { registerGitHubTools } from './githubTools.js';
 import { registerControlCenterTools } from './controlCenterTools.js';
+import { registerSecurityAssessmentTools } from './securityAssessmentTools.js';
 
 function require2(scope: Scope, targetId: string): Principal {
   const p = currentPrincipal();
@@ -327,6 +328,7 @@ export function buildServer(): McpServer {
   // Agent Control Plane: all nine contracts are now registered.
   // A6 activated agent_diff, agent_apply, and agent_discard.
   registerAgentTools(server);
+  registerSecurityAssessmentTools(server);
 
   return server;
 }

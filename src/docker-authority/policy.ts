@@ -2,12 +2,14 @@
 import path from 'node:path';
 import { BridgeError } from '../shared/errors.js';
 import { APPLY_MUTATION_SCRIPT, GIT_HOST_CHECK_SCRIPT, LIVE_STAT_SCRIPT, MOUNTINFO_CHECK_SCRIPT } from '../executor/agents/sandboxSpec.js';
+import { ASSESSMENT_STAGER_SCRIPT, BE9_SOURCE_STAGING_POLICY_VERSION } from '../shared/securityAssessmentStaging.js';
 
 const CURRENT_NS = 'io.quarangate';
 const LEGACY_NS = ['io.mcp-ide-bridge', 'io.mcp-bridge'] as const;
 const ACCEPTED_NS = [CURRENT_NS, ...LEGACY_NS] as const;
 const GITHUB_NS = 'io.quarangate.github';
 const JOB_RE = /^job_[0-9a-f]{32}$/u;
+const ASSESSMENT_RE = /^assessment_[0-9a-f]{24}$/u;
 const GH_OP_RE = /^gh_[0-9a-f]{24}$/u;
 const PROVIDER_BINDING_RE = /^[0-9a-f]{64}$/u;
 const IMAGE_ID_RE = /^sha256:[0-9a-f]{64}$/u;
@@ -18,6 +20,7 @@ const MAX_NANO_CPUS = 64_000_000_000;
 const ALLOWED_RESOURCES = new Set([
   'runner','stager','workspace','evidence','applier','ollama-read-helper','before-capture','post-capture','git-helper','net','provider-session','secret',
   'home','control','proxy','evidence-rm','evidence-io','evidence-read','github-git-helper',
+  'assessment-stager','assessment-runner','assessment-source','assessment-evidence','assessment-net',
 ]);
 const GITHUB_RESOURCES = new Set(['head-check','push-helper','push-secret']);
 
@@ -43,6 +46,7 @@ export interface ManagedIdentity {
   namespace: string;
   resource: string;
   job?: string;
+  assessment?: string;
   operation?: string;
   attempt?: string;
   providerBinding?: string;
@@ -92,17 +96,20 @@ export function managedIdentity(labels: unknown): ManagedIdentity {
     resource: l[`${ns}.resource`],
     job: l[`${ns}.job`],
     attempt: l[`${ns}.attempt`],
+    assessment: ns === CURRENT_NS ? l[`${CURRENT_NS}.assessment`] : undefined,
     providerBinding: l[`${CURRENT_NS}.provider-binding`],
-  })).filter(x => x.managed !== undefined || x.resource !== undefined || x.job !== undefined || x.attempt !== undefined);
+  })).filter(x => x.managed !== undefined || x.resource !== undefined || x.job !== undefined || x.attempt !== undefined || x.assessment !== undefined);
   if (found.length !== 1) deny('exactly one accepted QuaranGate ownership namespace is required');
   const one = found[0]!;
   if (one.managed !== 'true' || typeof one.resource !== 'string' || !ALLOWED_RESOURCES.has(one.resource)) deny('invalid QuaranGate ownership labels');
   if (one.job !== undefined && (typeof one.job !== 'string' || one.job.length < 1 || one.job.length > 128)) deny('invalid job ownership label');
   if (one.attempt !== undefined && (typeof one.attempt !== 'string' || !/^att_[0-9a-f]{32}$/u.test(one.attempt))) deny('invalid attempt ownership label');
+  if (one.assessment !== undefined && (typeof one.assessment !== 'string' || !ASSESSMENT_RE.test(one.assessment))) deny('invalid assessment ownership label');
   if (one.providerBinding !== undefined && (typeof one.providerBinding !== 'string' || !PROVIDER_BINDING_RE.test(one.providerBinding))) deny('invalid provider binding label');
   return {
     scope: 'sandbox', namespace: one.ns, resource: one.resource,
     ...(typeof one.job === 'string' ? { job: one.job } : {}),
+    ...(typeof one.assessment === 'string' ? { assessment: one.assessment } : {}),
     ...(typeof one.attempt === 'string' ? { attempt: one.attempt } : {}),
     ...(typeof one.providerBinding === 'string' ? { providerBinding: one.providerBinding } : {}),
   };
@@ -112,6 +119,11 @@ function assertCreationIdentity(identity: ManagedIdentity): void {
   if (identity.scope === 'sandbox') {
     if (identity.namespace !== CURRENT_NS) deny('new managed resources must use the current QuaranGate ownership namespace');
     if (!identity.job || !JOB_RE.test(identity.job)) deny('new managed resources require a canonical job id');
+    const assessmentRole = identity.resource.startsWith('assessment-');
+    if (assessmentRole && (!identity.assessment || !ASSESSMENT_RE.test(identity.assessment))) {
+      deny('assessment managed resources require a canonical assessment id');
+    }
+    if (!assessmentRole && identity.assessment) deny('assessment label is reserved for assessment resource roles');
     if (identity.resource === 'applier' && !identity.attempt) deny('applier resource requires an attempt id');
     if (identity.resource !== 'applier' && identity.attempt) deny('attempt label is reserved for applier resources');
   }
@@ -140,7 +152,7 @@ function validateHostBinds(identity: ManagedIdentity, bindsValue: unknown, trust
   let allowedTarget: string | null = null;
   let allowedMode: 'ro' | 'rw' | null = null;
   if (identity.scope === 'github' && ['head-check','push-helper'].includes(identity.resource)) { allowedTarget = '/src'; allowedMode = 'ro'; }
-  if (identity.scope === 'sandbox' && ['stager','git-helper'].includes(identity.resource)) { allowedTarget = '/src'; allowedMode = 'ro'; }
+  if (identity.scope === 'sandbox' && ['stager','git-helper','assessment-stager'].includes(identity.resource)) { allowedTarget = '/src'; allowedMode = 'ro'; }
   if (identity.scope === 'sandbox' && identity.resource === 'applier') { allowedTarget = '/project'; allowedMode = 'rw'; }
   if (!allowedTarget && binds.length) deny('host binds are forbidden for this resource role');
   if (allowedTarget && binds.length !== 1) deny('resource role requires exactly one trusted host bind');
@@ -188,6 +200,9 @@ function validateMountShapeForRole(identity: ManagedIdentity, mounts: readonly M
   }
   const rules: Record<string, Array<readonly [string, boolean]>> = {
     stager: [['/workspace', false]],
+    'assessment-stager': [['/workspace', false], ['/workspace', true]],
+    'assessment-runner': [['/workspace', true]],
+    'assessment-evidence': [['/evidence', false]],
     'ollama-read-helper': [['/workspace', true]],
     'before-capture': [['/workspace', true], ['/evidence', false]],
     'post-capture': [['/workspace', true]],
@@ -210,14 +225,15 @@ function validateMountShapeForRole(identity: ManagedIdentity, mounts: readonly M
     }
     return;
   }
-  if (identity.resource === 'proxy' || identity.resource === 'git-helper' || identity.resource === 'workspace' || identity.resource === 'evidence' || identity.resource === 'net' || identity.resource === 'provider-session') {
+  if (identity.resource === 'proxy' || identity.resource === 'git-helper' || identity.resource === 'workspace' || identity.resource === 'evidence' || identity.resource === 'net' || identity.resource === 'provider-session' || identity.resource === 'assessment-source' || identity.resource === 'assessment-net') {
     if (mounts.length) deny('managed volume mounts are forbidden for this resource role');
     return;
   }
   const allowed = rules[identity.resource];
   if (!allowed) { if (mounts.length) deny('managed volume mounts are forbidden for this resource role'); return; }
   for (const m of mounts) if (!allowed.some(([target, ro]) => target === m.Target && ro === m.ReadOnly)) deny('managed volume target/mode is not permitted for this resource role');
-  if (identity.resource !== 'before-capture' && mounts.length !== allowed.length) deny('resource role has an unexpected managed volume count');
+  if (identity.resource !== 'before-capture' && identity.resource !== 'assessment-stager' && mounts.length !== allowed.length) deny('resource role has an unexpected managed volume count');
+  if (identity.resource === 'assessment-stager' && mounts.length !== 1) deny('assessment-stager must mount exactly one source volume');
   if (identity.resource === 'before-capture' && mounts.length !== 1) deny('before-capture helper must mount exactly one source or destination volume');
 }
 
@@ -239,6 +255,52 @@ export function validateManagedContainerCreate(bodyValue: unknown, trustedHostPa
   const body = record(bodyValue);
   const identity = managedIdentity(body.Labels);
   assertCreationIdentity(identity);
+  if (identity.resource === 'assessment-source' || identity.resource === 'assessment-net') {
+    deny('assessment source/network identities cannot create containers');
+  }
+  if (identity.resource.startsWith('assessment-')) {
+    if (body.NetworkDisabled !== true) deny('assessment containers require NetworkDisabled=true');
+    if (body.User !== '1000:1000') deny('assessment containers require the fixed non-root identity');
+    if (identity.resource === 'assessment-stager') {
+      const cmd = body.Cmd;
+      if (!Array.isArray(cmd) || cmd.length !== 3 || cmd[0] !== 'node' || cmd[1] !== '-e' || cmd[2] !== ASSESSMENT_STAGER_SCRIPT) {
+        deny('assessment-stager command must match the fixed server-owned program');
+      }
+      if (body.WorkingDir !== '/tmp') deny('assessment-stager working directory must be /tmp');
+      const env = stringArray(body.Env, 'assessment-stager Env');
+      if (!env.includes('HOME=/tmp') || !env.includes('GIT_OPTIONAL_LOCKS=0')) {
+        deny('assessment-stager environment shape is invalid');
+      }
+      const revision = env.find(v => v.startsWith('EXPECTED_SOURCE_REVISION='));
+      const mode = env.find(v => v.startsWith('ASSESSMENT_STAGE_MODE='));
+      const assessment = env.find(v => v.startsWith('ASSESSMENT_ID='));
+      const project = env.find(v => v.startsWith('PROJECT_ID='));
+      const image = env.find(v => v.startsWith('STAGER_IMAGE_ID='));
+      const policy = env.find(v => v.startsWith('STAGING_POLICY_VERSION='));
+      const expectedManifest = env.find(v => v.startsWith('EXPECTED_MANIFEST_DIGEST='));
+      if (!revision || !/^EXPECTED_SOURCE_REVISION=[0-9a-f]{40}$/.test(revision)) deny('assessment-stager expected revision is invalid');
+      if (!mode || !/^ASSESSMENT_STAGE_MODE=(?:stage|verify)$/.test(mode)) deny('assessment-stager mode is invalid');
+      if (!assessment || !/^ASSESSMENT_ID=assessment_[0-9a-f]{24}$/.test(assessment)) deny('assessment-stager assessment identity is invalid');
+      if (!project || !/^PROJECT_ID=[a-z0-9][a-z0-9_-]{0,63}$/.test(project)) deny('assessment-stager project identity is invalid');
+      if (!image || !/^STAGER_IMAGE_ID=sha256:[0-9a-f]{64}$/.test(image)) deny('assessment-stager image identity is invalid');
+      if (policy !== `STAGING_POLICY_VERSION=${BE9_SOURCE_STAGING_POLICY_VERSION}`) deny('assessment-stager policy version is invalid');
+      const verify = mode === 'ASSESSMENT_STAGE_MODE=verify';
+      if (verify !== Boolean(expectedManifest)) deny('assessment-stager manifest binding does not match verification mode');
+      if (expectedManifest && !/^EXPECTED_MANIFEST_DIGEST=[0-9a-f]{64}$/.test(expectedManifest)) deny('assessment-stager expected manifest digest is invalid');
+      const allowedPrefixes = [
+        'EXPECTED_SOURCE_REVISION=', 'ASSESSMENT_STAGE_MODE=', 'ASSESSMENT_ID=',
+        'PROJECT_ID=', 'STAGER_IMAGE_ID=', 'STAGING_POLICY_VERSION=', 'EXPECTED_MANIFEST_DIGEST=',
+      ];
+      if (env.some(v => !allowedPrefixes.some(prefix => v.startsWith(prefix)) && v !== 'HOME=/tmp' && v !== 'GIT_OPTIONAL_LOCKS=0')) {
+        deny('assessment-stager environment contains unsupported fields');
+      }
+      if (env.length !== (verify ? 9 : 8)) deny('assessment-stager environment contains duplicate or missing fields');
+      const mounts = managedVolumeMounts(body);
+      if (mounts.length !== 1 || mounts[0]!.Target !== '/workspace' || mounts[0]!.ReadOnly !== verify) {
+        deny('assessment-stager source volume mode must be writable for stage and read-only for verify');
+      }
+    }
+  }
   if (typeof body.Image !== 'string' || !IMAGE_ID_RE.test(body.Image)) deny('managed container Image must be an immutable local Docker image ID');
   const host = record(body.HostConfig ?? {});
   if (host.AutoRemove !== false) deny('AutoRemove must be false');
@@ -385,6 +447,20 @@ export function validateManagedVolumeAttachment(container: ManagedIdentity, volu
     if (!allowed) deny('GitHub managed volume is not permitted for this container role');
     return;
   }
+  const assessmentPair = container.resource.startsWith('assessment-') || volume.resource.startsWith('assessment-');
+  if (assessmentPair) {
+    if (!container.job || !volume.job || container.job !== volume.job) deny('cross-execution assessment volume attachment is forbidden');
+    if (!container.assessment || !volume.assessment || container.assessment !== volume.assessment) deny('cross-assessment volume attachment is forbidden');
+    const allowedAssessmentPairs = new Set([
+      'assessment-stager:assessment-source:/workspace:rw',
+      'assessment-stager:assessment-source:/workspace:ro',
+      'assessment-runner:assessment-source:/workspace:ro',
+      'assessment-evidence:assessment-evidence:/evidence:rw',
+    ]);
+    const assessmentKey = `${container.resource}:${volume.resource}:${mount.Target}:${mount.ReadOnly ? 'ro' : 'rw'}`;
+    if (!allowedAssessmentPairs.has(assessmentKey)) deny('managed assessment volume is not permitted for this container role');
+    return;
+  }
   if (volume.resource === 'provider-session') {
     if (container.resource !== 'runner' || !container.providerBinding || container.providerBinding !== volume.providerBinding
       || mount.Target !== '/home/runner/.kiro/sessions/cli' || mount.ReadOnly) deny('provider-session volume binding does not match runner authority');
@@ -413,7 +489,7 @@ export function validateManagedVolumeCreate(name: unknown, labels: unknown): Man
     if (identity.resource !== 'push-secret') deny('GitHub managed volume creation is restricted to push-secret');
     return identity;
   }
-  if (!['workspace','evidence','provider-session','secret','home','control'].includes(identity.resource)) deny('resource role may not own a managed volume');
+  if (!['workspace','evidence','provider-session','secret','home','control','assessment-source','assessment-evidence'].includes(identity.resource)) deny('resource role may not own a managed volume');
   if (identity.resource === 'provider-session' && !identity.providerBinding) deny('provider-session volume requires provider binding');
   return identity;
 }
@@ -422,7 +498,15 @@ export function validateManagedNetworkCreate(name: unknown, internal: unknown, l
   if (typeof name !== 'string') deny('managed network name must be a string');
   const identity = managedIdentity(labels);
   assertCreationIdentity(identity);
-  if (identity.scope !== 'sandbox' || identity.resource !== 'net' || !identity.job) deny('managed network requires current job-scoped net labels');
+  if (identity.scope !== 'sandbox' || !identity.job) deny('managed network requires current execution labels');
+  if (identity.resource === 'assessment-net') {
+    if (!identity.assessment) deny('assessment network requires assessment ownership');
+    if (name !== `io-quarangate-assessment-net-${identity.assessment}` || Boolean(internal) !== true) {
+      deny('assessment network must be the exact server-owned internal network');
+    }
+    return identity;
+  }
+  if (identity.resource !== 'net') deny('managed network requires net or assessment-net role');
   const base = `io-quarangate-net-${identity.job}`;
   const expected = new Map<string, boolean>([[base,true],[`${base}-ext`,false],[`${base}-copilot-int`,true],[`${base}-copilot-ext`,false]]);
   if (!expected.has(name) || expected.get(name) !== Boolean(internal)) deny('managed network name/internal policy mismatch');
@@ -430,6 +514,9 @@ export function validateManagedNetworkCreate(name: unknown, internal: unknown, l
 }
 
 export function validateManagedNetworkAttachment(network: ManagedIdentity, container: ManagedIdentity): void {
+  if (network.resource === 'assessment-net' || container.resource.startsWith('assessment-')) {
+    deny('assessment network runtime attachment is disabled in initial BE9');
+  }
   if (network.scope !== 'sandbox' || network.resource !== 'net' || container.scope !== 'sandbox') deny('managed network attachment requires sandbox ownership');
   if (!network.job || !container.job || network.job !== container.job) deny('cross-job managed network attachment is forbidden');
   if (container.resource !== 'proxy') deny('only governed egress proxy containers may receive a second managed network attachment');

@@ -167,6 +167,14 @@ describe("BE8 R1 trusted static discovery bounds", () => {
     const source = snapshot([{ path: "src/app.ts", content: "export {}" }]);
     expect(discoverSecurityStack(source).discoveryId).toBe(discoverSecurityStack(source).discoveryId);
   });
+
+  it("omits absent optional target identity from durable discovery and plan JSON", () => {
+    const result = discoverSecurityStack(snapshot([{ path: "src/app.ts", content: "export {}" }]));
+    const plan = createSecurityAssessmentPlan(result);
+    expect(Object.hasOwn(result, "targetId")).toBe(false);
+    expect(Object.hasOwn(plan, "targetId")).toBe(false);
+    expect(() => JSON.stringify({ result, plan })).not.toThrow();
+  });
 });
 
 describe("BE8 R1 request authority", () => {

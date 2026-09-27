@@ -36,10 +36,10 @@ function assertDeepStrict(schema: z.ZodTypeAny | undefined, label: string, seen 
 const JOB = `job_${'a'.repeat(32)}`;
 
 describe('SH-08 MCP tool-schema properties', () => {
-  it('all 45 registered tools use recursively strict object contracts', () => {
+  it('all 49 registered tools use recursively strict object contracts', () => {
     const s = serverInternals();
     const names = Object.keys(s._registeredTools).sort();
-    expect(names).toHaveLength(45);
+    expect(names).toHaveLength(49);
     let objectSchemas = 0;
     for (const name of names) {
       const tool = s._registeredTools[name]!;
@@ -94,8 +94,13 @@ describe('SH-08 MCP tool-schema properties', () => {
   it('strictness does not alter the exact tool catalog or mutation annotations', () => {
     const s = serverInternals();
     const names = Object.keys(s._registeredTools);
-    expect(new Set(names).size).toBe(45);
-    for (const required of ['fs_write','fs_delete','terminal_exec','agent_apply','agent_discard','github_push_branch','github_pull_request_review']) {
+    expect(new Set(names).size).toBe(49);
+    for (const required of [
+      'fs_write','fs_delete','terminal_exec','agent_apply','agent_discard',
+      'github_push_branch','github_pull_request_review',
+      'security_assessment_start','security_assessment_status',
+      'security_assessment_cancel','security_assessment_evidence',
+    ]) {
       expect(s._registeredTools[required], required).toBeDefined();
     }
   });

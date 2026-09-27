@@ -187,7 +187,7 @@ export function discoverSecurityStack(snapshot: TrustedSecuritySourceSnapshot): 
       unsupported,
     }),
     projectId: snapshot.projectId,
-    targetId: snapshot.targetId,
+    ...(snapshot.targetId !== undefined ? { targetId: snapshot.targetId } : {}),
     sourceRevision: snapshot.sourceRevision,
     detectorVersion: DETECTOR_VERSION,
     readOnly: true,

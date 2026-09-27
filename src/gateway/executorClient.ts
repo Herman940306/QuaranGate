@@ -4,6 +4,10 @@ import { BridgeError } from '../shared/errors.js';
 import { MAX_PROVIDER_RETRY_AFTER_MS } from '../shared/agents.js';
 import type { ExecResult, FileStat, TargetInfo } from '../shared/types.js';
 import type {
+  SecurityAssessmentOperationalPreflight,
+  SecurityAssessmentOperationalPreflightRequest,
+} from '../shared/securityAssessment.js';
+import type {
   GitHubBranchSummary, GitHubChecksSummary, GitHubCommentSummary, GitHubCommitSummary,
   GitHubIssueDetail, GitHubIssueSummary, GitHubPullFileSummary, GitHubPullReviewCommentSummary,
   GitHubPullReviewSummary, GitHubPullSummary, GitHubRepoMetadata, GitHubRepositorySummary, GitHubReviewEvent,
@@ -70,6 +74,35 @@ export const executor = {
   readyz: () => call<{ ok: true }>('/readyz').then(() => true).catch(() => false),
   controlCenterRuntime: () => call<ControlCenterRuntimeWire>('/control-center/runtime'),
   controlCenterExecutionFabric: () => call<{ executionFabric: ControlCenterExecutionFabricWire | null }>('/control-center/execution-fabric').then((r) => r.executionFabric),
+
+  securityAssessmentReplayClaim: (req: {
+    bridgeRequestId: string;
+    nonce: string;
+    assessmentId: string;
+    assessmentVersion: number;
+    expiresAt: string;
+  }) => call<{ claimed: boolean }>('/security-assessment/replay/claim', req).then((r) => r.claimed),
+
+  securityAssessmentPreflight: (req: SecurityAssessmentOperationalPreflightRequest) =>
+    call<SecurityAssessmentOperationalPreflight>('/security-assessment/preflight', req),
+  securityAssessmentPrepare: (req: SecurityAssessmentOperationalPreflightRequest) =>
+    call<{ projectId: string; sourceRevision: string; sourceTree: string; manifestDigest: string }>(
+      '/security-assessment/prepare',
+      req,
+    ),
+  securityAssessmentRevalidate: (assessmentId: string) =>
+    call<{
+      schemaVersion: 'BE9_SOURCE_STAGE_V1';
+      mode: 'stage' | 'verify';
+      sourceRevision: string;
+      sourceTree: string;
+      fileCount: number;
+      totalBytes: number;
+      manifestBytes: number;
+      manifestDigest: string;
+    }>('/security-assessment/revalidate', { assessmentId }),
+  securityAssessmentCleanup: (assessmentId: string, uncertain = false) =>
+    call<{ ok: true }>('/security-assessment/cleanup', { assessmentId, uncertain }),
 
   // GitHub App control plane. Remote reads/PR actions use owner/repository
   // identifiers that are re-authorized against trusted accounts by the

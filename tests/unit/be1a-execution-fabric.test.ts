@@ -394,4 +394,72 @@ describe('BE1A cross-project execution fabric', () => {
     );
     expect(() => parseAgentConfigYaml(badResource)).toThrow(BridgeError);
   });
+
+  it('serializes security-assessment and agent-job owners through the same resource authority', () => {
+    const store = db();
+    const shared = 'database:shared-security-db';
+
+    store.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment',
+      ownerId: 'assessment-lease-a',
+      projectId: 'proj-a',
+      resourceKeys: [shared],
+    });
+    expect(store.executionLeaseSummary()).toEqual([
+      expect.objectContaining({
+        ownerKind: 'security-assessment',
+        ownerId: 'assessment-lease-a',
+        projectId: 'proj-a',
+        resourceKey: shared,
+        state: 'ACTIVE',
+      }),
+    ]);
+
+    store.insert(job(40, 'proj-b', [shared]));
+    expect(store.claimNext(4)).toBeUndefined();
+
+    store.releaseExecutionLeasesForOwner('security-assessment', 'assessment-lease-a', 'assessment settled');
+    expect(store.claimNext(4)!.project).toBe('proj-b');
+  });
+
+  it('denies assessment lease acquisition while an Agent job owns the resource', () => {
+    const store = db();
+    const shared = 'temp-root:shared-assessment';
+    store.insert(job(41, 'proj-a', [shared]));
+    expect(store.claimNext(4)!.project).toBe('proj-a');
+
+    expect(() => store.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment',
+      ownerId: 'assessment-lease-b',
+      projectId: 'proj-b',
+      resourceKeys: [shared],
+    })).toThrowError(expect.objectContaining({ code: 'CONCURRENCY_LIMIT' }));
+  });
+
+  it('keeps UNCERTAIN assessment ownership blocking until evidence-bound settlement', () => {
+    const store = db();
+    const shared = 'owner-host:assessment-scope';
+    store.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment',
+      ownerId: 'assessment-lease-c',
+      projectId: 'proj-a',
+      resourceKeys: [shared],
+    });
+    store.markExecutionLeasesUncertainForOwner(
+      'security-assessment',
+      'assessment-lease-c',
+      'recovery cannot prove cleanup',
+    );
+
+    store.insert(job(42, 'proj-b', [shared]));
+    expect(store.claimNext(4)).toBeUndefined();
+    expect(store.executionLeaseSummary()).toEqual([
+      expect.objectContaining({
+        ownerKind: 'security-assessment',
+        ownerId: 'assessment-lease-c',
+        resourceKey: shared,
+        state: 'UNCERTAIN',
+      }),
+    ]);
+  });
 });

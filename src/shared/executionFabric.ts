@@ -51,3 +51,30 @@ export function parseExecutionResourceKey(key: string): ExecutionResourceRef {
   if (!EXECUTION_RESOURCE_ID_PATTERN.test(id)) throw new Error('malformed execution resource id');
   return { category, id };
 }
+
+
+export const EXECUTION_RESOURCE_OWNER_KINDS = ['agent-job', 'security-assessment'] as const;
+export type ExecutionResourceOwnerKind = (typeof EXECUTION_RESOURCE_OWNER_KINDS)[number];
+
+export const EXECUTION_RESOURCE_OWNER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+export interface ExecutionResourceOwnerRef {
+  ownerKind: ExecutionResourceOwnerKind;
+  ownerId: string;
+  projectId: string;
+}
+
+export function assertExecutionResourceOwner(ref: ExecutionResourceOwnerRef): void {
+  if (!(EXECUTION_RESOURCE_OWNER_KINDS as readonly string[]).includes(ref.ownerKind)) {
+    throw new Error('unknown execution resource owner kind');
+  }
+  if (!EXECUTION_RESOURCE_OWNER_ID_PATTERN.test(ref.ownerId)) {
+    throw new Error('malformed execution resource owner id');
+  }
+  if (!AGENT_PROJECT_ID_PATTERN_COMPAT.test(ref.projectId)) {
+    throw new Error('malformed execution resource project id');
+  }
+}
+
+// Kept local to avoid creating a circular dependency on shared/agents.
+const AGENT_PROJECT_ID_PATTERN_COMPAT = /^[a-z0-9][a-z0-9_-]{0,63}$/;

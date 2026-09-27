@@ -49,7 +49,7 @@ export function createSecurityAssessmentPlan(discovery: SecurityDiscoveryResult)
   return {
     planId: id({ discoveryId: discovery.discoveryId, sourceRevision: discovery.sourceRevision, applicableIds, unavailableSteps: unavailableSteps.map((item) => [item.capabilityId, item.state]) }),
     projectId: discovery.projectId,
-    targetId: discovery.targetId,
+    ...(discovery.targetId !== undefined ? { targetId: discovery.targetId } : {}),
     sourceRevision: discovery.sourceRevision,
     detectedStack: discovery.detected,
     selectedCapabilities,

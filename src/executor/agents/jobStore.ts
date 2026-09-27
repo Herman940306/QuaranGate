@@ -50,9 +50,13 @@ import {
   type ArtifactState,
   type AgentRetentionClass,
 } from '../../shared/agents.js';
-import { parseExecutionResourceKey } from '../../shared/executionFabric.js';
+import {
+  assertExecutionResourceOwner,
+  parseExecutionResourceKey,
+  type ExecutionResourceOwnerKind,
+} from '../../shared/executionFabric.js';
 
-export const AGENT_JOB_SCHEMA_VERSION = 10;
+export const AGENT_JOB_SCHEMA_VERSION = 13;
 
 /**
  * Concurrency admission counts EXECUTING jobs only. QUEUED jobs are "active"
@@ -105,6 +109,8 @@ const REQUIRED_SCHEMA_TABLES = [
   'agent_provider_state',
   'live_writer_leases',
   'execution_resource_leases',
+  'security_assessment_replay',
+  'security_assessment_prepared',
 ] as const;
 
 /** Required column -> declared SQLite affinity, per table. */
@@ -163,8 +169,18 @@ const REQUIRED_SCHEMA_COLUMNS: Record<string, Record<string, string>> = {
     acquired_at: 'TEXT', finished_at: 'TEXT', reason: 'TEXT',
   },
   execution_resource_leases: {
-    lease_id: 'TEXT', resource_key: 'TEXT', job_id: 'TEXT', project_id: 'TEXT',
-    state: 'TEXT', acquired_at: 'TEXT', finished_at: 'TEXT', reason: 'TEXT',
+    lease_id: 'TEXT', resource_key: 'TEXT', owner_kind: 'TEXT', owner_id: 'TEXT',
+    job_id: 'TEXT', project_id: 'TEXT', state: 'TEXT', acquired_at: 'TEXT',
+    finished_at: 'TEXT', reason: 'TEXT',
+  },
+  security_assessment_replay: {
+    bridge_request_id: 'TEXT', nonce: 'TEXT', assessment_id: 'TEXT',
+    assessment_version: 'INTEGER', expires_at: 'TEXT', created_at: 'TEXT',
+  },
+  security_assessment_prepared: {
+    assessment_id: 'TEXT', project_id: 'TEXT', expected_source_revision: 'TEXT',
+    execution_id: 'TEXT', source_volume: 'TEXT', stage_receipt_json: 'TEXT',
+    resource_keys_json: 'TEXT', created_at: 'TEXT',
   },
 };
 
@@ -173,6 +189,7 @@ const REQUIRED_SCHEMA_INDEXES = [
   'idx_apply_attempts_active_job',
   'idx_apply_attempts_active_project',
   'idx_execution_resource_held',
+  'idx_execution_resource_owner',
 ] as const;
 
 const LIVE_WRITER_TABLE_SQL = `CREATE TABLE live_writer_leases (
@@ -594,11 +611,23 @@ export class AgentJobStore {
    *
    * Fail closed instead of repairing or inferring missing historical state.
    */
-  private assertSchemaShape(options: { includeProviderState?: boolean; includeLiveWriter?: boolean; includeSessionSourceRevision?: boolean; includeExecutionFabric?: boolean; stampedVersion?: number } = {}): void {
+  private assertSchemaShape(options: {
+    includeProviderState?: boolean;
+    includeLiveWriter?: boolean;
+    includeSessionSourceRevision?: boolean;
+    includeExecutionFabric?: boolean;
+    includeExecutionOwner?: boolean;
+    includeAssessmentReplay?: boolean;
+    includeAssessmentPrepared?: boolean;
+    stampedVersion?: number;
+  } = {}): void {
     const includeProviderState = options.includeProviderState ?? true;
     const includeLiveWriter = options.includeLiveWriter ?? true;
     const includeSessionSourceRevision = options.includeSessionSourceRevision ?? true;
     const includeExecutionFabric = options.includeExecutionFabric ?? true;
+    const includeExecutionOwner = options.includeExecutionOwner ?? true;
+    const includeAssessmentReplay = options.includeAssessmentReplay ?? true;
+    const includeAssessmentPrepared = options.includeAssessmentPrepared ?? true;
     const stampedVersion = options.stampedVersion ?? AGENT_JOB_SCHEMA_VERSION;
     const missing: string[] = [];
 
@@ -611,6 +640,8 @@ export class AgentJobStore {
       if (!includeProviderState && t === 'agent_provider_state') continue;
       if (!includeLiveWriter && t === 'live_writer_leases') continue;
       if (!includeExecutionFabric && t === 'execution_resource_leases') continue;
+      if (!includeAssessmentReplay && t === 'security_assessment_replay') continue;
+      if (!includeAssessmentPrepared && t === 'security_assessment_prepared') continue;
       if (!tableExists(t)) missing.push(`table ${t}`);
     }
 
@@ -620,12 +651,15 @@ export class AgentJobStore {
       if (!includeProviderState && table === 'agent_provider_state') continue;
       if (!includeLiveWriter && table === 'live_writer_leases') continue;
       if (!includeExecutionFabric && table === 'execution_resource_leases') continue;
+      if (!includeAssessmentReplay && table === 'security_assessment_replay') continue;
+      if (!includeAssessmentPrepared && table === 'security_assessment_prepared') continue;
       if (!tableExists(table)) continue;
       const info = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string }[];
       for (const [column, affinity] of Object.entries(columns)) {
         if (!includeSessionSourceRevision && table === 'agent_sessions' && column === 'source_revision') continue;
         if (!includeLiveWriter && table === 'agent_apply_attempts' && (column === 'worktree_id' || column === 'writer_lease_id')) continue;
         if (!includeExecutionFabric && table === 'agent_jobs' && (column === 'execution_resources' || column === 'global_exclusive')) continue;
+        if (!includeExecutionOwner && table === 'execution_resource_leases' && (column === 'owner_kind' || column === 'owner_id')) continue;
         const got = info.find((c) => c.name === column);
         if (!got) { missing.push(`${table}.${column}`); continue; }
         if (String(got.type).toUpperCase() !== affinity) {
@@ -639,7 +673,8 @@ export class AgentJobStore {
     // would silently permit two concurrently active apply attempts.
     if (tableExists('agent_apply_attempts')) {
       for (const idx of REQUIRED_SCHEMA_INDEXES) {
-        if (!includeExecutionFabric && idx === 'idx_execution_resource_held') continue;
+        if (!includeExecutionFabric && idx.startsWith('idx_execution_resource_')) continue;
+        if (!includeExecutionOwner && idx === 'idx_execution_resource_owner') continue;
         if (!indexExists(idx)) missing.push(`index ${idx}`);
       }
     }
@@ -741,20 +776,63 @@ export class AgentJobStore {
       CREATE TABLE IF NOT EXISTS execution_resource_leases (
         lease_id      TEXT PRIMARY KEY NOT NULL,
         resource_key  TEXT NOT NULL,
-        job_id        TEXT NOT NULL REFERENCES agent_jobs(job_id),
+        owner_kind    TEXT NOT NULL CHECK(owner_kind IN ('agent-job','security-assessment')),
+        owner_id      TEXT NOT NULL,
+        job_id        TEXT REFERENCES agent_jobs(job_id),
         project_id    TEXT NOT NULL,
         state         TEXT NOT NULL CHECK(state IN ('ACTIVE','UNCERTAIN','RELEASED')),
         acquired_at   TEXT NOT NULL,
         finished_at   TEXT,
-        reason        TEXT
+        reason        TEXT,
+        CHECK(
+          (owner_kind='agent-job' AND job_id IS NOT NULL AND owner_id=job_id)
+          OR
+          (owner_kind='security-assessment' AND job_id IS NULL)
+        )
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_resource_held
         ON execution_resource_leases(resource_key)
         WHERE state IN ('ACTIVE','UNCERTAIN');
+      CREATE INDEX IF NOT EXISTS idx_execution_resource_owner
+        ON execution_resource_leases(owner_kind, owner_id);
       CREATE INDEX IF NOT EXISTS idx_execution_resource_job
         ON execution_resource_leases(job_id);
       CREATE INDEX IF NOT EXISTS idx_execution_resource_project
         ON execution_resource_leases(project_id);
+    `);
+  }
+
+  /** BE9.2 restart-safe admission replay ledger. */
+  private createSecurityAssessmentReplaySchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS security_assessment_replay (
+        bridge_request_id  TEXT PRIMARY KEY NOT NULL,
+        nonce              TEXT NOT NULL UNIQUE,
+        assessment_id      TEXT NOT NULL,
+        assessment_version INTEGER NOT NULL CHECK(assessment_version >= 0),
+        expires_at         TEXT NOT NULL,
+        created_at         TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_security_assessment_replay_expiry
+        ON security_assessment_replay(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_security_assessment_replay_assessment
+        ON security_assessment_replay(assessment_id, assessment_version);
+    `);
+  }
+
+  /** BE9.2 durable prepared-source recovery metadata. */
+  private createSecurityAssessmentPreparedSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS security_assessment_prepared (
+        assessment_id            TEXT PRIMARY KEY NOT NULL,
+        project_id               TEXT NOT NULL,
+        expected_source_revision TEXT NOT NULL,
+        execution_id             TEXT NOT NULL,
+        source_volume            TEXT NOT NULL UNIQUE,
+        stage_receipt_json       TEXT NOT NULL,
+        resource_keys_json       TEXT NOT NULL,
+        created_at               TEXT NOT NULL
+      );
     `);
   }
 
@@ -782,16 +860,25 @@ export class AgentJobStore {
     // (apart from SQLite's normal open/journal bookkeeping); it is never
     // partially repaired or privacy-migrated before the failure is reported.
     if (version === 6) {
-      this.assertSchemaShape({ includeProviderState: false, includeLiveWriter: false, includeSessionSourceRevision: false, includeExecutionFabric: false, stampedVersion: 6 });
+      this.assertSchemaShape({ includeProviderState: false, includeLiveWriter: false, includeSessionSourceRevision: false, includeExecutionFabric: false, includeAssessmentReplay: false, includeAssessmentPrepared: false, stampedVersion: 6 });
     }
     if (version === 7) {
-      this.assertSchemaShape({ includeLiveWriter: false, includeSessionSourceRevision: false, includeExecutionFabric: false, stampedVersion: 7 });
+      this.assertSchemaShape({ includeLiveWriter: false, includeSessionSourceRevision: false, includeExecutionFabric: false, includeAssessmentReplay: false, includeAssessmentPrepared: false, stampedVersion: 7 });
     }
     if (version === 8) {
-      this.assertSchemaShape({ includeSessionSourceRevision: false, includeExecutionFabric: false, stampedVersion: 8 });
+      this.assertSchemaShape({ includeSessionSourceRevision: false, includeExecutionFabric: false, includeAssessmentReplay: false, includeAssessmentPrepared: false, stampedVersion: 8 });
     }
     if (version === 9) {
-      this.assertSchemaShape({ includeExecutionFabric: false, stampedVersion: 9 });
+      this.assertSchemaShape({ includeExecutionFabric: false, includeAssessmentReplay: false, includeAssessmentPrepared: false, stampedVersion: 9 });
+    }
+    if (version === 10) {
+      this.assertSchemaShape({ includeExecutionOwner: false, includeAssessmentReplay: false, includeAssessmentPrepared: false, stampedVersion: 10 });
+    }
+    if (version === 11) {
+      this.assertSchemaShape({ includeAssessmentReplay: false, includeAssessmentPrepared: false, stampedVersion: 11 });
+    }
+    if (version === 12) {
+      this.assertSchemaShape({ includeAssessmentPrepared: false, stampedVersion: 12 });
     }
     // ODR-2 v9 safety boundary: no older schema may already contain the v9
     // revision-binding column. Adopting such a column could trust provenance
@@ -814,6 +901,26 @@ export class AgentJobStore {
       const partialExecution = this.db.prepare(`SELECT name FROM sqlite_master WHERE name IN ('execution_resource_leases','idx_execution_resource_held') ORDER BY name`).all() as { name: string }[];
       if (partialExecution.length > 0 || this.columnExists('agent_jobs','execution_resources') || this.columnExists('agent_jobs','global_exclusive')) {
         throw new BridgeError('INTERNAL', `agent job DB schema v${version} contains partial v10 execution-fabric state; refusing automatic repair`, 500);
+      }
+    }
+    if (version < 11 && this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_resource_leases'`).get()) {
+      const hasOwnerKind = this.columnExists('execution_resource_leases', 'owner_kind');
+      const hasOwnerId = this.columnExists('execution_resource_leases', 'owner_id');
+      const ownerIndex = this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_execution_resource_owner'`).get();
+      if (hasOwnerKind || hasOwnerId || ownerIndex) {
+        throw new BridgeError('INTERNAL', `agent job DB schema v${version} contains partial v11 execution-owner state; refusing automatic repair`, 500);
+      }
+    }
+    if (version < 12 && this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_assessment_replay'`).get()) {
+      const replayRows = this.db.prepare(`SELECT COUNT(*) AS count FROM security_assessment_replay`).get() as { count: number };
+      if (Number(replayRows.count) !== 0) {
+        throw new BridgeError('INTERNAL', `agent job DB schema v${version} contains non-empty partial v12 assessment replay state; refusing automatic repair`, 500);
+      }
+    }
+    if (version < 13 && this.db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_assessment_prepared'`).get()) {
+      const preparedRows = this.db.prepare(`SELECT COUNT(*) AS count FROM security_assessment_prepared`).get() as { count: number };
+      if (Number(preparedRows.count) !== 0) {
+        throw new BridgeError('INTERNAL', `agent job DB schema v${version} contains non-empty partial v13 assessment prepared state; refusing automatic repair`, 500);
       }
     }
     this.db.exec('BEGIN IMMEDIATE');
@@ -868,6 +975,8 @@ export class AgentJobStore {
         this._sessionStore.createSchema();
         this.createProviderAdmissionSchema();
         this.createExecutionFabricSchema();
+        this.createSecurityAssessmentReplaySchema();
+        this.createSecurityAssessmentPreparedSchema();
       }
       if (version < 2) {
         // v1 (A2) → v2 (A3): record the trusted base commit of a staged sandbox
@@ -1044,6 +1153,32 @@ export class AgentJobStore {
           this.db.exec('ALTER TABLE agent_jobs ADD COLUMN global_exclusive INTEGER NOT NULL DEFAULT 0');
         }
         this.createExecutionFabricSchema();
+      }
+      if (version < 11) {
+        // BE9.2: generalize the existing BE1A resource authority to explicit
+        // owner kinds. Historical v10 rows are provably agent-job owned by
+        // their mandatory job_id; no assessment ownership is inferred.
+        this.db.exec(`
+          ALTER TABLE execution_resource_leases RENAME TO execution_resource_leases_v10;
+          DROP INDEX IF EXISTS idx_execution_resource_held;
+          DROP INDEX IF EXISTS idx_execution_resource_owner;
+          DROP INDEX IF EXISTS idx_execution_resource_job;
+          DROP INDEX IF EXISTS idx_execution_resource_project;
+        `);
+        this.createExecutionFabricSchema();
+        this.db.exec(`
+          INSERT INTO execution_resource_leases
+            (lease_id, resource_key, owner_kind, owner_id, job_id, project_id, state, acquired_at, finished_at, reason)
+          SELECT lease_id, resource_key, 'agent-job', job_id, job_id, project_id, state, acquired_at, finished_at, reason
+          FROM execution_resource_leases_v10;
+          DROP TABLE execution_resource_leases_v10;
+        `);
+      }
+      if (version < 12) {
+        this.createSecurityAssessmentReplaySchema();
+      }
+      if (version < 13) {
+        this.createSecurityAssessmentPreparedSchema();
       }
       this.db.exec(`PRAGMA user_version=${AGENT_JOB_SCHEMA_VERSION}`);
       this.db.exec('COMMIT');
@@ -1675,9 +1810,16 @@ export class AgentJobStore {
       if (Number(res.changes) !== 1) { this.db.exec('ROLLBACK'); return undefined; }
       for (const key of resourceKeys) {
         this.db.prepare(`INSERT INTO execution_resource_leases
-          (lease_id, resource_key, job_id, project_id, state, acquired_at)
-          VALUES (?, ?, ?, ?, 'ACTIVE', ?)`
-        ).run(`erl_${randomBytes(16).toString('hex')}`, key, candidate.job_id, candidate.project, startedAt);
+          (lease_id, resource_key, owner_kind, owner_id, job_id, project_id, state, acquired_at)
+          VALUES (?, ?, 'agent-job', ?, ?, ?, 'ACTIVE', ?)`
+        ).run(
+          `erl_${randomBytes(16).toString('hex')}`,
+          key,
+          candidate.job_id,
+          candidate.job_id,
+          candidate.project,
+          startedAt,
+        );
       }
       this.db.exec('COMMIT');
       return this.get(candidate.job_id);
@@ -1688,24 +1830,156 @@ export class AgentJobStore {
   }
 
   releaseExecutionLeases(jobId: string, reason: string = 'job settled'): void {
-    const finishedAt = nowIso();
-    this.db.prepare(`UPDATE execution_resource_leases
-      SET state='RELEASED', finished_at=?, reason=?
-      WHERE job_id=? AND state='ACTIVE'`).run(finishedAt, reason.slice(0, 500), jobId);
+    this.releaseExecutionLeasesForOwner('agent-job', jobId, reason);
   }
 
   markExecutionLeasesUncertain(jobId: string, reason: string): void {
+    this.markExecutionLeasesUncertainForOwner('agent-job', jobId, reason);
+  }
+
+  acquireExecutionLeasesForOwner(input: {
+    ownerKind: ExecutionResourceOwnerKind;
+    ownerId: string;
+    projectId: string;
+    resourceKeys: readonly string[];
+    globalExclusive?: boolean;
+  }): { acquired: string[] } {
+    assertExecutionResourceOwner({
+      ownerKind: input.ownerKind,
+      ownerId: input.ownerId,
+      projectId: input.projectId,
+    });
+    if (input.resourceKeys.length > 128) {
+      throw new BridgeError('MALFORMED_REQUEST', 'execution resource owner request exceeds resource bound', 400);
+    }
+    const keys = [...new Set(input.resourceKeys)].sort();
+    if (keys.length !== input.resourceKeys.length) {
+      throw new BridgeError('MALFORMED_REQUEST', 'execution resource owner request contains duplicate resource keys', 400);
+    }
+    for (const key of keys) {
+      try { parseExecutionResourceKey(key); }
+      catch {
+        throw new BridgeError('MALFORMED_REQUEST', 'execution resource owner request contains malformed resource key', 400);
+      }
+    }
+    if (input.globalExclusive) keys.push('machine:global-exclusive');
+
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const already = this.db.prepare(`
+        SELECT resource_key FROM execution_resource_leases
+        WHERE owner_kind=? AND owner_id=? AND state IN ('ACTIVE','UNCERTAIN')
+        ORDER BY resource_key
+      `).all(input.ownerKind, input.ownerId) as Array<{resource_key:string}>;
+      if (already.length > 0) {
+        throw new BridgeError('CONCURRENCY_LIMIT', 'execution resource owner already holds active or uncertain resources', 409);
+      }
+
+      const activeGlobal = this.db.prepare(`
+        SELECT 1 FROM execution_resource_leases
+        WHERE resource_key='machine:global-exclusive' AND state IN ('ACTIVE','UNCERTAIN')
+        LIMIT 1
+      `).get();
+      if (activeGlobal) {
+        throw new BridgeError('CONCURRENCY_LIMIT', 'global-exclusive execution resource is held', 409);
+      }
+      if (input.globalExclusive) {
+        const anyHeld = this.db.prepare(`
+          SELECT 1 FROM execution_resource_leases
+          WHERE state IN ('ACTIVE','UNCERTAIN') LIMIT 1
+        `).get();
+        if (anyHeld) {
+          throw new BridgeError('CONCURRENCY_LIMIT', 'execution resources are already held', 409);
+        }
+      }
+
+      for (const key of keys) {
+        const held = this.db.prepare(`
+          SELECT 1 FROM execution_resource_leases
+          WHERE resource_key=? AND state IN ('ACTIVE','UNCERTAIN') LIMIT 1
+        `).get(key);
+        if (held) {
+          throw new BridgeError('CONCURRENCY_LIMIT', `execution resource ${key} is held`, 409);
+        }
+      }
+
+      const acquiredAt = nowIso();
+      for (const key of keys) {
+        this.db.prepare(`INSERT INTO execution_resource_leases
+          (lease_id, resource_key, owner_kind, owner_id, job_id, project_id, state, acquired_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)`
+        ).run(
+          `erl_${randomBytes(16).toString('hex')}`,
+          key,
+          input.ownerKind,
+          input.ownerId,
+          input.ownerKind === 'agent-job' ? input.ownerId : null,
+          input.projectId,
+          acquiredAt,
+        );
+      }
+      this.db.exec('COMMIT');
+      return { acquired: keys };
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  releaseExecutionLeasesForOwner(
+    ownerKind: ExecutionResourceOwnerKind,
+    ownerId: string,
+    reason: string = 'execution owner settled',
+  ): void {
+    const binding = this.db.prepare(`
+      SELECT project_id FROM execution_resource_leases
+      WHERE owner_kind=? AND owner_id=?
+      ORDER BY acquired_at DESC LIMIT 1
+    `).get(ownerKind, ownerId) as {project_id:string}|undefined;
+    if (!binding) return;
+    assertExecutionResourceOwner({ ownerKind, ownerId, projectId: binding.project_id });
+    const finishedAt = nowIso();
+    this.db.prepare(`UPDATE execution_resource_leases
+      SET state='RELEASED', finished_at=?, reason=?
+      WHERE owner_kind=? AND owner_id=? AND state='ACTIVE'`
+    ).run(finishedAt, reason.slice(0, 500), ownerKind, ownerId);
+  }
+
+  markExecutionLeasesUncertainForOwner(
+    ownerKind: ExecutionResourceOwnerKind,
+    ownerId: string,
+    reason: string,
+  ): void {
+    const binding = this.db.prepare(`
+      SELECT project_id FROM execution_resource_leases
+      WHERE owner_kind=? AND owner_id=?
+      ORDER BY acquired_at DESC LIMIT 1
+    `).get(ownerKind, ownerId) as {project_id:string}|undefined;
+    if (!binding) return;
+    assertExecutionResourceOwner({ ownerKind, ownerId, projectId: binding.project_id });
     const at = nowIso();
     this.db.prepare(`UPDATE execution_resource_leases
       SET state='UNCERTAIN', finished_at=?, reason=?
-      WHERE job_id=? AND state='ACTIVE'`).run(at, reason.slice(0, 500), jobId);
+      WHERE owner_kind=? AND owner_id=? AND state='ACTIVE'`
+    ).run(at, reason.slice(0, 500), ownerKind, ownerId);
   }
 
-  executionLeaseSummary(): Array<{ resourceKey: string; jobId: string; projectId: string; state: 'ACTIVE' | 'UNCERTAIN' }> {
-    return (this.db.prepare(`SELECT resource_key, job_id, project_id, state
+  executionLeaseSummary(): Array<{
+    resourceKey: string;
+    ownerKind: ExecutionResourceOwnerKind;
+    ownerId: string;
+    jobId?: string;
+    projectId: string;
+    state: 'ACTIVE' | 'UNCERTAIN';
+  }> {
+    return (this.db.prepare(`SELECT resource_key, owner_kind, owner_id, job_id, project_id, state
       FROM execution_resource_leases WHERE state IN ('ACTIVE','UNCERTAIN')
       ORDER BY resource_key, acquired_at`).all() as Array<Record<string, unknown>>).map((r) => ({
-        resourceKey: String(r.resource_key), jobId: String(r.job_id), projectId: String(r.project_id),
+        resourceKey: String(r.resource_key),
+        ownerKind: String(r.owner_kind) as ExecutionResourceOwnerKind,
+        ownerId: String(r.owner_id),
+        ...(r.job_id === null ? {} : { jobId: String(r.job_id) }),
+        projectId: String(r.project_id),
         state: String(r.state) as 'ACTIVE' | 'UNCERTAIN',
       }));
   }
@@ -2648,6 +2922,166 @@ export class AgentJobStore {
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
+    }
+  }
+
+  saveSecurityAssessmentPrepared(input: {
+    assessmentId: string;
+    projectId: string;
+    expectedSourceRevision: string;
+    executionId: string;
+    sourceVolume: string;
+    stageReceipt: unknown;
+    resourceKeys: readonly string[];
+  }): void {
+    if (!/^assessment_[0-9a-f]{24}$/.test(input.assessmentId)
+      || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(input.projectId)
+      || !/^[0-9a-f]{40}$/.test(input.expectedSourceRevision)
+      || !/^job_[0-9a-f]{32}$/.test(input.executionId)
+      || !/^qg-be9-source-[A-Za-z0-9_.-]{1,180}$/.test(input.sourceVolume)) {
+      throw new BridgeError('MALFORMED_REQUEST', 'invalid durable assessment prepared identity', 400);
+    }
+    if (input.resourceKeys.length > 128 || new Set(input.resourceKeys).size !== input.resourceKeys.length) {
+      throw new BridgeError('MALFORMED_REQUEST', 'invalid durable assessment resource set', 400);
+    }
+    for (const key of input.resourceKeys) {
+      try { parseExecutionResourceKey(key); }
+      catch { throw new BridgeError('MALFORMED_REQUEST', 'invalid durable assessment resource identity', 400); }
+    }
+    const receipt = JSON.stringify(input.stageReceipt);
+    const resources = JSON.stringify([...input.resourceKeys].sort());
+    if (Buffer.byteLength(receipt, 'utf8') > 64 * 1024 || Buffer.byteLength(resources, 'utf8') > 32 * 1024) {
+      throw new BridgeError('MALFORMED_REQUEST', 'durable assessment prepared metadata exceeds bounds', 400);
+    }
+    try {
+      this.db.prepare(`
+        INSERT INTO security_assessment_prepared(
+          assessment_id, project_id, expected_source_revision, execution_id,
+          source_volume, stage_receipt_json, resource_keys_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.assessmentId,
+        input.projectId,
+        input.expectedSourceRevision,
+        input.executionId,
+        input.sourceVolume,
+        receipt,
+        resources,
+        nowIso(),
+      );
+    } catch (error) {
+      if (isUniqueConstraintViolation(error)) {
+        throw new BridgeError('CONCURRENCY_LIMIT', 'assessment already has durable prepared metadata', 409);
+      }
+      throw error;
+    }
+  }
+
+  listSecurityAssessmentPrepared(): Array<{
+    assessmentId: string;
+    projectId: string;
+    expectedSourceRevision: string;
+    executionId: string;
+    sourceVolume: string;
+    stageReceipt: unknown;
+    resourceKeys: string[];
+  }> {
+    const rows = this.db.prepare(`
+      SELECT * FROM security_assessment_prepared ORDER BY assessment_id
+    `).all() as Array<Record<string, unknown>>;
+    if (rows.length > 1000) {
+      throw new BridgeError('INTERNAL', 'durable assessment prepared recovery set exceeds bound', 500);
+    }
+    return rows.map((row) => {
+      let stageReceipt: unknown;
+      let resourceKeys: unknown;
+      try {
+        stageReceipt = JSON.parse(String(row.stage_receipt_json));
+        resourceKeys = JSON.parse(String(row.resource_keys_json));
+      } catch {
+        throw new BridgeError('INTERNAL', 'durable assessment prepared metadata is malformed', 500);
+      }
+      if (!Array.isArray(resourceKeys)
+        || resourceKeys.length > 128
+        || resourceKeys.some((key) => typeof key !== 'string')
+        || new Set(resourceKeys).size !== resourceKeys.length) {
+        throw new BridgeError('INTERNAL', 'durable assessment resource metadata is malformed', 500);
+      }
+      for (const key of resourceKeys as string[]) {
+        try { parseExecutionResourceKey(key); }
+        catch { throw new BridgeError('INTERNAL', 'durable assessment resource identity is malformed', 500); }
+      }
+      return {
+        assessmentId: String(row.assessment_id),
+        projectId: String(row.project_id),
+        expectedSourceRevision: String(row.expected_source_revision),
+        executionId: String(row.execution_id),
+        sourceVolume: String(row.source_volume),
+        stageReceipt,
+        resourceKeys: resourceKeys as string[],
+      };
+    });
+  }
+
+  deleteSecurityAssessmentPrepared(assessmentId: string): void {
+    this.db.prepare('DELETE FROM security_assessment_prepared WHERE assessment_id=?').run(assessmentId);
+  }
+
+  claimSecurityAssessmentReplay(input: {
+    bridgeRequestId: string;
+    nonce: string;
+    assessmentId: string;
+    assessmentVersion: number;
+    expiresAt: string;
+  }): boolean {
+    if (!/^bar_[0-9a-f]{24}$/.test(input.bridgeRequestId)
+      || !/^[0-9a-f]{32,64}$/.test(input.nonce)
+      || !/^assessment_[0-9a-f]{24}$/.test(input.assessmentId)
+      || !Number.isSafeInteger(input.assessmentVersion)
+      || input.assessmentVersion < 0) {
+      throw new BridgeError('MALFORMED_REQUEST', 'invalid assessment replay identity', 400);
+    }
+    const expiry = new Date(input.expiresAt);
+    if (!Number.isFinite(expiry.getTime()) || expiry.toISOString() !== input.expiresAt) {
+      throw new BridgeError('MALFORMED_REQUEST', 'invalid assessment replay expiry', 400);
+    }
+    const now = nowIso();
+    if (expiry.getTime() < new Date(now).getTime()) {
+      return false;
+    }
+
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('DELETE FROM security_assessment_replay WHERE expires_at < ?').run(now);
+      const count = Number((this.db.prepare('SELECT COUNT(*) AS count FROM security_assessment_replay').get() as { count: number }).count);
+      if (count >= 10_000) {
+        throw new BridgeError('CONCURRENCY_LIMIT', 'assessment replay ledger is at its bounded capacity', 503);
+      }
+      try {
+        this.db.prepare(`
+          INSERT INTO security_assessment_replay(
+            bridge_request_id, nonce, assessment_id, assessment_version, expires_at, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          input.bridgeRequestId,
+          input.nonce,
+          input.assessmentId,
+          input.assessmentVersion,
+          input.expiresAt,
+          now,
+        );
+      } catch (error) {
+        if (isUniqueConstraintViolation(error)) {
+          this.db.exec('ROLLBACK');
+          return false;
+        }
+        throw error;
+      }
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch {}
+      throw error;
     }
   }
 
