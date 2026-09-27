@@ -613,6 +613,12 @@ function validateRecord(record: SecurityAssessmentRecord): void {
   assertId(record.binding.projectId, "assessment_project_invalid");
   if (record.binding.targetId) assertId(record.binding.targetId, "assessment_target_invalid");
   assertRevision(record.binding.sourceRevision);
+  if (
+    record.binding.assessmentIntent !== undefined
+    && !["source", "runtime", "pipeline"].includes(record.binding.assessmentIntent)
+  ) {
+    throw new ProductDataError("PRODUCT_DATA_INVALID", "assessment_intent_invalid");
+  }
   assertTimestamp(record.requestedAt, "assessment_requested_at_invalid");
   assertTimestamp(record.updatedAt, "assessment_updated_at_invalid");
   assertTimestampOrder(record.requestedAt, record.updatedAt, "assessment_updated_at_before_requested_at");

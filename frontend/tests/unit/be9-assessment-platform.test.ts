@@ -8,6 +8,7 @@ vi.mock("server-only", () => ({}));
 import type { ProductAssessmentAdmissionRequest, SecurityAssessmentAdmissionReceipt } from "../../../src/shared/securityAssessment";
 import type { ProductContextAdapter } from "../../src/server/product/adapters/workspace";
 import { MemorySecurityAssessmentRepository, PostgresSecurityAssessmentRepository } from "../../src/server/product/security/assessment";
+import { canonicalSnapshot } from "../../src/server/product/security/assessment/snapshot";
 import type { SecurityAssessmentAdmissionAdapter } from "../../src/server/product/security/bridge";
 import { MemorySecurityAssessmentEvidenceStore } from "../../src/server/product/security/evidence";
 import { readProductMigrationsThroughBe9 } from "../../src/server/product/security/migrations";
@@ -150,6 +151,81 @@ describe("BE9.2 durable assessment platform", () => {
     expect(sql).toContain("PREPARATION_ABORT_REQUIRING_CLEANUP");
     expect(sql).toContain("FOREIGN KEY (workspace_id, organization_id)");
     expect(sql).not.toMatch(/password|access_token|refresh_token|private_key|secret_value|raw_scanner_output/i);
+  });
+
+  it("rejects untrusted durable binding enums and discovery column/snapshot drift", async () => {
+    const repo = new MemorySecurityAssessmentRepository();
+    const disc = discovery(`disc_${"9".repeat(24)}`);
+    const plan = {
+      planId: `plan_${"8".repeat(24)}`,
+      projectId: disc.projectId,
+      sourceRevision: disc.sourceRevision,
+      detectedStack: [],
+      selectedCapabilities: [],
+      prerequisites: [],
+      environmentRequirements: [],
+      ordering: [],
+      expectedEvidenceTypes: [],
+      safetyClassification: "NON_DESTRUCTIVE_STATIC_PLAN" as const,
+      destructiveClassification: "NON_DESTRUCTIVE" as const,
+      networkRequirements: "NONE_FOR_BE8_PLAN" as const,
+      credentialRequirements: "NONE_FOR_BE8_PLAN" as const,
+      unsupported: [],
+      unavailableSteps: [],
+      provenance: {
+        plannerVersion: "BE8_SECURITY_PLANNER_V1" as const,
+        discoveryId: disc.discoveryId,
+        sourceRevision: disc.sourceRevision,
+      },
+      executionAuthority: false as const,
+    };
+    await expect(repo.create({
+      assessmentId: `assessment_${"7".repeat(24)}`,
+      owner: {
+        productUserId: USER_A,
+        organizationId: ORG_A,
+        workspaceId: WS_A,
+        principalRef: "principal-a",
+        principalMappingVersion: 1,
+      },
+      binding: {
+        projectId: disc.projectId,
+        sourceRevision: disc.sourceRevision,
+        assessmentIntent: "attacker-defined" as never,
+      },
+      discoveryId: disc.discoveryId,
+      planId: plan.planId,
+      discoverySnapshot: disc,
+      planSnapshot: plan,
+      requestedAt: "2026-09-27T20:00:00.000Z",
+      correlationId: "corr-a",
+    })).rejects.toMatchObject({ code: "PRODUCT_DATA_INVALID" });
+
+    const snap = canonicalSnapshot(disc);
+    const db: QueryExecutor = {
+      async query<T>() {
+        return {
+          rows: [{
+            discovery_id: disc.discoveryId,
+            product_user_id: USER_A,
+            organization_id: ORG_A,
+            workspace_id: WS_A,
+            principal_ref: "principal-a",
+            principal_mapping_version: 1,
+            project_id: "project-tampered",
+            target_id: null,
+            source_revision: disc.sourceRevision,
+            snapshot_schema_version: "BE9_DISCOVERY_SNAPSHOT_V1",
+            snapshot_json: disc,
+            snapshot_digest_sha256: snap.digest,
+            snapshot_byte_length: snap.byteLength,
+          }] as T[],
+          rowCount: 1,
+        };
+      },
+    };
+    await expect(new PostgresSecurityDiscoveryStore(db).get(disc.discoveryId))
+      .rejects.toMatchObject({ code: "PRODUCT_DATA_INVALID" });
   });
 
   it("production runtime is wired to Postgres discovery, assessment, and evidence stores", () => {

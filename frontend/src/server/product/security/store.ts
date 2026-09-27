@@ -69,6 +69,8 @@ interface DiscoveryRow {
   workspace_id: string;
   principal_ref: string;
   principal_mapping_version: string | number;
+  project_id: string;
+  target_id: string | null;
   source_revision: string;
   snapshot_schema_version: string;
   snapshot_json: unknown;
@@ -129,7 +131,7 @@ export class PostgresSecurityDiscoveryStore implements SecurityDiscoveryStore {
     }
     const result = await this.db.query<DiscoveryRow & Record<string, unknown>>(
       `SELECT discovery_id, product_user_id, organization_id, workspace_id,
-              principal_ref, principal_mapping_version, source_revision, snapshot_schema_version,
+              principal_ref, principal_mapping_version, project_id, target_id, source_revision, snapshot_schema_version,
               snapshot_json, snapshot_digest_sha256, snapshot_byte_length
          FROM security_discoveries
         WHERE discovery_id = $1
@@ -153,6 +155,8 @@ export class PostgresSecurityDiscoveryStore implements SecurityDiscoveryStore {
     assertOwner(entry);
     if (
       entry.result.discoveryId !== row.discovery_id
+      || entry.result.projectId !== row.project_id
+      || (entry.result.targetId ?? null) !== row.target_id
       || entry.result.sourceRevision !== row.source_revision
     ) {
       throw new ProductDataError("PRODUCT_DATA_INVALID", "security_discovery_binding_mismatch");

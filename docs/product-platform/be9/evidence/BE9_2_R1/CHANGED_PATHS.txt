@@ -1,0 +1,10 @@
+docs/product-platform/be9/BE9_2_R1_HANDOFF.md
+docs/product-platform/be9/evidence/BE9_2_R1/CHANGED_PATHS.txt
+docs/product-platform/be9/evidence/BE9_2_R1/PRESTATE.txt
+docs/product-platform/be9/evidence/BE9_2_R1/SHA256SUMS
+docs/product-platform/be9/evidence/BE9_2_R1/SOURCE_SHA256SUMS
+docs/product-platform/be9/evidence/BE9_2_R1/VALIDATION.txt
+frontend/next-env.d.ts
+frontend/src/server/product/security/assessment/repository.ts
+frontend/src/server/product/security/store.ts
+frontend/tests/unit/be9-assessment-platform.test.ts

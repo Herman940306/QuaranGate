@@ -1,0 +1,4 @@
+0f70629890b72a0a82e91972cc032c04b658b26c265373cb711cf576bfbf8fcc  frontend/next-env.d.ts
+df70888ec0e4004ab31d7ef911bfc7eb109f7b7536c93ad31182b5b84b74564f  frontend/src/server/product/security/assessment/repository.ts
+95f4a1457f3c376783308f3a2ddff16c6249f2a57246d08c5b955d31ce1bcbe8  frontend/src/server/product/security/store.ts
+12061faf36ed25c84f184b6b937f069950cce0bb945b52eda34c5037c0e6271f  frontend/tests/unit/be9-assessment-platform.test.ts
