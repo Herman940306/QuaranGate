@@ -236,6 +236,7 @@ describe("BE9.1 assessment lifecycle foundation", () => {
     { state: "PREPARING", event: "PRECONDITION_DRIFT_WITH_RESOURCES", next: "CLEANUP", pending: "FAILED_PRECONDITION" },
     { state: "PREPARING", event: "PREPARATION_INFRASTRUCTURE_FAILURE_NO_RESOURCES", next: "FAILED_INFRASTRUCTURE" },
     { state: "PREPARING", event: "PREPARATION_INFRASTRUCTURE_FAILURE_WITH_RESOURCES", next: "CLEANUP", pending: "FAILED_INFRASTRUCTURE" },
+    { state: "PREPARING", event: "PREPARATION_ABORT_REQUIRING_CLEANUP" as SecurityAssessmentEvent, next: "CLEANUP", pending: "FAILED_INFRASTRUCTURE" },
     { state: "RUNNING", event: "TOOL_SUCCESS", next: "CLEANUP", pending: "SUCCESS" },
     { state: "RUNNING", event: "TOOL_FAILURE", next: "CLEANUP", pending: "FAILED_TOOL" },
     { state: "RUNNING", event: "EXECUTION_TIMEOUT", next: "CLEANUP", pending: "FAILED_TIMEOUT" },
@@ -285,6 +286,31 @@ describe("BE9.1 assessment lifecycle foundation", () => {
     expect(() => resolveAssessmentEvent("ADMITTED", "TOOL_SUCCESS")).toThrow(ProductDataError);
     expect(() => resolveAssessmentEvent("PREPARING", "TOOL_SUCCESS")).toThrow(ProductDataError);
   });
+
+  it.each([
+    "FAILED_PRECONDITION",
+    "FAILED_TOOL",
+    "FAILED_TIMEOUT",
+    "FAILED_INFRASTRUCTURE",
+  ] as SecurityAssessmentPendingOutcome[])(
+    "preserves stronger %s outcome through durable CANCELLING stop/absence cleanup",
+    async (pendingOutcome) => {
+      const record = recordAt("CANCELLING", 7, pendingOutcome);
+      const repo = new MemorySecurityAssessmentRepository([record]);
+      const updated = await repo.transition(transitionInput(record, "EXECUTION_STOPPED_OR_ABSENT"));
+      expect(updated.state).toBe("CLEANUP");
+      expect(updated.pendingOutcome).toBe(pendingOutcome);
+    },
+  );
+
+  it.each(["SUCCESS", "CANCELLED"] as SecurityAssessmentPendingOutcome[])(
+    "rejects non-failure %s outcome in durable CANCELLING state",
+    (pendingOutcome) => {
+      const record = recordAt("CANCELLING", 7, pendingOutcome);
+      expect(() => new MemorySecurityAssessmentRepository([record]))
+        .toThrowError(ProductDataError);
+    },
+  );
 
   it.each([
     ["SUCCESS", "COMPLETED"],
@@ -485,6 +511,11 @@ describe("BE9.1 assessment lifecycle foundation", () => {
     await expect(repo.transition({
       ...transitionInput(created, "ADMISSION_REVALIDATION_PASS"),
       reason: "",
+    })).rejects.toMatchObject({ code: "PRODUCT_DATA_INVALID" });
+
+    await expect(repo.transition({
+      ...transitionInput(created, "ADMISSION_REVALIDATION_PASS"),
+      reason: "   ",
     })).rejects.toMatchObject({ code: "PRODUCT_DATA_INVALID" });
 
     await expect(repo.transition({

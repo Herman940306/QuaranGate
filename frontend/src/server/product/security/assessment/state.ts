@@ -86,6 +86,10 @@ export function resolveAssessmentEvent(
           return { nextState: "FAILED_INFRASTRUCTURE" };
         case "PREPARATION_INFRASTRUCTURE_FAILURE_WITH_RESOURCES":
           return { nextState: "CLEANUP", pendingOutcome: "FAILED_INFRASTRUCTURE" };
+        case "PREPARATION_ABORT_REQUIRING_CLEANUP":
+          // Catch-all resource-owning preparation aborts fail closed as
+          // infrastructure failures; precondition drift has its own event.
+          return { nextState: "CLEANUP", pendingOutcome: "FAILED_INFRASTRUCTURE" };
         default: return invalidEvent(current, event);
       }
 

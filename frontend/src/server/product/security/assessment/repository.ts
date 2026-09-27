@@ -50,7 +50,7 @@ function assertCorrelationId(value: string): void {
 }
 
 function assertReason(value: string): void {
-  if (value.length < 1 || value.length > 500 || value.includes("\0")) {
+  if (value.trim().length < 1 || value.length > 500 || value.includes("\0")) {
     throw new ProductDataError("PRODUCT_DATA_INVALID", "assessment_transition_reason_invalid");
   }
 }
@@ -542,7 +542,8 @@ function assertTransitionLog(record: SecurityAssessmentRecord): void {
       throw new ProductDataError("PRODUCT_DATA_INVALID", "assessment_transition_log_prior_state_mismatch");
     }
 
-    const priorOutcome = replayState === undefined && entry.priorState === "CLEANUP"
+    const priorOutcome = replayState === undefined
+      && (entry.priorState === "CANCELLING" || entry.priorState === "CLEANUP")
       ? entry.pendingOutcome
       : replayOutcome;
     const resolution = resolveAssessmentEvent(entry.priorState, entry.event, priorOutcome);
@@ -627,10 +628,16 @@ function validateRecord(record: SecurityAssessmentRecord): void {
     throw new ProductDataError("PRODUCT_DATA_INVALID", "assessment_cleanup_outcome_required");
   }
   if (
-    ["PLANNED", "ADMITTED", "PREPARING", "RUNNING", "CANCELLING", "FAILED_POLICY"].includes(record.state)
+    ["PLANNED", "ADMITTED", "PREPARING", "RUNNING", "FAILED_POLICY"].includes(record.state)
     && record.pendingOutcome !== undefined
   ) {
     throw new ProductDataError("PRODUCT_DATA_INVALID", "assessment_pending_outcome_state_mismatch");
+  }
+  if (
+    record.state === "CANCELLING"
+    && (record.pendingOutcome === "SUCCESS" || record.pendingOutcome === "CANCELLED")
+  ) {
+    throw new ProductDataError("PRODUCT_DATA_INVALID", "assessment_cancelling_outcome_mismatch");
   }
   if (record.state === "COMPLETED" && record.pendingOutcome !== "SUCCESS") {
     throw new ProductDataError("PRODUCT_DATA_INVALID", "assessment_completed_without_success");

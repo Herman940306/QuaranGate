@@ -1,0 +1,4 @@
+6f7d990c611e3309e373e3cdf2c10e779f6d2aaa482a6228c1a8a8009858d979  frontend/src/server/product/security/assessment/repository.ts
+99065a5169decb7cd9983088d152a6e6859a0ef3faed6801d78edf351cf2972e  frontend/src/server/product/security/assessment/state.ts
+9c52609033c2c40bd764cff188988e646ff1e32f13938fa92d63d4ebdbe1523b  frontend/src/server/product/security/assessment/types.ts
+2598a9b56d209b49e503f5eaee330c6ce4c86c0e48735a1c0a8bc531c821a74a  frontend/tests/unit/be9-assessment-lifecycle.test.ts
