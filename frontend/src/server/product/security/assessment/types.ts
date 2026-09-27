@@ -1,4 +1,5 @@
 import "server-only";
+import type { SecurityAssessmentPlan, SecurityDiscoveryResult } from "../types";
 
 export const BE9_ASSESSMENT_STATES = [
   "PLANNED",
@@ -42,6 +43,31 @@ export const BE9_PENDING_OUTCOMES = [
 ] as const;
 
 export type SecurityAssessmentPendingOutcome = typeof BE9_PENDING_OUTCOMES[number];
+
+export const BE9_ASSESSMENT_EVENTS = [
+  "ADMISSION_REVALIDATION_PASS",
+  "ADMISSION_POLICY_DENIED",
+  "ADMISSION_PRECONDITION_FAILED",
+  "ADMISSION_TEMPORARILY_UNAVAILABLE",
+  "CANCEL_REQUEST",
+  "PREPARE_BEGIN",
+  "PREPARATION_INFRASTRUCTURE_FAILURE_NO_RESOURCES",
+  "PREPARATION_INFRASTRUCTURE_FAILURE_WITH_RESOURCES",
+  "PREPARATION_COMPLETE",
+  "PRECONDITION_DRIFT_NO_RESOURCES",
+  "PRECONDITION_DRIFT_WITH_RESOURCES",
+  "TOOL_SUCCESS",
+  "TOOL_FAILURE",
+  "EXECUTION_TIMEOUT",
+  "EXECUTION_INFRASTRUCTURE_FAILURE",
+  "EXECUTION_STOPPED_OR_ABSENT",
+  "STOP_STATE_AMBIGUOUS",
+  "CLEANUP_PROVEN",
+  "EVIDENCE_FINALIZATION_FAILED",
+  "CLEANUP_NOT_PROVABLE",
+] as const;
+
+export type SecurityAssessmentEvent = typeof BE9_ASSESSMENT_EVENTS[number];
 export type SecurityAssessmentActorClass = "product-service" | "operational-bridge" | "worker" | "recovery";
 
 export interface SecurityAssessmentOwner {
@@ -67,14 +93,14 @@ export interface ImmutableSnapshot<T> {
   byteLength: number;
 }
 
-export interface SecurityAssessmentCreateInput<TDiscovery = unknown, TPlan = unknown> {
+export interface SecurityAssessmentCreateInput {
   assessmentId: string;
   owner: SecurityAssessmentOwner;
   binding: SecurityAssessmentBinding;
   discoveryId: string;
   planId: string;
-  discoverySnapshot: TDiscovery;
-  planSnapshot: TPlan;
+  discoverySnapshot: SecurityDiscoveryResult;
+  planSnapshot: SecurityAssessmentPlan;
   requestedAt: string;
   correlationId: string;
 }
@@ -82,18 +108,17 @@ export interface SecurityAssessmentCreateInput<TDiscovery = unknown, TPlan = unk
 export interface SecurityAssessmentTransitionInput {
   assessmentId: string;
   expectedVersion: number;
-  nextState: SecurityAssessmentState;
+  event: SecurityAssessmentEvent;
   reason: string;
   actor: SecurityAssessmentActorClass;
   correlationId: string;
   at: string;
-  pendingOutcome?: SecurityAssessmentPendingOutcome;
-  cleanupUncertain?: boolean;
 }
 
 export interface SecurityAssessmentTransitionRecord {
   assessmentId: string;
   priorState: SecurityAssessmentState;
+  event: SecurityAssessmentEvent;
   nextState: SecurityAssessmentState;
   version: number;
   reason: string;
@@ -103,14 +128,14 @@ export interface SecurityAssessmentTransitionRecord {
   pendingOutcome?: SecurityAssessmentPendingOutcome;
 }
 
-export interface SecurityAssessmentRecord<TDiscovery = unknown, TPlan = unknown> {
+export interface SecurityAssessmentRecord {
   id: string;
   owner: SecurityAssessmentOwner;
   binding: SecurityAssessmentBinding;
   discoveryId: string;
   planId: string;
-  discoverySnapshot: ImmutableSnapshot<TDiscovery>;
-  planSnapshot: ImmutableSnapshot<TPlan>;
+  discoverySnapshot: ImmutableSnapshot<SecurityDiscoveryResult>;
+  planSnapshot: ImmutableSnapshot<SecurityAssessmentPlan>;
   state: SecurityAssessmentState;
   version: number;
   pendingOutcome?: SecurityAssessmentPendingOutcome;
@@ -128,8 +153,9 @@ export interface SecurityAssessmentReadScope {
 }
 
 export interface SecurityAssessmentRepository {
-  create<TDiscovery, TPlan>(input: SecurityAssessmentCreateInput<TDiscovery, TPlan>): Promise<SecurityAssessmentRecord<TDiscovery, TPlan>>;
+  create(input: SecurityAssessmentCreateInput): Promise<SecurityAssessmentRecord>;
   read(scope: SecurityAssessmentReadScope, assessmentId: string): Promise<SecurityAssessmentRecord | undefined>;
   transition(input: SecurityAssessmentTransitionInput): Promise<SecurityAssessmentRecord>;
-  listActive(): Promise<SecurityAssessmentRecord[]>;
+  /** Trusted recovery worker only. Never expose as a product/MCP listing primitive. */
+  listActiveForRecovery(): Promise<SecurityAssessmentRecord[]>;
 }

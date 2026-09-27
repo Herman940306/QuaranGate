@@ -1,0 +1,11 @@
+frontend/src/server/product/security/assessment/repository.ts
+frontend/src/server/product/security/assessment/snapshot.ts
+frontend/src/server/product/security/assessment/state.ts
+frontend/src/server/product/security/assessment/types.ts
+frontend/tests/unit/be9-assessment-lifecycle.test.ts
+docs/product-platform/be9/BE9_1_R1_HANDOFF.md
+docs/product-platform/be9/evidence/R1/PRESTATE.txt
+docs/product-platform/be9/evidence/R1/CHANGED_PATHS.txt
+docs/product-platform/be9/evidence/R1/VALIDATION.txt
+docs/product-platform/be9/evidence/R1/SOURCE_SHA256SUMS
+docs/product-platform/be9/evidence/R1/SHA256SUMS

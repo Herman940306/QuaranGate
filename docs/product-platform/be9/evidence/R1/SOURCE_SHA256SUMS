@@ -1,0 +1,5 @@
+0e9447f6b9c20d0205a27381990cb901f6e518240053e7b83d97f0f7824a0b5b  frontend/src/server/product/security/assessment/repository.ts
+731ab7350838296cd0bb0ef03a58056baab6fee67c6e81e78ec4637a00e37ff3  frontend/src/server/product/security/assessment/snapshot.ts
+8d54b60d97c8119dd2f9a4f7e252f4ace764661aa63a34afc075b43c43e44189  frontend/src/server/product/security/assessment/state.ts
+e06e4fafeaecb39f986a517a57a59cae3c7565d750b9500f314124bb7a6a3b0b  frontend/src/server/product/security/assessment/types.ts
+905ed86aab0afdffa7774df6d1654c11da35a5dd5ad923f9b1163d56e44e046c  frontend/tests/unit/be9-assessment-lifecycle.test.ts
