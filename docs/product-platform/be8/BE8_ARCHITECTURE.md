@@ -17,9 +17,11 @@ BE8 does not execute arbitrary scanners, mutate CI pipelines, install dependenci
 
 ## Discovery model
 
-Discovery accepts only governed project-source metadata supplied through the product service boundary. Paths must be workspace-relative, normalized, non-absolute, non-empty, and non-escaping. Symlinks, binary files, oversized manifests, malformed manifests, and malicious paths are reported as unsupported facts rather than silently trusted.
+The browser supplies only bounded discovery selectors: `projectId`, optional `targetId`, and optional `assessmentIntent`. It cannot supply source files, file metadata, source revision, detected stack, provenance, or a prior discovery object.
 
-Every detected technology carries source type, path, confidence, and detector version. Caller-declared stack values are ignored for truth.
+A server-owned `SecuritySourceAdapter` resolves the authenticated Principal/workspace/project/target to the trusted source snapshot. The default production adapter fails closed until the governed registered-project source integration is available. Paths from that trusted snapshot must be workspace-relative, normalized, non-absolute, non-empty, and non-escaping. Symlinks, binary files, oversized manifests, malformed manifests, and malicious paths are reported as unsupported facts rather than silently trusted.
+
+Every detected technology carries source type, path, confidence, and detector version. Caller-declared stack values are rejected rather than treated as truth.
 
 ## Planner model
 

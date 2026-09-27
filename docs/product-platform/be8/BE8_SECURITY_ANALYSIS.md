@@ -4,7 +4,11 @@
 
 BE8 keeps planner authority separate from execution authority. It does not introduce `run_security_tool`, `run_scanner`, `docker_run`, `shell_exec`, or any generic command execution API.
 
-Browser input may request discovery for a governed project and may supply static file metadata, but it cannot declare authoritative stack facts. The server decides detected technologies and capability applicability.
+Browser input may request discovery using only a bounded `projectId`, optional `targetId`, and optional `assessmentIntent`. The browser cannot supply source files, file metadata, source revision, detected stack, provenance, or a discovery result.
+
+Source revision and file bytes/metadata come only from the server-owned `SecuritySourceAdapter`. That adapter is responsible for resolving the authenticated user's governed registered project/target source. The default production adapter intentionally fails closed as unavailable until that governed integration exists.
+
+The server decides detected technologies and capability applicability.
 
 ## Read-only constraints
 
