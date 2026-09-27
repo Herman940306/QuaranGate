@@ -1,0 +1,58 @@
+docs/product-platform/be8/evidence/R2/focused-be8.txt:14: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/frontend-build.txt:14: trailing whitespace.
++  Generating static pages using 5 workers (1/4) 
+docs/product-platform/be8/evidence/R2/frontend-build.txt:15: trailing whitespace.
++  Generating static pages using 5 workers (2/4) 
+docs/product-platform/be8/evidence/R2/frontend-build.txt:16: trailing whitespace.
++  Generating static pages using 5 workers (3/4) 
+docs/product-platform/be8/evidence/R2/frontend-build.txt:67: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/frontend-typecheck.txt:4: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/frontend-unit.txt:34: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/root-build.txt:4: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/root-typecheck.txt:4: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/root-unit.txt:1717: new blank line at EOF.
+docs/product-platform/be8/evidence/R2/staged-diff-check-raw.txt:3: trailing whitespace.
+++  Generating static pages using 5 workers (1/4) 
+docs/product-platform/be8/evidence/R2/staged-diff-check-raw.txt:5: trailing whitespace.
+++  Generating static pages using 5 workers (2/4) 
+docs/product-platform/be8/evidence/R2/staged-diff-check-raw.txt:7: trailing whitespace.
+++  Generating static pages using 5 workers (3/4) 
+docs/product-platform/be8/evidence/R3/be1a-regressions.txt:1710: new blank line at EOF.
+docs/product-platform/be8/evidence/R3/focused-be8.txt:14: new blank line at EOF.
+docs/product-platform/be8/evidence/R3/frontend-build.txt:14: trailing whitespace.
++  Generating static pages using 5 workers (1/4) 
+docs/product-platform/be8/evidence/R3/frontend-build.txt:15: trailing whitespace.
++  Generating static pages using 5 workers (2/4) 
+docs/product-platform/be8/evidence/R3/frontend-build.txt:16: trailing whitespace.
++  Generating static pages using 5 workers (3/4) 
+docs/product-platform/be8/evidence/R3/frontend-build.txt:67: new blank line at EOF.
+docs/product-platform/be8/evidence/R3/frontend-typecheck.txt:4: new blank line at EOF.
+docs/product-platform/be8/evidence/R3/frontend-unit.txt:34: new blank line at EOF.
+docs/product-platform/be8/evidence/R3/root-build.txt:4: new blank line at EOF.
+docs/product-platform/be8/evidence/R3/root-typecheck.txt:4: new blank line at EOF.
+docs/product-platform/be8/evidence/R3/root-unit.txt:1717: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/focused-auth-final.txt:14: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/focused-auth.txt:14: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/frontend-build-standard-localdeps.txt:14: trailing whitespace.
++  Generating static pages using 5 workers (1/4) 
+docs/product-platform/sh04-r2/evidence/frontend-build-standard-localdeps.txt:15: trailing whitespace.
++  Generating static pages using 5 workers (2/4) 
+docs/product-platform/sh04-r2/evidence/frontend-build-standard-localdeps.txt:16: trailing whitespace.
++  Generating static pages using 5 workers (3/4) 
+docs/product-platform/sh04-r2/evidence/frontend-build-standard-localdeps.txt:63: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/frontend-build-webpack.txt:10: trailing whitespace.
++  Generating static pages using 5 workers (1/4) 
+docs/product-platform/sh04-r2/evidence/frontend-build-webpack.txt:11: trailing whitespace.
++  Generating static pages using 5 workers (2/4) 
+docs/product-platform/sh04-r2/evidence/frontend-build-webpack.txt:12: trailing whitespace.
++  Generating static pages using 5 workers (3/4) 
+docs/product-platform/sh04-r2/evidence/frontend-build-webpack.txt:60: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/frontend-typecheck-final.txt:4: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/frontend-typecheck.txt:4: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/frontend-unit-final.txt:32: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/frontend-unit.txt:32: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/root-build.txt:4: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/root-typecheck.txt:4: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/root-unit-final.txt:1712: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/root-unit.txt:1781: new blank line at EOF.
+docs/product-platform/sh04-r2/evidence/sh06-focused-retry.txt:11: new blank line at EOF.

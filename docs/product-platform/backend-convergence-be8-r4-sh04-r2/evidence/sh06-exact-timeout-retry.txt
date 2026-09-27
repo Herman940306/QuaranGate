@@ -1,0 +1,11 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90m/workspace/QuaranGate-backend-convergence-be8-r4-sh04-r2-gpt[39m
+
+ [32m✓[39m tests/unit/sh06-forward-recovery.test.ts [2m([22m[2m59 tests[22m[2m | [22m[33m58 skipped[39m[2m)[22m[33m 5194[2mms[22m[39m
+     [33m[2m✓[22m[39m executes actual production shell: primary failure restores v9 then admits exact R2 fallback [33m 5192[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m1 passed[39m[22m[2m | [22m[33m58 skipped[39m[90m (59)[39m
+[2m   Start at [22m 03:24:49
+[2m   Duration [22m 5.43s[2m (transform 89ms, setup 0ms, import 115ms, tests 5.19s, environment 0ms)[22m
+

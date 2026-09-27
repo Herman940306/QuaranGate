@@ -1,0 +1,155 @@
+
+> quarangate@0.1.0 security:fuzz
+> node scripts/security-fuzz.mjs --build
+
+{
+  "schemaVersion": 1,
+  "status": "PASS",
+  "seed": 1374718481,
+  "iterationsPerTarget": 2000,
+  "maxInputBytes": 1024,
+  "maxCorpus": 256,
+  "maxRuntimeMs": 20000,
+  "coverageSampleInterval": 16,
+  "elapsedMs": 2758,
+  "targetCount": 15,
+  "totalExecutions": 30067,
+  "coverageRanges": 395,
+  "targets": [
+    {
+      "name": "image-ref",
+      "executed": 2006,
+      "accepted": 2006,
+      "rejected": 0,
+      "corpusSize": 256,
+      "retained": 256,
+      "coverageRanges": 120
+    },
+    {
+      "name": "workspace-path",
+      "executed": 2006,
+      "accepted": 910,
+      "rejected": 1096,
+      "corpusSize": 75,
+      "retained": 75,
+      "coverageRanges": 22
+    },
+    {
+      "name": "apply-path",
+      "executed": 2005,
+      "accepted": 1456,
+      "rejected": 549,
+      "corpusSize": 20,
+      "retained": 20,
+      "coverageRanges": 8
+    },
+    {
+      "name": "guard-pattern",
+      "executed": 2005,
+      "accepted": 564,
+      "rejected": 1441,
+      "corpusSize": 152,
+      "retained": 152,
+      "coverageRanges": 38
+    },
+    {
+      "name": "archive-path",
+      "executed": 2005,
+      "accepted": 1164,
+      "rejected": 841,
+      "corpusSize": 135,
+      "retained": 135,
+      "coverageRanges": 39
+    },
+    {
+      "name": "evidence-path",
+      "executed": 2004,
+      "accepted": 4,
+      "rejected": 2000,
+      "corpusSize": 4,
+      "retained": 4,
+      "coverageRanges": 6
+    },
+    {
+      "name": "github-key",
+      "executed": 2004,
+      "accepted": 387,
+      "rejected": 1617,
+      "corpusSize": 20,
+      "retained": 20,
+      "coverageRanges": 4
+    },
+    {
+      "name": "ide-auth",
+      "executed": 2004,
+      "accepted": 5,
+      "rejected": 1999,
+      "corpusSize": 4,
+      "retained": 4,
+      "coverageRanges": 11
+    },
+    {
+      "name": "ide-hello",
+      "executed": 2004,
+      "accepted": 14,
+      "rejected": 1990,
+      "corpusSize": 60,
+      "retained": 60,
+      "coverageRanges": 28
+    },
+    {
+      "name": "ide-attest",
+      "executed": 2004,
+      "accepted": 4,
+      "rejected": 2000,
+      "corpusSize": 92,
+      "retained": 92,
+      "coverageRanges": 32
+    },
+    {
+      "name": "ide-server-frame",
+      "executed": 2004,
+      "accepted": 10,
+      "rejected": 1994,
+      "corpusSize": 50,
+      "retained": 50,
+      "coverageRanges": 27
+    },
+    {
+      "name": "ide-client-frame",
+      "executed": 2004,
+      "accepted": 4,
+      "rejected": 2000,
+      "corpusSize": 49,
+      "retained": 49,
+      "coverageRanges": 24
+    },
+    {
+      "name": "snapshot-manifest",
+      "executed": 2004,
+      "accepted": 8,
+      "rejected": 1996,
+      "corpusSize": 109,
+      "retained": 109,
+      "coverageRanges": 18
+    },
+    {
+      "name": "change-set",
+      "executed": 2004,
+      "accepted": 5,
+      "rejected": 1999,
+      "corpusSize": 88,
+      "retained": 88,
+      "coverageRanges": 15
+    },
+    {
+      "name": "redaction",
+      "executed": 2004,
+      "accepted": 2004,
+      "rejected": 0,
+      "corpusSize": 4,
+      "retained": 4,
+      "coverageRanges": 3
+    }
+  ]
+}
