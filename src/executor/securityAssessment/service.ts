@@ -220,6 +220,7 @@ export class SecurityAssessmentOperationalService {
     }
     const project = this.project(request.projectId);
     const keys = projectResourceKeys(project);
+    const heldKeys = [...keys, ...(project.globalExclusive ? ['machine:global-exclusive'] : [])].sort();
 
     this.store.acquireExecutionLeasesForOwner({
       ownerKind: 'security-assessment',
@@ -247,14 +248,14 @@ export class SecurityAssessmentOperationalService {
         executionId: staged.executionId,
         sourceVolume: staged.sourceVolume,
         stageReceipt: staged.receipt,
-        resourceKeys: keys,
+        resourceKeys: heldKeys,
       });
       this.prepared.set(request.assessmentId, {
         assessmentId: request.assessmentId,
         projectId: project.id,
         expectedSourceRevision: request.expectedSourceRevision,
         staged,
-        resourceKeys: keys,
+        resourceKeys: heldKeys,
       });
       return {
         projectId: project.id,
@@ -333,7 +334,8 @@ export class SecurityAssessmentOperationalService {
         );
         continue;
       }
-      const expectedKeys = projectResourceKeys(project);
+      const expectedKeys = [...projectResourceKeys(project),
+        ...(project.globalExclusive ? ['machine:global-exclusive'] : [])].sort();
       if (
         item.resourceKeys.length !== expectedKeys.length
         || item.resourceKeys.some((key, index) => key !== expectedKeys[index])
@@ -344,6 +346,19 @@ export class SecurityAssessmentOperationalService {
           'assessment recovery resource identity mismatch',
         );
         throw new BridgeError('PRECONDITION_FAILED', 'assessment recovery resource identity mismatch', 412);
+      }
+      try {
+        this.store.assertSecurityAssessmentPreparedLeaseBinding({
+          assessmentId: item.assessmentId,
+          projectId: item.projectId,
+          executionId: item.executionId,
+          resourceKeys: expectedKeys,
+        });
+      } catch {
+        this.store.markExecutionLeasesUncertainForOwner(
+          'security-assessment', item.assessmentId, 'assessment prepared lease binding is invalid',
+        );
+        throw new BridgeError('PRECONDITION_FAILED', 'assessment prepared lease binding is invalid', 412);
       }
       let receipt: AssessmentSourceStageReceipt;
       try {

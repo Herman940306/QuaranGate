@@ -2001,6 +2001,31 @@ export class AgentJobStore {
     return `job_${first.lease_id.slice(8)}`;
   }
 
+  /** Prove a prepared source is still bound to its exact live BE1A allocation. */
+  assertSecurityAssessmentPreparedLeaseBinding(input: {
+    assessmentId: string; projectId: string; executionId: string; resourceKeys: readonly string[];
+  }): void {
+    const fail = (): never => { throw new BridgeError('PRECONDITION_FAILED', 'assessment prepared lease binding is invalid', 412); };
+    const rows = this.db.prepare(`SELECT lease_id, resource_key, owner_kind, owner_id, project_id, state, acquired_at
+      FROM execution_resource_leases WHERE state IN ('ACTIVE','UNCERTAIN')
+      AND (owner_kind='security-assessment' AND owner_id=? OR resource_key IN
+        (SELECT resource_key FROM execution_resource_leases WHERE owner_kind='security-assessment' AND owner_id=?))
+      ORDER BY resource_key, lease_id`).all(input.assessmentId, input.assessmentId) as Array<{
+        lease_id: string; resource_key: string; owner_kind: string; owner_id: string;
+        project_id: string; state: string; acquired_at: string;
+      }>;
+    const expected = [...input.resourceKeys].sort();
+    if (expected.length === 0 || expected.length > 129 || new Set(expected).size !== expected.length
+      || rows.length !== expected.length) fail();
+    const first = rows[0]!;
+    if (!/^erl_be9_[0-9a-f]{32}$/.test(first.lease_id)
+      || input.executionId !== `job_${first.lease_id.slice(8)}`
+      || rows.some((row, index) => row.resource_key !== expected[index]
+        || row.owner_kind !== 'security-assessment' || row.owner_id !== input.assessmentId
+        || row.project_id !== input.projectId || row.state !== 'ACTIVE'
+        || row.acquired_at !== first.acquired_at || !/^erl_be9_[0-9a-f]{32}$/.test(row.lease_id))) fail();
+  }
+
   executionLeaseSummary(): Array<{
     resourceKey: string;
     ownerKind: ExecutionResourceOwnerKind;

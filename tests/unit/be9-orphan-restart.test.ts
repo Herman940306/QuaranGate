@@ -86,6 +86,31 @@ describe('BE9 orphan recovery across durable restart', () => {
     ]));
   });
 
+  it('never records proven absence when exact post-deletion inventory fails', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'be9-orphan-')), 'agents.db');
+    const first = new AgentJobStore(path);
+    first.acquireExecutionLeasesForOwner({ ownerKind: 'security-assessment', ownerId: ASSESSMENT,
+      projectId: 'project-a', resourceKeys: ['worktree:project-a-worktree'] });
+    const executionId = first.assessmentAllocationExecutionId(ASSESSMENT);
+    first.close();
+    docker.listVolumesByFilter
+      .mockResolvedValueOnce([{ Name: 'qg-be9-source-owned', Labels: {
+        'io.quarangate.managed': 'true', 'io.quarangate.resource': 'assessment-source',
+        'io.quarangate.assessment': ASSESSMENT, 'io.quarangate.job': executionId,
+      } }])
+      .mockRejectedValueOnce(new Error('Docker inspect failed with private response'));
+    const reopened = new AgentJobStore(path);
+    stores.push(reopened);
+    await service(reopened).recoverPrepared();
+    expect(docker.removeVolume).toHaveBeenCalledOnce();
+    const raw = new DatabaseSync(path);
+    const row = raw.prepare(`SELECT state, reason FROM execution_resource_leases
+      WHERE owner_kind='security-assessment' AND owner_id=?`).get(ASSESSMENT) as { state: string; reason: string };
+    raw.close();
+    expect(row).toEqual({ state: 'UNCERTAIN',
+      reason: 'assessment orphan resource cleanup or absence could not be proven' });
+  });
+
   it('keeps a legacy lease without a durable job binding uncertain and untouched', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'be9-legacy-orphan-')), 'agents.db');
     const first = new AgentJobStore(path);

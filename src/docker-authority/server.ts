@@ -3,7 +3,7 @@ import { Pool } from 'undici';
 import fs from 'node:fs';
 import YAML from 'yaml';
 import { asBridgeError, BridgeError } from '../shared/errors.js';
-import { managedIdentity, managedVolumeMounts, validateAuthorityRequest, validateManagedArchivePath, validateManagedExecForIdentity, validateManagedNetworkAttachment, validateManagedVolumeAttachment } from './policy.js';
+import { exactAssessmentInventoryResource, managedIdentity, managedVolumeMounts, validateAuthorityRequest, validateManagedArchivePath, validateManagedExecForIdentity, validateManagedNetworkAttachment, validateManagedVolumeAttachment } from './policy.js';
 
 const TOKEN = process.env.DOCKER_AUTHORITY_TOKEN ?? '';
 const SOCK = process.env.DOCKER_SOCK ?? '/var/run/docker.sock';
@@ -14,6 +14,18 @@ function enc(v:unknown){return encodeURIComponent(String(v));}
 function rec(v:unknown):Record<string,any>{if(!v||typeof v!=='object'||Array.isArray(v)) throw new BridgeError('FORBIDDEN_POLICY','invalid authority payload',403);return v as Record<string,any>}
 async function req(method:string,path:string,body?:unknown){const r=await docker.request({method:method as any,path,headers:body===undefined?undefined:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const b=Buffer.from(await r.body.arrayBuffer());if(r.statusCode>=400&&r.statusCode!==404)throw new BridgeError('DOCKER_UNAVAILABLE',`docker operation failed: ${r.statusCode} ${b.toString('utf8').slice(0,160)}`,502);return {status:r.statusCode,body:b,headers:r.headers}}
 function filters(v:unknown){const r=rec(v??{});for(const [k,a] of Object.entries(r))if(!Array.isArray(a)||!(a as unknown[]).every(x=>typeof x==='string')||!['label','name'].includes(k))throw new BridgeError('FORBIDDEN_POLICY','unsupported Docker filter',403);return encodeURIComponent(JSON.stringify(r));}
+function exactInventoryLabels(labels:unknown, wanted:Record<string,string>,resource:string){
+  const identity=managedIdentity(labels);
+  const l=rec(labels);
+  if(identity.scope!=='sandbox'||identity.namespace!=='io.quarangate'||identity.resource!==resource
+    || Object.entries(wanted).some(([key,value])=>l[key]!==value))
+    throw new BridgeError('FORBIDDEN_POLICY','assessment inventory ownership is not exact',403);
+}
+function inventoryFailure(error:unknown):BridgeError{
+  return error instanceof BridgeError && error.code==='FORBIDDEN_POLICY'
+    ? new BridgeError('FORBIDDEN_POLICY','assessment inventory ownership is not exact',403)
+    : new BridgeError('DOCKER_UNAVAILABLE','assessment inventory could not be proven complete',502);
+}
 function trustedTarget(info:any):boolean{const l=info?.Config?.Labels??{};if(l['io.quarangate.managed']==='true'||l['io.mcp-ide-bridge.managed']==='true'||l['io.mcp-bridge.managed']==='true'){managedIdentity(l);return true;}if(l['mcp.bridge.enabled']==='true'&&typeof l['mcp.bridge.workspace']==='string'&&l['mcp.bridge.workspace'].startsWith('/'))return true;let cfg:any={};try{cfg=YAML.parse(fs.readFileSync(process.env.BRIDGE_CONFIG??'/config/bridge.yaml','utf8'))??{}}catch{};const names=(info?.Name?[info.Name]:info?.Names??[]).map((x:string)=>x.replace(/^\//,''));return (cfg.targets??[]).some((t:any)=>t.containerName?names.includes(t.containerName):(l['com.docker.compose.project']===t.composeProject&&l['com.docker.compose.service']===t.composeService));}
 async function assertContainer(id:string){const r=await req('GET',`${API}/containers/${enc(id)}/json`);if(r.status===404)throw new BridgeError('UNKNOWN_TARGET','container is not available',404);const j=JSON.parse(r.body.toString());if(!trustedTarget(j))throw new BridgeError('FORBIDDEN_POLICY','container is outside QuaranGate authority',403);return j;}
 async function assertManagedContainer(id:string){const j=await assertContainer(id);const identity=managedIdentity(j.Config?.Labels);return { info:j, identity };}
@@ -31,7 +43,15 @@ app.post('/v1/operation',async(q,s)=>{try{const {op,payload}=validateAuthorityRe
 switch(op){
 case 'ping': out={ok:(await req('GET','/_ping')).status===200};break;
 case 'image.inspect': out=await json('GET',`${API}/images/${enc(p.ref)}/json`);break;
-case 'container.listManaged': {const all=p.all?1:0;const rows=await json('GET',`${API}/containers/json?all=${all}&filters=${filters(p.filters??{})}`);out=[];for(const c of rows){try{await assertContainer(c.Id);out.push(c)}catch{}}break;}
+case 'container.listManaged': {const all=p.all?1:0;const resource=exactAssessmentInventoryResource(p.filters);if(resource){
+  const wanted=Object.fromEntries((p.filters.label as string[]).map((label:string)=>{const at=label.indexOf('=');return [label.slice(0,at),label.slice(at+1)];}));
+  try {const rows=await json('GET',`${API}/containers/json?all=${all}&filters=${filters(p.filters)}`);
+    if(!Array.isArray(rows))throw new BridgeError('DOCKER_UNAVAILABLE','assessment inventory is malformed',502);
+    out=[];for(const c of rows){if(typeof c?.Id!=='string'||!/^[0-9a-f]{64}$/.test(c.Id))throw new BridgeError('FORBIDDEN_POLICY','assessment inventory identity is malformed',403);
+      exactInventoryLabels(c.Labels,wanted,resource);
+      const inspected=await assertContainer(c.Id);exactInventoryLabels(inspected.Config?.Labels,wanted,resource);out.push(c);}
+  }catch(error){throw inventoryFailure(error)}
+}else{const rows=await json('GET',`${API}/containers/json?all=${all}&filters=${filters(p.filters??{})}`);out=[];for(const c of rows){try{await assertContainer(c.Id);out.push(c)}catch{}}}break;}
 case 'container.inspectManaged': out=await assertContainer(String(p.id));break;
 case 'container.createManaged': {const body=rec(p.body);const containerIdentity=managedIdentity(body.Labels);for(const mount of managedVolumeMounts(body)){const volume=await managedVolume(mount.Source);validateManagedVolumeAttachment(containerIdentity,volume.identity,mount);}out=await json('POST',`${API}/containers/create?name=${enc(p.name)}`,body);break;}
 case 'container.execManaged': {if(p.action==='create'){const c=await assertContainer(String(p.containerId));const body=rec(p.body);const identity=managedIdentityFromTrustedContainer(c);if(identity)validateManagedExecForIdentity(identity,body);out=await json('POST',`${API}/containers/${enc(p.containerId)}/exec`,body);}else if(p.action==='inspect'){out=await json('GET',`${API}/exec/${enc(p.execId)}/json`);await assertContainer(String(out.ContainerID));}else throw new BridgeError('FORBIDDEN_POLICY','unsupported exec action',403);break;}
@@ -44,7 +64,14 @@ case 'container.restartManaged': await assertContainer(String(p.id));await req('
 case 'container.killManaged': await assertManagedContainer(String(p.id));await req('POST',`${API}/containers/${enc(p.id)}/kill?signal=${enc(p.signal??'SIGKILL')}`);out={ok:true};break;
 case 'container.removeManaged': await assertManagedContainer(String(p.id));await req('DELETE',`${API}/containers/${enc(p.id)}?force=1&v=1`);out={ok:true};break;
 case 'volume.createManaged': managedIdentity(p.labels);out=await json('POST',`${API}/volumes/create`,{Name:p.name,Driver:'local',Labels:p.labels});break;
-case 'volume.listManaged': {const r=await json('GET',`${API}/volumes?filters=${filters(p.filters??{})}`);out={Volumes:[]};for(const v of r?.Volumes??[]){try{managedIdentity(v.Labels);out.Volumes.push(v)}catch{}}break;}
+case 'volume.listManaged': {const resource=exactAssessmentInventoryResource(p.filters);if(resource==='assessment-source'){
+  const wanted=Object.fromEntries((p.filters.label as string[]).map((label:string)=>{const at=label.indexOf('=');return [label.slice(0,at),label.slice(at+1)];}));
+  try{const r=await json('GET',`${API}/volumes?filters=${filters(p.filters)}`);
+    if(r?.Volumes!==null&&!Array.isArray(r?.Volumes))throw new BridgeError('DOCKER_UNAVAILABLE','assessment inventory is malformed',502);
+    out={Volumes:[]};for(const v of r.Volumes??[]){if(typeof v?.Name!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$/.test(v.Name))throw new BridgeError('FORBIDDEN_POLICY','assessment inventory identity is malformed',403);
+      exactInventoryLabels(v.Labels,wanted,resource);out.Volumes.push(v);}
+  }catch(error){throw inventoryFailure(error)}
+}else{const r=await json('GET',`${API}/volumes?filters=${filters(p.filters??{})}`);out={Volumes:[]};for(const v of r?.Volumes??[]){try{managedIdentity(v.Labels);out.Volumes.push(v)}catch{}}}break;}
 case 'volume.removeManaged': await assertManagedVolume(String(p.name));await req('DELETE',`${API}/volumes/${enc(p.name)}?force=1`);out={ok:true};break;
 case 'network.createManaged': managedIdentity(p.labels);out=await json('POST',`${API}/networks/create`,{Name:p.name,Driver:'bridge',Internal:Boolean(p.internal),CheckDuplicate:true,Labels:p.labels});break;
 case 'network.listManaged': {const rows=await json('GET',`${API}/networks?filters=${filters(p.filters??{})}`);out=[];for(const n of rows){try{managedIdentity(n.Labels);out.push(n)}catch{}}break;}

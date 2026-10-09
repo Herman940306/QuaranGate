@@ -79,7 +79,7 @@ function fakeStager(overrides: Partial<AssessmentSourceStager> = {}): Assessment
   };
   return {
     probe: async () => receipt('verify'),
-    stage: async () => staged,
+    stage: async (input) => ({ ...staged, executionId: input.executionId }),
     revalidateBeforeRun: async () => receipt('verify'),
     recover: async () => receipt('verify'),
     remove: async () => {},
@@ -286,6 +286,88 @@ describe('BE9.2 Executor operational assessment service', () => {
     });
     expect(recovered).toBe(1);
     expect(stagedAgain).toBe(0);
+  });
+
+  it.each([
+    ['missing', "DELETE FROM execution_resource_leases WHERE owner_kind='security-assessment'"],
+    ['released', "UPDATE execution_resource_leases SET state='RELEASED' WHERE owner_kind='security-assessment'"],
+    ['uncertain', "UPDATE execution_resource_leases SET state='UNCERTAIN' WHERE owner_kind='security-assessment'"],
+    ['foreign project', "UPDATE execution_resource_leases SET project_id='project-b' WHERE owner_kind='security-assessment'"],
+    ['swapped resource', "UPDATE execution_resource_leases SET resource_key='worktree:foreign' WHERE resource_key='worktree:project-a-worktree'"],
+    ['partial resource set', "DELETE FROM execution_resource_leases WHERE resource_key='database:shared-a'"],
+  ])('refuses %s durable prepared lease before source inspection and remains refused after restart', async (_kind, sql) => {
+    const path = join(mkdtempSync(join(tmpdir(), 'be9-binding-')), 'agents.db');
+    const first = new AgentJobStore(path);
+    await service(first).prepare(request());
+    first.close();
+    const raw = new DatabaseSync(path);
+    raw.exec(sql);
+    raw.close();
+    const reopened = new AgentJobStore(path);
+    stores.push(reopened);
+    let inspected = 0;
+    const stager = fakeStager({ recover: async () => { inspected++; return receipt(); } });
+    await expect(service(reopened, stager).recoverPrepared()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(inspected).toBe(0);
+    expect(reopened.executionLeaseSummary().filter((lease) => lease.ownerId === ASSESSMENT)
+      .every((lease) => lease.state === 'UNCERTAIN')).toBe(true);
+    await expect(service(reopened, stager).recoverPrepared()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(inspected).toBe(0);
+  });
+
+  it('refuses a prepared execution identity that does not derive from its durable lease', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'be9-binding-')), 'agents.db');
+    const first = new AgentJobStore(path);
+    await service(first).prepare(request());
+    first.close();
+    const raw = new DatabaseSync(path);
+    raw.prepare('UPDATE security_assessment_prepared SET execution_id=? WHERE assessment_id=?')
+      .run(`job_${'1'.repeat(32)}`, ASSESSMENT);
+    raw.close();
+    const reopened = new AgentJobStore(path);
+    stores.push(reopened);
+    let inspected = 0;
+    await expect(service(reopened, fakeStager({ recover: async () => { inspected++; return receipt(); } }))
+      .recoverPrepared()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(inspected).toBe(0);
+    expect(reopened.executionLeaseSummary()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ownerId: ASSESSMENT, state: 'UNCERTAIN' }),
+    ]));
+  });
+
+  it('refuses a foreign holder of an expected prepared resource', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'be9-binding-')), 'agents.db');
+    const first = new AgentJobStore(path);
+    await service(first).prepare(request());
+    first.close();
+    const raw = new DatabaseSync(path);
+    raw.prepare(`UPDATE execution_resource_leases SET owner_id=?
+      WHERE resource_key='worktree:project-a-worktree'`)
+      .run(`assessment_${'3'.repeat(24)}`);
+    raw.close();
+    const reopened = new AgentJobStore(path);
+    stores.push(reopened);
+    let inspected = 0;
+    await expect(service(reopened, fakeStager({ recover: async () => { inspected++; return receipt(); } }))
+      .recoverPrepared()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(inspected).toBe(0);
+    expect(reopened.executionLeaseSummary().filter((lease) => lease.ownerId === ASSESSMENT)
+      .every((lease) => lease.state === 'UNCERTAIN')).toBe(true);
+  });
+
+  it('persists the global exclusive key and recovers only with its exact active lease', async () => {
+    const db = store();
+    const global = config();
+    global.projects[0]!.globalExclusive = true;
+    const make = () => new SecurityAssessmentOperationalService(global, db, fakeStager(), IMAGE,
+      async (id) => ({ id, running: true }));
+    await make().prepare(request());
+    expect(db.getSecurityAssessmentPrepared(ASSESSMENT)?.resourceKeys)
+      .toContain('machine:global-exclusive');
+    await expect(make().recoverPrepared()).resolves.toBeUndefined();
+    expect(db.executionLeaseSummary()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ resourceKey: 'machine:global-exclusive', state: 'ACTIVE' }),
+    ]));
   });
 
   it.each(['preflight', 'prepare'] as const)('quarantines a durable %s crash window after store reopen', async (phase) => {

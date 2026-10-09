@@ -532,3 +532,20 @@ export function validateAuthorityRequest(value: unknown, trustedHostPaths: reado
   if (req.op === 'network.createManaged') validateManagedNetworkCreate(payload.name, payload.internal, payload.labels);
   return { op: req.op as DockerAuthorityOperation, payload };
 }
+
+/** Only the server-owned BE9 orphan query receives exhaustive inventory semantics. */
+export function exactAssessmentInventoryResource(filters: unknown): 'assessment-stager' | 'assessment-source' | null {
+  if (!filters || typeof filters !== 'object' || Array.isArray(filters)) return null;
+  const value = filters as Record<string, unknown>;
+  if (Object.keys(value).length !== 1 || !Array.isArray(value.label)
+    || value.label.length !== 4 || value.label.some((label) => typeof label !== 'string')) return null;
+  const labels = value.label as string[];
+  const resource = labels.find((label) => label.startsWith('io.quarangate.resource='))?.slice('io.quarangate.resource='.length);
+  const assessment = labels.find((label) => label.startsWith('io.quarangate.assessment='))?.slice('io.quarangate.assessment='.length);
+  const job = labels.find((label) => label.startsWith('io.quarangate.job='))?.slice('io.quarangate.job='.length);
+  if ((resource !== 'assessment-stager' && resource !== 'assessment-source')
+    || !assessment || !ASSESSMENT_RE.test(assessment) || !job || !JOB_RE.test(job)) return null;
+  const expected = new Set(['io.quarangate.managed=true', `io.quarangate.resource=${resource}`,
+    `io.quarangate.assessment=${assessment}`, `io.quarangate.job=${job}`]);
+  return new Set(labels).size === expected.size && labels.every((label) => expected.has(label)) ? resource : null;
+}
