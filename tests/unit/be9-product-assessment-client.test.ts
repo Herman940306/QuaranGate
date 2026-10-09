@@ -9,6 +9,8 @@ vi.mock('undici', () => ({
 }));
 
 import { productAssessmentClient } from '../../src/gateway/productAssessmentClient.js';
+import { registerSecurityAssessmentTools } from '../../src/gateway/securityAssessmentTools.js';
+import { withPrincipal } from '../../src/gateway/context.js';
 
 const MCP_TOKEN = 'm'.repeat(40);
 const BRIDGE_TOKEN = 'b'.repeat(40);
@@ -19,11 +21,18 @@ const PLAN = `plan_${'c'.repeat(24)}`;
 const REV = 'd'.repeat(40);
 const DIGEST = 'e'.repeat(64);
 
-function response(statusCode: number, value: unknown) {
+function rawResponse(statusCode: number, value: string) {
   return {
     statusCode,
-    body: { text: async () => JSON.stringify(value) },
+    body: {
+      async *[Symbol.asyncIterator]() { yield Buffer.from(value); },
+      destroy: vi.fn(),
+    },
   };
+}
+
+function response(statusCode: number, value: unknown) {
+  return rawResponse(statusCode, JSON.stringify(value));
 }
 
 function binding() {
@@ -125,11 +134,11 @@ describe('BE9.2 product assessment MCP client bridge', () => {
   });
 
   it('rejects malformed, oversized, or bad-envelope product responses', async () => {
-    mocks.request.mockResolvedValueOnce({ statusCode: 200, body: { text: async () => '{' } });
+    mocks.request.mockResolvedValueOnce(rawResponse(200, '{'));
     await expect(productAssessmentClient.status('principal-a', ASSESSMENT))
       .rejects.toMatchObject({ code: 'INTERNAL' });
 
-    mocks.request.mockResolvedValueOnce({ statusCode: 200, body: { text: async () => 'x'.repeat(300 * 1024) } });
+    mocks.request.mockResolvedValueOnce(rawResponse(200, 'x'.repeat(300 * 1024)));
     await expect(productAssessmentClient.status('principal-a', ASSESSMENT))
       .rejects.toMatchObject({ code: 'INTERNAL' });
 
@@ -150,6 +159,90 @@ describe('BE9.2 product assessment MCP client bridge', () => {
       await expect(productAssessmentClient.status('principal-a', ASSESSMENT))
         .rejects.toMatchObject({ code });
     }
+  });
+
+  it('does not reflect a malicious upstream error code in a 503 BridgeError', async () => {
+    const sentinel = 'SENTINEL_UNTRUSTED_UPSTREAM_CODE';
+    mocks.request.mockResolvedValueOnce(response(503, { error: { code: sentinel, detail: sentinel } }));
+    const error = await productAssessmentClient.status('principal-a', ASSESSMENT).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ code: 'DOCKER_UNAVAILABLE', httpStatus: 503 });
+    expect(error.message).toBe('product assessment internal service is unavailable');
+    expect(error.message).not.toContain(sentinel);
+  });
+
+  it('keeps the MCP error and audit detail free of upstream error text', async () => {
+    const sentinel = 'SENTINEL_UNTRUSTED_UPSTREAM_CODE';
+    mocks.request.mockResolvedValueOnce(response(503, { error: { code: sentinel, detail: sentinel } }));
+    let statusHandler: ((args: { assessmentId: string }) => Promise<{ content: { text: string }[] }>) | undefined;
+    registerSecurityAssessmentTools({
+      registerTool(name: string, _config: unknown, handler: typeof statusHandler) {
+        if (name === 'security_assessment_status') statusHandler = handler;
+      },
+    } as never);
+    if (!statusHandler) throw new Error('missing assessment status tool');
+    const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      const result = await withPrincipal({
+        id: 'principal-a', name: 'test', keyHash: '',
+        scopes: ['security:assessment:read'], targets: [], enabled: true,
+      }, () => statusHandler!({ assessmentId: ASSESSMENT }));
+      expect(result.content[0]?.text).toContain('product assessment internal service is unavailable');
+      expect(result.content[0]?.text).not.toContain(sentinel);
+      const auditLine = String(output.mock.calls.at(-1)?.[0]);
+      expect(JSON.parse(auditLine).detail).toBe('product assessment internal service is unavailable');
+      expect(auditLine).not.toContain(sentinel);
+    } finally {
+      output.mockRestore();
+    }
+  });
+
+  it('stops reading and disposes an oversized streamed response immediately', async () => {
+    const read = vi.fn();
+    const destroy = vi.fn();
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      body: {
+        async *[Symbol.asyncIterator]() {
+          for (const chunk of [Buffer.alloc(128 * 1024), Buffer.alloc(128 * 1024), Buffer.of(1), Buffer.of(2)]) {
+            read();
+            yield chunk;
+          }
+        },
+        destroy,
+      },
+    });
+    await expect(productAssessmentClient.status('principal-a', ASSESSMENT))
+      .rejects.toMatchObject({ code: 'INTERNAL', message: 'product assessment internal response exceeded bound' });
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it('accepts exactly 256 KiB and rejects one byte more', async () => {
+    const valid = JSON.stringify({ data: summary() });
+    const boundary = valid.padEnd(256 * 1024, ' ');
+    mocks.request.mockResolvedValueOnce(rawResponse(200, boundary));
+    await expect(productAssessmentClient.status('principal-a', ASSESSMENT))
+      .resolves.toMatchObject({ id: ASSESSMENT });
+    mocks.request.mockResolvedValueOnce(rawResponse(200, `${boundary} `));
+    await expect(productAssessmentClient.status('principal-a', ASSESSMENT))
+      .rejects.toMatchObject({ code: 'INTERNAL', message: 'product assessment internal response exceeded bound' });
+  });
+
+  it('turns a malicious response stream failure into a fixed bounded BridgeError', async () => {
+    const sentinel = 'SENTINEL_MALICIOUS_STREAM_FAILURE';
+    const destroy = vi.fn();
+    mocks.request.mockResolvedValueOnce({
+      statusCode: 200,
+      body: {
+        async *[Symbol.asyncIterator]() { throw new Error(sentinel); },
+        destroy,
+      },
+    });
+    const error = await productAssessmentClient.status('principal-a', ASSESSMENT).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ code: 'DOCKER_UNAVAILABLE', httpStatus: 503 });
+    expect(error.message).toBe('product assessment internal response could not be read');
+    expect(error.message).not.toContain(sentinel);
+    expect(destroy).toHaveBeenCalledOnce();
   });
 
   it('returns summary/evidence data through the bounded internal route only', async () => {

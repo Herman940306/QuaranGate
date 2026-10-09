@@ -8,6 +8,26 @@ import type {
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const TIMEOUT_MS = 5_000;
 
+async function boundedBody(body: AsyncIterable<Uint8Array> & { destroy(): void }): Promise<string> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for await (const chunk of body) {
+      total += chunk.byteLength;
+      if (total > MAX_RESPONSE_BYTES) {
+        throw new BridgeError('INTERNAL', 'product assessment internal response exceeded bound', 503);
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks, total).toString('utf8');
+  } catch (error) {
+    // Stop upstream delivery on overflow or a failed read without exposing stream errors.
+    try { body.destroy(); } catch { /* disposal must not replace the bounded error */ }
+    if (error instanceof BridgeError) throw error;
+    throw new BridgeError('DOCKER_UNAVAILABLE', 'product assessment internal response could not be read', 503);
+  }
+}
+
 function base(): string {
   const raw = process.env.QG_PRODUCT_INTERNAL_URL?.trim() ?? '';
   let parsed: URL;
@@ -51,22 +71,18 @@ async function call<T>(payload: Record<string, unknown>): Promise<T> {
   }).catch(() => {
     throw new BridgeError('DOCKER_UNAVAILABLE', 'product assessment internal service is unavailable', 503);
   });
-  const body = await response.body.text();
-  if (Buffer.byteLength(body, 'utf8') > MAX_RESPONSE_BYTES) {
-    throw new BridgeError('INTERNAL', 'product assessment internal response exceeded bound', 503);
-  }
+  const body = await boundedBody(response.body);
   let parsed: any;
   try { parsed = body ? JSON.parse(body) : {}; } catch {
     throw new BridgeError('INTERNAL', 'product assessment internal response is malformed', 503);
   }
   if (response.statusCode >= 400) {
-    const code = String(parsed?.error?.code ?? 'INTERNAL');
     const status = response.statusCode;
     if (status === 404) throw new BridgeError('PRECONDITION_FAILED', 'security assessment is unavailable', 404);
     if (status === 403) throw new BridgeError('FORBIDDEN_PROJECT', 'security assessment is not permitted', 403);
     if (status === 409) throw new BridgeError('CONCURRENCY_LIMIT', 'security assessment state is stale', 409);
     if (status === 400) throw new BridgeError('MALFORMED_REQUEST', 'security assessment request was rejected', 400);
-    throw new BridgeError('DOCKER_UNAVAILABLE', `product assessment internal service unavailable (${code})`, 503);
+    throw new BridgeError('DOCKER_UNAVAILABLE', 'product assessment internal service is unavailable', 503);
   }
   if (!parsed || typeof parsed !== 'object' || !parsed.data) {
     throw new BridgeError('INTERNAL', 'product assessment internal response shape is invalid', 503);
