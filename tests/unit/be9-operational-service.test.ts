@@ -13,6 +13,7 @@ import type {
   AssessmentSourceStager,
   StagedAssessmentSource,
 } from '../../src/executor/securityAssessment/sourceStaging.js';
+import { AssessmentSourceCleanupUncertainError } from '../../src/executor/securityAssessment/sourceStaging.js';
 import { BridgeError } from '../../src/shared/errors.js';
 
 const REV = 'a'.repeat(40);
@@ -158,8 +159,33 @@ describe('BE9.2 Executor operational assessment service', () => {
       projectId: 'project-a',
       resourceKeys: ['worktree:project-a-worktree'],
     });
-    const result = await service(db).preflight(request());
-    expect(result.resourceAvailable).toBe(false);
+    let probed = false;
+    await expect(service(db, fakeStager({ probe: async () => {
+      probed = true;
+      return receipt();
+    } })).preflight(request())).rejects.toMatchObject({ code: 'CONCURRENCY_LIMIT' });
+    expect(probed).toBe(false);
+  });
+
+  it('retains a durable UNCERTAIN BE1A lease when preflight probe cleanup is unproven', async () => {
+    const db = store();
+    await expect(service(db, fakeStager({ probe: async () => {
+      expect(db.executionLeaseSummary()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ownerId: ASSESSMENT, state: 'ACTIVE' }),
+      ]));
+      throw new AssessmentSourceCleanupUncertainError();
+    } })).preflight(request())).rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    expect(db.executionLeaseSummary()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ownerId: ASSESSMENT, state: 'UNCERTAIN' }),
+    ]));
+  });
+
+  it('releases the probe lease after proven ordinary preflight failure', async () => {
+    const db = store();
+    await expect(service(db, fakeStager({ probe: async () => {
+      throw new BridgeError('PRECONDITION_FAILED', 'synthetic dirty source', 412);
+    } })).preflight(request())).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(db.executionLeaseSummary()).toEqual([]);
   });
 
   it('fails closed on unregistered or offline required targets', async () => {
@@ -199,6 +225,16 @@ describe('BE9.2 Executor operational assessment service', () => {
     await expect(service(db, stager).prepare(request()))
       .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     expect(db.executionLeaseSummary()).toEqual([]);
+  });
+
+  it('keeps the BE1A lease UNCERTAIN when stage fails before returning a resource handle', async () => {
+    const db = store();
+    await expect(service(db, fakeStager({ stage: async () => {
+      throw new AssessmentSourceCleanupUncertainError('PRECONDITION_FAILED');
+    } })).prepare(request())).rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    expect(db.executionLeaseSummary()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ownerId: ASSESSMENT, state: 'UNCERTAIN' }),
+    ]));
   });
 
   it('recovers an exact durable staged source after executor service restart without restaging', async () => {

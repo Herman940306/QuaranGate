@@ -19,7 +19,11 @@ import type {
   AssessmentSourceStageReceipt,
   StagedAssessmentSource,
 } from './sourceStaging.js';
-import { AssessmentSourceStager, parseAssessmentSourceStageReceipt } from './sourceStaging.js';
+import {
+  AssessmentSourceCleanupUncertainError,
+  AssessmentSourceStager,
+  parseAssessmentSourceStageReceipt,
+} from './sourceStaging.js';
 
 export interface SecurityAssessmentTargetFact {
   id: string;
@@ -148,18 +152,44 @@ export class SecurityAssessmentOperationalService {
       throw new BridgeError('PRECONDITION_FAILED', 'assessment stager image is not configured', 503);
     }
 
-    const source = await this.sourceStager.probe({
-      assessmentId: request.assessmentId,
+    const resources = projectResourceKeys(project);
+    this.store.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment',
+      ownerId: request.assessmentId,
       projectId: project.id,
-      expectedSourceRevision: request.expectedSourceRevision,
-      stagerImageId: this.stagerImageId,
-      hostPath: project.hostPath,
+      resourceKeys: resources,
+      globalExclusive: project.globalExclusive ?? false,
     });
+    let source: AssessmentSourceStageReceipt;
+    try {
+      source = await this.sourceStager.probe({
+        assessmentId: request.assessmentId,
+        projectId: project.id,
+        expectedSourceRevision: request.expectedSourceRevision,
+        stagerImageId: this.stagerImageId,
+        hostPath: project.hostPath,
+      });
+    } catch (error) {
+      if (error instanceof AssessmentSourceCleanupUncertainError) {
+        this.store.markExecutionLeasesUncertainForOwner(
+          'security-assessment', request.assessmentId,
+          'assessment preflight allocated resource cleanup could not be proven',
+        );
+      } else {
+        this.store.releaseExecutionLeasesForOwner(
+          'security-assessment', request.assessmentId, 'assessment preflight cleanup proven',
+        );
+      }
+      throw error instanceof BridgeError ? error
+        : new BridgeError('DOCKER_UNAVAILABLE', 'assessment source preflight failed', 503);
+    }
+    this.store.releaseExecutionLeasesForOwner(
+      'security-assessment', request.assessmentId, 'assessment preflight cleanup proven',
+    );
     if (source.sourceRevision !== request.expectedSourceRevision) {
       throw new BridgeError('PRECONDITION_FAILED', 'security assessment source revision drifted', 412);
     }
 
-    const resources = projectResourceKeys(project);
     const capability = this.capabilityRegistry.availability(request.requestedCapabilityClasses);
     return {
       projectId: project.id,
@@ -239,15 +269,25 @@ export class SecurityAssessmentOperationalService {
             request.assessmentId,
             'assessment preparation failed after source creation and cleanup could not be proven',
           );
-          throw error;
+          throw new AssessmentSourceCleanupUncertainError(
+            error instanceof BridgeError ? error.code : undefined,
+          );
         }
+      }
+      if (error instanceof AssessmentSourceCleanupUncertainError) {
+        this.store.markExecutionLeasesUncertainForOwner(
+          'security-assessment', request.assessmentId,
+          'assessment staging allocated resource cleanup could not be proven',
+        );
+        throw error;
       }
       this.store.releaseExecutionLeasesForOwner(
         'security-assessment',
         request.assessmentId,
         'assessment staging failed before execution',
       );
-      throw error;
+      throw error instanceof BridgeError ? error
+        : new BridgeError('DOCKER_UNAVAILABLE', 'assessment preparation failed', 503);
     }
   }
 

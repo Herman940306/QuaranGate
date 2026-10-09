@@ -62,7 +62,64 @@ function staged(): StagedAssessmentSource & {
 }
 
 describe('BE9.2 staged-volume recovery authority', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    docker.createVolume.mockResolvedValue(undefined);
+    docker.createContainer.mockResolvedValue('owned-container-id');
+    docker.startContainer.mockResolvedValue(undefined);
+    docker.waitContainer.mockResolvedValue({ statusCode: 0, timedOut: false });
+    docker.getContainerLogs.mockResolvedValue({ stdout: `BE9_STAGE_RECEIPT=${JSON.stringify(receipt())}\n`, stderr: '', truncated: false });
+    docker.removeContainer.mockResolvedValue(undefined);
+    docker.removeVolume.mockResolvedValue(undefined);
+  });
+
+  const input = {
+    assessmentId: ASSESSMENT, projectId: 'project-a', expectedSourceRevision: REVISION,
+    stagerImageId: IMAGE, hostPath: '/trusted/project-a',
+  };
+
+  it('denies probe success when its allocated volume cannot be removed', async () => {
+    docker.removeVolume.mockRejectedValue(new Error('private Docker metadata'));
+    await expect(new AssessmentSourceStager().probe(input)).rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+  });
+
+  it('denies probe success when its stager container cannot be removed', async () => {
+    docker.removeContainer.mockRejectedValue(new Error('private Docker metadata'));
+    await expect(new AssessmentSourceStager().probe(input)).rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    expect(docker.removeContainer).toHaveBeenCalledTimes(1);
+    expect(docker.removeContainer).toHaveBeenCalledWith('owned-container-id', true);
+  });
+
+  it('denies stage success when the stager container cannot be removed, even before a handle returns', async () => {
+    docker.removeContainer.mockRejectedValue(new Error('private Docker metadata'));
+    await expect(new AssessmentSourceStager().stage(input)).rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    expect(docker.removeVolume).toHaveBeenCalledTimes(1);
+  });
+
+  it('denies stage success when failed staging also leaves its volume unremoved', async () => {
+    docker.waitContainer.mockResolvedValue({ statusCode: 1, timedOut: false });
+    docker.removeVolume.mockRejectedValue(new Error('private Docker metadata'));
+    await expect(new AssessmentSourceStager().stage(input)).rejects.toMatchObject({
+      code: 'DOCKER_UNAVAILABLE', primaryCode: 'PRECONDITION_FAILED',
+      message: 'assessment source resource cleanup could not be proven',
+    });
+  });
+
+  it('preserves the source rejection when both removals are proven', async () => {
+    docker.waitContainer.mockResolvedValue({ statusCode: 1, timedOut: false });
+    await expect(new AssessmentSourceStager().stage(input)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(docker.removeContainer).toHaveBeenCalledTimes(1);
+    expect(docker.removeVolume).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats ambiguous container creation as uncertain without removing by guessed name', async () => {
+    docker.createContainer.mockRejectedValue(new Error('private Docker metadata'));
+    await expect(new AssessmentSourceStager().stage(input)).rejects.toMatchObject({
+      code: 'DOCKER_UNAVAILABLE', message: 'assessment source resource cleanup could not be proven',
+    });
+    expect(docker.removeContainer).not.toHaveBeenCalled();
+    expect(docker.removeVolume).toHaveBeenCalledTimes(1);
+  });
 
   it('fails closed when the durable volume is missing', async () => {
     docker.listVolumesByFilter.mockResolvedValue([]);

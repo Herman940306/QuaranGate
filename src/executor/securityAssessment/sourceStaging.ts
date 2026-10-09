@@ -27,6 +27,23 @@ const RECEIPT_PREFIX = 'BE9_STAGE_RECEIPT=';
 const STAGE_TIMEOUT_MS = 120_000;
 const STAGE_LOG_BYTES = 64 * 1024;
 
+/** Only this safe marker may cross the stager/service boundary on unproven cleanup. */
+export class AssessmentSourceCleanupUncertainError extends BridgeError {
+  constructor(public readonly primaryCode?: string) {
+    super('DOCKER_UNAVAILABLE', 'assessment source resource cleanup could not be proven', 503);
+  }
+}
+
+async function dockerCall<T>(operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); }
+  catch { throw new BridgeError('DOCKER_UNAVAILABLE', 'assessment source Docker operation failed', 503); }
+}
+
+function safeFailure(error: unknown): BridgeError {
+  return error instanceof BridgeError ? error
+    : new BridgeError('DOCKER_UNAVAILABLE', 'assessment source staging failed', 503);
+}
+
 export interface AssessmentSourceStageReceipt {
   schemaVersion: 'BE9_SOURCE_STAGE_V1';
   mode: 'stage' | 'verify';
@@ -241,24 +258,24 @@ async function runStager(input: {
   const suffix = randomBytes(6).toString('hex');
   const name = `qg-be9-stager-${input.assessmentId.slice('assessment_'.length)}-${suffix}`;
   let containerId: string | undefined;
+  let creationAttempted = false;
+  let receipt: AssessmentSourceStageReceipt | undefined;
+  let failure: BridgeError | undefined;
   try {
     const body = buildAssessmentStagerCreateBody(input);
-    containerId = await createContainer(name, body);
-    await startContainer(containerId);
-    const waited = await waitContainer(containerId, { timeoutMs: STAGE_TIMEOUT_MS });
+    creationAttempted = true;
+    containerId = await dockerCall(() => createContainer(name, body));
+    await dockerCall(() => startContainer(containerId!));
+    const waited = await dockerCall(() => waitContainer(containerId!, { timeoutMs: STAGE_TIMEOUT_MS }));
     if (waited.timedOut) {
-      await killContainer(containerId).catch(() => {});
+      await dockerCall(() => killContainer(containerId!)).catch(() => {});
       throw new BridgeError('PRECONDITION_FAILED', 'assessment source staging timed out', 412);
     }
-    const logs = await getContainerLogs(containerId, STAGE_LOG_BYTES);
+    const logs = await dockerCall(() => getContainerLogs(containerId!, STAGE_LOG_BYTES));
     if (waited.statusCode !== 0) {
-      throw new BridgeError(
-        'PRECONDITION_FAILED',
-        `assessment source staging rejected source (exit ${String(waited.statusCode)}): ${logs.stderr.slice(0, 512)}`,
-        412,
-      );
+      throw new BridgeError('PRECONDITION_FAILED', 'assessment source staging rejected source', 412);
     }
-    const receipt = parseAssessmentSourceStageReceipt(logs);
+    receipt = parseAssessmentSourceStageReceipt(logs);
     if (
       receipt.mode !== input.mode
       || receipt.assessmentId !== input.assessmentId
@@ -271,11 +288,16 @@ async function runStager(input: {
     ) {
       throw new BridgeError('PRECONDITION_FAILED', 'assessment staging receipt binding mismatch', 412);
     }
-    return receipt;
-  } finally {
-    if (containerId) await removeContainer(containerId, true).catch(() => {});
-    await removeContainer(name, true).catch(() => {});
+  } catch (error) {
+    failure = safeFailure(error);
   }
+  if (creationAttempted && !containerId) throw new AssessmentSourceCleanupUncertainError(failure?.code);
+  if (containerId) {
+    try { await dockerCall(() => removeContainer(containerId, true)); }
+    catch { throw new AssessmentSourceCleanupUncertainError(failure?.code); }
+  }
+  if (failure) throw failure;
+  return receipt!;
 }
 
 export class AssessmentSourceStager {
@@ -289,20 +311,26 @@ export class AssessmentSourceStager {
     assertStageInput(input);
     const executionId = `job_${randomBytes(16).toString('hex')}`;
     const sourceVolume = `qg-be9-probe-${input.assessmentId.slice('assessment_'.length)}-${executionId.slice(-12)}`;
-    await createVolume(
-      sourceVolume,
-      assessmentLabels('assessment-source', input.assessmentId, executionId),
-    );
     try {
-      return await runStager({
+      await dockerCall(() => createVolume(
+        sourceVolume,
+        assessmentLabels('assessment-source', input.assessmentId, executionId),
+      ));
+    } catch { throw new AssessmentSourceCleanupUncertainError(); }
+    let receipt: AssessmentSourceStageReceipt | undefined;
+    let failure: BridgeError | undefined;
+    try {
+      receipt = await runStager({
         ...input,
         executionId,
         sourceVolume,
         mode: 'stage',
       });
-    } finally {
-      await removeVolume(sourceVolume, true).catch(() => {});
-    }
+    } catch (error) { failure = safeFailure(error); }
+    try { await dockerCall(() => removeVolume(sourceVolume, true)); }
+    catch { throw new AssessmentSourceCleanupUncertainError(failure?.code); }
+    if (failure) throw failure;
+    return receipt!;
   }
 
   async stage(input: {
@@ -316,7 +344,8 @@ export class AssessmentSourceStager {
     const executionId = `job_${randomBytes(16).toString('hex')}`;
     const sourceVolume = `qg-be9-source-${input.assessmentId.slice('assessment_'.length)}-${executionId.slice(-12)}`;
     const labels = assessmentLabels('assessment-source', input.assessmentId, executionId);
-    await createVolume(sourceVolume, labels);
+    try { await dockerCall(() => createVolume(sourceVolume, labels)); }
+    catch { throw new AssessmentSourceCleanupUncertainError(); }
     try {
       const receipt = await runStager({
         ...input,
@@ -332,8 +361,9 @@ export class AssessmentSourceStager {
         receipt,
       };
     } catch (error) {
-      await removeVolume(sourceVolume, true).catch(() => {});
-      throw error;
+      try { await dockerCall(() => removeVolume(sourceVolume, true)); }
+      catch { throw new AssessmentSourceCleanupUncertainError(safeFailure(error).code); }
+      throw safeFailure(error);
     }
   }
 
@@ -380,7 +410,7 @@ export class AssessmentSourceStager {
     stagerImageId: string;
     hostPath: string;
   }): Promise<AssessmentSourceStageReceipt> {
-    const volumes = await listVolumesByFilter({ name: [input.sourceVolume] });
+    const volumes = await dockerCall(() => listVolumesByFilter({ name: [input.sourceVolume] }));
     if (volumes.length !== 1 || volumes[0]!.Name !== input.sourceVolume) {
       throw new BridgeError('PRECONDITION_FAILED', 'prepared assessment source volume is missing or ambiguous', 412);
     }
@@ -397,6 +427,6 @@ export class AssessmentSourceStager {
   }
 
   async remove(staged: StagedAssessmentSource): Promise<void> {
-    await removeVolume(staged.sourceVolume, true);
+    await dockerCall(() => removeVolume(staged.sourceVolume, true));
   }
 }
