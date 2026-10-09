@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { AgentControlPlaneConfig } from '../../src/executor/agentConfig.js';
 import { AgentJobStore } from '../../src/executor/agents/jobStore.js';
 import {
@@ -82,6 +83,7 @@ function fakeStager(overrides: Partial<AssessmentSourceStager> = {}): Assessment
     revalidateBeforeRun: async () => receipt('verify'),
     recover: async () => receipt('verify'),
     remove: async () => {},
+    reconcileOrphan: async () => 0,
     ...overrides,
   } as AssessmentSourceStager;
 }
@@ -133,6 +135,26 @@ describe('BE9.2 Executor operational assessment service', () => {
       capabilityStatus: 'UNAVAILABLE',
       capabilityCode: 'BE10_SCANNER_PLUGIN_UNAVAILABLE',
     });
+  });
+
+  it('uses distinct durable execution labels for probe and preparation', async () => {
+    const db = store();
+    let probeExecution = '';
+    let prepareExecution = '';
+    const stager = fakeStager({
+      probe: async (input) => { probeExecution = input.executionId; return receipt('verify'); },
+      stage: async (input) => {
+        prepareExecution = input.executionId;
+        return { assessmentId: ASSESSMENT, projectId: 'project-a',
+          executionId: input.executionId, sourceVolume: 'qg-be9-source-test', receipt: receipt('stage') };
+      },
+    });
+    const operational = service(db, stager);
+    await operational.preflight(request());
+    await operational.prepare(request());
+    expect(probeExecution).toMatch(/^job_[0-9a-f]{32}$/);
+    expect(prepareExecution).toMatch(/^job_[0-9a-f]{32}$/);
+    expect(prepareExecution).not.toBe(probeExecution);
   });
 
   it('does not accept caller-shaped host paths or resource keys because they are absent from the request contract', async () => {
@@ -264,6 +286,74 @@ describe('BE9.2 Executor operational assessment service', () => {
     });
     expect(recovered).toBe(1);
     expect(stagedAgain).toBe(0);
+  });
+
+  it.each(['preflight', 'prepare'] as const)('quarantines a durable %s crash window after store reopen', async (phase) => {
+    const path = join(mkdtempSync(join(tmpdir(), 'be9-crash-')), 'agents.db');
+    const first = new AgentJobStore(path);
+    first.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment', ownerId: ASSESSMENT,
+      projectId: 'project-a', resourceKeys: ['worktree:project-a-worktree'],
+    });
+    first.close();
+    const reopened = new AgentJobStore(path);
+    stores.push(reopened);
+    let reconciled = 0;
+    const restarted = service(reopened, fakeStager({ reconcileOrphan: async (id) => {
+      expect(id).toBe(ASSESSMENT);
+      reconciled++;
+      return 0;
+    } }));
+    await restarted.recoverPrepared();
+    expect(reopened.executionLeaseSummary()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ownerId: ASSESSMENT, state: 'UNCERTAIN' }),
+    ]));
+    expect(reconciled).toBe(1);
+    await restarted.recoverPrepared();
+    expect(reconciled).toBe(2);
+    await expect(restarted[phase](request())).rejects.toMatchObject({ code: 'CONCURRENCY_LIMIT' });
+  });
+
+  it('preserves a valid prepared lease while quarantining a separate orphan after reopen', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'be9-mixed-restart-')), 'agents.db');
+    const first = new AgentJobStore(path);
+    await service(first).prepare(request());
+    const orphanId = `assessment_${'1'.repeat(24)}`;
+    first.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment', ownerId: orphanId,
+      projectId: 'project-a', resourceKeys: ['worktree:other-worktree'],
+    });
+    first.close();
+    const reopened = new AgentJobStore(path);
+    stores.push(reopened);
+    let recovered = 0;
+    const restarted = service(reopened, fakeStager({ recover: async () => {
+      recovered++;
+      return receipt('verify');
+    } }));
+    await restarted.recoverPrepared();
+    expect(recovered).toBe(1);
+    expect(reopened.executionLeaseSummary()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ownerId: ASSESSMENT, state: 'ACTIVE' }),
+      expect.objectContaining({ ownerId: orphanId, state: 'UNCERTAIN' }),
+    ]));
+  });
+
+  it('quarantines malformed prepared metadata after reopening the durable store', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'be9-malformed-')), 'agents.db');
+    const first = new AgentJobStore(path);
+    await service(first).prepare(request());
+    first.close();
+    const raw = new DatabaseSync(path);
+    raw.prepare('UPDATE security_assessment_prepared SET stage_receipt_json=? WHERE assessment_id=?')
+      .run('{malformed', ASSESSMENT);
+    raw.close();
+    const reopened = new AgentJobStore(path);
+    stores.push(reopened);
+    await service(reopened).recoverPrepared();
+    expect(reopened.executionLeaseSummary()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ownerId: ASSESSMENT, state: 'UNCERTAIN' }),
+    ]));
   });
 
   it('fails closed and marks leases UNCERTAIN when restart cannot prove the durable source volume', async () => {

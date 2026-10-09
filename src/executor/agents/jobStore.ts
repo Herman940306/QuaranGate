@@ -1909,7 +1909,9 @@ export class AgentJobStore {
           (lease_id, resource_key, owner_kind, owner_id, job_id, project_id, state, acquired_at)
           VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?)`
         ).run(
-          `erl_${randomBytes(16).toString('hex')}`,
+          input.ownerKind === 'security-assessment'
+            ? `erl_be9_${randomBytes(16).toString('hex')}`
+            : `erl_${randomBytes(16).toString('hex')}`,
           key,
           input.ownerKind,
           input.ownerId,
@@ -1962,6 +1964,41 @@ export class AgentJobStore {
       SET state='UNCERTAIN', finished_at=?, reason=?
       WHERE owner_kind=? AND owner_id=? AND state='ACTIVE'`
     ).run(at, reason.slice(0, 500), ownerKind, ownerId);
+  }
+
+  /** Record the outcome without promoting an orphaned assessment lease to RELEASED. */
+  recordAssessmentOrphanReconciliation(assessmentId: string, removedCount: number | null): void {
+    if (!/^assessment_[0-9a-f]{24}$/.test(assessmentId)) {
+      throw new BridgeError('MALFORMED_REQUEST', 'invalid assessment recovery identity', 400);
+    }
+    this.db.prepare(`UPDATE execution_resource_leases SET reason=?
+      WHERE owner_kind='security-assessment' AND owner_id=? AND state='UNCERTAIN'`
+    ).run(removedCount === null
+      ? 'assessment orphan resource cleanup or absence could not be proven'
+      : removedCount > 0
+        ? 'assessment orphan resources removed; lease remains uncertain pending governed reconciliation'
+        : 'assessment orphan resource absence verified; lease remains uncertain pending governed reconciliation', assessmentId);
+  }
+
+  /** The first durable BE1A lease supplies the BE9 Docker execution identity. */
+  assessmentAllocationExecutionId(assessmentId: string): string {
+    if (!/^assessment_[0-9a-f]{24}$/.test(assessmentId)) {
+      throw new BridgeError('MALFORMED_REQUEST', 'invalid assessment allocation identity', 400);
+    }
+    const rows = this.db.prepare(`SELECT lease_id, project_id, acquired_at
+      FROM execution_resource_leases
+      WHERE owner_kind='security-assessment' AND owner_id=? AND state IN ('ACTIVE','UNCERTAIN')
+      ORDER BY resource_key`).all(assessmentId) as Array<{
+        lease_id: string; project_id: string; acquired_at: string;
+      }>;
+    const first = rows[0];
+    if (!first || rows.length > 128 || !/^erl_be9_[0-9a-f]{32}$/.test(first.lease_id)
+      || rows.some((row) => !/^erl_be9_[0-9a-f]{32}$/.test(row.lease_id)
+        || row.project_id !== first.project_id
+        || row.acquired_at !== first.acquired_at)) {
+      throw new BridgeError('PRECONDITION_FAILED', 'assessment durable allocation identity is unavailable', 412);
+    }
+    return `job_${first.lease_id.slice(8)}`;
   }
 
   executionLeaseSummary(): Array<{
@@ -2977,7 +3014,7 @@ export class AgentJobStore {
     }
   }
 
-  listSecurityAssessmentPrepared(): Array<{
+  listSecurityAssessmentPrepared(assessmentId?: string): Array<{
     assessmentId: string;
     projectId: string;
     expectedSourceRevision: string;
@@ -2987,8 +3024,9 @@ export class AgentJobStore {
     resourceKeys: string[];
   }> {
     const rows = this.db.prepare(`
-      SELECT * FROM security_assessment_prepared ORDER BY assessment_id
-    `).all() as Array<Record<string, unknown>>;
+      SELECT * FROM security_assessment_prepared
+      WHERE (? IS NULL OR assessment_id=?) ORDER BY assessment_id
+    `).all(assessmentId ?? null, assessmentId ?? null) as Array<Record<string, unknown>>;
     if (rows.length > 1000) {
       throw new BridgeError('INTERNAL', 'durable assessment prepared recovery set exceeds bound', 500);
     }
@@ -3021,6 +3059,18 @@ export class AgentJobStore {
         resourceKeys: resourceKeys as string[],
       };
     });
+  }
+
+  /** Read identities before parsing any untrusted durable metadata. */
+  listSecurityAssessmentPreparedIds(): string[] {
+    const rows = this.db.prepare('SELECT assessment_id FROM security_assessment_prepared ORDER BY assessment_id').all() as Array<{ assessment_id: string }>;
+    if (rows.length > 1000) throw new BridgeError('INTERNAL', 'durable assessment prepared recovery set exceeds bound', 500);
+    return rows.map((row) => String(row.assessment_id));
+  }
+
+  getSecurityAssessmentPrepared(assessmentId: string): ReturnType<AgentJobStore['listSecurityAssessmentPrepared']>[number] | undefined {
+    // Keep the existing strict parser as the single source of durable row validation.
+    return this.listSecurityAssessmentPrepared(assessmentId)[0];
   }
 
   deleteSecurityAssessmentPrepared(assessmentId: string): void {

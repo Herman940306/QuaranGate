@@ -160,10 +160,12 @@ export class SecurityAssessmentOperationalService {
       resourceKeys: resources,
       globalExclusive: project.globalExclusive ?? false,
     });
+    const executionId = this.store.assessmentAllocationExecutionId(request.assessmentId);
     let source: AssessmentSourceStageReceipt;
     try {
       source = await this.sourceStager.probe({
         assessmentId: request.assessmentId,
+        executionId,
         projectId: project.id,
         expectedSourceRevision: request.expectedSourceRevision,
         stagerImageId: this.stagerImageId,
@@ -226,11 +228,13 @@ export class SecurityAssessmentOperationalService {
       resourceKeys: keys,
       globalExclusive: project.globalExclusive ?? false,
     });
+    const executionId = this.store.assessmentAllocationExecutionId(request.assessmentId);
 
     let staged: StagedAssessmentSource | undefined;
     try {
       staged = await this.sourceStager.stage({
         assessmentId: request.assessmentId,
+        executionId,
         projectId: project.id,
         expectedSourceRevision: request.expectedSourceRevision,
         stagerImageId: this.stagerImageId,
@@ -292,12 +296,43 @@ export class SecurityAssessmentOperationalService {
   }
 
   async recoverPrepared(): Promise<void> {
-    const durable = this.store.listSecurityAssessmentPrepared();
-    for (const item of durable) {
+    const preparedIds = new Set(this.store.listSecurityAssessmentPreparedIds());
+    const orphans = new Set(this.store.executionLeaseSummary()
+      .filter((lease) => lease.ownerKind === 'security-assessment' && !preparedIds.has(lease.ownerId))
+      .map((lease) => lease.ownerId));
+    for (const assessmentId of orphans) {
+      this.store.markExecutionLeasesUncertainForOwner(
+        'security-assessment', assessmentId, 'assessment restart found no prepared source identity',
+      );
+      try {
+        const executionId = this.store.assessmentAllocationExecutionId(assessmentId);
+        const removedCount = await this.sourceStager.reconcileOrphan(assessmentId, executionId);
+        this.store.recordAssessmentOrphanReconciliation(assessmentId, removedCount);
+      } catch {
+        this.store.recordAssessmentOrphanReconciliation(assessmentId, null);
+      }
+    }
+    for (const assessmentId of preparedIds) {
+      let item: ReturnType<AgentJobStore['getSecurityAssessmentPrepared']>;
+      try { item = this.store.getSecurityAssessmentPrepared(assessmentId); }
+      catch {
+        this.store.markExecutionLeasesUncertainForOwner(
+          'security-assessment', assessmentId, 'assessment prepared metadata is malformed',
+        );
+        continue;
+      }
+      if (!item) continue;
       if (this.prepared.has(item.assessmentId)) {
         throw new BridgeError('INTERNAL', 'duplicate in-memory assessment recovery identity', 500);
       }
-      const project = this.project(item.projectId);
+      let project: AgentProjectConfig;
+      try { project = this.project(item.projectId); }
+      catch {
+        this.store.markExecutionLeasesUncertainForOwner(
+          'security-assessment', item.assessmentId, 'assessment prepared project metadata is invalid',
+        );
+        continue;
+      }
       const expectedKeys = projectResourceKeys(project);
       if (
         item.resourceKeys.length !== expectedKeys.length
@@ -310,11 +345,19 @@ export class SecurityAssessmentOperationalService {
         );
         throw new BridgeError('PRECONDITION_FAILED', 'assessment recovery resource identity mismatch', 412);
       }
-      const receipt = parseAssessmentSourceStageReceipt({
-        stdout: `BE9_STAGE_RECEIPT=${JSON.stringify(item.stageReceipt)}\n`,
-        stderr: '',
-        truncated: false,
-      });
+      let receipt: AssessmentSourceStageReceipt;
+      try {
+        receipt = parseAssessmentSourceStageReceipt({
+          stdout: `BE9_STAGE_RECEIPT=${JSON.stringify(item.stageReceipt)}\n`,
+          stderr: '',
+          truncated: false,
+        });
+      } catch {
+        this.store.markExecutionLeasesUncertainForOwner(
+          'security-assessment', item.assessmentId, 'assessment prepared receipt is malformed',
+        );
+        continue;
+      }
       if (
         receipt.mode !== 'stage'
         || receipt.assessmentId !== item.assessmentId

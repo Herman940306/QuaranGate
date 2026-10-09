@@ -5,6 +5,7 @@ const docker = vi.hoisted(() => ({
   createVolume: vi.fn(),
   getContainerLogs: vi.fn(),
   killContainer: vi.fn(),
+  listContainersByFilter: vi.fn(),
   listVolumesByFilter: vi.fn(),
   removeContainer: vi.fn(),
   removeVolume: vi.fn(),
@@ -71,10 +72,13 @@ describe('BE9.2 staged-volume recovery authority', () => {
     docker.getContainerLogs.mockResolvedValue({ stdout: `BE9_STAGE_RECEIPT=${JSON.stringify(receipt())}\n`, stderr: '', truncated: false });
     docker.removeContainer.mockResolvedValue(undefined);
     docker.removeVolume.mockResolvedValue(undefined);
+    docker.listContainersByFilter.mockResolvedValue([]);
+    docker.listVolumesByFilter.mockResolvedValue([]);
   });
 
   const input = {
-    assessmentId: ASSESSMENT, projectId: 'project-a', expectedSourceRevision: REVISION,
+    assessmentId: ASSESSMENT, executionId: EXECUTION,
+    projectId: 'project-a', expectedSourceRevision: REVISION,
     stagerImageId: IMAGE, hostPath: '/trusted/project-a',
   };
 
@@ -127,6 +131,65 @@ describe('BE9.2 staged-volume recovery authority', () => {
       .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     expect(docker.createVolume).not.toHaveBeenCalled();
     expect(docker.createContainer).not.toHaveBeenCalled();
+  });
+
+  it('reconciles only exact assessment-owned crash resources and verifies absence', async () => {
+    const labels = { 'io.quarangate.managed': 'true', 'io.quarangate.resource': 'assessment-source',
+      'io.quarangate.assessment': ASSESSMENT, 'io.quarangate.job': EXECUTION };
+    docker.listVolumesByFilter.mockResolvedValueOnce([{ Name: VOLUME, Labels: labels }]).mockResolvedValueOnce([]);
+    await new AssessmentSourceStager().reconcileOrphan(ASSESSMENT, EXECUTION);
+    expect(docker.removeVolume).toHaveBeenCalledWith(VOLUME, true);
+    expect(docker.listVolumesByFilter).toHaveBeenCalledWith({ label: [
+      'io.quarangate.managed=true', 'io.quarangate.resource=assessment-source',
+      `io.quarangate.assessment=${ASSESSMENT}`,
+      `io.quarangate.job=${EXECUTION}`,
+    ] });
+  });
+
+  it('retains uncertainty and never deletes a false-label or ambiguously enumerated resource', async () => {
+    docker.listVolumesByFilter.mockResolvedValue([{ Name: VOLUME, Labels: {
+      'io.quarangate.managed': 'true', 'io.quarangate.resource': 'assessment-source',
+      'io.quarangate.assessment': ASSESSMENT, 'io.quarangate.job': 'foreign',
+    } }]);
+    await expect(new AssessmentSourceStager().reconcileOrphan(ASSESSMENT, EXECUTION)).rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    expect(docker.removeVolume).not.toHaveBeenCalled();
+    docker.listVolumesByFilter.mockRejectedValue(new Error('private Docker details'));
+    await expect(new AssessmentSourceStager().reconcileOrphan(ASSESSMENT, EXECUTION)).rejects.toMatchObject({
+      code: 'DOCKER_UNAVAILABLE', message: 'assessment source resource cleanup could not be proven',
+    });
+  });
+
+  it('removes an exact orphan stager before its source volume', async () => {
+    const labels = { 'io.quarangate.managed': 'true', 'io.quarangate.resource': 'assessment-stager',
+      'io.quarangate.assessment': ASSESSMENT, 'io.quarangate.job': EXECUTION };
+    const id = 'f'.repeat(64);
+    docker.listContainersByFilter.mockResolvedValueOnce([{ Id: id, Labels: labels }]).mockResolvedValueOnce([]);
+    await new AssessmentSourceStager().reconcileOrphan(ASSESSMENT, EXECUTION);
+    expect(docker.removeContainer).toHaveBeenCalledWith(id, true);
+    expect(docker.listContainersByFilter).toHaveBeenCalledWith({ label: [
+      'io.quarangate.managed=true', 'io.quarangate.resource=assessment-stager',
+      `io.quarangate.assessment=${ASSESSMENT}`,
+      `io.quarangate.job=${EXECUTION}`,
+    ] });
+  });
+
+  it('does not remove an orphan volume when container enumeration fails', async () => {
+    docker.listContainersByFilter.mockRejectedValue(new Error('private daemon detail'));
+    await expect(new AssessmentSourceStager().reconcileOrphan(ASSESSMENT, EXECUTION))
+      .rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    expect(docker.removeVolume).not.toHaveBeenCalled();
+  });
+
+  it('retains uncertainty after deletion failure or ambiguous post-delete enumeration', async () => {
+    const labels = { 'io.quarangate.managed': 'true', 'io.quarangate.resource': 'assessment-source',
+      'io.quarangate.assessment': ASSESSMENT, 'io.quarangate.job': EXECUTION };
+    docker.listVolumesByFilter.mockResolvedValue([{ Name: VOLUME, Labels: labels }]);
+    docker.removeVolume.mockRejectedValueOnce(new Error('private daemon detail'));
+    await expect(new AssessmentSourceStager().reconcileOrphan(ASSESSMENT, EXECUTION))
+      .rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    docker.removeVolume.mockResolvedValue(undefined);
+    await expect(new AssessmentSourceStager().reconcileOrphan(ASSESSMENT, EXECUTION))
+      .rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
   });
 
   it('fails closed when volume resolution is ambiguous', async () => {

@@ -13,6 +13,7 @@ import {
   createVolume,
   getContainerLogs,
   killContainer,
+  listContainersByFilter,
   listVolumesByFilter,
   removeContainer,
   removeVolume,
@@ -301,15 +302,61 @@ async function runStager(input: {
 }
 
 export class AssessmentSourceStager {
+  /** Reconcile an interrupted probe/prepare. No recovered bytes become a source. */
+  async reconcileOrphan(assessmentId: string, executionId: string): Promise<number> {
+    if (!SECURITY_ASSESSMENT_ID_PATTERN.test(assessmentId)
+      || !/^job_[0-9a-f]{32}$/.test(executionId)) {
+      throw new AssessmentSourceCleanupUncertainError();
+    }
+    const filter = (resource: string) => ({ label: [
+      'io.quarangate.managed=true',
+      `io.quarangate.resource=${resource}`,
+      `io.quarangate.assessment=${assessmentId}`,
+      `io.quarangate.job=${executionId}`,
+    ] });
+    const exact = (labels: Record<string, string> | null, resource: string): boolean =>
+      labels?.['io.quarangate.managed'] === 'true'
+      && labels['io.quarangate.resource'] === resource
+      && labels['io.quarangate.assessment'] === assessmentId
+      && labels['io.quarangate.job'] === executionId;
+    try {
+      const containers = await listContainersByFilter(filter('assessment-stager'));
+      const volumes = await listVolumesByFilter(filter('assessment-source'));
+      if (containers.length > 128 || volumes.length > 128
+        || containers.some((item) => !/^[0-9a-f]{64}$/.test(item.Id)
+          || !exact(item.Labels, 'assessment-stager'))
+        || volumes.some((item) => !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$/.test(item.Name)
+          || !exact(item.Labels, 'assessment-source'))
+        || new Set(containers.map((item) => item.Id)).size !== containers.length
+        || new Set(volumes.map((item) => item.Name)).size !== volumes.length) {
+        throw new AssessmentSourceCleanupUncertainError();
+      }
+      for (const item of containers) await removeContainer(item.Id, true);
+      for (const item of volumes) await removeVolume(item.Name, true);
+      const remainingContainers = await listContainersByFilter(filter('assessment-stager'));
+      const remainingVolumes = await listVolumesByFilter(filter('assessment-source'));
+      if (remainingContainers.length !== 0 || remainingVolumes.length !== 0) {
+        throw new AssessmentSourceCleanupUncertainError();
+      }
+      return containers.length + volumes.length;
+    } catch {
+      throw new AssessmentSourceCleanupUncertainError();
+    }
+  }
+
   async probe(input: {
     assessmentId: string;
+    executionId: string;
     projectId: string;
     expectedSourceRevision: string;
     stagerImageId: string;
     hostPath: string;
   }): Promise<AssessmentSourceStageReceipt> {
     assertStageInput(input);
-    const executionId = `job_${randomBytes(16).toString('hex')}`;
+    const executionId = input.executionId;
+    if (!/^job_[0-9a-f]{32}$/.test(executionId)) {
+      throw new BridgeError('INTERNAL', 'invalid assessment execution id', 500);
+    }
     const sourceVolume = `qg-be9-probe-${input.assessmentId.slice('assessment_'.length)}-${executionId.slice(-12)}`;
     try {
       await dockerCall(() => createVolume(
@@ -335,13 +382,17 @@ export class AssessmentSourceStager {
 
   async stage(input: {
     assessmentId: string;
+    executionId: string;
     projectId: string;
     expectedSourceRevision: string;
     stagerImageId: string;
     hostPath: string;
   }): Promise<StagedAssessmentSource> {
     assertStageInput(input);
-    const executionId = `job_${randomBytes(16).toString('hex')}`;
+    const executionId = input.executionId;
+    if (!/^job_[0-9a-f]{32}$/.test(executionId)) {
+      throw new BridgeError('INTERNAL', 'invalid assessment execution id', 500);
+    }
     const sourceVolume = `qg-be9-source-${input.assessmentId.slice('assessment_'.length)}-${executionId.slice(-12)}`;
     const labels = assessmentLabels('assessment-source', input.assessmentId, executionId);
     try { await dockerCall(() => createVolume(sourceVolume, labels)); }

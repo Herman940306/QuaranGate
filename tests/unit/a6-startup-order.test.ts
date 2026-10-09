@@ -109,6 +109,8 @@ vi.mock('../../src/executor/agents/jobStore.js', async (importOriginal) => {
       return { abortedNoMutation: [], uncertain: [] };
     }
     listSecurityAssessmentPrepared() { return []; }
+    listSecurityAssessmentPreparedIds(): string[] { return []; }
+    executionLeaseSummary(): [] { return []; }
     markExecutionLeasesUncertainForOwner(): void {}
     close(): void {}
   }
