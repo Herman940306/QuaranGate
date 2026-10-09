@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Readable } from 'node:stream';
 
 const { request, routes } = vi.hoisted(() => ({
   request: vi.fn(), routes: new Map<string, (req: unknown, res: unknown) => Promise<void>>(),
@@ -18,8 +19,13 @@ const labels = (resource: string) => ({
 });
 const exact = (resource: string) => ({ label: Object.entries(labels(resource)).map(([k, v]) => `${k}=${v}`) });
 const dockerReply = (statusCode: number, value: unknown) => ({
-  statusCode, headers: {}, body: { arrayBuffer: async () => Buffer.from(JSON.stringify(value)) },
+  statusCode, headers: {}, body: Object.assign(Readable.from([Buffer.from(JSON.stringify(value))]), {
+    arrayBuffer: async () => Buffer.from(JSON.stringify(value)),
+  }),
 });
+const exactFailure = { status: 502, body: {
+  error: 'DOCKER_UNAVAILABLE', message: 'assessment inventory could not be proven complete',
+} };
 
 async function operation(op: string, filters: unknown) {
   const handler = routes.get('/v1/operation')!;
@@ -75,4 +81,74 @@ describe('BE9 exact Docker inventory', () => {
     request.mockResolvedValueOnce(dockerReply(200, { Id: id, Name: '/foreign', Config: { Labels: {} } }));
     expect(await operation('container.listManaged', {})).toEqual({ status: 200, body: [] });
   });
+
+  it.each(['container.listManaged', 'volume.listManaged'])(
+    'rejects 129 exact %s rows before inspecting any container', async (op) => {
+      const rows = Array.from({ length: 129 }, (_, n) => op.startsWith('container')
+        ? { Id: n.toString(16).padStart(64, '0'), Labels: labels('assessment-stager') }
+        : { Name: `qg-be9-source-${n}`, Labels: labels('assessment-source') });
+      request.mockResolvedValueOnce(dockerReply(200, op.startsWith('container') ? rows : { Volumes: rows }));
+      expect(await operation(op, exact(op.startsWith('container') ? 'assessment-stager' : 'assessment-source'))).toEqual(exactFailure);
+      expect(request).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['container.listManaged', 'volume.listManaged'])(
+    'allows 128 exact %s rows with bounded replies', async (op) => {
+      const isContainer = op.startsWith('container');
+      const resource = isContainer ? 'assessment-stager' : 'assessment-source';
+      const rows = Array.from({ length: 128 }, (_, n) => isContainer
+        ? { Id: n.toString(16).padStart(64, '0'), Labels: labels(resource) }
+        : { Name: `qg-be9-source-${n}`, Labels: labels(resource) });
+      request.mockResolvedValueOnce(dockerReply(200, isContainer ? rows : { Volumes: rows }));
+      if (isContainer) for (const row of rows) request.mockResolvedValueOnce(dockerReply(200, {
+        Config: { Labels: row.Labels },
+      }));
+      expect(await operation(op, exact(resource))).toEqual({ status: 200,
+        body: isContainer ? rows : { Volumes: rows } });
+      expect(request).toHaveBeenCalledTimes(isContainer ? 129 : 1);
+    },
+  );
+
+  it('aborts exact inventory on an oversized streaming chunk without reading later chunks', async () => {
+    let chunksProduced = 0;
+    const stream = Readable.from((async function* () {
+      yield Buffer.alloc(2 * 1024 * 1024 + 1);
+      for (let n = 0; n < 100; n++) { chunksProduced++; yield Buffer.from('private'); }
+    })());
+    request.mockResolvedValueOnce({ statusCode: 200, headers: {}, body: stream });
+    expect(await operation('container.listManaged', exact('assessment-stager'))).toEqual(exactFailure);
+    expect(chunksProduced).toBeLessThan(100);
+    expect(stream.destroyed).toBe(true);
+  });
+
+  it('bounds exact container inspect and rejects duplicate identities', async () => {
+    request.mockResolvedValueOnce(dockerReply(200, [{ Id: id, Labels: labels('assessment-stager') }]));
+    const inspect = Readable.from([Buffer.alloc(2 * 1024 * 1024 + 1)]);
+    request.mockResolvedValueOnce({ statusCode: 200, headers: {}, body: inspect });
+    expect(await operation('container.listManaged', exact('assessment-stager'))).toEqual(exactFailure);
+    expect(inspect.destroyed).toBe(true);
+
+    request.mockClear();
+    request.mockResolvedValueOnce(dockerReply(200, Array.from({ length: 2 }, () => ({
+      Id: id, Labels: labels('assessment-stager'),
+    }))));
+    expect(await operation('container.listManaged', exact('assessment-stager'))).toEqual(exactFailure);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['content-length', 'malformed', 'status', 'stream error'])(
+    'sanitizes exact inventory %s failures', async (kind) => {
+      const secret = 'private Docker diagnostic';
+      const body = kind === 'stream error'
+        ? Readable.from((async function* () { throw new Error(secret); })())
+        : Readable.from([Buffer.from(kind === 'malformed' ? '{' : secret)]);
+      request.mockResolvedValueOnce({ statusCode: kind === 'status' ? 500 : 200,
+        headers: kind === 'content-length' ? { 'content-length': String(2 * 1024 * 1024 + 1) } : {}, body });
+      const result = await operation('container.listManaged', exact('assessment-stager'));
+      expect(result).toEqual(exactFailure);
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(body.destroyed).toBe(true);
+    },
+  );
 });

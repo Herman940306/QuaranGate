@@ -96,5 +96,6 @@ All entries are F1 candidates pending independent review. “Foundation” means
 | `src/lib/errors.ts` | Safe typed error copy; `errorCopy`, `ErrorCategory` | Shared errors; none | No API; later error normalization | Foundation |
 | `src/lib/motion.ts` | Central springs/reduced transition; `motionSpring`, `transitionFor` | Motion; none | Motion; no backend expectation | Foundation |
 | `tests/unit/foundation.test.tsx` | Pure contracts and safe-render assertions; no exports | Tests; isolated fixtures | Vitest/React rendering; extend with later behavior | Foundation |
+| `tests/unit/be9-admission-response-boundary.test.ts` | BE9 admission response stream limit and sanitized failure regressions; no exports | Security assessment admission; mock stream and fetch state only | Mock Fetch, server-only stub; retain against the operational Gateway bridge | Production-ready test for candidate behavior, pending independent review |
 | `tests/e2e/foundation.spec.ts` | Browser, axe, keyboard, appearance, responsive, forced-colors and 200% CSS layout-zoom evidence; no exports | Tests; isolated browser contexts | Loopback Next/axe; later authorized integration | Foundation |
 | `tests/production-smoke.mjs` | Production route/storage/header checks; no exports | Tests; bounded server/browser | Production Next; later deployment qualification | Foundation |

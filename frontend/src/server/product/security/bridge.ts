@@ -77,6 +77,41 @@ function validateReceipt(value: unknown): SecurityAssessmentAdmissionReceipt {
   return r as unknown as SecurityAssessmentAdmissionReceipt;
 }
 
+async function boundedResponseText(response: Response): Promise<string> {
+  const fail = (message: string) => new ProductDataError("PRODUCT_DATA_UNAVAILABLE", message);
+  const cancel = () => { if (response.body) void response.body.cancel().catch(() => {}); };
+  const length = response.headers.get("content-length");
+  if (length !== null && /^(0|[1-9][0-9]*)$/.test(length)
+    && BigInt(length) > BigInt(MAX_RESPONSE_BYTES)) {
+    cancel();
+    throw fail("security_assessment_bridge_response_oversized");
+  }
+  if (!response.body) return "";
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) {
+        void reader.cancel().catch(() => {});
+        throw fail("security_assessment_bridge_response_oversized");
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks, size).toString("utf8");
+  } catch (error) {
+    if (reader) void reader.cancel().catch(() => {});
+    if (error instanceof ProductDataError) throw error;
+    throw fail("security_assessment_bridge_unavailable");
+  } finally {
+    reader?.releaseLock();
+  }
+}
+
 export class HttpSecurityAssessmentAdmissionAdapter implements SecurityAssessmentAdmissionAdapter {
   async admit(request: ProductAssessmentAdmissionRequest): Promise<SecurityAssessmentAdmissionReceipt> {
     let response: Response;
@@ -94,13 +129,11 @@ export class HttpSecurityAssessmentAdmissionAdapter implements SecurityAssessmen
     } catch {
       throw new ProductDataError("PRODUCT_DATA_UNAVAILABLE", "security_assessment_bridge_unavailable");
     }
-    const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
-      throw new ProductDataError("PRODUCT_DATA_UNAVAILABLE", "security_assessment_bridge_response_oversized");
-    }
     if (!response.ok) {
+      if (response.body) void response.body.cancel().catch(() => {});
       throw new ProductDataError("PRODUCT_DATA_UNAVAILABLE", "security_assessment_bridge_unavailable");
     }
+    const text = await boundedResponseText(response);
     try {
       return validateReceipt(JSON.parse(text));
     } catch (error) {

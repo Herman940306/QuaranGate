@@ -10,9 +10,24 @@ const SOCK = process.env.DOCKER_SOCK ?? '/var/run/docker.sock';
 const PORT = Number(process.env.DOCKER_AUTHORITY_PORT ?? 8991);
 const docker = new Pool('http://localhost', { socketPath: SOCK, connections: 16 });
 const API='/v1.44';
+// 128 BE9 resources at up to 16 KiB of Docker list/inspect metadata each.
+const BE9_INVENTORY_MAX_BYTES=2*1024*1024;
+const BE9_INVENTORY_MAX_ROWS=128;
 function enc(v:unknown){return encodeURIComponent(String(v));}
 function rec(v:unknown):Record<string,any>{if(!v||typeof v!=='object'||Array.isArray(v)) throw new BridgeError('FORBIDDEN_POLICY','invalid authority payload',403);return v as Record<string,any>}
 async function req(method:string,path:string,body?:unknown){const r=await docker.request({method:method as any,path,headers:body===undefined?undefined:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const b=Buffer.from(await r.body.arrayBuffer());if(r.statusCode>=400&&r.statusCode!==404)throw new BridgeError('DOCKER_UNAVAILABLE',`docker operation failed: ${r.statusCode} ${b.toString('utf8').slice(0,160)}`,502);return {status:r.statusCode,body:b,headers:r.headers}}
+async function boundedInventoryJson(path:string):Promise<any>{
+  const r=await docker.request({method:'GET',path});
+  const body=r.body;
+  const fail=()=>new BridgeError('DOCKER_UNAVAILABLE','assessment inventory could not be proven complete',502);
+  try {
+    const length=r.headers['content-length'];
+    if(r.statusCode>=400 || (length!==undefined && (typeof length!=='string' || !/^(0|[1-9][0-9]*)$/.test(length) || BigInt(length)>BigInt(BE9_INVENTORY_MAX_BYTES)))) throw fail();
+    const chunks:Buffer[]=[];let size=0;
+    for await(const chunk of body){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>BE9_INVENTORY_MAX_BYTES)throw fail();chunks.push(bytes);}
+    return JSON.parse(Buffer.concat(chunks,size).toString('utf8'));
+  }catch{body.destroy();throw fail();}
+}
 function filters(v:unknown){const r=rec(v??{});for(const [k,a] of Object.entries(r))if(!Array.isArray(a)||!(a as unknown[]).every(x=>typeof x==='string')||!['label','name'].includes(k))throw new BridgeError('FORBIDDEN_POLICY','unsupported Docker filter',403);return encodeURIComponent(JSON.stringify(r));}
 function exactInventoryLabels(labels:unknown, wanted:Record<string,string>,resource:string){
   const identity=managedIdentity(labels);
@@ -27,7 +42,10 @@ function inventoryFailure(error:unknown):BridgeError{
     : new BridgeError('DOCKER_UNAVAILABLE','assessment inventory could not be proven complete',502);
 }
 function trustedTarget(info:any):boolean{const l=info?.Config?.Labels??{};if(l['io.quarangate.managed']==='true'||l['io.mcp-ide-bridge.managed']==='true'||l['io.mcp-bridge.managed']==='true'){managedIdentity(l);return true;}if(l['mcp.bridge.enabled']==='true'&&typeof l['mcp.bridge.workspace']==='string'&&l['mcp.bridge.workspace'].startsWith('/'))return true;let cfg:any={};try{cfg=YAML.parse(fs.readFileSync(process.env.BRIDGE_CONFIG??'/config/bridge.yaml','utf8'))??{}}catch{};const names=(info?.Name?[info.Name]:info?.Names??[]).map((x:string)=>x.replace(/^\//,''));return (cfg.targets??[]).some((t:any)=>t.containerName?names.includes(t.containerName):(l['com.docker.compose.project']===t.composeProject&&l['com.docker.compose.service']===t.composeService));}
-async function assertContainer(id:string){const r=await req('GET',`${API}/containers/${enc(id)}/json`);if(r.status===404)throw new BridgeError('UNKNOWN_TARGET','container is not available',404);const j=JSON.parse(r.body.toString());if(!trustedTarget(j))throw new BridgeError('FORBIDDEN_POLICY','container is outside QuaranGate authority',403);return j;}
+async function assertContainer(id:string, exactInventory=false){let j:any;
+  if(exactInventory)j=await boundedInventoryJson(`${API}/containers/${enc(id)}/json`);
+  else{const r=await req('GET',`${API}/containers/${enc(id)}/json`);if(r.status===404)throw new BridgeError('UNKNOWN_TARGET','container is not available',404);j=JSON.parse(r.body.toString());}
+  if(!trustedTarget(j))throw new BridgeError('FORBIDDEN_POLICY','container is outside QuaranGate authority',403);return j;}
 async function assertManagedContainer(id:string){const j=await assertContainer(id);const identity=managedIdentity(j.Config?.Labels);return { info:j, identity };}
 function managedIdentityFromTrustedContainer(info:any){const l=info?.Config?.Labels??{};const marked=l['io.quarangate.managed']!==undefined||l['io.mcp-ide-bridge.managed']!==undefined||l['io.mcp-bridge.managed']!==undefined||l['io.quarangate.github.managed']!==undefined;return marked?managedIdentity(l):null;}
 async function managedVolume(name:string){const r=await req('GET',`${API}/volumes/${enc(name)}`);if(r.status===404)throw new BridgeError('FORBIDDEN_POLICY','managed volume is not available',403);const info=JSON.parse(r.body.toString());return {info,identity:managedIdentity(info.Labels)};}
@@ -45,11 +63,12 @@ case 'ping': out={ok:(await req('GET','/_ping')).status===200};break;
 case 'image.inspect': out=await json('GET',`${API}/images/${enc(p.ref)}/json`);break;
 case 'container.listManaged': {const all=p.all?1:0;const resource=exactAssessmentInventoryResource(p.filters);if(resource){
   const wanted=Object.fromEntries((p.filters.label as string[]).map((label:string)=>{const at=label.indexOf('=');return [label.slice(0,at),label.slice(at+1)];}));
-  try {const rows=await json('GET',`${API}/containers/json?all=${all}&filters=${filters(p.filters)}`);
+  try {const rows=await boundedInventoryJson(`${API}/containers/json?all=${all}&filters=${filters(p.filters)}`);
     if(!Array.isArray(rows))throw new BridgeError('DOCKER_UNAVAILABLE','assessment inventory is malformed',502);
+    if(rows.length>BE9_INVENTORY_MAX_ROWS || new Set(rows.map(c=>c?.Id)).size!==rows.length)throw new BridgeError('DOCKER_UNAVAILABLE','assessment inventory exceeds resource limit',502);
     out=[];for(const c of rows){if(typeof c?.Id!=='string'||!/^[0-9a-f]{64}$/.test(c.Id))throw new BridgeError('FORBIDDEN_POLICY','assessment inventory identity is malformed',403);
       exactInventoryLabels(c.Labels,wanted,resource);
-      const inspected=await assertContainer(c.Id);exactInventoryLabels(inspected.Config?.Labels,wanted,resource);out.push(c);}
+      const inspected=await assertContainer(c.Id,true);exactInventoryLabels(inspected.Config?.Labels,wanted,resource);out.push(c);}
   }catch(error){throw inventoryFailure(error)}
 }else{const rows=await json('GET',`${API}/containers/json?all=${all}&filters=${filters(p.filters??{})}`);out=[];for(const c of rows){try{await assertContainer(c.Id);out.push(c)}catch{}}}break;}
 case 'container.inspectManaged': out=await assertContainer(String(p.id));break;
@@ -66,8 +85,9 @@ case 'container.removeManaged': await assertManagedContainer(String(p.id));await
 case 'volume.createManaged': managedIdentity(p.labels);out=await json('POST',`${API}/volumes/create`,{Name:p.name,Driver:'local',Labels:p.labels});break;
 case 'volume.listManaged': {const resource=exactAssessmentInventoryResource(p.filters);if(resource==='assessment-source'){
   const wanted=Object.fromEntries((p.filters.label as string[]).map((label:string)=>{const at=label.indexOf('=');return [label.slice(0,at),label.slice(at+1)];}));
-  try{const r=await json('GET',`${API}/volumes?filters=${filters(p.filters)}`);
+  try{const r=await boundedInventoryJson(`${API}/volumes?filters=${filters(p.filters)}`);
     if(r?.Volumes!==null&&!Array.isArray(r?.Volumes))throw new BridgeError('DOCKER_UNAVAILABLE','assessment inventory is malformed',502);
+    if((r.Volumes??[]).length>BE9_INVENTORY_MAX_ROWS || new Set((r.Volumes??[]).map((v:any)=>v?.Name)).size!==(r.Volumes??[]).length)throw new BridgeError('DOCKER_UNAVAILABLE','assessment inventory exceeds resource limit',502);
     out={Volumes:[]};for(const v of r.Volumes??[]){if(typeof v?.Name!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$/.test(v.Name))throw new BridgeError('FORBIDDEN_POLICY','assessment inventory identity is malformed',403);
       exactInventoryLabels(v.Labels,wanted,resource);out.Volumes.push(v);}
   }catch(error){throw inventoryFailure(error)}
