@@ -604,6 +604,111 @@ describe('BE9.2 Executor operational assessment service', () => {
       .toEqual(expect.arrayContaining([expect.objectContaining({ state: 'UNCERTAIN' })]));
   });
 
+  it('does not quarantine a newer allocation after an older awaited recovery fails', async () => {
+    const db = store();
+    await service(db).prepare(request());
+    let enter!: () => void;
+    let resume!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    const restarting = service(db, fakeStager({
+      recover: async () => { enter(); await gate; throw new BridgeError('PRECONDITION_FAILED', 'old staging source lost', 412); },
+    }));
+    const pending = restarting.recoverPrepared();
+    await entered;
+    const original = db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT);
+    db.releaseExecutionLeasesForOwner('security-assessment', ASSESSMENT, 'simulated old allocation settlement');
+    db.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment', ownerId: ASSESSMENT, projectId: 'project-a',
+      resourceKeys: original.map((row) => row.resourceKey),
+    });
+    const replacementId = db.assessmentAllocationExecutionId(ASSESSMENT);
+    resume();
+    await expect(pending).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT))
+      .toEqual(original.map((row) => expect.objectContaining({ resourceKey: row.resourceKey, state: 'ACTIVE' })));
+    expect(db.assessmentAllocationExecutionId(ASSESSMENT)).toBe(replacementId);
+  });
+
+  it('does not release a newer same-owner allocation when an earlier stage fails', async () => {
+    const db = store();
+    let enter!: () => void;
+    let resume!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    const stager = fakeStager({
+      stage: async () => { enter(); await gate; throw new BridgeError('DOCKER_UNAVAILABLE', 'synthetic stage failure', 503); },
+    });
+    const pending = service(db, stager).prepare(request());
+    await entered;
+    const original = db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT);
+    expect(original).toHaveLength(2);
+    db.releaseExecutionLeasesForOwner('security-assessment', ASSESSMENT, 'simulate old allocation settlement');
+    db.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment', ownerId: ASSESSMENT, projectId: 'project-a',
+      resourceKeys: original.map((row) => row.resourceKey),
+    });
+    const replacementId = db.assessmentAllocationExecutionId(ASSESSMENT);
+    resume();
+    await expect(pending).rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
+    expect(db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT))
+      .toEqual(original.map((row) => expect.objectContaining({
+        resourceKey: row.resourceKey, state: 'ACTIVE',
+      })));
+    expect(db.assessmentAllocationExecutionId(ASSESSMENT)).toBe(replacementId);
+  });
+
+  it('does not quarantine newer same-owner allocation when old stage returns after replacement', async () => {
+    const db = store();
+    let enter!: () => void;
+    let resume!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    const underlying = fakeStager();
+    const pending = service(db, fakeStager({
+      stage: async (input) => { enter(); await gate; return underlying.stage(input); },
+    })).prepare(request());
+    await entered;
+    const original = db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT);
+    db.releaseExecutionLeasesForOwner('security-assessment', ASSESSMENT, 'simulate previous lease ended');
+    db.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment', ownerId: ASSESSMENT, projectId: 'project-a',
+      resourceKeys: original.map((row) => row.resourceKey),
+    });
+    const replacementId = db.assessmentAllocationExecutionId(ASSESSMENT);
+    resume();
+    await expect(pending).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT))
+      .toEqual(original.map((row) => expect.objectContaining({ resourceKey: row.resourceKey, state: 'ACTIVE' })));
+    expect(db.assessmentAllocationExecutionId(ASSESSMENT)).toBe(replacementId);
+  });
+
+  it('does not release newer same-owner allocation after awaited old prepared cleanup', async () => {
+    const db = store();
+    let enter!: () => void;
+    let resume!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    const operational = service(db, fakeStager({
+      remove: async () => { enter(); await gate; },
+    }));
+    await operational.prepare(request());
+    const pending = operational.cleanup(ASSESSMENT);
+    await entered;
+    const original = db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT);
+    db.releaseExecutionLeasesForOwner('security-assessment', ASSESSMENT, 'simulate prior settlement');
+    db.acquireExecutionLeasesForOwner({
+      ownerKind: 'security-assessment', ownerId: ASSESSMENT, projectId: 'project-a',
+      resourceKeys: original.map((row) => row.resourceKey),
+    });
+    const replacementId = db.assessmentAllocationExecutionId(ASSESSMENT);
+    resume();
+    await expect(pending).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT))
+      .toEqual(original.map((row) => expect.objectContaining({ resourceKey: row.resourceKey, state: 'ACTIVE' })));
+    expect(db.assessmentAllocationExecutionId(ASSESSMENT)).toBe(replacementId);
+  });
+
   it('marks the shared resource lease uncertain when source cleanup cannot be proven', async () => {
     const db = store();
     const stager = fakeStager({

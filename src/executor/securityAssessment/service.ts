@@ -122,6 +122,17 @@ export class SecurityAssessmentOperationalService {
     return !held.some((lease) => wanted.has(lease.resourceKey));
   }
 
+  /** Settlement cannot act on a newer allocation that reused the same owner ID. */
+  private transitionAllocation(
+    assessmentId: string, projectId: string, executionId: string,
+    resourceKeys: readonly string[], transition: 'RELEASED' | 'UNCERTAIN',
+    reason: string,
+  ): boolean {
+    return this.store.transitionSecurityAssessmentAllocation({
+      assessmentId, projectId, executionId, resourceKeys, transition, reason,
+    });
+  }
+
   claimReplay(input: {
     bridgeRequestId: string;
     nonce: string;
@@ -161,6 +172,7 @@ export class SecurityAssessmentOperationalService {
       globalExclusive: project.globalExclusive ?? false,
     });
     const executionId = this.store.assessmentAllocationExecutionId(request.assessmentId);
+    const heldKeys = [...resources, ...(project.globalExclusive ? ['machine:global-exclusive'] : [])].sort();
     let source: AssessmentSourceStageReceipt;
     try {
       source = await this.sourceStager.probe({
@@ -173,21 +185,25 @@ export class SecurityAssessmentOperationalService {
       });
     } catch (error) {
       if (error instanceof AssessmentSourceCleanupUncertainError) {
-        this.store.markExecutionLeasesUncertainForOwner(
-          'security-assessment', request.assessmentId,
+        this.transitionAllocation(
+          request.assessmentId, project.id, executionId, heldKeys, 'UNCERTAIN',
           'assessment preflight allocated resource cleanup could not be proven',
         );
       } else {
-        this.store.releaseExecutionLeasesForOwner(
-          'security-assessment', request.assessmentId, 'assessment preflight cleanup proven',
+        this.transitionAllocation(
+          request.assessmentId, project.id, executionId, heldKeys, 'RELEASED',
+          'assessment preflight cleanup proven',
         );
       }
       throw error instanceof BridgeError ? error
         : new BridgeError('DOCKER_UNAVAILABLE', 'assessment source preflight failed', 503);
     }
-    this.store.releaseExecutionLeasesForOwner(
-      'security-assessment', request.assessmentId, 'assessment preflight cleanup proven',
-    );
+    if (!this.transitionAllocation(
+      request.assessmentId, project.id, executionId, heldKeys, 'RELEASED',
+      'assessment preflight cleanup proven',
+    )) {
+      throw new BridgeError('PRECONDITION_FAILED', 'assessment preflight allocation changed', 412);
+    }
     if (source.sourceRevision !== request.expectedSourceRevision) {
       throw new BridgeError('PRECONDITION_FAILED', 'security assessment source revision drifted', 412);
     }
@@ -276,11 +292,10 @@ export class SecurityAssessmentOperationalService {
       if (staged) {
         try {
           await this.sourceStager.remove(staged);
-          this.store.deleteSecurityAssessmentPrepared(request.assessmentId);
+          this.store.deleteSecurityAssessmentPreparedForAllocation(request.assessmentId, executionId);
         } catch {
-          this.store.markExecutionLeasesUncertainForOwner(
-            'security-assessment',
-            request.assessmentId,
+          this.transitionAllocation(
+            request.assessmentId, project.id, executionId, heldKeys, 'UNCERTAIN',
             'assessment preparation failed after source creation and cleanup could not be proven',
           );
           throw new AssessmentSourceCleanupUncertainError(
@@ -289,15 +304,14 @@ export class SecurityAssessmentOperationalService {
         }
       }
       if (error instanceof AssessmentSourceCleanupUncertainError) {
-        this.store.markExecutionLeasesUncertainForOwner(
-          'security-assessment', request.assessmentId,
+        this.transitionAllocation(
+          request.assessmentId, project.id, executionId, heldKeys, 'UNCERTAIN',
           'assessment staging allocated resource cleanup could not be proven',
         );
         throw error;
       }
-      this.store.releaseExecutionLeasesForOwner(
-        'security-assessment',
-        request.assessmentId,
+      this.transitionAllocation(
+        request.assessmentId, project.id, executionId, heldKeys, 'RELEASED',
         'assessment staging failed before execution',
       );
       throw error instanceof BridgeError ? error
@@ -312,9 +326,9 @@ export class SecurityAssessmentOperationalService {
     try {
       this.store.assertSecurityAssessmentPreparedLeaseBinding(input);
     } catch {
-      this.store.markExecutionLeasesUncertainForOwner(
-        'security-assessment', input.assessmentId,
-        'assessment prepared lease binding changed during source verification',
+      this.transitionAllocation(
+        input.assessmentId, input.projectId, input.executionId, input.resourceKeys,
+        'UNCERTAIN', 'assessment prepared lease binding changed during source verification',
       );
       throw new BridgeError('PRECONDITION_FAILED', 'assessment prepared lease binding is invalid', 412);
     }
@@ -379,6 +393,8 @@ export class SecurityAssessmentOperationalService {
           resourceKeys: expectedKeys,
         });
       } catch {
+        // Identity itself is invalid here, so no exact generation can be trusted.
+        // Quarantine the owner's held resources rather than assuming absence.
         this.store.markExecutionLeasesUncertainForOwner(
           'security-assessment', item.assessmentId, 'assessment prepared lease binding is invalid',
         );
@@ -426,10 +442,10 @@ export class SecurityAssessmentOperationalService {
           hostPath: project.hostPath,
         });
       } catch (error) {
-        this.store.markExecutionLeasesUncertainForOwner(
-          'security-assessment',
-          item.assessmentId,
-          'assessment recovery could not prove exact staged source ownership',
+        // An older awaited recovery cannot quarantine a replacement generation.
+        this.transitionAllocation(
+          item.assessmentId, item.projectId, item.executionId, expectedKeys,
+          'UNCERTAIN', 'assessment recovery could not prove exact staged source ownership',
         );
         throw error;
       }
@@ -504,9 +520,9 @@ export class SecurityAssessmentOperationalService {
       try {
         await this.sourceStager.remove(prepared.staged);
       } catch (error) {
-        this.store.markExecutionLeasesUncertainForOwner(
-          'security-assessment',
-          assessmentId,
+        this.transitionAllocation(
+          assessmentId, prepared.projectId, prepared.staged.executionId,
+          prepared.resourceKeys, 'UNCERTAIN',
           'assessment source cleanup could not be proven',
         );
         throw error;
@@ -516,21 +532,16 @@ export class SecurityAssessmentOperationalService {
     }
 
     if (prepared) {
-      this.store.deleteSecurityAssessmentPrepared(assessmentId);
+      this.store.deleteSecurityAssessmentPreparedForAllocation(assessmentId, prepared.staged.executionId);
     }
 
-    if (uncertain) {
-      this.store.markExecutionLeasesUncertainForOwner(
-        'security-assessment',
-        assessmentId,
-        'assessment cleanup was reported uncertain',
-      );
-    } else {
-      this.store.releaseExecutionLeasesForOwner(
-        'security-assessment',
-        assessmentId,
-        'assessment cleanup proven',
-      );
+    const transitioned = this.transitionAllocation(
+      assessmentId, prepared.projectId, prepared.staged.executionId,
+      prepared.resourceKeys, uncertain ? 'UNCERTAIN' : 'RELEASED',
+      uncertain ? 'assessment cleanup was reported uncertain' : 'assessment cleanup proven',
+    );
+    if (!transitioned) {
+      throw new BridgeError('PRECONDITION_FAILED', 'assessment cleanup allocation changed', 412);
     }
   }
 }

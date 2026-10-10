@@ -1928,6 +1928,77 @@ export class AgentJobStore {
     }
   }
 
+  /**
+   * Settle only the BE9 allocation that actually created these resources.
+   * The owner ID alone is not an allocation identity: released history permits
+   * that owner to acquire a later generation while an earlier operation awaits.
+   * False means the expected generation is no longer current; no lease changed.
+   */
+  transitionSecurityAssessmentAllocation(input: {
+    assessmentId: string;
+    projectId: string;
+    executionId: string;
+    resourceKeys: readonly string[];
+    transition: 'RELEASED' | 'UNCERTAIN';
+    reason: string;
+  }): boolean {
+    assertExecutionResourceOwner({
+      ownerKind: 'security-assessment',
+      ownerId: input.assessmentId,
+      projectId: input.projectId,
+    });
+    const expected = [...input.resourceKeys].sort();
+    if (!/^job_[0-9a-f]{32}$/.test(input.executionId)
+      || expected.length === 0 || expected.length > 129
+      || new Set(expected).size !== expected.length) {
+      throw new BridgeError('MALFORMED_REQUEST', 'invalid assessment allocation transition identity', 400);
+    }
+    for (const key of expected) {
+      try { parseExecutionResourceKey(key); }
+      catch { throw new BridgeError('MALFORMED_REQUEST', 'invalid assessment allocation resource key', 400); }
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db.prepare(`SELECT lease_id, resource_key, owner_kind, owner_id,
+          project_id, state, acquired_at
+        FROM execution_resource_leases
+        WHERE owner_kind='security-assessment' AND owner_id=?
+          AND state IN ('ACTIVE','UNCERTAIN')
+        ORDER BY resource_key`).all(input.assessmentId) as Array<{
+          lease_id: string; resource_key: string; owner_kind: string;
+          owner_id: string; project_id: string; state: string; acquired_at: string;
+        }>;
+      const first = rows[0];
+      const matched = first !== undefined && rows.length === expected.length
+        && /^erl_be9_[0-9a-f]{32}$/.test(first.lease_id)
+        && input.executionId === `job_${first.lease_id.slice(8)}`
+        && rows.every((row, i) => row.resource_key === expected[i]
+          && row.owner_kind === 'security-assessment' && row.owner_id === input.assessmentId
+          && row.project_id === input.projectId
+          && row.acquired_at === first.acquired_at
+          && /^erl_be9_[0-9a-f]{32}$/.test(row.lease_id)
+          && (input.transition === 'UNCERTAIN' || row.state === 'ACTIVE'));
+      if (!matched) {
+        this.db.exec('COMMIT');
+        return false;
+      }
+      const at = nowIso();
+      const update = this.db.prepare(`UPDATE execution_resource_leases
+        SET state=?, finished_at=?, reason=?
+        WHERE lease_id=? AND state='ACTIVE'`);
+      for (const row of rows) {
+        if (row.state === 'ACTIVE') update.run(
+          input.transition, at, input.reason.slice(0, 500), row.lease_id,
+        );
+      }
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
   releaseExecutionLeasesForOwner(
     ownerKind: ExecutionResourceOwnerKind,
     ownerId: string,
@@ -3107,6 +3178,16 @@ export class AgentJobStore {
   getSecurityAssessmentPrepared(assessmentId: string): ReturnType<AgentJobStore['listSecurityAssessmentPrepared']>[number] | undefined {
     // Keep the existing strict parser as the single source of durable row validation.
     return this.listSecurityAssessmentPrepared(assessmentId)[0];
+  }
+
+  /** Never delete another generation's prepared row on stale cleanup. */
+  deleteSecurityAssessmentPreparedForAllocation(assessmentId: string, executionId: string): void {
+    if (!/^assessment_[0-9a-f]{24}$/.test(assessmentId)
+      || !/^job_[0-9a-f]{32}$/.test(executionId)) {
+      throw new BridgeError('MALFORMED_REQUEST', 'invalid prepared cleanup identity', 400);
+    }
+    this.db.prepare('DELETE FROM security_assessment_prepared WHERE assessment_id=? AND execution_id=?')
+      .run(assessmentId, executionId);
   }
 
   deleteSecurityAssessmentPrepared(assessmentId: string): void {
