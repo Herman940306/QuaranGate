@@ -317,6 +317,56 @@ describe('BE9.2 Executor operational assessment service', () => {
       && row.state === 'ACTIVE')).toHaveLength(2);
   });
 
+  it('refuses prepared adoption if the durable BE1A lease changes during asynchronous recovery', async () => {
+    const db = store();
+    await service(db).prepare(request());
+    let recovered = 0;
+    const restarted = service(db, fakeStager({
+      recover: async () => {
+        recovered++;
+        await Promise.resolve();
+        db.markExecutionLeasesUncertainForOwner(
+          'security-assessment', ASSESSMENT, 'simulated concurrent lease uncertainty',
+        );
+        return receipt('verify');
+      },
+    }));
+    await expect(restarted.recoverPrepared()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(recovered).toBe(1);
+    await expect(restarted.revalidateBeforeRun(ASSESSMENT))
+      .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+  });
+
+  it('refuses execution revalidation if its lease was already released before source inspection', async () => {
+    const db = store();
+    const stager = fakeStager({ revalidateBeforeRun: async () => {
+      throw new Error('must not inspect source with a released lease');
+    } });
+    const operational = service(db, stager);
+    await operational.prepare(request());
+    db.releaseExecutionLeasesForOwner('security-assessment', ASSESSMENT);
+    await expect(operational.revalidateBeforeRun(ASSESSMENT))
+      .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+  });
+
+  it('refuses execution receipt if the lease becomes uncertain during asynchronous revalidation', async () => {
+    const db = store();
+    let checked = 0;
+    const stager = fakeStager({ revalidateBeforeRun: async () => {
+      checked++;
+      await Promise.resolve();
+      db.markExecutionLeasesUncertainForOwner(
+        'security-assessment', ASSESSMENT, 'simulated concurrent lease uncertainty',
+      );
+      return receipt('verify');
+    } });
+    const operational = service(db, stager);
+    await operational.prepare(request());
+    await expect(operational.revalidateBeforeRun(ASSESSMENT))
+      .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(checked).toBe(1);
+  });
+
   it.each([
     ['missing', "DELETE FROM execution_resource_leases WHERE owner_kind='security-assessment'"],
     ['released', "UPDATE execution_resource_leases SET state='RELEASED' WHERE owner_kind='security-assessment'"],

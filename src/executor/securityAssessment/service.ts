@@ -296,6 +296,21 @@ export class SecurityAssessmentOperationalService {
     }
   }
 
+  /** The BE1A lease must remain exact and ACTIVE across awaited source verification. */
+  private assertPreparedLeaseFresh(input: {
+    assessmentId: string; projectId: string; executionId: string; resourceKeys: readonly string[];
+  }): void {
+    try {
+      this.store.assertSecurityAssessmentPreparedLeaseBinding(input);
+    } catch {
+      this.store.markExecutionLeasesUncertainForOwner(
+        'security-assessment', input.assessmentId,
+        'assessment prepared lease binding changed during source verification',
+      );
+      throw new BridgeError('PRECONDITION_FAILED', 'assessment prepared lease binding is invalid', 412);
+    }
+  }
+
   async recoverPrepared(): Promise<void> {
     const preparedIds = new Set(this.store.listSecurityAssessmentPreparedIds());
     const orphans = new Set(this.store.executionLeaseSummary()
@@ -409,6 +424,12 @@ export class SecurityAssessmentOperationalService {
         );
         throw error;
       }
+      this.assertPreparedLeaseFresh({
+        assessmentId: item.assessmentId,
+        projectId: item.projectId,
+        executionId: item.executionId,
+        resourceKeys: expectedKeys,
+      });
       this.prepared.set(item.assessmentId, {
         assessmentId: item.assessmentId,
         projectId: item.projectId,
@@ -429,12 +450,28 @@ export class SecurityAssessmentOperationalService {
       );
     }
     const project = this.project(prepared.projectId);
-    return this.sourceStager.revalidateBeforeRun({
+    const expectedKeys = [...projectResourceKeys(project),
+      ...(project.globalExclusive ? ['machine:global-exclusive'] : [])].sort();
+    if (prepared.resourceKeys.length !== expectedKeys.length
+      || prepared.resourceKeys.some((key, index) => key !== expectedKeys[index])) {
+      this.store.markExecutionLeasesUncertainForOwner(
+        'security-assessment', assessmentId, 'assessment prepared resource identity drifted',
+      );
+      throw new BridgeError('PRECONDITION_FAILED', 'assessment prepared resource identity drifted', 412);
+    }
+    const binding = {
+      assessmentId, projectId: prepared.projectId,
+      executionId: prepared.staged.executionId, resourceKeys: expectedKeys,
+    };
+    this.assertPreparedLeaseFresh(binding);
+    const result = await this.sourceStager.revalidateBeforeRun({
       ...prepared.staged,
       expectedSourceRevision: prepared.expectedSourceRevision,
       stagerImageId: this.stagerImageId,
       hostPath: project.hostPath,
     });
+    this.assertPreparedLeaseFresh(binding);
+    return result;
   }
 
   async cleanup(assessmentId: string, uncertain = false): Promise<void> {
