@@ -135,8 +135,14 @@ export async function createVolume(name: string, labels: Record<string, string>)
   await authorityCall('volume.createManaged', { name, labels });
 }
 
-export async function removeVolume(name: string, force = true): Promise<void> {
-  void force; await authorityCall('volume.removeManaged', { name });
+export async function removeVolume(
+  name: string, force = true,
+  expectedAssessmentSourceOwner?: { assessmentId: string; executionId: string },
+): Promise<void> {
+  void force;
+  await authorityCall('volume.removeManaged', {
+    name, ...(expectedAssessmentSourceOwner ? { expectedAssessmentSourceOwner } : {}),
+  });
 }
 
 export async function listVolumesByFilter(filters: Record<string, string[]>): Promise<VolumeSummary[]> {

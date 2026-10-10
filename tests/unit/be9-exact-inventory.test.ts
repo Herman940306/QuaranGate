@@ -122,6 +122,108 @@ describe('BE9 exact Docker inventory', () => {
     expect(stream.destroyed).toBe(true);
   });
 
+  it('aborts oversized assessment-source volume inventory on the strict recovery selector', async () => {
+    let laterChunks = 0;
+    const stream = Readable.from((async function* () {
+      yield Buffer.alloc(2 * 1024 * 1024 + 1);
+      for (let n = 0; n < 30; n++) {
+        laterChunks++;
+        yield Buffer.from('untrusted Docker content');
+      }
+    })());
+    request.mockResolvedValueOnce({ statusCode: 200, headers: {}, body: stream });
+    const result = await operation('volume.listManaged', exact('assessment-source'));
+    expect(result).toEqual(exactFailure);
+    expect(laterChunks).toBeLessThan(30);
+    expect(stream.destroyed).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes same-name creation against a pending checked assessment deletion', async () => {
+    const volumeName = 'qg-be9-source-owned';
+    const ownerB = {
+      ...labels('assessment-source'),
+      'io.quarangate.job': `job_${'e'.repeat(32)}`,
+      'io.quarangate.assessment': `assessment_${'f'.repeat(24)}`,
+    };
+    const methods: string[] = [];
+    let releaseGet!: (reply: unknown) => void;
+    let observedGet!: () => void;
+    const enteredGet = new Promise<void>((resolve) => { observedGet = resolve; });
+    const heldGet = new Promise<unknown>((resolve) => { releaseGet = resolve; });
+    request.mockImplementation((options: { method: string; path: string }) => {
+      methods.push(options.method);
+      if (options.method === 'GET') { observedGet(); return heldGet; }
+      if (options.method === 'DELETE') return dockerReply(204, {});
+      if (options.method === 'POST') return dockerReply(201, { Name: volumeName, Labels: ownerB });
+      throw new Error('unexpected Docker operation');
+    });
+    const handler = routes.get('/v1/operation')!;
+    const invoke = async (op: string, payload: unknown) => {
+      let status = 200;
+      await handler({ body: { op, payload } }, {
+        status(value: number) { status = value; return this; },
+        json(_value: unknown) { return this; },
+      });
+      return status;
+    };
+    const deleting = invoke('volume.removeManaged', {
+      name: volumeName, expectedAssessmentSourceOwner: {
+        assessmentId: assessment, executionId: job,
+      },
+    });
+    await enteredGet;
+    const creatingB = invoke('volume.createManaged', { name: volumeName, labels: ownerB });
+    await Promise.resolve();
+    // Broker-controlled B creation must not overtake A's inspected deletion.
+    expect(methods).toEqual(['GET']);
+    releaseGet(dockerReply(200, { Name: volumeName, Labels: labels('assessment-source') }));
+    expect(await deleting).toBe(200);
+    expect(await creatingB).toBe(200);
+    expect(methods).toEqual(['GET', 'DELETE', 'POST']);
+  });
+
+  it('never issues a name-only DELETE when volume inspection proves absence', async () => {
+    request.mockResolvedValueOnce(dockerReply(404, { message: 'not found' }));
+    const handler = routes.get('/v1/operation')!;
+    let status = 200;
+    await handler({ body: { op: 'volume.removeManaged', payload: {
+      name: 'qg-be9-source-absent',
+      expectedAssessmentSourceOwner: { assessmentId: assessment, executionId: job },
+    } } }, {
+      status(value: number) { status = value; return this; },
+      json(_value: unknown) { return this; },
+    });
+    expect(status).toBe(200);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0]?.[0].method).toBe('GET');
+  });
+
+  it('rejects create responses that return a different assessment volume generation', async () => {
+    const volumeName = 'qg-be9-source-existing';
+    request.mockResolvedValueOnce(dockerReply(201, {
+      Name: volumeName, Labels: {
+        ...labels('assessment-source'),
+        'io.quarangate.job': `job_${'f'.repeat(32)}`,
+      },
+    }));
+    const handler = routes.get('/v1/operation')!;
+    let status = 200;
+    let body: unknown;
+    await handler({ body: { op: 'volume.createManaged', payload: {
+      name: volumeName, labels: labels('assessment-source'),
+    } } }, {
+      status(value: number) { status = value; return this; },
+      json(value: unknown) { body = value; return this; },
+    });
+    expect(status).toBe(403);
+    expect(body).toEqual({
+      error: 'FORBIDDEN_POLICY',
+      message: 'assessment source volume creation ownership mismatch',
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it('bounds exact container inspect and rejects duplicate identities', async () => {
     request.mockResolvedValueOnce(dockerReply(200, [{ Id: id, Labels: labels('assessment-stager') }]));
     const inspect = Readable.from([Buffer.alloc(2 * 1024 * 1024 + 1)]);
@@ -134,6 +236,35 @@ describe('BE9 exact Docker inventory', () => {
       Id: id, Labels: labels('assessment-stager'),
     }))));
     expect(await operation('container.listManaged', exact('assessment-stager'))).toEqual(exactFailure);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses removal when assessment volume ownership is swapped to another allocation', async () => {
+    const otherOwner = {
+      ...labels('assessment-source'),
+      'io.quarangate.job': `job_${'e'.repeat(32)}`,
+      'io.quarangate.assessment': `assessment_${'f'.repeat(24)}`,
+    };
+    request.mockResolvedValueOnce(dockerReply(200, {
+      Name: 'qg-be9-source-owned', Labels: otherOwner,
+    }));
+    const handler = routes.get('/v1/operation')!;
+    let status = 200;
+    let body: unknown;
+    await handler({
+      body: { op: 'volume.removeManaged', payload: {
+        name: 'qg-be9-source-owned',
+        expectedAssessmentSourceOwner: { assessmentId: assessment, executionId: job },
+      } },
+    }, {
+      status(value: number) { status = value; return this; },
+      json(value: unknown) { body = value; return this; },
+    });
+    expect(status).toBe(403);
+    expect(body).toEqual({
+      error: 'FORBIDDEN_POLICY',
+      message: 'assessment source volume ownership mismatch',
+    });
     expect(request).toHaveBeenCalledTimes(1);
   });
 

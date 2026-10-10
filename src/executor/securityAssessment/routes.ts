@@ -91,14 +91,19 @@ export function registerSecurityAssessmentRoutes(
   app.post('/security-assessment/cleanup', handle(async (req) => {
     const body = closedObject(
       req.body,
-      new Set(['assessmentId', 'uncertain']),
+      new Set(['assessmentId', 'expectedExecutionId', 'uncertain']),
       'security assessment cleanup',
     );
+    if (typeof body.expectedExecutionId !== 'string'
+      || !/^job_[0-9a-f]{32}$/.test(body.expectedExecutionId)) {
+      throw new BridgeError('MALFORMED_REQUEST', 'security assessment cleanup requires exact allocation identity', 400);
+    }
     if (body.uncertain !== undefined && typeof body.uncertain !== 'boolean') {
       throw new BridgeError('MALFORMED_REQUEST', 'security assessment cleanup uncertain must be boolean', 400);
     }
     await requireService().cleanup(
       String(body.assessmentId ?? ''),
+      body.expectedExecutionId,
       body.uncertain === true,
     );
     return { ok: true };

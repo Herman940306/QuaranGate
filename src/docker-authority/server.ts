@@ -15,6 +15,25 @@ const BE9_INVENTORY_MAX_BYTES=2*1024*1024;
 const BE9_INVENTORY_MAX_ROWS=128;
 function enc(v:unknown){return encodeURIComponent(String(v));}
 function rec(v:unknown):Record<string,any>{if(!v||typeof v!=='object'||Array.isArray(v)) throw new BridgeError('FORBIDDEN_POLICY','invalid authority payload',403);return v as Record<string,any>}
+/** Serialize competing create/remove operations on the same managed volume name.
+ * This protects the trusted broker's inspect-then-delete sequence against a
+ * concurrent request to the same broker, without adding Docker privileges.
+ * Out-of-band raw Docker socket actors remain outside this guarantee.
+ */
+const volumeMutationLocks = new Map<string, Promise<void>>();
+async function serializedVolumeMutation<T>(name: string, operation: () => Promise<T>): Promise<T> {
+  const previous = volumeMutationLocks.get(name);
+  let unlock!: () => void;
+  const current = new Promise<void>((resolve) => { unlock = resolve; });
+  volumeMutationLocks.set(name, current);
+  if (previous) await previous;
+  try {
+    return await operation();
+  } finally {
+    unlock();
+    if (volumeMutationLocks.get(name) === current) volumeMutationLocks.delete(name);
+  }
+}
 async function req(method:string,path:string,body?:unknown){const r=await docker.request({method:method as any,path,headers:body===undefined?undefined:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const b=Buffer.from(await r.body.arrayBuffer());if(r.statusCode>=400&&r.statusCode!==404)throw new BridgeError('DOCKER_UNAVAILABLE',`docker operation failed: ${r.statusCode} ${b.toString('utf8').slice(0,160)}`,502);return {status:r.statusCode,body:b,headers:r.headers}}
 async function boundedInventoryJson(path:string):Promise<any>{
   const r=await docker.request({method:'GET',path});
@@ -82,7 +101,23 @@ case 'container.stopManaged': await assertContainer(String(p.id));await req('POS
 case 'container.restartManaged': await assertContainer(String(p.id));await req('POST',`${API}/containers/${enc(p.id)}/restart?t=${Number(p.timeoutSec??10)}`);out={ok:true};break;
 case 'container.killManaged': await assertManagedContainer(String(p.id));await req('POST',`${API}/containers/${enc(p.id)}/kill?signal=${enc(p.signal??'SIGKILL')}`);out={ok:true};break;
 case 'container.removeManaged': await assertManagedContainer(String(p.id));await req('DELETE',`${API}/containers/${enc(p.id)}?force=1&v=1`);out={ok:true};break;
-case 'volume.createManaged': managedIdentity(p.labels);out=await json('POST',`${API}/volumes/create`,{Name:p.name,Driver:'local',Labels:p.labels});break;
+case 'volume.createManaged': {
+  const intended = managedIdentity(p.labels);
+  out = await serializedVolumeMutation(String(p.name), async () => {
+    const created = await json('POST',`${API}/volumes/create`, {
+      Name: p.name, Driver: 'local', Labels: p.labels,
+    });
+    if (intended.scope === 'sandbox' && intended.resource === 'assessment-source') {
+      const actual = managedIdentity(created?.Labels);
+      if (created?.Name !== p.name || actual.resource !== 'assessment-source'
+        || actual.assessment !== intended.assessment || actual.job !== intended.job) {
+        throw new BridgeError('FORBIDDEN_POLICY','assessment source volume creation ownership mismatch',403);
+      }
+    }
+    return created;
+  });
+  break;
+}
 case 'volume.listManaged': {const resource=exactAssessmentInventoryResource(p.filters);if(resource==='assessment-source'){
   const wanted=Object.fromEntries((p.filters.label as string[]).map((label:string)=>{const at=label.indexOf('=');return [label.slice(0,at),label.slice(at+1)];}));
   try{const r=await boundedInventoryJson(`${API}/volumes?filters=${filters(p.filters)}`);
@@ -92,7 +127,39 @@ case 'volume.listManaged': {const resource=exactAssessmentInventoryResource(p.fi
       exactInventoryLabels(v.Labels,wanted,resource);out.Volumes.push(v);}
   }catch(error){throw inventoryFailure(error)}
 }else{const r=await json('GET',`${API}/volumes?filters=${filters(p.filters??{})}`);out={Volumes:[]};for(const v of r?.Volumes??[]){try{managedIdentity(v.Labels);out.Volumes.push(v)}catch{}}}break;}
-case 'volume.removeManaged': await assertManagedVolume(String(p.name));await req('DELETE',`${API}/volumes/${enc(p.name)}?force=1`);out={ok:true};break;
+case 'volume.removeManaged': {
+  if (typeof p.name !== 'string' || p.name.length === 0 || p.name.length > 255
+    || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(p.name)) {
+    throw new BridgeError('FORBIDDEN_POLICY','managed volume removal name is invalid',403);
+  }
+  out = await serializedVolumeMutation(p.name, async () => {
+    const volume = await assertManagedVolume(p.name);
+    // An absent volume must never be followed by DELETE-by-name: another
+    // allocation could create that name between absence and deletion.
+    if (!volume) return { ok: true };
+    const identity = managedIdentity(volume.Labels);
+    if (identity.scope === 'sandbox' && identity.resource === 'assessment-source') {
+      const expected = rec(p.expectedAssessmentSourceOwner);
+      if (Object.keys(expected).length !== 2
+        || typeof expected.assessmentId !== 'string'
+        || typeof expected.executionId !== 'string'
+        || !/^assessment_[0-9a-f]{24}$/.test(expected.assessmentId)
+        || !/^job_[0-9a-f]{32}$/.test(expected.executionId)
+        || identity.assessment !== expected.assessmentId
+        || identity.job !== expected.executionId) {
+        throw new BridgeError('FORBIDDEN_POLICY','assessment source volume ownership mismatch',403);
+      }
+    } else if (p.expectedAssessmentSourceOwner !== undefined) {
+      throw new BridgeError('FORBIDDEN_POLICY','unexpected assessment volume ownership assertion',403);
+    }
+    // Atomicity is established only among requests to this broker instance.
+    // Docker exposes no conditional volume DELETE; out-of-band raw socket
+    // mutation remains an explicit external trust-boundary limitation.
+    await req('DELETE',`${API}/volumes/${enc(p.name)}?force=1`);
+    return { ok: true };
+  });
+  break;
+}
 case 'network.createManaged': managedIdentity(p.labels);out=await json('POST',`${API}/networks/create`,{Name:p.name,Driver:'bridge',Internal:Boolean(p.internal),CheckDuplicate:true,Labels:p.labels});break;
 case 'network.listManaged': {const rows=await json('GET',`${API}/networks?filters=${filters(p.filters??{})}`);out=[];for(const n of rows){try{managedIdentity(n.Labels);out.push(n)}catch{}}break;}
 case 'network.connectManaged': {const network=await managedNetwork(String(p.network));const container=await assertManagedContainer(String(p.container));validateManagedNetworkAttachment(network.identity,container.identity);const aliases=Array.isArray(p.aliases)&&p.aliases.every((x:unknown)=>typeof x==='string')?p.aliases:[];if(aliases.length>1||aliases.some((x:string)=>x!=='egress-proxy'))throw new BridgeError('FORBIDDEN_POLICY','network aliases are restricted to the governed proxy alias',403);await req('POST',`${API}/networks/${enc(p.network)}/connect`,{Container:p.container,...(aliases.length?{EndpointConfig:{Aliases:aliases}}:{})});out={ok:true};break;}

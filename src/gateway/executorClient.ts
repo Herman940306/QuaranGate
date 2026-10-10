@@ -86,7 +86,7 @@ export const executor = {
   securityAssessmentPreflight: (req: SecurityAssessmentOperationalPreflightRequest) =>
     call<SecurityAssessmentOperationalPreflight>('/security-assessment/preflight', req),
   securityAssessmentPrepare: (req: SecurityAssessmentOperationalPreflightRequest) =>
-    call<{ projectId: string; sourceRevision: string; sourceTree: string; manifestDigest: string }>(
+    call<{ projectId: string; executionId: string; sourceRevision: string; sourceTree: string; manifestDigest: string }>(
       '/security-assessment/prepare',
       req,
     ),
@@ -101,8 +101,8 @@ export const executor = {
       manifestBytes: number;
       manifestDigest: string;
     }>('/security-assessment/revalidate', { assessmentId }),
-  securityAssessmentCleanup: (assessmentId: string, uncertain = false) =>
-    call<{ ok: true }>('/security-assessment/cleanup', { assessmentId, uncertain }),
+  securityAssessmentCleanup: (assessmentId: string, expectedExecutionId: string, uncertain = false) =>
+    call<{ ok: true }>('/security-assessment/cleanup', { assessmentId, expectedExecutionId, uncertain }),
 
   // GitHub App control plane. Remote reads/PR actions use owner/repository
   // identifiers that are re-authorized against trusted accounts by the

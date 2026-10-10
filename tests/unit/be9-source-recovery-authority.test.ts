@@ -138,7 +138,9 @@ describe('BE9.2 staged-volume recovery authority', () => {
       'io.quarangate.assessment': ASSESSMENT, 'io.quarangate.job': EXECUTION };
     docker.listVolumesByFilter.mockResolvedValueOnce([{ Name: VOLUME, Labels: labels }]).mockResolvedValueOnce([]);
     await new AssessmentSourceStager().reconcileOrphan(ASSESSMENT, EXECUTION);
-    expect(docker.removeVolume).toHaveBeenCalledWith(VOLUME, true);
+    expect(docker.removeVolume).toHaveBeenCalledWith(VOLUME, true, {
+      assessmentId: ASSESSMENT, executionId: EXECUTION,
+    });
     expect(docker.listVolumesByFilter).toHaveBeenCalledWith({ label: [
       'io.quarangate.managed=true', 'io.quarangate.resource=assessment-source',
       `io.quarangate.assessment=${ASSESSMENT}`,

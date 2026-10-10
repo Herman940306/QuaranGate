@@ -55,7 +55,9 @@ describe('BE9 orphan recovery across durable restart', () => {
     const reopened = new AgentJobStore(path);
     stores.push(reopened);
     await service(reopened).recoverPrepared();
-    expect(docker.removeVolume).toHaveBeenCalledExactlyOnceWith(name, true);
+    expect(docker.removeVolume).toHaveBeenCalledExactlyOnceWith(name, true, {
+      assessmentId: ASSESSMENT, executionId,
+    });
     expect(docker.listVolumesByFilter).toHaveBeenCalledWith({ label: [
       'io.quarangate.managed=true', 'io.quarangate.resource=assessment-source',
       `io.quarangate.assessment=${ASSESSMENT}`, `io.quarangate.job=${executionId}`,

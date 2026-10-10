@@ -1862,7 +1862,18 @@ export class AgentJobStore {
         throw new BridgeError('MALFORMED_REQUEST', 'execution resource owner request contains malformed resource key', 400);
       }
     }
+    // The global-exclusive marker must only be injected by the trusted
+    // globalExclusive flag, never supplied as an ordinary resource key.
+    if (keys.includes('machine:global-exclusive')) {
+      throw new BridgeError('MALFORMED_REQUEST', 'execution resource owner request contains reserved global-exclusive key', 400);
+    }
     if (input.globalExclusive) keys.push('machine:global-exclusive');
+    // The total allocation (not merely submitted keys) must fit the same
+    // bound enforced by durable BE9 allocation-identity recovery.
+    if (keys.length > 128) {
+      throw new BridgeError('MALFORMED_REQUEST', 'execution resource owner request exceeds total resource bound', 400);
+    }
+    keys.sort();
 
     this.db.exec('BEGIN IMMEDIATE');
     try {

@@ -552,7 +552,7 @@ describe('BE9.2 Executor operational assessment service', () => {
     const operational = service(db, stager);
     const pending = operational.prepare(request());
     await started;
-    await expect(operational.cleanup(ASSESSMENT))
+    await expect(operational.cleanup(ASSESSMENT, db.assessmentAllocationExecutionId(ASSESSMENT)))
       .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     expect(db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT))
       .toEqual(expect.arrayContaining([expect.objectContaining({ state: 'UNCERTAIN' })]));
@@ -598,7 +598,8 @@ describe('BE9.2 Executor operational assessment service', () => {
     const fresh = service(db, fakeStager({
       remove: async () => { throw new Error('must not remove an unproven handle'); },
     }));
-    await expect(fresh.cleanup(ASSESSMENT)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    await expect(fresh.cleanup(ASSESSMENT, db.assessmentAllocationExecutionId(ASSESSMENT)))
+      .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     expect(db.getSecurityAssessmentPrepared(ASSESSMENT)).toBeDefined();
     expect(db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT))
       .toEqual(expect.arrayContaining([expect.objectContaining({ state: 'UNCERTAIN' })]));
@@ -693,7 +694,7 @@ describe('BE9.2 Executor operational assessment service', () => {
       remove: async () => { enter(); await gate; },
     }));
     await operational.prepare(request());
-    const pending = operational.cleanup(ASSESSMENT);
+    const pending = operational.cleanup(ASSESSMENT, db.assessmentAllocationExecutionId(ASSESSMENT));
     await entered;
     const original = db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT);
     db.releaseExecutionLeasesForOwner('security-assessment', ASSESSMENT, 'simulate prior settlement');
@@ -719,7 +720,7 @@ describe('BE9.2 Executor operational assessment service', () => {
     const operational = service(db, stager);
     await operational.prepare(request());
 
-    await expect(operational.cleanup(ASSESSMENT))
+    await expect(operational.cleanup(ASSESSMENT, db.assessmentAllocationExecutionId(ASSESSMENT)))
       .rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' });
     expect(db.executionLeaseSummary()).toEqual(expect.arrayContaining([
       expect.objectContaining({

@@ -332,7 +332,7 @@ export class AssessmentSourceStager {
         throw new AssessmentSourceCleanupUncertainError();
       }
       for (const item of containers) await removeContainer(item.Id, true);
-      for (const item of volumes) await removeVolume(item.Name, true);
+      for (const item of volumes) await removeVolume(item.Name, true, { assessmentId, executionId });
       const remainingContainers = await listContainersByFilter(filter('assessment-stager'));
       const remainingVolumes = await listVolumesByFilter(filter('assessment-source'));
       if (remainingContainers.length !== 0 || remainingVolumes.length !== 0) {
@@ -374,7 +374,9 @@ export class AssessmentSourceStager {
         mode: 'stage',
       });
     } catch (error) { failure = safeFailure(error); }
-    try { await dockerCall(() => removeVolume(sourceVolume, true)); }
+    try { await dockerCall(() => removeVolume(sourceVolume, true, {
+      assessmentId: input.assessmentId, executionId,
+    })); }
     catch { throw new AssessmentSourceCleanupUncertainError(failure?.code); }
     if (failure) throw failure;
     return receipt!;
@@ -412,7 +414,9 @@ export class AssessmentSourceStager {
         receipt,
       };
     } catch (error) {
-      try { await dockerCall(() => removeVolume(sourceVolume, true)); }
+      try { await dockerCall(() => removeVolume(sourceVolume, true, {
+        assessmentId: input.assessmentId, executionId,
+      })); }
       catch { throw new AssessmentSourceCleanupUncertainError(safeFailure(error).code); }
       throw safeFailure(error);
     }
@@ -461,7 +465,14 @@ export class AssessmentSourceStager {
     stagerImageId: string;
     hostPath: string;
   }): Promise<AssessmentSourceStageReceipt> {
-    const volumes = await dockerCall(() => listVolumesByFilter({ name: [input.sourceVolume] }));
+    // This precise four-label selector activates Docker Authority's bounded
+    // streamed assessment inventory, never its generic name-filtered path.
+    const volumes = await dockerCall(() => listVolumesByFilter({ label: [
+      'io.quarangate.managed=true',
+      'io.quarangate.resource=assessment-source',
+      `io.quarangate.assessment=${input.assessmentId}`,
+      `io.quarangate.job=${input.executionId}`,
+    ] }));
     if (volumes.length !== 1 || volumes[0]!.Name !== input.sourceVolume) {
       throw new BridgeError('PRECONDITION_FAILED', 'prepared assessment source volume is missing or ambiguous', 412);
     }
@@ -478,6 +489,8 @@ export class AssessmentSourceStager {
   }
 
   async remove(staged: StagedAssessmentSource): Promise<void> {
-    await dockerCall(() => removeVolume(staged.sourceVolume, true));
+    await dockerCall(() => removeVolume(staged.sourceVolume, true, {
+      assessmentId: staged.assessmentId, executionId: staged.executionId,
+    }));
   }
 }

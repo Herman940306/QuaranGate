@@ -82,6 +82,22 @@ function projectResourceKeys(project: AgentProjectConfig): string[] {
   return [...new Set(resources.map(executionResourceKey))].sort();
 }
 
+/** All durable resource identities must fit before any lease is allocated. */
+function assessmentResourceSet(project: AgentProjectConfig): {
+  keys: string[]; heldKeys: string[];
+} {
+  const keys = projectResourceKeys(project);
+  const globalKey = 'machine:global-exclusive';
+  if (project.globalExclusive && keys.includes(globalKey)) {
+    throw new BridgeError('PRECONDITION_FAILED', 'assessment resource identity duplicates global exclusivity', 412);
+  }
+  const heldKeys = [...keys, ...(project.globalExclusive ? [globalKey] : [])].sort();
+  if (heldKeys.length > 128) {
+    throw new BridgeError('PRECONDITION_FAILED', 'assessment execution resources exceed allocation bound', 412);
+  }
+  return { keys, heldKeys };
+}
+
 export interface PreparedSecurityAssessmentSource {
   assessmentId: string;
   projectId: string;
@@ -163,7 +179,7 @@ export class SecurityAssessmentOperationalService {
       throw new BridgeError('PRECONDITION_FAILED', 'assessment stager image is not configured', 503);
     }
 
-    const resources = projectResourceKeys(project);
+    const { keys: resources, heldKeys } = assessmentResourceSet(project);
     this.store.acquireExecutionLeasesForOwner({
       ownerKind: 'security-assessment',
       ownerId: request.assessmentId,
@@ -172,7 +188,6 @@ export class SecurityAssessmentOperationalService {
       globalExclusive: project.globalExclusive ?? false,
     });
     const executionId = this.store.assessmentAllocationExecutionId(request.assessmentId);
-    const heldKeys = [...resources, ...(project.globalExclusive ? ['machine:global-exclusive'] : [])].sort();
     let source: AssessmentSourceStageReceipt;
     try {
       source = await this.sourceStager.probe({
@@ -226,6 +241,7 @@ export class SecurityAssessmentOperationalService {
     request: SecurityAssessmentOperationalPreflightRequest,
   ): Promise<{
     projectId: string;
+    executionId: string;
     sourceRevision: string;
     sourceTree: string;
     manifestDigest: string;
@@ -235,8 +251,7 @@ export class SecurityAssessmentOperationalService {
       throw new BridgeError('CONCURRENCY_LIMIT', 'assessment source is already prepared in this executor instance', 409);
     }
     const project = this.project(request.projectId);
-    const keys = projectResourceKeys(project);
-    const heldKeys = [...keys, ...(project.globalExclusive ? ['machine:global-exclusive'] : [])].sort();
+    const { keys, heldKeys } = assessmentResourceSet(project);
 
     this.store.acquireExecutionLeasesForOwner({
       ownerKind: 'security-assessment',
@@ -284,6 +299,8 @@ export class SecurityAssessmentOperationalService {
       });
       return {
         projectId: project.id,
+        // Server-issued allocation identity for authorized internal cleanup.
+        executionId,
         sourceRevision: staged.receipt.sourceRevision,
         sourceTree: staged.receipt.sourceTree,
         manifestDigest: staged.receipt.manifestDigest,
@@ -499,44 +516,70 @@ export class SecurityAssessmentOperationalService {
     return result;
   }
 
-  async cleanup(assessmentId: string, uncertain = false): Promise<void> {
+  async cleanup(
+    assessmentId: string, expectedExecutionId: string, uncertain = false,
+  ): Promise<void> {
+    // The caller must carry the server-issued generation from its original
+    // preparation. Never resolve a delayed request to the current generation.
+    if (!/^job_[0-9a-f]{32}$/.test(expectedExecutionId)) {
+      throw new BridgeError('MALFORMED_REQUEST', 'assessment cleanup requires exact allocation identity', 400);
+    }
     const prepared = this.prepared.get(assessmentId);
+    if (prepared && prepared.staged.executionId !== expectedExecutionId) {
+      throw new BridgeError('PRECONDITION_FAILED', 'assessment cleanup allocation changed', 412);
+    }
     if (!prepared) {
-      // An ACTIVE lease is durable evidence of possible in-flight staging.
-      // A persisted prepared row may also outlive this service instance.
-      // Neither a missing in-memory handle nor an empty local map proves
-      // Docker resource absence; quarantine instead of releasing.
-      this.store.markExecutionLeasesUncertainForOwner(
-        'security-assessment', assessmentId,
-        'assessment cleanup cannot prove absence without a prepared source handle',
-      );
-      throw new BridgeError(
-        'PRECONDITION_FAILED',
-        'assessment cleanup requires governed source reconciliation',
-        412,
-      );
-    }
-    if (prepared) {
-      try {
-        await this.sourceStager.remove(prepared.staged);
-      } catch (error) {
-        this.transitionAllocation(
-          assessmentId, prepared.projectId, prepared.staged.executionId,
-          prepared.resourceKeys, 'UNCERTAIN',
-          'assessment source cleanup could not be proven',
-        );
-        throw error;
-      } finally {
-        this.prepared.delete(assessmentId);
+      // Missing local state is not proof of absence. Quarantine ONLY the
+      // matching durable generation; a delayed A request must leave B alone.
+      const currentExecutionId = this.store.assessmentAllocationExecutionId(assessmentId);
+      if (currentExecutionId !== expectedExecutionId) {
+        throw new BridgeError('PRECONDITION_FAILED', 'assessment cleanup allocation changed', 412);
       }
+      const held = this.store.executionLeaseSummary().filter(
+        (lease) => lease.ownerKind === 'security-assessment' && lease.ownerId === assessmentId,
+      );
+      const first = held[0];
+      if (!first || !this.transitionAllocation(
+        assessmentId, first.projectId, expectedExecutionId,
+        held.map((row) => row.resourceKey), 'UNCERTAIN',
+        'assessment cleanup cannot prove absence without prepared source handle',
+      )) {
+        throw new BridgeError('PRECONDITION_FAILED', 'assessment cleanup allocation changed', 412);
+      }
+      throw new BridgeError(
+        'PRECONDITION_FAILED', 'assessment cleanup requires governed source reconciliation', 412,
+      );
     }
 
-    if (prepared) {
-      this.store.deleteSecurityAssessmentPreparedForAllocation(assessmentId, prepared.staged.executionId);
+    const binding = {
+      assessmentId, projectId: prepared.projectId,
+      executionId: expectedExecutionId, resourceKeys: prepared.resourceKeys,
+    };
+    // Prove ownership before any asynchronous destructive operation.
+    this.assertPreparedLeaseFresh(binding);
+    try {
+      await this.sourceStager.remove(prepared.staged);
+    } catch (error) {
+      this.transitionAllocation(
+        assessmentId, prepared.projectId, expectedExecutionId,
+        prepared.resourceKeys, 'UNCERTAIN',
+        'assessment source cleanup could not be proven',
+      );
+      throw error;
+    } finally {
+      // Do not discard a newer in-memory generation installed during await.
+      if (this.prepared.get(assessmentId) === prepared) this.prepared.delete(assessmentId);
     }
 
+    // After the awaited removal, prove this is still the exact ACTIVE
+    // allocation before changing durable prepared state. A newer generation
+    // must not be touched, and an uncertain A must remain quarantined.
+    this.assertPreparedLeaseFresh(binding);
+    // Deleting the durable record and settling obligations are each
+    // allocation-conditional; a later B must never be affected by A.
+    this.store.deleteSecurityAssessmentPreparedForAllocation(assessmentId, expectedExecutionId);
     const transitioned = this.transitionAllocation(
-      assessmentId, prepared.projectId, prepared.staged.executionId,
+      assessmentId, prepared.projectId, expectedExecutionId,
       prepared.resourceKeys, uncertain ? 'UNCERTAIN' : 'RELEASED',
       uncertain ? 'assessment cleanup was reported uncertain' : 'assessment cleanup proven',
     );
