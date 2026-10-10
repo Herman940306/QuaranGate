@@ -120,6 +120,38 @@ describe("BE9.2 internal MCP assessment adapter", () => {
     }
   });
 
+  it.each(["no-length", "understated-length"])(
+    "bounds streamed internal assessment requests with %s without buffering all chunks",
+    async (lengthMode) => {
+      let pulls = 0;
+      let cancellations = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(new Uint8Array(16 * 1024).fill(97));
+          if (pulls >= 30) controller.close();
+        },
+        cancel() { cancellations += 1; },
+      });
+      const headers = new Headers({
+        "content-type": "application/json",
+        "x-product-assessment-mcp-token": MCP_TOKEN,
+      });
+      if (lengthMode === "understated-length") headers.set("content-length", "1");
+      const req = new Request("http://product.internal/internal/security/assessment/mcp", {
+        method: "POST",
+        headers,
+        body: stream,
+        duplex: "half",
+      } as RequestInit & { duplex: string });
+      const response = await POST(req);
+      expect(response.status).toBe(400);
+      expect(pulls).toBeLessThan(20);
+      expect(cancellations).toBe(1);
+      expect(mocks.service.operationalAssessment).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects malformed or oversized identities before service delegation", async () => {
     const malformed = await POST(request({
       action: "status",

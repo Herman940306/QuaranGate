@@ -1,4 +1,5 @@
 import { failure, success } from "../../../../../server/product/http/errors";
+import { readBoundedSecurityJson } from "../../../../../server/product/security/request";
 import { validateSecurityAssessmentAdmissionReceipt } from "../../../../../server/product/security/evidence";
 import { securityAssessmentService } from "../../../../../server/product/security/runtime";
 
@@ -11,14 +12,9 @@ const ASSESSMENT = /^assessment_[0-9a-f]{24}$/;
 const CORRELATION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 async function body(request: Request): Promise<Record<string, unknown>> {
-  const declared = request.headers.get("content-length");
-  if (declared !== null) {
-    const n = Number(declared);
-    if (!Number.isSafeInteger(n) || n < 1 || n > MAX_BODY_BYTES) throw new Error("security_request_invalid");
-  }
-  const text = await request.text();
-  if (Buffer.byteLength(text, "utf8") > MAX_BODY_BYTES) throw new Error("security_request_invalid");
-  const parsed = JSON.parse(text) as unknown;
+  // Bound bytes during streaming, including chunked and falsely declared bodies.
+  // This reader cancels the stream as soon as the enforced cap is exceeded.
+  const parsed = await readBoundedSecurityJson(request, MAX_BODY_BYTES);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("security_request_invalid");
   return parsed as Record<string, unknown>;
 }

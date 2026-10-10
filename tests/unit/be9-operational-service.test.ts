@@ -537,6 +537,73 @@ describe('BE9.2 Executor operational assessment service', () => {
     ]));
   });
 
+  it('quarantines staging in progress if cleanup arrives before preparation has a handle', async () => {
+    const db = store();
+    const original = fakeStager();
+    let enter!: () => void;
+    let resume!: () => void;
+    const started = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    let removes = 0;
+    const stager = fakeStager({
+      stage: async (input) => { enter(); await gate; return original.stage(input); },
+      remove: async () => { removes += 1; },
+    });
+    const operational = service(db, stager);
+    const pending = operational.prepare(request());
+    await started;
+    await expect(operational.cleanup(ASSESSMENT))
+      .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ state: 'UNCERTAIN' })]));
+    resume();
+    await expect(pending).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(removes).toBe(1);
+    expect(db.getSecurityAssessmentPrepared(ASSESSMENT)).toBeUndefined();
+    expect(db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ state: 'UNCERTAIN' })]));
+  });
+
+  it.each(['released', 'uncertain'] as const)(
+    'does not durably prepare source if BE1A allocation becomes %s while staging awaits',
+    async (transition) => {
+      const db = store();
+      const original = fakeStager();
+      let enter!: () => void;
+      let resume!: () => void;
+      const started = new Promise<void>((resolve) => { enter = resolve; });
+      const gate = new Promise<void>((resolve) => { resume = resolve; });
+      let removes = 0;
+      const stager = fakeStager({
+        stage: async (input) => { enter(); await gate; return original.stage(input); },
+        remove: async () => { removes++; },
+      });
+      const pending = service(db, stager).prepare(request());
+      await started;
+      if (transition === 'released') {
+        db.releaseExecutionLeasesForOwner('security-assessment', ASSESSMENT);
+      } else {
+        db.markExecutionLeasesUncertainForOwner('security-assessment', ASSESSMENT, 'test lease transition');
+      }
+      resume();
+      await expect(pending).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      expect(removes).toBe(1);
+      expect(db.getSecurityAssessmentPrepared(ASSESSMENT)).toBeUndefined();
+    },
+  );
+
+  it('quarantines durable prepared obligations when cleanup runs in a fresh service instance', async () => {
+    const db = store();
+    await service(db).prepare(request());
+    const fresh = service(db, fakeStager({
+      remove: async () => { throw new Error('must not remove an unproven handle'); },
+    }));
+    await expect(fresh.cleanup(ASSESSMENT)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(db.getSecurityAssessmentPrepared(ASSESSMENT)).toBeDefined();
+    expect(db.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ state: 'UNCERTAIN' })]));
+  });
+
   it('marks the shared resource lease uncertain when source cleanup cannot be proven', async () => {
     const db = store();
     const stager = fakeStager({

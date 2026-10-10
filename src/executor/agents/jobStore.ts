@@ -3015,7 +3015,16 @@ export class AgentJobStore {
     if (Buffer.byteLength(receipt, 'utf8') > 64 * 1024 || Buffer.byteLength(resources, 'utf8') > 32 * 1024) {
       throw new BridgeError('MALFORMED_REQUEST', 'durable assessment prepared metadata exceeds bounds', 400);
     }
+    this.db.exec('BEGIN IMMEDIATE');
     try {
+      // The exact ACTIVE BE1A allocation and durable prepared row are committed
+      // together. A concurrent cleanup/lease change cannot interleave on SQLite.
+      this.assertSecurityAssessmentPreparedLeaseBinding({
+        assessmentId: input.assessmentId,
+        projectId: input.projectId,
+        executionId: input.executionId,
+        resourceKeys: input.resourceKeys,
+      });
       this.db.prepare(`
         INSERT INTO security_assessment_prepared(
           assessment_id, project_id, expected_source_revision, execution_id,
@@ -3031,7 +3040,9 @@ export class AgentJobStore {
         resources,
         nowIso(),
       );
+      this.db.exec('COMMIT');
     } catch (error) {
+      this.db.exec('ROLLBACK');
       if (isUniqueConstraintViolation(error)) {
         throw new BridgeError('CONCURRENCY_LIMIT', 'assessment already has durable prepared metadata', 409);
       }

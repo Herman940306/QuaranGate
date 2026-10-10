@@ -241,6 +241,15 @@ export class SecurityAssessmentOperationalService {
         stagerImageId: this.stagerImageId,
         hostPath: project.hostPath,
       });
+      // If an internal cleanup or an external authority action invalidated
+      // the allocation while staging awaited Docker, never publish a receipt.
+      this.assertPreparedLeaseFresh({
+        assessmentId: request.assessmentId,
+        projectId: project.id,
+        executionId,
+        resourceKeys: heldKeys,
+      });
+      // The store validates the same binding again *inside* the atomic insert.
       this.store.saveSecurityAssessmentPrepared({
         assessmentId: request.assessmentId,
         projectId: project.id,
@@ -476,6 +485,21 @@ export class SecurityAssessmentOperationalService {
 
   async cleanup(assessmentId: string, uncertain = false): Promise<void> {
     const prepared = this.prepared.get(assessmentId);
+    if (!prepared) {
+      // An ACTIVE lease is durable evidence of possible in-flight staging.
+      // A persisted prepared row may also outlive this service instance.
+      // Neither a missing in-memory handle nor an empty local map proves
+      // Docker resource absence; quarantine instead of releasing.
+      this.store.markExecutionLeasesUncertainForOwner(
+        'security-assessment', assessmentId,
+        'assessment cleanup cannot prove absence without a prepared source handle',
+      );
+      throw new BridgeError(
+        'PRECONDITION_FAILED',
+        'assessment cleanup requires governed source reconciliation',
+        412,
+      );
+    }
     if (prepared) {
       try {
         await this.sourceStager.remove(prepared.staged);
