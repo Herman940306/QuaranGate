@@ -5,14 +5,19 @@ describe('SH-11 Docker broker hostile-world wiring', () => {
   const server = readFileSync('src/docker-authority/server.ts','utf8');
   const policy = readFileSync('src/docker-authority/policy.ts','utf8');
 
-  it('revalidates every mounted volume from Docker state before container creation', () => {
-    expect(server).toContain('for(const mount of managedVolumeMounts(body))');
-    expect(server).toContain('const volume=await managedVolume(mount.Source)');
-    expect(server).toContain('validateManagedVolumeAttachment(containerIdentity,volume.identity,mount)');
-    const validateAt = server.indexOf('validateManagedVolumeAttachment(containerIdentity,volume.identity,mount)');
-    const createAt = server.indexOf("/containers/create?name=");
-    expect(validateAt).toBeGreaterThan(-1);
+  it('revalidates each named mount while holding the same lock used for volume mutation', () => {
+    const containerCreateAt = server.indexOf("case 'container.createManaged':");
+    const locksAt = server.indexOf('serializedVolumeMounts(mounts.map(m => m.Source)', containerCreateAt);
+    const inspectAt = server.indexOf('await managedVolume(mount.Source)', locksAt);
+    const validateAt = server.indexOf('validateManagedVolumeAttachment(containerIdentity, volume.identity, mount)', locksAt);
+    const createAt = server.indexOf('/containers/create?name=', validateAt);
+    const proofAt = server.indexOf('await proveAssessmentAttachment(id, containerIdentity, mounts)', createAt);
+    expect(containerCreateAt).toBeGreaterThan(-1);
+    expect(locksAt).toBeGreaterThan(containerCreateAt);
+    expect(inspectAt).toBeGreaterThan(locksAt);
+    expect(validateAt).toBeGreaterThan(inspectAt);
     expect(createAt).toBeGreaterThan(validateAt);
+    expect(proofAt).toBeGreaterThan(createAt);
   });
 
   it('revalidates network and container identities before second-network attachment', () => {

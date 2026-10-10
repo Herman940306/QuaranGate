@@ -34,6 +34,14 @@ async function serializedVolumeMutation<T>(name: string, operation: () => Promis
     if (volumeMutationLocks.get(name) === current) volumeMutationLocks.delete(name);
   }
 }
+/** Hold all named-volume locks in a stable order, including during Docker container attachment. */
+async function serializedVolumeMounts<T>(names: readonly string[], operation: () => Promise<T>): Promise<T> {
+  const ordered = [...new Set(names)].sort();
+  const acquire = (index: number): Promise<T> => index === ordered.length
+    ? operation()
+    : serializedVolumeMutation(ordered[index]!, () => acquire(index + 1));
+  return acquire(0);
+}
 async function req(method:string,path:string,body?:unknown){const r=await docker.request({method:method as any,path,headers:body===undefined?undefined:{'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const b=Buffer.from(await r.body.arrayBuffer());if(r.statusCode>=400&&r.statusCode!==404)throw new BridgeError('DOCKER_UNAVAILABLE',`docker operation failed: ${r.statusCode} ${b.toString('utf8').slice(0,160)}`,502);return {status:r.statusCode,body:b,headers:r.headers}}
 async function boundedInventoryJson(path:string):Promise<any>{
   const r=await docker.request({method:'GET',path});
@@ -69,6 +77,52 @@ async function assertManagedContainer(id:string){const j=await assertContainer(i
 function managedIdentityFromTrustedContainer(info:any){const l=info?.Config?.Labels??{};const marked=l['io.quarangate.managed']!==undefined||l['io.mcp-ide-bridge.managed']!==undefined||l['io.mcp-bridge.managed']!==undefined||l['io.quarangate.github.managed']!==undefined;return marked?managedIdentity(l):null;}
 async function managedVolume(name:string){const r=await req('GET',`${API}/volumes/${enc(name)}`);if(r.status===404)throw new BridgeError('FORBIDDEN_POLICY','managed volume is not available',403);const info=JSON.parse(r.body.toString());return {info,identity:managedIdentity(info.Labels)};}
 async function assertManagedVolume(name:string){const r=await req('GET',`${API}/volumes/${enc(name)}`);if(r.status===404)return null;const info=JSON.parse(r.body.toString());managedIdentity(info.Labels);return info;}
+
+/** Convert Docker's effective inspect mount list into a strict assessment proof. */
+function assessmentInspectMounts(info: any): ReturnType<typeof managedVolumeMounts> {
+  if (!Array.isArray(info?.Mounts) || info.Mounts.length < 1 || info.Mounts.length > 8) {
+    throw new BridgeError('FORBIDDEN_POLICY', 'assessment container mount inventory is unproven', 403);
+  }
+  return info.Mounts.map((item: any) => {
+    if (item?.Type !== 'volume' || typeof item.Name !== 'string'
+      || typeof item.Destination !== 'string' || typeof item.RW !== 'boolean'
+      || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/.test(item.Name)) {
+      throw new BridgeError('FORBIDDEN_POLICY', 'assessment container mount inventory is malformed', 403);
+    }
+    return { Type: 'volume' as const, Source: item.Name,
+      Target: item.Destination, ReadOnly: !item.RW };
+  });
+}
+/** Call only with all expected named-volume locks held. */
+async function proveAssessmentAttachment(
+  id: string, expectedIdentity: ReturnType<typeof managedIdentity>,
+  expectedMounts: ReturnType<typeof managedVolumeMounts>,
+): Promise<void> {
+  try {
+    const info = await boundedInventoryJson(`${API}/containers/${enc(id)}/json`);
+    if (info?.Id !== id) throw new Error('created container identity mismatch');
+    const actual = managedIdentity(info?.Config?.Labels);
+    if (actual.scope !== expectedIdentity.scope || actual.namespace !== expectedIdentity.namespace
+      || actual.resource !== expectedIdentity.resource || actual.assessment !== expectedIdentity.assessment
+      || actual.job !== expectedIdentity.job) throw new Error('created container owner mismatch');
+    const observed = assessmentInspectMounts(info);
+    if (observed.length !== expectedMounts.length
+      || new Set(observed.map(m => m.Target)).size !== observed.length
+      || observed.some(m => !expectedMounts.some(expected =>
+        expected.Source === m.Source && expected.Target === m.Target
+          && expected.ReadOnly === m.ReadOnly))) {
+      throw new Error('created container mount mismatch');
+    }
+    for (const mount of expectedMounts) {
+      const volume = await managedVolume(mount.Source);
+      validateManagedVolumeAttachment(expectedIdentity, volume.identity, mount);
+    }
+  } catch {
+    // Sanitized failure; never return a usable container ID on ambiguous proof.
+    throw new BridgeError('FORBIDDEN_POLICY', 'assessment container attachment ownership could not be proven', 403);
+  }
+}
+
 async function managedNetwork(id:string){const r=await req('GET',`${API}/networks/${enc(id)}`);if(r.status===404)throw new BridgeError('FORBIDDEN_POLICY','managed network is not available',403);const info=JSON.parse(r.body.toString());return {info,identity:managedIdentity(info.Labels)};}
 async function assertManagedNetwork(id:string){const r=await req('GET',`${API}/networks/${enc(id)}`);if(r.status===404)return null;const info=JSON.parse(r.body.toString());managedIdentity(info.Labels);return info;}
 async function json(method:string,path:string,body?:unknown){const r=await req(method,path,body);return r.body.length?JSON.parse(r.body.toString()):null}
@@ -91,10 +145,58 @@ case 'container.listManaged': {const all=p.all?1:0;const resource=exactAssessmen
   }catch(error){throw inventoryFailure(error)}
 }else{const rows=await json('GET',`${API}/containers/json?all=${all}&filters=${filters(p.filters??{})}`);out=[];for(const c of rows){try{await assertContainer(c.Id);out.push(c)}catch{}}}break;}
 case 'container.inspectManaged': out=await assertContainer(String(p.id));break;
-case 'container.createManaged': {const body=rec(p.body);const containerIdentity=managedIdentity(body.Labels);for(const mount of managedVolumeMounts(body)){const volume=await managedVolume(mount.Source);validateManagedVolumeAttachment(containerIdentity,volume.identity,mount);}out=await json('POST',`${API}/containers/create?name=${enc(p.name)}`,body);break;}
+case 'container.createManaged': {
+  const body = rec(p.body);
+  const containerIdentity = managedIdentity(body.Labels);
+  const mounts = managedVolumeMounts(body);
+  out = await serializedVolumeMounts(mounts.map(m => m.Source), async () => {
+    for (const mount of mounts) {
+      const volume = await managedVolume(mount.Source);
+      validateManagedVolumeAttachment(containerIdentity, volume.identity, mount);
+    }
+    // The named volumes cannot be removed/recreated by this broker between
+    // authorization and attachment. This does not confer daemon-wide locking.
+    let created: any;
+    try { created = await json('POST', `${API}/containers/create?name=${enc(p.name)}`, body); }
+    catch (error) {
+      if (containerIdentity.scope === 'sandbox' && containerIdentity.resource.startsWith('assessment-')) {
+        throw new BridgeError('DOCKER_UNAVAILABLE', 'assessment container creation outcome could not be proven', 502);
+      }
+      throw error;
+    }
+    if (containerIdentity.scope === 'sandbox' && containerIdentity.resource.startsWith('assessment-')) {
+      const id = created?.Id;
+      if (typeof id !== 'string' || !/^[0-9a-f]{64}$/.test(id)) {
+        throw new BridgeError('DOCKER_UNAVAILABLE', 'assessment container creation could not be proven', 502);
+      }
+      await proveAssessmentAttachment(id, containerIdentity, mounts);
+    }
+    return created;
+  });
+  break;
+}
 case 'container.execManaged': {if(p.action==='create'){const c=await assertContainer(String(p.containerId));const body=rec(p.body);const identity=managedIdentityFromTrustedContainer(c);if(identity)validateManagedExecForIdentity(identity,body);out=await json('POST',`${API}/containers/${enc(p.containerId)}/exec`,body);}else if(p.action==='inspect'){out=await json('GET',`${API}/exec/${enc(p.execId)}/json`);await assertContainer(String(out.ContainerID));}else throw new BridgeError('FORBIDDEN_POLICY','unsupported exec action',403);break;}
 case 'container.archiveWriteManaged': {const c=await assertContainer(String(p.containerId));const identity=managedIdentityFromTrustedContainer(c);if(identity)validateManagedArchivePath(identity,'write',p.path);}{const data=Buffer.from(String(p.base64??''),'base64');if(data.length>9*1024*1024)throw new BridgeError('FORBIDDEN_POLICY','archive write exceeds authority cap',403);const r=await docker.request({method:'PUT',path:`${API}/containers/${enc(p.containerId)}/archive?path=${enc(p.path)}&noOverwriteDirNonDir=1`,headers:{'content-type':'application/x-tar'},body:data});const t=await r.body.text();if(r.statusCode>=400)throw new BridgeError('DOCKER_UNAVAILABLE',`archive write failed: ${r.statusCode} ${t.slice(0,160)}`,502);out={ok:true};}break;
-case 'container.startManaged': await assertContainer(String(p.id));await req('POST',`${API}/containers/${enc(p.id)}/start`);out={ok:true};break;
+case 'container.startManaged': {
+  const id = String(p.id);
+  const before = await assertContainer(id);
+  const identity = managedIdentityFromTrustedContainer(before);
+  if (identity?.scope === 'sandbox' && identity.resource.startsWith('assessment-')) {
+    const mounts = assessmentInspectMounts(before);
+    out = await serializedVolumeMounts(mounts.map(m => m.Source), async () => {
+      // Inspect the attached volume owners again after obtaining the same
+      // name locks used by create/remove. Hold locks throughout Docker start.
+      await proveAssessmentAttachment(id, identity, mounts);
+      await req('POST', `${API}/containers/${enc(id)}/start`);
+      await proveAssessmentAttachment(id, identity, mounts);
+      return { ok: true };
+    });
+  } else {
+    await req('POST', `${API}/containers/${enc(id)}/start`);
+    out = { ok: true };
+  }
+  break;
+}
 case 'container.waitManaged': {await assertManagedContainer(String(p.id));const ac=new AbortController();const ms=Math.max(1,Math.min(Number(p.timeoutMs??300000),300000));const timer=setTimeout(()=>ac.abort(),ms);try{const r=await docker.request({method:'POST',path:`${API}/containers/${enc(p.id)}/wait`,signal:ac.signal});const t=await r.body.text();if(r.statusCode>=400)throw new BridgeError('DOCKER_UNAVAILABLE','container wait failed',502);out=JSON.parse(t);}catch(e){if(ac.signal.aborted)throw new BridgeError('DOCKER_UNAVAILABLE','container wait timeout',504);throw e}finally{clearTimeout(timer)}break;}
 case 'container.logsManaged': await assertContainer(String(p.id));{const cap=Math.max(1,Math.min(Number(p.maxBytes??1048576),8*1024*1024))+65536;const r=await docker.request({method:'GET',path:`${API}/containers/${enc(p.id)}/logs?stdout=1&stderr=1&timestamps=0`});if(r.statusCode>=400)throw new BridgeError('DOCKER_UNAVAILABLE','container logs failed',502);let chunks:Buffer[]=[];let n=0;for await(const c of r.body as any){const b=Buffer.from(c);const take=Math.min(b.length,cap-n);if(take>0){chunks.push(b.subarray(0,take));n+=take}if(n>=cap){(r.body as any).destroy();break}}out={base64:Buffer.concat(chunks).toString('base64')};}break;
 case 'container.stopManaged': await assertContainer(String(p.id));await req('POST',`${API}/containers/${enc(p.id)}/stop?t=${Number(p.timeoutSec??2)}`);out={ok:true};break;
