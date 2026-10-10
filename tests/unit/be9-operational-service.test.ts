@@ -288,6 +288,35 @@ describe('BE9.2 Executor operational assessment service', () => {
     expect(stagedAgain).toBe(0);
   });
 
+  it('recovers prepared source after released preflight lease history survives restart', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'be9-preflight-history-')), 'agents.db');
+    const first = new AgentJobStore(path);
+    const stager = fakeStager();
+    await service(first, stager).preflight(request());
+    await service(first, stager).prepare(request());
+
+    const sql = new DatabaseSync(path);
+    const states = sql.prepare("SELECT state FROM execution_resource_leases WHERE owner_kind='security-assessment' AND owner_id=?").all(ASSESSMENT) as Array<{state: string}>;
+    sql.close();
+    expect(states.filter((row) => row.state === 'RELEASED')).toHaveLength(2);
+    expect(states.filter((row) => row.state === 'ACTIVE')).toHaveLength(2);
+
+    first.close();
+    const restored = new AgentJobStore(path);
+    stores.push(restored);
+    let adopted = 0;
+    const restarted = service(restored, fakeStager({
+      recover: async () => { adopted += 1; return receipt('verify'); },
+    }));
+    await restarted.recoverPrepared();
+    expect(adopted).toBe(1);
+    await expect(restarted.revalidateBeforeRun(ASSESSMENT)).resolves.toMatchObject({
+      assessmentId: ASSESSMENT, projectId: 'project-a',
+    });
+    expect(restored.executionLeaseSummary().filter((row) => row.ownerId === ASSESSMENT
+      && row.state === 'ACTIVE')).toHaveLength(2);
+  });
+
   it.each([
     ['missing', "DELETE FROM execution_resource_leases WHERE owner_kind='security-assessment'"],
     ['released', "UPDATE execution_resource_leases SET state='RELEASED' WHERE owner_kind='security-assessment'"],
